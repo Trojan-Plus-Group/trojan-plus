@@ -33,6 +33,8 @@
 
 using namespace std;
 
+const bool IS_ENABLE_RAM_PROFILING = false;
+
 #ifndef _WIN32  // nat mode does not support in windows platform
 // copied from shadowsocks-libev udpreplay.c
 static int get_dstaddr(struct msghdr *msg, struct sockaddr_storage *dstaddr) {
@@ -264,7 +266,7 @@ static void get_curr_pid_used_ram(int &vm_ram, int &rss_ram, int& exe_ram, int& 
 // reference codesnap from:
 // https://stackoverflow.com/questions/63166/how-to-determine-cpu-and-memory-consumption-from-inside-a-process
 void log_out_current_ram(const char *tag) {
-    if (Log::level == Log::ALL) {
+    if (IS_ENABLE_RAM_PROFILING) {
         struct sysinfo memInfo;
         sysinfo(&memInfo);
 
@@ -295,34 +297,38 @@ void log_out_current_ram(const char *tag) {
         get_curr_pid_used_ram(vm_ram, rss_ram, exe_ram, lib_ram, stk_ram);
 
         cout << (string(tag) + " current RSS: " + to_string(rss_ram) + "KB VM: " + to_string(vm_ram) + "KB, EXE: " + to_string(exe_ram) +
-                            "KB, Lib:" + to_string(lib_ram) + "KB, Stk:" + to_string(stk_ram) + "KB, total VM [" +
-                            to_string(virtualMemUsed >> 10) + "/" + to_string(totalVirtualMem >> 10) + "KB] RAM [" +
-                            to_string(physMemUsed >> 10) + "/" + to_string(totalPhysMem >> 10) + "KB]") << endl;
+                 "KB, Lib:" + to_string(lib_ram) + "KB, Stk:" + to_string(stk_ram) + "KB, total VM [" +
+                 to_string(virtualMemUsed >> 10) + "/" + to_string(totalVirtualMem >> 10) + "KB] RAM [" +
+                 to_string(physMemUsed >> 10) + "/" + to_string(totalPhysMem >> 10) + "KB]")
+             << endl;
     }
 }
 
 #elif (defined _WIN32)
 
 void log_out_current_ram(const char *tag) {
-    MEMORYSTATUSEX memInfo;
-    memInfo.dwLength = sizeof(MEMORYSTATUSEX);
+    if (IS_ENABLE_RAM_PROFILING) {
+        MEMORYSTATUSEX memInfo;
+        memInfo.dwLength = sizeof(MEMORYSTATUSEX);
 
-    GlobalMemoryStatusEx(&memInfo);
+        GlobalMemoryStatusEx(&memInfo);
 
-    DWORDLONG totalVirtualMem = memInfo.ullTotalPageFile;
-    DWORDLONG virtualMemUsed = memInfo.ullTotalPageFile - memInfo.ullAvailPageFile;
+        DWORDLONG totalVirtualMem = memInfo.ullTotalPageFile;
+        DWORDLONG virtualMemUsed = memInfo.ullTotalPageFile - memInfo.ullAvailPageFile;
 
-    PROCESS_MEMORY_COUNTERS_EX pmc;
-    GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS *)&pmc, sizeof(pmc));
-    SIZE_T virtualMemUsedByMe = pmc.PrivateUsage;
+        PROCESS_MEMORY_COUNTERS_EX pmc;
+        GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc));
+        SIZE_T virtualMemUsedByMe = pmc.PrivateUsage;
 
-    DWORDLONG totalPhysMem = memInfo.ullTotalPhys;
-    DWORDLONG physMemUsed = memInfo.ullTotalPhys - memInfo.ullAvailPhys;
-    SIZE_T physMemUsedByMe = pmc.WorkingSetSize;
+        DWORDLONG totalPhysMem = memInfo.ullTotalPhys;
+        DWORDLONG physMemUsed = memInfo.ullTotalPhys - memInfo.ullAvailPhys;
+        SIZE_T physMemUsedByMe = pmc.WorkingSetSize;
 
-    cout << (string(tag) + " current RSS: " + to_string(physMemUsedByMe >> 10) + "KB VM: " + to_string(virtualMemUsedByMe >> 10) + "KB, total VM [" +
-             to_string(virtualMemUsed >> 10) + "/" + to_string(totalVirtualMem >> 10) + "KB] RAM [" +
-             to_string(physMemUsed >> 10) + "/" + to_string(totalPhysMem >> 10) + "KB]") << endl;
+        cout << (string(tag) + " current RSS: " + to_string(physMemUsedByMe >> 10) + "KB VM: " + to_string(virtualMemUsedByMe >> 10) + "KB, total VM [" +
+                 to_string(virtualMemUsed >> 10) + "/" + to_string(totalVirtualMem >> 10) + "KB] RAM [" +
+                 to_string(physMemUsed >> 10) + "/" + to_string(totalPhysMem >> 10) + "KB]")
+             << endl;
+    }
 }
 
 #else
