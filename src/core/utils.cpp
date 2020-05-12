@@ -20,6 +20,10 @@
 #ifndef _WIN32
 #include "sys/sysinfo.h"
 #include "sys/types.h"
+#else
+#define WIN32_LEAN_AND_MEAN 1
+#include <windows.h>
+#include <psapi.h>
 #endif //_WIN32
 
 #include "utils.h"
@@ -275,7 +279,25 @@ bool prepare_nat_udp_target_bind(int fd, bool is_ipv4, const boost::asio::ip::ud
 }
 
 void log_out_current_ram(const char* tag){
-    // nothing to do in windows
+    MEMORYSTATUSEX memInfo;
+    memInfo.dwLength = sizeof(MEMORYSTATUSEX);
+
+    GlobalMemoryStatusEx(&memInfo);
+    
+    DWORDLONG totalVirtualMem = memInfo.ullTotalPageFile;
+    DWORDLONG virtualMemUsed = memInfo.ullTotalPageFile - memInfo.ullAvailPageFile;
+
+    PROCESS_MEMORY_COUNTERS_EX pmc;
+    GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc));
+    SIZE_T virtualMemUsedByMe = pmc.PrivateUsage;
+
+    DWORDLONG totalPhysMem = memInfo.ullTotalPhys;
+    DWORDLONG physMemUsed = memInfo.ullTotalPhys - memInfo.ullAvailPhys;
+    SIZE_T physMemUsedByMe = pmc.WorkingSetSize;
+
+    _log_with_date_time(string(tag) + " current RSS: " + to_string(physMemUsedByMe >> 10) + "KB VM: " + to_string(virtualMemUsedByMe >> 10) + "KB, total VM [" +
+        to_string(virtualMemUsed >> 10) + "/" + to_string(totalVirtualMem >> 10) + "KB] RAM [" +
+        to_string(physMemUsed >> 10) + "/" + to_string(totalPhysMem >> 10) + "KB]");
 }
 
 #endif  // _WIN32
