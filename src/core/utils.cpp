@@ -17,6 +17,11 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#ifndef _WIN32
+#include "sys/sysinfo.h"
+#include "sys/types.h"
+#endif //_WIN32
+
 #include "utils.h"
 #include "log.h"
 
@@ -178,6 +183,83 @@ bool prepare_nat_udp_target_bind(int fd, bool is_ipv4, const boost::asio::ip::ud
     return true;
 }
 
+static void get_curr_pid_used_ram(int& vm_ram, int& phy_ram) {  //Note: this value is in KB!
+    FILE *file = fopen("/proc/self/status", "r");
+    if (!file) {
+        return;
+    }
+
+    char line[128];
+
+    const char *VmSize = "VmSize:";
+    const char *VmRSS = "VmRSS:";
+
+    const size_t VmSize_len = strlen(VmSize);
+    const size_t VmRSS_len = strlen(VmRSS);
+
+    auto parse = [](char *line) {
+        // This assumes that a digit will be found and the line ends in " Kb".
+        line[strlen(line) - 3] = '\0';
+        return atoi(line);
+    };
+
+    vm_ram = -1;
+    phy_ram = -1;
+
+    while (fgets(line, 128, file) != NULL) {
+        if (strncmp(line, VmSize, VmSize_len) == 0) {
+            vm_ram = parse(line + VmSize_len);
+            if (phy_ram != -1) {
+                break;
+            }
+        }
+
+        if (strncmp(line, VmRSS, VmRSS_len) == 0) {
+            phy_ram = parse(line + VmRSS_len);
+            if (vm_ram != -1) {
+                break;
+            }
+        }
+    }
+    fclose(file);
+}
+
+// reference codesnap from: 
+// https://stackoverflow.com/questions/63166/how-to-determine-cpu-and-memory-consumption-from-inside-a-process
+void log_out_current_ram(const char* tag){
+    if(Log::level == Log::ALL){
+        struct sysinfo memInfo;
+        sysinfo(&memInfo);
+
+        uint64_t totalVirtualMem = memInfo.totalram;
+        //Add other values in next statement to avoid int overflow on right hand side...
+        totalVirtualMem += memInfo.totalswap;
+        totalVirtualMem *= memInfo.mem_unit;
+
+        uint64_t virtualMemUsed = memInfo.totalram - memInfo.freeram;
+        //Add other values in next statement to avoid int overflow on right hand side...
+        virtualMemUsed += memInfo.totalswap - memInfo.freeswap;
+        virtualMemUsed *= memInfo.mem_unit;
+
+        uint64_t totalPhysMem = memInfo.totalram;
+        //Multiply in next statement to avoid int overflow on right hand side...
+        totalPhysMem *= memInfo.mem_unit;
+
+        uint64_t physMemUsed = memInfo.totalram - memInfo.freeram;
+        //Multiply in next statement to avoid int overflow on right hand side...
+        physMemUsed *= memInfo.mem_unit;
+
+        int process_used_vm_ram = -1;
+        int process_used_phy_ram = -1;
+
+        get_curr_pid_used_ram(process_used_vm_ram, process_used_phy_ram);
+
+        _log_with_date_time(string(tag) + " current RSS: " + to_string(process_used_phy_ram) + "KB VM: " + to_string(process_used_vm_ram) + "KB, total VM [" +
+                            to_string(virtualMemUsed >> 10) + "/" + to_string(totalVirtualMem >> 10) + "KB] RAM [" +
+                            to_string(physMemUsed >> 10) + "/" + to_string(totalPhysMem >> 10) + "KB]");
+    }
+}
+
 #else
 
 std::pair<std::string, uint16_t> recv_tproxy_udp_msg(int fd, boost::asio::ip::udp::endpoint& recv_endpoint, char* buf, int& buf_len, int& ttl){
@@ -190,6 +272,10 @@ bool prepare_nat_udp_bind(int fd, bool is_ipv4, bool recv_ttl){
 
 bool prepare_nat_udp_target_bind(int fd, bool is_ipv4, const boost::asio::ip::udp::endpoint& udp_target_endpoint) {
     throw runtime_error("NAT is not supported in Windows");
+}
+
+void log_out_current_ram(){
+    // nothing to do in windows
 }
 
 #endif  // _WIN32

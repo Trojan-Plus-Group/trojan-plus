@@ -194,4 +194,6 @@ std::pair<std::string, uint16_t> recv_tproxy_udp_msg(int fd, boost::asio::ip::ud
 bool prepare_nat_udp_bind(int fd, bool is_ipv4, bool recv_ttl);
 bool prepare_nat_udp_target_bind(int fd, bool is_ipv4, const boost::asio::ip::udp::endpoint& udp_target_endpoint);
 
+void log_out_current_ram(const char* tag);
+
 #endif  //_TROJAN_UTILS_H_

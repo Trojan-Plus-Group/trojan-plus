@@ -28,6 +28,8 @@
 #endif // ENABLE_MYSQL
 #include "core/service.h"
 #include "core/version.h"
+#include "core/utils.h"
+
 using namespace std;
 using namespace boost::asio;
 namespace po = boost::program_options;
@@ -61,82 +63,83 @@ void signal_async_wait(signal_set &sig, Service &service, bool &restart) {
     });
 }
 
+void parse_params(int argc, const char *argv[], string& config_file, bool& test) {
+    string log_file;
+    string keylog_file;
+    po::options_description desc("options");
+    desc.add_options()("config,c", po::value<string>(&config_file)->default_value(DEFAULT_CONFIG)->value_name("CONFIG"), "specify config file")("help,h", "print help message")("keylog,k", po::value<string>(&keylog_file)->value_name("KEYLOG"), "specify keylog file location (OpenSSL >= 1.1.1)")("log,l", po::value<string>(&log_file)->value_name("LOG"), "specify log file location")("test,t", po::bool_switch(&test), "test config file")("version,v", "print version and build info");
+    po::positional_options_description pd;
+    pd.add("config", 1);
+    po::variables_map vm;
+    po::store(po::command_line_parser(argc, argv).options(desc).positional(pd).run(), vm);
+    po::notify(vm);
+    if (vm.count("help")) {
+        Log::log(string("usage: ") + argv[0] + " [-htv] [-l LOG] [-k KEYLOG] [[-c] CONFIG]", Log::FATAL);
+        cerr << desc;
+        exit(EXIT_SUCCESS);
+    }
+    if (vm.count("version")) {
+        Log::log(string("Boost ") + BOOST_LIB_VERSION + ", " + OpenSSL_version(OPENSSL_VERSION), Log::FATAL);
+#ifdef ENABLE_MYSQL
+        Log::log(string(" [Enabled] MySQL Support (") + mysql_get_client_info() + ')', Log::FATAL);
+#else   // ENABLE_MYSQL
+        Log::log("[Disabled] MySQL Support", Log::FATAL);
+#endif  // ENABLE_MYSQL
+#ifdef TCP_FASTOPEN
+        Log::log(" [Enabled] TCP_FASTOPEN Support", Log::FATAL);
+#else   // TCP_FASTOPEN
+        Log::log("[Disabled] TCP_FASTOPEN Support", Log::FATAL);
+#endif  // TCP_FASTOPEN
+#ifdef TCP_FASTOPEN_CONNECT
+        Log::log(" [Enabled] TCP_FASTOPEN_CONNECT Support", Log::FATAL);
+#else   // TCP_FASTOPEN_CONNECT
+        Log::log("[Disabled] TCP_FASTOPEN_CONNECT Support", Log::FATAL);
+#endif  // TCP_FASTOPEN_CONNECT
+#if ENABLE_SSL_KEYLOG
+        Log::log(" [Enabled] SSL KeyLog Support", Log::FATAL);
+#else   // ENABLE_SSL_KEYLOG
+        Log::log("[Disabled] SSL KeyLog Support", Log::FATAL);
+#endif  // ENABLE_SSL_KEYLOG
+#ifdef ENABLE_NAT
+        Log::log(" [Enabled] NAT Support", Log::FATAL);
+#else   // ENABLE_NAT
+        Log::log("[Disabled] NAT Support", Log::FATAL);
+#endif  // ENABLE_NAT
+#ifdef ENABLE_TLS13_CIPHERSUITES
+        Log::log(" [Enabled] TLS1.3 Ciphersuites Support", Log::FATAL);
+#else   // ENABLE_TLS13_CIPHERSUITES
+        Log::log("[Disabled] TLS1.3 Ciphersuites Support", Log::FATAL);
+#endif  // ENABLE_TLS13_CIPHERSUITES
+#ifdef ENABLE_REUSE_PORT
+        Log::log(" [Enabled] TCP Port Reuse Support", Log::FATAL);
+#else   // ENABLE_REUSE_PORT
+        Log::log("[Disabled] TCP Port Reuse Support", Log::FATAL);
+#endif  // ENABLE_REUSE_PORT
+        Log::log("OpenSSL Information", Log::FATAL);
+        if (OpenSSL_version_num() != OPENSSL_VERSION_NUMBER) {
+            Log::log(string("\tCompile-time Version: ") + OPENSSL_VERSION_TEXT, Log::FATAL);
+        }
+        Log::log(string("\tBuild Flags: ") + OpenSSL_version(OPENSSL_CFLAGS), Log::FATAL);
+        exit(EXIT_SUCCESS);
+    }
+    if (vm.count("log")) {
+        Log::redirect(log_file);
+    }
+    if (vm.count("keylog")) {
+        Log::redirect_keylog(keylog_file);
+    }
+}
+
 int main(int argc, const char *argv[]) {
     try {
+        log_out_current_ram("main 0");
         Log::log("Welcome to trojan " + Version::get_version(), Log::FATAL);
+        
         string config_file;
-        string log_file;
-        string keylog_file;
         bool test;
-        po::options_description desc("options");
-        desc.add_options()
-            ("config,c", po::value<string>(&config_file)->default_value(DEFAULT_CONFIG)->value_name("CONFIG"), "specify config file")
-            ("help,h", "print help message")
-            ("keylog,k", po::value<string>(&keylog_file)->value_name("KEYLOG"), "specify keylog file location (OpenSSL >= 1.1.1)")
-            ("log,l", po::value<string>(&log_file)->value_name("LOG"), "specify log file location")
-            ("test,t", po::bool_switch(&test), "test config file")
-            ("version,v", "print version and build info")
-        ;
-        po::positional_options_description pd;
-        pd.add("config", 1);
-        po::variables_map vm;
-        po::store(po::command_line_parser(argc, argv).options(desc).positional(pd).run(), vm);
-        po::notify(vm);
-        if (vm.count("help")) {
-            Log::log(string("usage: ") + argv[0] + " [-htv] [-l LOG] [-k KEYLOG] [[-c] CONFIG]", Log::FATAL);
-            cerr << desc;
-            exit(EXIT_SUCCESS);
-        }
-        if (vm.count("version")) {
-            Log::log(string("Boost ") + BOOST_LIB_VERSION + ", " + OpenSSL_version(OPENSSL_VERSION), Log::FATAL);
-#ifdef ENABLE_MYSQL
-            Log::log(string(" [Enabled] MySQL Support (") + mysql_get_client_info() + ')', Log::FATAL);
-#else // ENABLE_MYSQL
-            Log::log("[Disabled] MySQL Support", Log::FATAL);
-#endif // ENABLE_MYSQL
-#ifdef TCP_FASTOPEN
-            Log::log(" [Enabled] TCP_FASTOPEN Support", Log::FATAL);
-#else // TCP_FASTOPEN
-            Log::log("[Disabled] TCP_FASTOPEN Support", Log::FATAL);
-#endif // TCP_FASTOPEN
-#ifdef TCP_FASTOPEN_CONNECT
-            Log::log(" [Enabled] TCP_FASTOPEN_CONNECT Support", Log::FATAL);
-#else // TCP_FASTOPEN_CONNECT
-            Log::log("[Disabled] TCP_FASTOPEN_CONNECT Support", Log::FATAL);
-#endif // TCP_FASTOPEN_CONNECT
-#if ENABLE_SSL_KEYLOG
-            Log::log(" [Enabled] SSL KeyLog Support", Log::FATAL);
-#else // ENABLE_SSL_KEYLOG
-            Log::log("[Disabled] SSL KeyLog Support", Log::FATAL);
-#endif // ENABLE_SSL_KEYLOG
-#ifdef ENABLE_NAT
-            Log::log(" [Enabled] NAT Support", Log::FATAL);
-#else // ENABLE_NAT
-            Log::log("[Disabled] NAT Support", Log::FATAL);
-#endif // ENABLE_NAT
-#ifdef ENABLE_TLS13_CIPHERSUITES
-            Log::log(" [Enabled] TLS1.3 Ciphersuites Support", Log::FATAL);
-#else // ENABLE_TLS13_CIPHERSUITES
-            Log::log("[Disabled] TLS1.3 Ciphersuites Support", Log::FATAL);
-#endif // ENABLE_TLS13_CIPHERSUITES
-#ifdef ENABLE_REUSE_PORT
-            Log::log(" [Enabled] TCP Port Reuse Support", Log::FATAL);
-#else // ENABLE_REUSE_PORT
-            Log::log("[Disabled] TCP Port Reuse Support", Log::FATAL);
-#endif // ENABLE_REUSE_PORT
-            Log::log("OpenSSL Information", Log::FATAL);
-            if (OpenSSL_version_num() != OPENSSL_VERSION_NUMBER) {
-                Log::log(string("\tCompile-time Version: ") + OPENSSL_VERSION_TEXT, Log::FATAL);
-            }
-            Log::log(string("\tBuild Flags: ") + OpenSSL_version(OPENSSL_CFLAGS), Log::FATAL);
-            exit(EXIT_SUCCESS);
-        }
-        if (vm.count("log")) {
-            Log::redirect(log_file);
-        }
-        if (vm.count("keylog")) {
-            Log::redirect_keylog(keylog_file);
-        }
+        parse_params(argc, argv, config_file, test);
+
+        log_out_current_ram("main 1");
         bool restart;
         Config config;
         do {
@@ -159,6 +162,7 @@ int main(int argc, const char *argv[]) {
             sig.add(SIGUSR1);
 #endif // _WIN32
             signal_async_wait(sig, service, restart);
+            log_out_current_ram("main 2");
             service.run();
             if (restart) {
                 _log_with_date_time("trojan service restarting. . . ", Log::WARN);

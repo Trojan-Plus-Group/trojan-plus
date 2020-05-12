@@ -33,7 +33,7 @@ using namespace boost::asio::ip;
 
 char __debug_str_buf[1024];
 
-Log::Level Log::level(INFO);
+Log::Level Log::level(ALL);
 FILE *Log::keylog(nullptr);
 FILE *Log::output_stream(stderr);
 Log::LogCallback Log::log_callback{};
