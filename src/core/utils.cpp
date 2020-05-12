@@ -206,7 +206,7 @@ bool prepare_nat_udp_target_bind(int fd, bool is_ipv4, const boost::asio::ip::ud
 
 #if (defined __linux__) || (defined __CYGWIN__)
 
-static void get_curr_pid_used_ram(int &vm_ram, int &phy_ram) {  //Note: this value is in KB!
+static void get_curr_pid_used_ram(int &vm_ram, int &rss_ram, int& exe_ram, int& lib_ram, int& stk_ram) {  //Note: this value is in KB!
     FILE *file = fopen("/proc/self/status", "r");
     if (!file) {
         return;
@@ -216,6 +216,9 @@ static void get_curr_pid_used_ram(int &vm_ram, int &phy_ram) {  //Note: this val
 
     const char *VmSize = "VmSize:";
     const char *VmRSS = "VmRSS:";
+    const char *VmLib = "VmLib:";
+    const char *VmExe = "VmExe:";
+    const char *VmStk = "VmStk:";
 
     const size_t VmSize_len = strlen(VmSize);
     const size_t VmRSS_len = strlen(VmRSS);
@@ -227,21 +230,30 @@ static void get_curr_pid_used_ram(int &vm_ram, int &phy_ram) {  //Note: this val
     };
 
     vm_ram = -1;
-    phy_ram = -1;
+    rss_ram = -1;
+    exe_ram = -1;
+    lib_ram = -1;
+    stk_ram = -1;
 
     while (fgets(line, 128, file) != NULL) {
         if (strncmp(line, VmSize, VmSize_len) == 0) {
             vm_ram = parse(line + VmSize_len);
-            if (phy_ram != -1) {
-                break;
-            }
         }
 
         if (strncmp(line, VmRSS, VmRSS_len) == 0) {
-            phy_ram = parse(line + VmRSS_len);
-            if (vm_ram != -1) {
-                break;
-            }
+            rss_ram = parse(line + VmRSS_len);
+        }
+
+        if (strncmp(line, VmLib, VmRSS_len) == 0) {
+            lib_ram = parse(line + VmRSS_len);
+        }
+
+        if (strncmp(line, VmExe, VmRSS_len) == 0) {
+            exe_ram = parse(line + VmRSS_len);
+        }
+
+        if (strncmp(line, VmStk, VmRSS_len) == 0) {
+            stk_ram = parse(line + VmRSS_len);
         }
     }
     fclose(file);
@@ -272,12 +284,16 @@ void log_out_current_ram(const char *tag) {
         //Multiply in next statement to avoid int overflow on right hand side...
         physMemUsed *= memInfo.mem_unit;
 
-        int process_used_vm_ram = -1;
-        int process_used_phy_ram = -1;
+        int vm_ram = -1;
+        int rss_ram = -1;
+        int exe_ram = -1;
+        int lib_ram = -1;        
+        int stk_ram = -1;
 
-        get_curr_pid_used_ram(process_used_vm_ram, process_used_phy_ram);
+        get_curr_pid_used_ram(vm_ram, rss_ram, exe_ram, lib_ram, stk_ram);
 
-        _log_with_date_time(string(tag) + " current RSS: " + to_string(process_used_phy_ram) + "KB VM: " + to_string(process_used_vm_ram) + "KB, total VM [" +
+        _log_with_date_time(string(tag) + " current RSS: " + to_string(rss_ram) + "KB VM: " + to_string(vm_ram) + "KB, EXE: " + to_string(exe_ram) +
+                            "KB, Lib:" + to_string(lib_ram) + "KB, Stk:" + to_string(stk_ram) + "KB, total VM [" +
                             to_string(virtualMemUsed >> 10) + "/" + to_string(totalVirtualMem >> 10) + "KB] RAM [" +
                             to_string(physMemUsed >> 10) + "/" + to_string(totalPhysMem >> 10) + "KB]");
     }
