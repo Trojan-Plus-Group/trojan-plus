@@ -26,14 +26,16 @@
 #include <psapi.h>
 #endif //_WIN32
 
+#include <fstream>
+#include <ios>
 #include <iostream>
 
-#include "utils.h"
 #include "log.h"
+#include "utils.h"
 
 using namespace std;
 
-const bool IS_ENABLE_RAM_PROFILING = false;
+const bool IS_ENABLE_RAM_PROFILING = true;
 
 #ifndef _WIN32  // nat mode does not support in windows platform
 // copied from shadowsocks-libev udpreplay.c
@@ -210,57 +212,37 @@ bool prepare_nat_udp_target_bind(int fd, bool is_ipv4, const boost::asio::ip::ud
 
 #if (defined __linux__) || (defined __CYGWIN__)
 
-static void get_curr_pid_used_ram(int &vm_ram, int &rss_ram, int& exe_ram, int& lib_ram, int& stk_ram) {  //Note: this value is in KB!
-    FILE *file = fopen("/proc/self/status", "r");
-    if (!file) {
-        return;
-    }
+void process_mem_usage(size_t &vm_usage, size_t &resident_set) {
+    using std::ifstream;
+    using std::ios_base;
+    using std::string;
 
-    char line[128];
+    vm_usage = 0;
+    resident_set = 0;
 
-    const char *VmSize = "VmSize:";
-    const char *VmRSS = "VmRSS:";
-    const char *VmLib = "VmLib:";
-    const char *VmExe = "VmExe:";
-    const char *VmStk = "VmStk:";
+    // 'file' stat seems to give the most reliable results
+    //
+    ifstream stat_stream("/proc/self/stat", ios_base::in);
 
-    const size_t VmSize_len = strlen(VmSize);
-    const size_t VmRSS_len = strlen(VmRSS);
+    // dummy vars for leading entries in stat that we don't care about
+    //
+    string pid, comm, state, ppid, pgrp, session, tty_nr;
+    string tpgid, flags, minflt, cminflt, majflt, cmajflt;
+    string utime, stime, cutime, cstime, priority, nice;
+    string O, itrealvalue, starttime;
 
-    auto parse = [](char *line) {
-        // This assumes that a digit will be found and the line ends in " Kb".
-        line[strlen(line) - 3] = '\0';
-        return atoi(line);
-    };
+    // the two fields we want
+    //
+    unsigned long vsize;
+    long rss;
 
-    vm_ram = -1;
-    rss_ram = -1;
-    exe_ram = -1;
-    lib_ram = -1;
-    stk_ram = -1;
+    stat_stream >> pid >> comm >> state >> ppid >> pgrp >> session >> tty_nr >> tpgid >> flags >> minflt >> cminflt >> majflt >> cmajflt >> utime >> stime >> cutime >> cstime >> priority >> nice >> O >> itrealvalue >> starttime >> vsize >> rss;  // don't care about the rest
 
-    while (fgets(line, 128, file) != NULL) {
-        if (strncmp(line, VmSize, VmSize_len) == 0) {
-            vm_ram = parse(line + VmSize_len);
-        }
+    stat_stream.close();
 
-        if (strncmp(line, VmRSS, VmRSS_len) == 0) {
-            rss_ram = parse(line + VmRSS_len);
-        }
-
-        if (strncmp(line, VmLib, VmRSS_len) == 0) {
-            lib_ram = parse(line + VmRSS_len);
-        }
-
-        if (strncmp(line, VmExe, VmRSS_len) == 0) {
-            exe_ram = parse(line + VmRSS_len);
-        }
-
-        if (strncmp(line, VmStk, VmRSS_len) == 0) {
-            stk_ram = parse(line + VmRSS_len);
-        }
-    }
-    fclose(file);
+    long page_size_kb = sysconf(_SC_PAGE_SIZE) / 1024;  // in case x86-64 is configured to use 2MB pages
+    vm_usage = vsize / 1024;
+    resident_set = rss * page_size_kb;
 }
 
 // reference codesnap from:
@@ -288,16 +270,11 @@ void log_out_current_ram(const char *tag) {
         //Multiply in next statement to avoid int overflow on right hand side...
         physMemUsed *= memInfo.mem_unit;
 
-        int vm_ram = -1;
-        int rss_ram = -1;
-        int exe_ram = -1;
-        int lib_ram = -1;        
-        int stk_ram = -1;
+        size_t vm_usage;
+        size_t rss;
+        process_mem_usage(vm_usage, rss);
 
-        get_curr_pid_used_ram(vm_ram, rss_ram, exe_ram, lib_ram, stk_ram);
-
-        cout << (string(tag) + " current RSS: " + to_string(rss_ram) + "KB VM: " + to_string(vm_ram) + "KB, EXE: " + to_string(exe_ram) +
-                 "KB, Lib:" + to_string(lib_ram) + "KB, Stk:" + to_string(stk_ram) + "KB, total VM [" +
+        cout << (string(tag) + " current RSS: " + to_string(rss) + "KB VM: " + to_string(vm_usage) + "KB, total VM [" +
                  to_string(virtualMemUsed >> 10) + "/" + to_string(totalVirtualMem >> 10) + "KB] RAM [" +
                  to_string(physMemUsed >> 10) + "/" + to_string(totalPhysMem >> 10) + "KB]")
              << endl;
