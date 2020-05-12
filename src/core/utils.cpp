@@ -26,6 +26,8 @@
 #include <psapi.h>
 #endif //_WIN32
 
+#include <iostream>
+
 #include "utils.h"
 #include "log.h"
 
@@ -292,10 +294,10 @@ void log_out_current_ram(const char *tag) {
 
         get_curr_pid_used_ram(vm_ram, rss_ram, exe_ram, lib_ram, stk_ram);
 
-        _log_with_date_time(string(tag) + " current RSS: " + to_string(rss_ram) + "KB VM: " + to_string(vm_ram) + "KB, EXE: " + to_string(exe_ram) +
+        cout << (string(tag) + " current RSS: " + to_string(rss_ram) + "KB VM: " + to_string(vm_ram) + "KB, EXE: " + to_string(exe_ram) +
                             "KB, Lib:" + to_string(lib_ram) + "KB, Stk:" + to_string(stk_ram) + "KB, total VM [" +
                             to_string(virtualMemUsed >> 10) + "/" + to_string(totalVirtualMem >> 10) + "KB] RAM [" +
-                            to_string(physMemUsed >> 10) + "/" + to_string(totalPhysMem >> 10) + "KB]");
+                            to_string(physMemUsed >> 10) + "/" + to_string(totalPhysMem >> 10) + "KB]") << endl;
     }
 }
 
@@ -318,9 +320,9 @@ void log_out_current_ram(const char *tag) {
     DWORDLONG physMemUsed = memInfo.ullTotalPhys - memInfo.ullAvailPhys;
     SIZE_T physMemUsedByMe = pmc.WorkingSetSize;
 
-    _log_with_date_time(string(tag) + " current RSS: " + to_string(physMemUsedByMe >> 10) + "KB VM: " + to_string(virtualMemUsedByMe >> 10) + "KB, total VM [" +
-                        to_string(virtualMemUsed >> 10) + "/" + to_string(totalVirtualMem >> 10) + "KB] RAM [" +
-                        to_string(physMemUsed >> 10) + "/" + to_string(totalPhysMem >> 10) + "KB]");
+    cout << (string(tag) + " current RSS: " + to_string(physMemUsedByMe >> 10) + "KB VM: " + to_string(virtualMemUsedByMe >> 10) + "KB, total VM [" +
+             to_string(virtualMemUsed >> 10) + "/" + to_string(totalVirtualMem >> 10) + "KB] RAM [" +
+             to_string(physMemUsed >> 10) + "/" + to_string(totalPhysMem >> 10) + "KB]") << endl;
 }
 
 #else
