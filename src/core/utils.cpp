@@ -17,10 +17,10 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef _WIN32
+#if (defined __linux__) || (defined __CYGWIN__)
 #include "sys/sysinfo.h"
 #include "sys/types.h"
-#else
+#elif (defined _WIN32)
 #define WIN32_LEAN_AND_MEAN 1
 #include <windows.h>
 #include <psapi.h>
@@ -187,7 +187,26 @@ bool prepare_nat_udp_target_bind(int fd, bool is_ipv4, const boost::asio::ip::ud
     return true;
 }
 
-static void get_curr_pid_used_ram(int& vm_ram, int& phy_ram) {  //Note: this value is in KB!
+
+#else
+
+std::pair<std::string, uint16_t> recv_tproxy_udp_msg(int fd, boost::asio::ip::udp::endpoint& recv_endpoint, char* buf, int& buf_len, int& ttl){
+    throw runtime_error("NAT is not supported in Windows");
+}
+
+bool prepare_nat_udp_bind(int fd, bool is_ipv4, bool recv_ttl){
+    throw runtime_error("NAT is not supported in Windows");
+}
+
+bool prepare_nat_udp_target_bind(int fd, bool is_ipv4, const boost::asio::ip::udp::endpoint& udp_target_endpoint) {
+    throw runtime_error("NAT is not supported in Windows");
+}
+
+#endif  // _WIN32
+
+#if (defined __linux__) || (defined __CYGWIN__)
+
+static void get_curr_pid_used_ram(int &vm_ram, int &phy_ram) {  //Note: this value is in KB!
     FILE *file = fopen("/proc/self/status", "r");
     if (!file) {
         return;
@@ -228,10 +247,10 @@ static void get_curr_pid_used_ram(int& vm_ram, int& phy_ram) {  //Note: this val
     fclose(file);
 }
 
-// reference codesnap from: 
+// reference codesnap from:
 // https://stackoverflow.com/questions/63166/how-to-determine-cpu-and-memory-consumption-from-inside-a-process
-void log_out_current_ram(const char* tag){
-    if(Log::level == Log::ALL){
+void log_out_current_ram(const char *tag) {
+    if (Log::level == Log::ALL) {
         struct sysinfo memInfo;
         sysinfo(&memInfo);
 
@@ -264,31 +283,19 @@ void log_out_current_ram(const char* tag){
     }
 }
 
-#else
+#elif (defined _WIN32)
 
-std::pair<std::string, uint16_t> recv_tproxy_udp_msg(int fd, boost::asio::ip::udp::endpoint& recv_endpoint, char* buf, int& buf_len, int& ttl){
-    throw runtime_error("NAT is not supported in Windows");
-}
-
-bool prepare_nat_udp_bind(int fd, bool is_ipv4, bool recv_ttl){
-    throw runtime_error("NAT is not supported in Windows");
-}
-
-bool prepare_nat_udp_target_bind(int fd, bool is_ipv4, const boost::asio::ip::udp::endpoint& udp_target_endpoint) {
-    throw runtime_error("NAT is not supported in Windows");
-}
-
-void log_out_current_ram(const char* tag){
+void log_out_current_ram(const char *tag) {
     MEMORYSTATUSEX memInfo;
     memInfo.dwLength = sizeof(MEMORYSTATUSEX);
 
     GlobalMemoryStatusEx(&memInfo);
-    
+
     DWORDLONG totalVirtualMem = memInfo.ullTotalPageFile;
     DWORDLONG virtualMemUsed = memInfo.ullTotalPageFile - memInfo.ullAvailPageFile;
 
     PROCESS_MEMORY_COUNTERS_EX pmc;
-    GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc));
+    GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS *)&pmc, sizeof(pmc));
     SIZE_T virtualMemUsedByMe = pmc.PrivateUsage;
 
     DWORDLONG totalPhysMem = memInfo.ullTotalPhys;
@@ -296,8 +303,11 @@ void log_out_current_ram(const char* tag){
     SIZE_T physMemUsedByMe = pmc.WorkingSetSize;
 
     _log_with_date_time(string(tag) + " current RSS: " + to_string(physMemUsedByMe >> 10) + "KB VM: " + to_string(virtualMemUsedByMe >> 10) + "KB, total VM [" +
-        to_string(virtualMemUsed >> 10) + "/" + to_string(totalVirtualMem >> 10) + "KB] RAM [" +
-        to_string(physMemUsed >> 10) + "/" + to_string(totalPhysMem >> 10) + "KB]");
+                        to_string(virtualMemUsed >> 10) + "/" + to_string(totalVirtualMem >> 10) + "KB] RAM [" +
+                        to_string(physMemUsed >> 10) + "/" + to_string(totalPhysMem >> 10) + "KB]");
 }
 
-#endif  // _WIN32
+#else
+void log_out_current_ram(const char *tag) {
+}
+#endif

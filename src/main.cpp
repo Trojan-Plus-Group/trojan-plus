@@ -147,9 +147,9 @@ void parse_params(int argc, const char *argv[], string& config_file, bool& test)
 
 int main(int argc, const char *argv[]) {
     try {
+        
         log_out_current_ram("main 0");
         Log::log("Welcome to trojan " + Version::get_version(), Log::FATAL);
-        
         string config_file;
         bool test;
         parse_params(argc, argv, config_file, test);
@@ -164,6 +164,7 @@ int main(int argc, const char *argv[]) {
             } else {
                 config.load(config_file);
             }
+            log_out_current_ram("main 2");
             Service service(config, test);
             if (test) {
                 Log::log("The config file looks good.", Log::OFF);
@@ -177,7 +178,7 @@ int main(int argc, const char *argv[]) {
             sig.add(SIGUSR1);
 #endif // _WIN32
             signal_async_wait(sig, service, restart);
-            log_out_current_ram("main 2");
+            log_out_current_ram("main 3");
             service.run();
             if (restart) {
                 _log_with_date_time("trojan service restarting. . . ", Log::WARN);
