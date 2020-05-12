@@ -64,15 +64,27 @@ void signal_async_wait(signal_set &sig, Service &service, bool &restart) {
 }
 
 void parse_params(int argc, const char *argv[], string& config_file, bool& test) {
+    log_out_current_ram("parse_params 0");
     string log_file;
     string keylog_file;
     po::options_description desc("options");
-    desc.add_options()("config,c", po::value<string>(&config_file)->default_value(DEFAULT_CONFIG)->value_name("CONFIG"), "specify config file")("help,h", "print help message")("keylog,k", po::value<string>(&keylog_file)->value_name("KEYLOG"), "specify keylog file location (OpenSSL >= 1.1.1)")("log,l", po::value<string>(&log_file)->value_name("LOG"), "specify log file location")("test,t", po::bool_switch(&test), "test config file")("version,v", "print version and build info");
+    log_out_current_ram("parse_params 1");
+    desc.add_options()
+        ("config,c", po::value<string>(&config_file)->default_value(DEFAULT_CONFIG)->value_name("CONFIG"), "specify config file")
+        ("help,h", "print help message")
+        ("keylog,k", po::value<string>(&keylog_file)->value_name("KEYLOG"), "specify keylog file location (OpenSSL >= 1.1.1)")
+        ("log,l", po::value<string>(&log_file)->value_name("LOG"), "specify log file location")
+        ("test,t", po::bool_switch(&test), "test config file")
+        ("version,v", "print version and build info")
+    ;
+    log_out_current_ram("parse_params 2");
     po::positional_options_description pd;
     pd.add("config", 1);
+    log_out_current_ram("parse_params 3");
     po::variables_map vm;
     po::store(po::command_line_parser(argc, argv).options(desc).positional(pd).run(), vm);
     po::notify(vm);
+    log_out_current_ram("parse_params 4");
     if (vm.count("help")) {
         Log::log(string("usage: ") + argv[0] + " [-htv] [-l LOG] [-k KEYLOG] [[-c] CONFIG]", Log::FATAL);
         cerr << desc;
@@ -122,12 +134,15 @@ void parse_params(int argc, const char *argv[], string& config_file, bool& test)
         Log::log(string("\tBuild Flags: ") + OpenSSL_version(OPENSSL_CFLAGS), Log::FATAL);
         exit(EXIT_SUCCESS);
     }
+    log_out_current_ram("parse_params 5");
     if (vm.count("log")) {
         Log::redirect(log_file);
     }
+    log_out_current_ram("parse_params 6");
     if (vm.count("keylog")) {
         Log::redirect_keylog(keylog_file);
     }
+    log_out_current_ram("parse_params 7");
 }
 
 int main(int argc, const char *argv[]) {

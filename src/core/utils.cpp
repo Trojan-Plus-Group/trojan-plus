@@ -274,7 +274,7 @@ bool prepare_nat_udp_target_bind(int fd, bool is_ipv4, const boost::asio::ip::ud
     throw runtime_error("NAT is not supported in Windows");
 }
 
-void log_out_current_ram(){
+void log_out_current_ram(const char* tag){
     // nothing to do in windows
 }
 
