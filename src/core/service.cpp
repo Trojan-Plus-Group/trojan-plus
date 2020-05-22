@@ -33,18 +33,20 @@
 #include "session/serversession.h"
 #include "utils.h"
 
+#include "tun/tundev.h"
+
 using namespace std;
 using namespace boost::asio::ip;
 using namespace boost::asio::ssl;
 
 
 Service::Service(Config &config, bool test) :
-    config(config),
     socket_acceptor(io_context),
     ssl_context(context::sslv23),
     auth(nullptr),
     udp_socket(io_context),
-    pipeline_select_idx(0) {
+    pipeline_select_idx(0),
+    config(config) {
 
 #ifndef ENABLE_NAT
     if (config.run_type == Config::NAT) {
@@ -53,38 +55,64 @@ Service::Service(Config &config, bool test) :
 #endif // ENABLE_NAT
 
     if (!test) {
-        tcp::resolver resolver(io_context);
-        tcp::endpoint listen_endpoint = *resolver.resolve(config.local_addr, to_string(config.local_port)).begin();
-        socket_acceptor.open(listen_endpoint.protocol());
-        socket_acceptor.set_option(tcp::acceptor::reuse_address(true));
-
-        if (config.tcp.reuse_port) {
-#ifdef ENABLE_REUSE_PORT
-            socket_acceptor.set_option(reuse_port(true));
-#else  // ENABLE_REUSE_PORT
-            _log_with_date_time("SO_REUSEPORT is not supported", Log::WARN);
-#endif // ENABLE_REUSE_PORT
+        if(config.run_type == Config::CLIENT_TUN || config.run_type == Config::SERVERT_TUN){
+            m_tundev = make_shared<TUNDev>(this, config.tun.tun_name, config.tun.net_ip, 
+                config.tun.net_mask, config.tun.mtu, config.tun.tun_fd);
         }
         
-        socket_acceptor.bind(listen_endpoint);
-        socket_acceptor.listen();
-        prepare_icmpd(config, listen_endpoint.address().is_v4());
+        if(config.run_type != Config::CLIENT_TUN){
+            tcp::resolver resolver(io_context);
+            tcp::endpoint listen_endpoint = *resolver.resolve(config.local_addr, to_string(config.local_port)).begin();
+            socket_acceptor.open(listen_endpoint.protocol());
+            socket_acceptor.set_option(tcp::acceptor::reuse_address(true));
 
-        if (config.run_type == Config::FORWARD || config.run_type == Config::NAT) {
-            auto udp_bind_endpoint = udp::endpoint(listen_endpoint.address(), listen_endpoint.port());
-            auto udp_protocol = udp_bind_endpoint.protocol();
-            udp_socket.open(udp_protocol);
+            if (config.tcp.reuse_port) {
+    #ifdef ENABLE_REUSE_PORT
+                socket_acceptor.set_option(reuse_port(true));
+    #else  // ENABLE_REUSE_PORT
+                _log_with_date_time("SO_REUSEPORT is not supported", Log::WARN);
+    #endif // ENABLE_REUSE_PORT
+            }
             
-            if(config.run_type == Config::NAT){
-                bool is_ipv4 = udp_protocol.family() == boost::asio::ip::tcp::v4().family();
-                bool recv_ttl = config.run_type == Config::NAT && config.experimental.pipeline_proxy_icmp;
-                if (!prepare_nat_udp_bind(udp_socket.native_handle(), is_ipv4, recv_ttl)) {
-                    stop();
-                    return;
+            socket_acceptor.bind(listen_endpoint);
+            socket_acceptor.listen();
+            prepare_icmpd(config, listen_endpoint.address().is_v4());
+
+            if (config.run_type == Config::FORWARD || config.run_type == Config::NAT) {
+                auto udp_bind_endpoint = udp::endpoint(listen_endpoint.address(), listen_endpoint.port());
+                auto udp_protocol = udp_bind_endpoint.protocol();
+                udp_socket.open(udp_protocol);
+                
+                if(config.run_type == Config::NAT){
+                    bool is_ipv4 = udp_protocol.family() == boost::asio::ip::tcp::v4().family();
+                    bool recv_ttl = config.run_type == Config::NAT && config.experimental.pipeline_proxy_icmp;
+                    if (!prepare_nat_udp_bind(udp_socket.native_handle(), is_ipv4, recv_ttl)) {
+                        stop();
+                        return;
+                    }
                 }
+
+                udp_socket.bind(udp_bind_endpoint);
             }
 
-            udp_socket.bind(udp_bind_endpoint);
+            if (config.tcp.no_delay) {
+                socket_acceptor.set_option(tcp::no_delay(true));
+            }
+            if (config.tcp.keep_alive) {
+                socket_acceptor.set_option(boost::asio::socket_base::keep_alive(true));
+            }
+            if (config.tcp.fast_open) {
+    #ifdef TCP_FASTOPEN
+                using fastopen = boost::asio::detail::socket_option::integer<IPPROTO_TCP, TCP_FASTOPEN>;
+                boost::system::error_code ec;
+                socket_acceptor.set_option(fastopen(config.tcp.fast_open_qlen), ec);
+    #else // TCP_FASTOPEN
+                _log_with_date_time("TCP_FASTOPEN is not supported", Log::WARN);
+    #endif // TCP_FASTOPEN
+    #ifndef TCP_FASTOPEN_CONNECT
+                _log_with_date_time("TCP_FASTOPEN_CONNECT is not supported", Log::WARN);
+    #endif // TCP_FASTOPEN_CONNECT
+            }
         }
     }
 
@@ -97,49 +125,6 @@ Service::Service(Config &config, bool test) :
 #else // ENABLE_MYSQL
             _log_with_date_time("MySQL is not supported", Log::WARN);
 #endif // ENABLE_MYSQL
-        }
-    }
-
-    if (!test) {
-        if (config.tcp.no_delay) {
-            socket_acceptor.set_option(tcp::no_delay(true));
-        }
-        if (config.tcp.keep_alive) {
-            socket_acceptor.set_option(boost::asio::socket_base::keep_alive(true));
-        }
-        if (config.tcp.fast_open) {
-#ifdef TCP_FASTOPEN
-            using fastopen = boost::asio::detail::socket_option::integer<IPPROTO_TCP, TCP_FASTOPEN>;
-            boost::system::error_code ec;
-            socket_acceptor.set_option(fastopen(config.tcp.fast_open_qlen), ec);
-#else // TCP_FASTOPEN
-            _log_with_date_time("TCP_FASTOPEN is not supported", Log::WARN);
-#endif // TCP_FASTOPEN
-#ifndef TCP_FASTOPEN_CONNECT
-            _log_with_date_time("TCP_FASTOPEN_CONNECT is not supported", Log::WARN);
-#endif // TCP_FASTOPEN_CONNECT
-        }
-    }
-
-    if(!config.experimental.pipeline_loadbalance_configs.empty()){
-        if (config.experimental.pipeline_num != 0) {
-            _log_with_date_time("Pipeline will use load balance config:", Log::WARN);
-            string tmp;
-            for (auto it = config.experimental.pipeline_loadbalance_configs.begin();
-             it != config.experimental.pipeline_loadbalance_configs.end(); it++) {
-                
-                auto other = make_shared<Config>();
-                other->load(*it);
-
-                auto ssl = make_shared<boost::asio::ssl::context>(context::sslv23);
-                other->prepare_ssl_context(*ssl, tmp);
-
-                config.experimental._pipeline_loadbalance_configs.emplace_back(other);
-                config.experimental._pipeline_loadbalance_context.emplace_back(ssl);
-                _log_with_date_time("Loaded " + (*it) + " config.", Log::WARN);
-            }
-        }else{
-            _log_with_date_time("Pipeline load balance need to enable pipeline (set pipeline_num as non zero)", Log::ERROR);
         }
     }
 }
@@ -184,11 +169,6 @@ void Service::prepare_icmpd(Config& config, bool is_ipv4){
 
 void Service::run() {
     
-    async_accept();
-    if (config.run_type == Config::FORWARD || config.run_type == Config::NAT) {
-        udp_async_read();
-    }
-    tcp::endpoint local_endpoint = socket_acceptor.local_endpoint();
     string rt;
     if (config.run_type == Config::SERVER) {
         rt = "server";
@@ -196,10 +176,27 @@ void Service::run() {
         rt = "forward";
     } else if (config.run_type == Config::NAT) {
         rt = "nat";
-    } else {
+    } else if (config.run_type == Config::CLIENT){
         rt = "client";
+    } else if( config.run_type == Config::CLIENT_TUN){
+        rt = "client tun";
+    } else if( config.run_type == Config::SERVERT_TUN){
+        rt = "server tun";
+    } else{
+        throw logic_error("unknow run type error");
     }
-    _log_with_date_time(string("trojan service (") + rt + ") started at " + local_endpoint.address().to_string() + ':' + to_string(local_endpoint.port()), Log::WARN);
+    
+    if(config.run_type != Config::CLIENT_TUN){
+        async_accept();
+        if (config.run_type == Config::FORWARD || config.run_type == Config::NAT) {
+            udp_async_read();
+        }
+        tcp::endpoint local_endpoint = socket_acceptor.local_endpoint();
+        
+        _log_with_date_time(string("trojan service (") + rt + ") started at " + local_endpoint.address().to_string() + ':' + to_string(local_endpoint.port()), Log::WARN);
+    }else{
+        _log_with_date_time(string("trojan service (") + rt + ") started at [" + config.tun.tun_name + "] " + config.tun.net_ip + "/" + config.tun.net_mask, Log::WARN);
+    }
     io_context.run();
     _log_with_date_time("trojan service stopped", Log::WARN);
 }
@@ -452,8 +449,9 @@ Pipeline* Service::search_default_pipeline() {
     return pipeline;
 }
 void Service::async_accept() {
+
     shared_ptr<SocketSession>session(nullptr);
-    
+
     if (config.run_type == Config::SERVER) {
         if(config.experimental.pipeline_num > 0){
             // start a pipeline mode in server run_type
@@ -576,10 +574,6 @@ void Service::udp_async_read() {
     }else{
         udp_socket.async_receive_from(boost::asio::buffer(udp_read_buf, Session::MAX_BUF_LENGTH), udp_recv_endpoint, cb);
     }    
-}
-
-boost::asio::io_context &Service::service() {
-    return io_context;
 }
 
 void Service::reload_cert() {

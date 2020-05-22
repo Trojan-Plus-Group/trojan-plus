@@ -56,21 +56,18 @@ bool ClientSession::prepare_session(){
         destroy();
         return false;
     }
-    auto ssl = out_socket.native_handle();
-    if (!config.ssl.sni.empty()) {
-        SSL_set_tlsext_host_name(ssl, config.ssl.sni.c_str());
-    }
-    if (config.ssl.reuse_session) {
-        SSL_SESSION *session = SSLSession::get_session();
-        if (session) {
-            SSL_set_session(ssl, session);
-        }
-    }
+    config.prepare_ssl_reuse(out_socket);
     return true;
 }
 
 void ClientSession::start() {
     if(prepare_session()){
+        in_async_read();
+    }
+}
+void ClientSession::recv_ack_cmd(){
+    SocketSession::recv_ack_cmd();
+    if(is_wait_for_pipeline_ack()){
         in_async_read();
     }
 }

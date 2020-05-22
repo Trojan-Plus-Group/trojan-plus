@@ -23,6 +23,7 @@
 #include "core/utils.h"
 #include "proto/pipelinerequest.h"
 #include "session/clientsession.h"
+#include "tun/tunsession.h"
 
 using namespace std;
 using namespace boost::asio::ip;
@@ -165,11 +166,7 @@ void Pipeline::out_async_recv(){
                                 if (session->is_udp_forward()) {
                                     _log_with_date_time("UDP don't need ACK command", Log::ERROR);
                                 } else {
-                                    auto client = static_cast<ClientSession*>(session);
-                                    client->recv_ack_cmd();
-                                    if (client->is_wait_for_pipeline_ack()) {
-                                        client->in_async_read();
-                                    }
+                                    session->recv_ack_cmd();
                                 }
                             } else {
                                 if (session->is_udp_forward()) {

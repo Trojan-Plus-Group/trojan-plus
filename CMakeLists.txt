@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.7.2)
 
-project(trojan CXX)
+project(trojan CXX C)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/")
 if(NOT CMAKE_BUILD_TYPE)
@@ -27,6 +27,26 @@ else()
     add_definitions(-Wall -Wextra)
 endif()
 
+# badvpn definitions for tun2socks
+add_definitions(-DBADVPN_THREADWORK_USE_PTHREAD=1 -DBADVPN_LINUX=1 -DBADVPN_BREACTOR_BADVPN=1)
+add_definitions(-D_GNU_SOURCE=1 -DBADVPN_USE_SIGNALFD=1 -DBADVPN_USE_EPOLL=1)
+add_definitions(-DBADVPN_LITTLE_ENDIAN=1 -DBADVPN_THREAD_SAFE=1)
+
+# remove lwip_tcp_client.cpp compiling warning
+set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -Wno-pmf-conversions")
+set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -Wno-pmf-conversions")
+
+
+include_directories(
+    src
+    src/tun/lwip_custom
+
+    badvpn/lwip/src/include/ipv4
+    badvpn/lwip/src/include/ipv6
+    badvpn/lwip/src/include
+    badvpn/misc
+)
+
 add_executable(trojan
     src/core/authenticator.cpp
     src/core/config.cpp
@@ -50,8 +70,45 @@ add_executable(trojan
     src/session/udpforwardsession.cpp
     src/session/pipelinesession.cpp
     src/ssl/ssldefaults.cpp
-    src/ssl/sslsession.cpp)
-include_directories(src)
+    src/ssl/sslsession.cpp
+
+    src/tun/lwip_tcp_client.cpp
+    src/tun/tundev.cpp
+    src/tun/tunsession.cpp
+
+    src/tun/lwip_custom/sys.c
+    badvpn/lwip/src/core/udp.c 
+    badvpn/lwip/src/core/memp.c 
+    badvpn/lwip/src/core/init.c 
+    badvpn/lwip/src/core/pbuf.c 
+    badvpn/lwip/src/core/tcp.c 
+    badvpn/lwip/src/core/tcp_out.c 
+    badvpn/lwip/src/core/netif.c 
+    badvpn/lwip/src/core/def.c 
+    badvpn/lwip/src/core/ip.c 
+    badvpn/lwip/src/core/mem.c 
+    badvpn/lwip/src/core/tcp_in.c 
+    badvpn/lwip/src/core/stats.c 
+    badvpn/lwip/src/core/inet_chksum.c 
+    badvpn/lwip/src/core/timeouts.c 
+    badvpn/lwip/src/core/ipv4/icmp.c 
+    badvpn/lwip/src/core/ipv4/igmp.c 
+    badvpn/lwip/src/core/ipv4/ip4_addr.c 
+    badvpn/lwip/src/core/ipv4/ip4_frag.c 
+    badvpn/lwip/src/core/ipv4/ip4.c 
+    badvpn/lwip/src/core/ipv4/autoip.c 
+    badvpn/lwip/src/core/ipv6/ethip6.c 
+    badvpn/lwip/src/core/ipv6/inet6.c 
+    badvpn/lwip/src/core/ipv6/ip6_addr.c 
+    badvpn/lwip/src/core/ipv6/mld6.c 
+    badvpn/lwip/src/core/ipv6/dhcp6.c 
+    badvpn/lwip/src/core/ipv6/icmp6.c 
+    badvpn/lwip/src/core/ipv6/ip6.c 
+    badvpn/lwip/src/core/ipv6/ip6_frag.c 
+    badvpn/lwip/src/core/ipv6/nd6.c
+)
+
+
 
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)

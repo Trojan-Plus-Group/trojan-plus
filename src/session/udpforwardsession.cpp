@@ -91,16 +91,7 @@ void UDPForwardSession::start_udp(const std::string& data) {
     if(pipeline_client_service){    
         cb();
     }else{
-        auto ssl = out_socket.native_handle();
-        if (config.ssl.sni != "") {
-            SSL_set_tlsext_host_name(ssl, config.ssl.sni.c_str());
-        }
-        if (config.ssl.reuse_session) {
-            SSL_SESSION *session = SSLSession::get_session();
-            if (session) {
-                SSL_set_session(ssl, session);
-            }
-        }
+        config.prepare_ssl_reuse(out_socket);
         connect_remote_server_ssl(this, config.remote_addr, to_string(config.remote_port), resolver, out_socket, udp_recv_endpoint, cb);
     }    
 }

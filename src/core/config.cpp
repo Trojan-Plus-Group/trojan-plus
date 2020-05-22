@@ -62,6 +62,10 @@ void Config::populate(const ptree &tree) {
         run_type = NAT;
     } else if (rt == "client") {
         run_type = CLIENT;
+    } else if (rt == "client_tun") {
+        run_type = CLIENT_TUN;
+    } else if (rt == "server_tun") {
+        run_type = SERVERT_TUN;
     } else {
         throw runtime_error("wrong run_type in config file");
     }
@@ -126,13 +130,41 @@ void Config::populate(const ptree &tree) {
     experimental.pipeline_num = tree.get("experimental.pipeline_num", uint32_t(0));
     experimental.pipeline_ack_window = tree.get("experimental.pipeline_ack_window", uint32_t(200));
     experimental.pipeline_loadbalance_configs.clear();
+    experimental._pipeline_loadbalance_configs.clear();
+    experimental._pipeline_loadbalance_context.clear();
     if(tree.get_child_optional("experimental.pipeline_loadbalance_configs")){
-        for (auto &item : tree.get_child("experimental.pipeline_loadbalance_configs")){
-            auto config = item.second.get_value<string>();
-            experimental.pipeline_loadbalance_configs.emplace_back(config);
-        }    
+        if(experimental.pipeline_num == 0){
+            _log_with_date_time("Pipeline load balance need to enable pipeline (set pipeline_num as non zero)", Log::ERROR);
+        }else{
+            for (auto &item : tree.get_child("experimental.pipeline_loadbalance_configs")){
+                auto config = item.second.get_value<string>();
+                experimental.pipeline_loadbalance_configs.emplace_back(config);
+            }
+
+            std::string tmp;
+            _log_with_date_time("Pipeline will use load balance config:", Log::WARN);
+            for (auto it = experimental.pipeline_loadbalance_configs.begin();
+                it != experimental.pipeline_loadbalance_configs.end(); it++) {
+                
+                auto other = make_shared<Config>();
+                other->load(*it);
+
+                auto ssl = make_shared<boost::asio::ssl::context>(context::sslv23);
+                other->prepare_ssl_context(*ssl, tmp);
+
+                experimental._pipeline_loadbalance_configs.emplace_back(other);
+                experimental._pipeline_loadbalance_context.emplace_back(ssl);
+                _log_with_date_time("Loaded " + (*it) + " config.", Log::WARN);
+            }
+        }        
     }
     experimental.pipeline_proxy_icmp = tree.get("experimental.pipeline_proxy_icmp", false);
+
+    tun.tun_name = tree.get("tun.tun_name", "");
+    tun.net_ip = tree.get("tun.net_ip", "");
+    tun.net_mask = tree.get("tun.net_mask", "");
+    tun.mtu = tree.get("tun.mtu", int(1500));
+    tun.tun_fd = tree.get("tun.tun_fd", int(-1));
 }
 
 bool Config::sip003() {
@@ -148,6 +180,8 @@ bool Config::sip003() {
             break;
         case CLIENT:
         case NAT:
+        case CLIENT_TUN:
+        case SERVERT_TUN:
             throw runtime_error("SIP003 with wrong run_type");
         case FORWARD:
             remote_addr = getenv("SS_REMOTE_HOST");
@@ -155,6 +189,7 @@ bool Config::sip003() {
             local_addr = getenv("SS_LOCAL_HOST");
             local_port = atoi(getenv("SS_LOCAL_PORT"));
             break;
+
     }
     return true;
 }
@@ -329,6 +364,19 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, string&
 #else // ENABLE_SSL_KEYLOG
         _log_with_date_time("SSL KeyLog is not supported", Log::WARN);
 #endif // ENABLE_SSL_KEYLOG
+    }
+}
+
+void Config::prepare_ssl_reuse(boost::asio::ssl::stream<boost::asio::ip::tcp::socket>& socket) const {
+    auto ssl_handle = socket.native_handle();
+    if (!ssl.sni.empty()) {
+        SSL_set_tlsext_host_name(ssl_handle, ssl.sni.c_str());
+    }
+    if (ssl.reuse_session) {
+        SSL_SESSION *session = SSLSession::get_session();
+        if (session) {
+            SSL_set_session(ssl_handle, session);
+        }
     }
 }
 

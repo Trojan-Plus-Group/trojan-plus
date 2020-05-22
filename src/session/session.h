@@ -68,7 +68,7 @@ public:
     };
 
     inline bool is_udp_forward()const { return is_udp_forward_session; }
-    inline void recv_ack_cmd(){ pipeline_ack_counter++;}
+    virtual void recv_ack_cmd() { pipeline_ack_counter++;}
     inline bool is_wait_for_pipeline_ack()const { return pipeline_wait_for_ack; }
 
     inline bool pre_call_ack_func(){

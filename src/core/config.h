@@ -32,7 +32,10 @@ public:
         SERVER,
         CLIENT,
         FORWARD,
-        NAT
+        NAT,
+
+        CLIENT_TUN,
+        SERVERT_TUN
     } run_type;
     std::string local_addr;
     uint16_t local_port;
@@ -84,8 +87,7 @@ public:
         std::string cafile;
     } mysql;
 
-    class Experimental{
-    public:
+    struct Experimental{
         uint32_t pipeline_num;
         uint32_t pipeline_ack_window;
         std::vector<std::string> pipeline_loadbalance_configs;
@@ -94,11 +96,21 @@ public:
         bool pipeline_proxy_icmp;
     } experimental;
 
+    struct TUN{
+        std::string tun_name;
+        std::string net_ip;
+        std::string net_mask;
+        int mtu;
+        int tun_fd;
+    } tun;
+
     void load(const std::string &filename);
     void populate(const std::string &JSON);
     bool sip003();
     void prepare_ssl_context(boost::asio::ssl::context& ssl_context, std::string& plain_http_response);
     static std::string SHA224(const std::string &message);
+
+    void prepare_ssl_reuse(boost::asio::ssl::stream<boost::asio::ip::tcp::socket>& socket) const;
 private:
     void populate(const boost::property_tree::ptree &tree);
 };

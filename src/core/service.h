@@ -33,13 +33,13 @@
 #include "session/session.h"
 #include "session/udpforwardsession.h"
 
+class TUNDev;
 class Pipeline;
 class icmpd;
 class Service {
 private:
     typedef std::list<std::weak_ptr<Pipeline>> PipelineList;
-    
-    const Config &config;
+
     boost::asio::io_context io_context;
     boost::asio::ip::tcp::acceptor socket_acceptor;
     boost::asio::ssl::context ssl_context;
@@ -55,22 +55,33 @@ private:
     PipelineList pipelines;
     size_t pipeline_select_idx;
     void prepare_pipelines();
-    void start_session(std::shared_ptr<Session> session, bool is_udp_forward, Pipeline::SentHandler&& started_handler);
+    
     std::shared_ptr<icmpd> icmp_processor;
     void prepare_icmpd(Config& config, bool is_ipv4);
 
+    std::shared_ptr<TUNDev> m_tundev;
+
 public:
     explicit Service(Config &config, bool test = false);
+    ~Service();
+
+    const Config &config;
+    
     void run();
     void stop();
-    boost::asio::io_context &service();
-    void reload_cert();
-    ~Service();
+
+    boost::asio::io_context &service() { return io_context; }
+    boost::asio::ssl::context& get_ssl_context(){ return ssl_context; }
+    
+    void reload_cert();  
+
+    void start_session(std::shared_ptr<Session> session, bool is_udp_forward, Pipeline::SentHandler&& started_handler);
 
     void session_async_send_to_pipeline(Session& session, PipelineRequest::Command cmd, const std::string& data, Pipeline::SentHandler&& sent_handler);
     void session_async_send_to_pipeline_icmp(const std::string& data, Pipeline::SentHandler&& sent_handler);
-    void session_destroy_in_pipeline(Session& session);
+    void session_destroy_in_pipeline(Session& session);    
 
+    bool is_use_pipeline() const { return config.experimental.pipeline_num > 0; }
     Pipeline* search_default_pipeline();
 };
 #endif // _SERVICE_H_
