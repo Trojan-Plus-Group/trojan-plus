@@ -30,7 +30,6 @@
 
 class Service;
 class Session : public std::enable_shared_from_this<Session> {
-
 public:
     typedef uint16_t SessionIdType;
     enum {
@@ -44,35 +43,22 @@ private:
     static std::set<SessionIdType>  s_session_used_ids;
 
 protected:
-    
-    uint8_t in_read_buf[MAX_BUF_LENGTH]{};
-    uint8_t out_read_buf[MAX_BUF_LENGTH]{};
-    uint8_t udp_read_buf[MAX_BUF_LENGTH]{};
-    uint64_t recv_len;
-    uint64_t sent_len;
-    time_t start_time{};
-    std::string out_write_buf;
-    std::string udp_data_buf;
-    boost::asio::ip::tcp::resolver resolver;
-    
-    boost::asio::ip::udp::socket udp_socket;
-    boost::asio::ip::udp::endpoint udp_recv_endpoint;
     Service* pipeline_client_service;
     bool is_udp_forward_session;
     int pipeline_ack_counter;
     bool pipeline_wait_for_ack;
     bool pipeline_first_call_ack;
-
+    
     void allocate_session_id();
     void free_session_id();
 public:
     Session(const Config &config, boost::asio::io_context &io_context);
-    virtual boost::asio::ip::tcp::socket& accept_socket() = 0;
+
     virtual void start() = 0;
     virtual ~Session();
     virtual void destroy(bool pipeline_call = false) = 0;
+
     const Config &config;
-    boost::asio::ip::tcp::endpoint in_endpoint;
     boost::asio::io_context &io_context;
 
     SessionIdType session_id;
@@ -80,6 +66,7 @@ public:
         pipeline_client_service = service; 
         is_udp_forward_session = is_udp_forward;
     };
+
     inline bool is_udp_forward()const { return is_udp_forward_session; }
     inline void recv_ack_cmd(){ pipeline_ack_counter++;}
     inline bool is_wait_for_pipeline_ack()const { return pipeline_wait_for_ack; }

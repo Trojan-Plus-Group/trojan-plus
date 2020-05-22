@@ -452,7 +452,8 @@ Pipeline* Service::search_default_pipeline() {
     return pipeline;
 }
 void Service::async_accept() {
-    shared_ptr<Session>session(nullptr);
+    shared_ptr<SocketSession>session(nullptr);
+    
     if (config.run_type == Config::SERVER) {
         if(config.experimental.pipeline_num > 0){
             // start a pipeline mode in server run_type

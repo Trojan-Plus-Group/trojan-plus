@@ -29,7 +29,7 @@ using namespace boost::asio::ip;
 using namespace boost::asio::ssl;
 
 ServerSession::ServerSession(const Config &config, boost::asio::io_context &io_context, boost::asio::ssl::context &ssl_context, Authenticator *auth, const std::string &plain_http_response) :
-    Session(config, io_context),
+    SocketSession(config, io_context),
     status(HANDSHAKE),
     in_socket(io_context, ssl_context),
     out_socket(io_context),

@@ -34,7 +34,7 @@ using namespace boost::asio::ssl;
 
 UDPForwardSession::UDPForwardSession(const Config &config, boost::asio::io_context &io_context, context &ssl_context, 
     const udp::endpoint &endpoint,const std::pair<std::string, uint16_t>& targetdst, UDPWrite in_write) :
-    Session(config, io_context),
+    SocketSession(config, io_context),
     status(CONNECT),
     in_write(move(in_write)),
     out_socket(io_context, ssl_context),

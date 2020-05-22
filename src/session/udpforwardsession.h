@@ -24,9 +24,9 @@
 #include <boost/asio/steady_timer.hpp>
 
 #include "core/pipeline.h"
-#include "session.h"
+#include "socketsession.h"
 
-class UDPForwardSession : public Session {
+class UDPForwardSession : public SocketSession {
 public:
     typedef std::function<void(const boost::asio::ip::udp::endpoint&, const std::string&)> UDPWrite;
 private:

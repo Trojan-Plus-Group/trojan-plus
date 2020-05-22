@@ -20,13 +20,14 @@
 #ifndef _SERVERSESSION_H_
 #define _SERVERSESSION_H_
 
-#include "session.h"
 #include <boost/asio/ssl.hpp>
+
+#include "socketsession.h"
 #include "pipelinesession.h"
 #include "core/authenticator.h"
 #include "core/pipeline.h"
 
-class ServerSession : public Session {
+class ServerSession : public SocketSession {
 private:
     enum Status {
         HANDSHAKE,

@@ -22,10 +22,10 @@
 
 #include <boost/asio/ssl.hpp>
 
-#include "session.h"
+#include "socketsession.h"
 #include "core/pipeline.h"
 
-class ClientSession : public Session {
+class ClientSession : public SocketSession {
 protected:
     enum Status {
         HANDSHAKE,

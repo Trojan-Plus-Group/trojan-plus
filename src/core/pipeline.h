@@ -30,7 +30,7 @@
 
 #include "proto/pipelinerequest.h"
 #include "core/config.h"
-#include "session/session.h"
+#include "session/socketsession.h"
 #include "core/icmpd.h"
 
 class Pipeline : public std::enable_shared_from_this<Pipeline> {

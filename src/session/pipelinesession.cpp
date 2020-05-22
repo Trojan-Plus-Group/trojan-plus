@@ -33,7 +33,7 @@ using namespace boost::asio::ssl;
 
 PipelineSession::PipelineSession(const Config &config, boost::asio::io_context &io_context, 
     boost::asio::ssl::context &ssl_context, Authenticator *auth, const std::string &plain_http_response):
-    Session(config, io_context),
+    SocketSession(config, io_context),
     status(HANDSHAKE),
     auth(auth),
     plain_http_response(plain_http_response),

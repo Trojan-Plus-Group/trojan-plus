@@ -24,13 +24,14 @@
 #include <boost/asio/ssl.hpp>
 
 #include "session.h"
+#include "socketsession.h"
 #include "serversession.h"
 #include "proto/pipelinerequest.h"
 #include "core/authenticator.h"
 #include "core/pipeline.h"
 
 class ServerSession;
-class PipelineSession : public Session {
+class PipelineSession : public SocketSession {
     typedef std::list<std::shared_ptr<ServerSession>> SessionsList;
 
     enum Status {
