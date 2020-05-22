@@ -6,6 +6,20 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/")
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
+
+if(CMAKE_BUILD_TYPE STREQUAL Release)
+    # reduce the sizeof binary, otherwise binary file will be very big
+    set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -s")
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -s")
+
+    if( ANDROID )
+        # I don't know why andorid's clang++ compiler will report "clang++: warning: argument unused during compilation: '-s' [-Wunused-command-line-argument]"
+        # so I add this to surpass warning
+        set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -Qunused-arguments")
+        set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -Qunused-arguments")
+    endif()
+endif()
+
 set(CMAKE_CXX_STANDARD 11)
 if(MSVC)
     add_definitions(-D_CRT_SECURE_NO_WARNINGS)
@@ -62,6 +76,7 @@ else()
         add_definitions(-DBOOST_DATE_TIME_NO_LIB)
     endif()
 
+    find_package(OpenSSL 1.1.0 REQUIRED)
     include_directories(${OPENSSL_INCLUDE_DIR})
     target_link_libraries(trojan ${OPENSSL_LIBRARIES})
 endif()
