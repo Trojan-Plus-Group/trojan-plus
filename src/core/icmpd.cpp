@@ -160,7 +160,7 @@ void icmpd::start_recv() {
                             std::ostringstream os;
                             os << ipv4_hdr << icmp_hdr << body;
                             
-                            m_service->session_async_send_to_pipeline_icmp(os.str(), [this, self](const boost::system::error_code) {
+                            m_service->session_async_send_to_pipeline_icmp(os.str(), [self](const boost::system::error_code) {
                                 // nothing to process...
                             });
                         }
@@ -204,7 +204,7 @@ void icmpd::start_recv() {
                         std::ostringstream os;
                         os << ipv4_hdr << icmp_hdr << body;
 
-                        static_cast<PipelineSession*>(icmp_sent_data->pipeline_session.lock().get())->session_write_icmp(os.str(), [this, self](const boost::system::error_code) {
+                        static_cast<PipelineSession*>(icmp_sent_data->pipeline_session.lock().get())->session_write_icmp(os.str(), [self](const boost::system::error_code) {
                             // nothing to process...
                         });
                     }
@@ -300,7 +300,7 @@ void icmpd::server_out_send(const std::string& data, std::weak_ptr<Session> pipe
         if(ipv4_hdr.time_to_live() == 1){
             auto exceed_data = generate_time_exceeded_icmp(ipv4_hdr, icmp_hdr);
             auto self = shared_from_this();
-            static_cast<PipelineSession*>(pipeline_session.lock().get())->session_write_icmp(exceed_data, [this, self](const boost::system::error_code) {
+            static_cast<PipelineSession*>(pipeline_session.lock().get())->session_write_icmp(exceed_data, [self](const boost::system::error_code) {
                 // nothing to process...
             });
             return;

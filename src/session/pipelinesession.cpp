@@ -39,7 +39,6 @@ PipelineSession::PipelineSession(const Config &config, boost::asio::io_context &
     plain_http_response(plain_http_response),
     live_socket(io_context, ssl_context),
     gc_timer(io_context),
-    is_async_sending(false),
     ssl_context(ssl_context){
 
     sending_data_cache.set_async_writer([this](const std::string& data, Pipeline::SentHandler handler) {
@@ -197,7 +196,7 @@ void PipelineSession::process_streaming_data(){
                 _log_with_endpoint(in_endpoint, "PipelineSession cann't find a session " + to_string(req.session_id) + " to process" , Log::WARN);
             }
         }else if(req.command == PipelineRequest::CLOSE){
-            auto found = find_and_process_session(req.session_id, [this, &req](SessionsList::iterator& it){ 
+            auto found = find_and_process_session(req.session_id, [this](SessionsList::iterator& it){ 
                 it->get()->destroy(true);   
                 sessions.erase(it);                        
             });
@@ -206,7 +205,7 @@ void PipelineSession::process_streaming_data(){
                 _log_with_endpoint(in_endpoint, "PipelineSession cann't find a session " + to_string(req.session_id) + " to destroy" , Log::WARN);
             }
         }else if(req.command == PipelineRequest::ACK){
-            auto found = find_and_process_session(req.session_id, [this, &req](SessionsList::iterator& it){ 
+            auto found = find_and_process_session(req.session_id, [](SessionsList::iterator& it){ 
                 auto session = it->get();
                 session->recv_ack_cmd();
                 if(session->is_wait_for_pipeline_ack()){

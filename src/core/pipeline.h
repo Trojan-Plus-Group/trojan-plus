@@ -145,7 +145,6 @@ private:
     bool destroyed;
     boost::asio::ssl::stream<boost::asio::ip::tcp::socket>out_socket;
     bool connected;
-    bool is_async_sending;
     char out_read_buf[MAX_BUF_LENGTH];
     std::string out_read_data;
     boost::asio::ip::tcp::resolver resolver; 

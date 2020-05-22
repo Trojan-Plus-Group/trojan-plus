@@ -33,7 +33,6 @@ Pipeline::Pipeline(const Config& config, boost::asio::io_context& io_context,
                    boost::asio::ssl::context& ssl_context) : destroyed(false),
                                                              out_socket(io_context, ssl_context),
                                                              connected(false),
-                                                             is_async_sending(false),
                                                              resolver(io_context),
                                                              config(config),
                                                              io_context(io_context) {
@@ -79,7 +78,7 @@ void Pipeline::session_async_send_cmd(PipelineRequest::Command cmd, Session& ses
         return;
     }
     _log_with_date_time("pipeline " + to_string(get_pipeline_id()) + " session_id: " + to_string(session.session_id) + " --> send to server cmd: " +  PipelineRequest::get_cmd_string(cmd) + " data length:" + to_string(send_data.length()));
-    sending_data_cache.push_data(move(PipelineRequest::generate(cmd, session.session_id, send_data)), move(sent_handler));
+    sending_data_cache.push_data(PipelineRequest::generate(cmd, session.session_id, send_data), move(sent_handler));
 }
 
 void Pipeline::session_async_send_icmp(const std::string& send_data, SentHandler&& sent_handler) {
