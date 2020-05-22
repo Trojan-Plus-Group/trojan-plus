@@ -20,6 +20,7 @@
 #ifndef IPV4_HEADER_HPP
 #define IPV4_HEADER_HPP
 
+#include <sstream>
 #include <iostream>
 #include <algorithm>
 #include <boost/asio/ip/address_v4.hpp>
@@ -130,13 +131,15 @@ class ipv4_header {
 
     friend std::istream &operator>>(std::istream &is, ipv4_header &header) {
         is.read(reinterpret_cast<char *>(header.rep_), HEADER_FIXED_LENGTH);
-        if (header.version() != 4)
-            is.setstate(std::ios::failbit);
-        std::streamsize options_length = header.header_length() - HEADER_FIXED_LENGTH;
-        if (options_length < 0 || options_length > HEADER_OPTIONS_LENGTH)
-            is.setstate(std::ios::failbit);
-        else
-            is.read(reinterpret_cast<char *>(header.rep_) + HEADER_FIXED_LENGTH, options_length);
+        if(is){
+            if (header.version() != 4)
+                is.setstate(std::ios::badbit);
+            std::streamsize options_length = header.header_length() - HEADER_FIXED_LENGTH;
+            if (options_length < 0 || options_length > HEADER_OPTIONS_LENGTH)
+                is.setstate(std::ios::badbit);
+            else
+                is.read(reinterpret_cast<char *>(header.rep_) + HEADER_FIXED_LENGTH, options_length);
+        }        
         return is;
     }
 
@@ -144,7 +147,7 @@ class ipv4_header {
         os.write(reinterpret_cast<const char *>(header.rep_), HEADER_FIXED_LENGTH);
         auto options_length = header.header_length() - HEADER_FIXED_LENGTH;
         if (options_length < 0) {
-            os.setstate(std::ios::failbit);
+            os.setstate(std::ios::badbit);
         }else{
             if (options_length > 0) {
                 os.write(reinterpret_cast<const char *>(header.rep_) + HEADER_FIXED_LENGTH, options_length);
@@ -167,7 +170,7 @@ class ipv4_header {
         header_checksum(static_cast<uint16_t>(~sum));
     }
 
-   private:
+private:
     unsigned short decode(int a, int b) const {
         return (rep_[a] << 8) + rep_[b];
     }

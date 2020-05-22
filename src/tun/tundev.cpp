@@ -6,6 +6,8 @@
 #include <assert.h>
 #include <boost/asio/ip/address_v4.hpp>
 
+#include "proto/ipv4_header.h"
+#include "proto/ipv6_header.h"
 #include "core/log.h"
 #include "core/service.h"
 #include "tun/tunsession.h"
@@ -231,9 +233,96 @@ err_t TUNDev::listener_accept_func(struct tcp_pcb *newpcb, err_t err){
     return  ERR_OK;
 }
 
+bool TUNDev::try_to_process_udp_packet(const uint8_t*, size_t){
+    // TODO
+    return false;
+}
+
+void TUNDev::input_netif_packet(const uint8_t* data, size_t packet_len){
+    if (try_to_process_udp_packet(data, packet_len)) {
+        return;
+    }            
+
+    struct pbuf *p = pbuf_alloc(PBUF_RAW, packet_len, PBUF_POOL);
+    if (!p) {
+        _log_with_date_time("[tun] device read: pbuf_alloc failed");
+        return;
+    }
+    
+    // write packet to pbuf            
+    if(pbuf_take(p, (void*)data, packet_len) != ERR_OK){
+        _log_with_date_time("[tun] device read: pbuf_take failed");
+        pbuf_free(p);
+        return;
+    }
+    
+    // pass pbuf to input
+    if (m_netif.input(p, &m_netif) != ERR_OK) {
+        _log_with_date_time("[tun] device read: input failed");
+        pbuf_free(p);
+        return;
+    }
+}
+
+void TUNDev::parse_packet(){
+    if(m_packet_parse_buff.size() == 0){
+        // need more byte for version
+        return;
+    }
+
+    auto data = (uint8_t*)m_packet_parse_buff.c_str();
+    auto data_len = m_packet_parse_buff.length();
+    auto ip_version = (data[0] >> 4) & 0xF;
+
+    if(ip_version == 4 || ip_version == 6){
+
+        istringstream is(m_packet_parse_buff);
+        uint16_t total_length = 0;
+
+        if(ip_version == 4){
+            ipv4_header ipv4_hdr;        
+            is >> ipv4_hdr;
+            if(is){
+                total_length = ipv4_hdr.total_length();
+            }
+            
+        }else{
+            ipv6_header ipv6_hdr;
+            is >> ipv6_hdr;
+            if(is){
+                total_length = ipv6_hdr.payload_length() + ipv6_header::HEADER_FIXED_LENGTH;
+            }
+        }
+
+        if(total_length != 0){
+            if(total_length <= data_len){
+                input_netif_packet(data, total_length);
+
+                if(data_len == total_length){
+                    //_log_with_date_time("full packet process");
+                    m_packet_parse_buff.clear();
+                }else{
+                    //_log_with_date_time("split packet process--------------");
+                    m_packet_parse_buff = m_packet_parse_buff.substr(total_length);
+                    parse_packet();
+                }
+            }
+        }else{
+            if(is.bad()){
+                m_packet_parse_buff.clear();
+            }
+        }
+
+    }else{
+        m_packet_parse_buff.clear();
+    }
+}
+
 void TUNDev::async_read(){
+
     m_sd_read_buffer.consume(m_sd_read_buffer.size());
-    const auto max_buff_size = numeric_limits<std::uint16_t>::max();
+
+    const auto max_buff_size = std::numeric_limits<uint16_t>::max();
     m_boost_sd.async_read_some(m_sd_read_buffer.prepare(max_buff_size),[this, max_buff_size](boost::system::error_code ec, size_t data_len){
         if(m_quitting){
             return;
@@ -241,33 +330,15 @@ void TUNDev::async_read(){
 
         if(!ec){
             m_sd_read_buffer.commit(data_len);
-            assert (data_len <= max_buff_size);
 
-            // process UDP directly
-            // if (process_device_udp_packet(data, data_len)) {
-            //     goto end;
-            // }            
+            auto data = boost::asio::buffer_cast<const char*>(m_sd_read_buffer.data());
+            m_packet_parse_buff.append(data, data_len);
 
-            struct pbuf *p = pbuf_alloc(PBUF_RAW, data_len, PBUF_POOL);
-            if (!p) {
-                _log_with_date_time("[tun] device read: pbuf_alloc failed");
-                goto end;
-            }
-            
-            // write packet to pbuf            
-            if(pbuf_take(p, boost::asio::buffer_cast<const void*>(m_sd_read_buffer.data()), data_len) != ERR_OK){
-                _log_with_date_time("[tun] device read: pbuf_take failed");
-                goto end;
-            }
-            
-            // pass pbuf to input
-            if (m_netif.input(p, &m_netif) != ERR_OK) {
-                _log_with_date_time("[tun] device read: input failed");
-                pbuf_free(p);
-            }
-            
-        end:
+            parse_packet();
             async_read();
         }
     });
+
+    // test sleep 
+    //::sleep(1);
 }

@@ -3,6 +3,7 @@
 
 #include <list>
 #include <memory>
+#include <string>
 
 #include <lwip/init.h>
 #include <lwip/ip_addr.h>
@@ -22,6 +23,7 @@
 
 class Service;
 class lwip_tcp_client;
+class TUNSession;
 // this class canot support ipv6
 class TUNDev{
 
@@ -57,6 +59,8 @@ private:
 private:
 
     std::list<std::shared_ptr<lwip_tcp_client>> m_tcp_clients;
+    std::list<std::shared_ptr<TUNSession>> m_udp_clients;
+
     Service* m_service;
     int m_tun_fd;
     const bool m_is_outsize_tun_fd;
@@ -67,8 +71,13 @@ private:
 
     boost::asio::streambuf m_sd_read_buffer;
     boost::asio::posix::stream_descriptor m_boost_sd;
+    std::string m_packet_parse_buff;
 
     void async_read();
+
+    bool try_to_process_udp_packet(const uint8_t* data, size_t packet_len);
+    void parse_packet();
+    void input_netif_packet(const uint8_t* data, size_t packet_len);
 
 public : 
     TUNDev(Service* _service, const std::string& _tun_name, 
