@@ -34,7 +34,8 @@ TUNDev::TUNDev(Service* _service, const std::string& _tun_name,
     sm_tundev = this;
 
     if(m_tun_fd == -1){
-        // open TUN device            
+        // open TUN device, check detail information:
+        // https://www.kernel.org/doc/Documentation/networking/tuntap.txt          
         if ((m_tun_fd = open("/dev/net/tun", O_RDWR)) < 0) {
             throw runtime_error("[tun] error opening device");
         }
@@ -47,6 +48,11 @@ TUNDev::TUNDev(Service* _service, const std::string& _tun_name,
             
         if (ioctl(m_tun_fd, TUNSETIFF, (void *)&ifr) < 0) {
             throw runtime_error("[tun] error configuring device");
+        }
+
+        if(ifr.ifr_mtu != m_mtu){
+            m_mtu = ifr.ifr_mtu;
+            _log_with_date_time("[tun] ifr.ifr_mtu:" + to_string(ifr.ifr_mtu), Log::WARN);
         }
     }
 
@@ -120,6 +126,10 @@ TUNDev::~TUNDev(){
 
     m_quitting = true;
 
+    _log_with_date_time("[tun] destoryed, clear all tcp_client:" + to_string(m_tcp_clients.size()));
+    for(auto it = m_tcp_clients.begin();it != m_tcp_clients.end();it++){
+        it->get()->close_client(true, true);
+    }
     m_tcp_clients.clear();
 
     // free listener
@@ -322,13 +332,14 @@ void TUNDev::async_read(){
 
     m_sd_read_buffer.consume(m_sd_read_buffer.size());
 
-    const auto max_buff_size = std::numeric_limits<uint16_t>::max();
+    const auto max_buff_size = m_mtu;
     m_boost_sd.async_read_some(m_sd_read_buffer.prepare(max_buff_size),[this, max_buff_size](boost::system::error_code ec, size_t data_len){
         if(m_quitting){
             return;
         }
 
         if(!ec){
+            //_log_with_date_time("TUNDev::async_read length: " + to_string(data_len));
             m_sd_read_buffer.commit(data_len);
 
             auto data = boost::asio::buffer_cast<const char*>(m_sd_read_buffer.data());
@@ -339,6 +350,6 @@ void TUNDev::async_read(){
         }
     });
 
-    // test sleep 
+    // sleep for test
     //::sleep(1);
 }

@@ -34,10 +34,6 @@ lwip_tcp_client::lwip_tcp_client(struct tcp_pcb *_pcb, shared_ptr<TUNSession> _s
     client_log("accepted");
 }
 
-lwip_tcp_client::~lwip_tcp_client(){
-    close_client(true);
-}
-
 void lwip_tcp_client::client_log(const char *fmt, ...){
     if(Log::level == Log::ALL){
         char buf[256];
@@ -168,7 +164,7 @@ int lwip_tcp_client::client_socks_recv_send_out(){
     return 0;
 }
 
-void lwip_tcp_client::close_client(bool _abort){
+void lwip_tcp_client::close_client(bool _abort, bool _call_by_tun_dev /*= false*/){
     if(m_closed || m_aborted){
         return;
     }
@@ -198,6 +194,8 @@ void lwip_tcp_client::close_client(bool _abort){
     m_pcb = nullptr;
     m_tun_session->destroy();
 
-    m_close_cb(this);
+    if(!_call_by_tun_dev){
+        m_close_cb(this);
+    }    
 }
 

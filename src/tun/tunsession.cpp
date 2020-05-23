@@ -23,6 +23,7 @@ TUNSession::TUNSession(Service* _service, bool _is_udp) :
 }
 
 TUNSession::~TUNSession(){
+    destroy();
     free_session_id();
 }
 
@@ -65,8 +66,8 @@ void TUNSession::destroy(bool pipeline_call){
     if(m_destroyed){
         return;
     }
-
     m_destroyed = true;
+    
     _log_with_endpoint(m_local_addr, "TUNSession session_id: " + to_string(session_id) + " disconnected ", Log::INFO);
 
     m_wait_ack_handler.clear();

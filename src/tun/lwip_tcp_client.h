@@ -38,8 +38,6 @@ private:
 
 public:
     lwip_tcp_client(struct tcp_pcb * _pcb, std::shared_ptr<TUNSession> _session, CloseCallback&& _close_cb);
-    ~lwip_tcp_client();
-
-    void close_client(bool _abort);
+    void close_client(bool _abort, bool _call_by_tun_dev = false);
 };
 #endif //_TROJAN_LWIP_TCP_CLIENT_HPP

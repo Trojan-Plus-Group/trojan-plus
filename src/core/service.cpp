@@ -202,6 +202,7 @@ void Service::run() {
 }
 
 void Service::stop() {
+    m_tundev = nullptr;
     boost::system::error_code ec;
     socket_acceptor.cancel(ec);
     if (udp_socket.is_open()) {
