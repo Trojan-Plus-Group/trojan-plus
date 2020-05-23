@@ -64,7 +64,7 @@ private:
     Service* m_service;
     int m_tun_fd;
     const bool m_is_outsize_tun_fd;
-    int m_mtu;
+    size_t m_mtu;
 
     bool m_quitting;
     uint8_t* m_device_write_buf;
@@ -75,17 +75,15 @@ private:
 
     void async_read();
 
-    bool try_to_process_udp_packet(const uint8_t* data, size_t packet_len);
+    int try_to_process_udp_packet(uint8_t* data, int data_len);
     void parse_packet();
     void input_netif_packet(const uint8_t* data, size_t packet_len);
-
+    int handle_write_upd_data(std::shared_ptr<TUNSession> _session);
 public : 
     TUNDev(Service* _service, const std::string& _tun_name, 
-        const std::string& _ipaddr, const std::string& _netmask, int _mtu, int _outside_tun_fd = -1);
+        const std::string& _ipaddr, const std::string& _netmask, size_t _mtu, int _outside_tun_fd = -1);
     ~TUNDev();
     
     int get_tun_fd(){ return m_tun_fd;}
-
-    
 };
 #endif //_TROJAN_TUNDEV_HPP

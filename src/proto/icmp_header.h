@@ -38,7 +38,7 @@
 // |          identifier           |       sequence number        |       |
 // |                               |                              |       v
 // +-------------------------------+------------------------------+      ---
-
+namespace trojan{
 class icmp_header {
 public:
     enum {
@@ -128,5 +128,7 @@ private:
 
     uint8_t rep_[HEADER_LENGTH];
 };
+
+}
 
 #endif  // ICMP_HEADER_HPP

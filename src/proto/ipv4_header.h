@@ -58,7 +58,7 @@
 // |                                                              |       |
 // |                                                              |       v
 // +--------------------------------------------------------------+      ---
-
+namespace trojan{
 class ipv4_header {
    public:
     enum {
@@ -182,5 +182,6 @@ private:
 
     unsigned char rep_[HEADER_MAX_LENGTH];
 };
+}
 
 #endif  // IPV4_HEADER_HPP

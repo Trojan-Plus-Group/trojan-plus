@@ -6,7 +6,7 @@
 #include <errno.h>
 #include <stdint.h>
 
-#include <byteorder.h>
+#include <misc/byteorder.h>
 
 #define PACK_STRUCT_BEGIN
 #define PACK_STRUCT_END

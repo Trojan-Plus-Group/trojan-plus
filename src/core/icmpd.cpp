@@ -30,6 +30,7 @@
 #include "core/utils.h"
 #include "session/pipelinesession.h"
 
+using namespace trojan;
 using namespace std;
 using namespace boost::asio::ip;
 

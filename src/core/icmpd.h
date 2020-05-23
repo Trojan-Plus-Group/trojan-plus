@@ -69,12 +69,12 @@ class icmpd : public std::enable_shared_from_this<icmpd> {
     std::list<std::shared_ptr<IcmpSendingCache>> m_sending_data_cache;
     bool m_is_sending_cache;
 
-    std::string generate_time_exceeded_icmp(ipv4_header& ipv4_hdr, icmp_header& icmp_hdr);
-    void send_back_time_exceeded(ipv4_header& ipv4_hdr, icmp_header& icmp_hdr);
+    std::string generate_time_exceeded_icmp(trojan::ipv4_header& ipv4_hdr, trojan::icmp_header& icmp_hdr);
+    void send_back_time_exceeded(trojan::ipv4_header& ipv4_hdr, trojan::icmp_header& icmp_hdr);
 
     void check_transfer_table_timeout();
     void add_transfer_table(std::string&& hash, std::shared_ptr<IcmpSentData>&& data);
-    bool read_icmp(std::istream& is, size_t length, ipv4_header& ipv4_hdr, icmp_header& icmp_hdr, std::string& body);
+    bool read_icmp(std::istream& is, size_t length, trojan::ipv4_header& ipv4_hdr, trojan::icmp_header& icmp_hdr, std::string& body);
     std::shared_ptr<icmpd::IcmpSentData> find_icmp_sent_data(const std::string& hash, bool erase);
 
     void send_data_to_socket(const std::string& data, boost::asio::ip::address_v4 addr);
@@ -83,11 +83,11 @@ class icmpd : public std::enable_shared_from_this<icmpd> {
     static int s_icmpd_file_lock;
 
 public :
- icmpd(boost::asio::io_context& io_context);
- ~icmpd();
- void start_recv();
+    icmpd(boost::asio::io_context& io_context);
+    ~icmpd();
+    void start_recv();
 
- void set_service(Service* service, bool client_or_server) {
+    void set_service(Service* service, bool client_or_server) {
      m_service = service;
      m_client_or_server = client_or_server;
     }

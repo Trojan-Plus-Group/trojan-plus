@@ -11,6 +11,11 @@
 
 class Service;
 class TUNSession : public Session{
+
+public:
+    typedef std::function<void(TUNSession*)> CloseCallback;
+private:
+
     Service* m_service;
     boost::asio::streambuf m_recv_buf;
     size_t m_recv_buf_ack_length;
@@ -19,6 +24,8 @@ class TUNSession : public Session{
     boost::asio::ip::tcp::resolver m_out_resolver;
 
     bool m_destroyed;
+    CloseCallback m_close_cb;
+    bool m_close_from_tundev_flag;
     bool m_connected;
     std::string m_send_buf;
     std::function<int()> m_write_to_lwip;
@@ -31,15 +38,37 @@ class TUNSession : public Session{
     boost::asio::ip::udp::endpoint m_local_addr_udp;
     boost::asio::ip::udp::endpoint m_remote_addr_udp;
 
-    void out_async_read();
+    boost::asio::steady_timer m_udp_timout_timer;
 
+    void out_async_read();
+    void reset_udp_timeout();
+
+    void out_async_send_impl(std::string data_to_send, Pipeline::SentHandler&& _handler);
 public:
     TUNSession(Service* _service, bool _is_udp);
     ~TUNSession();
 
-    void set_tcp_connect(boost::asio::ip::tcp::endpoint _local, boost::asio::ip::tcp::endpoint _remote);
-    void set_udp_connect(boost::asio::ip::udp::endpoint _local, boost::asio::ip::udp::endpoint _remote);
+    void set_tcp_connect(boost::asio::ip::tcp::endpoint _local, boost::asio::ip::tcp::endpoint _remote){
+        m_local_addr = _local;
+        m_remote_addr = _remote;
+    }
+
+    void set_udp_connect(boost::asio::ip::udp::endpoint _local, boost::asio::ip::udp::endpoint _remote){
+        m_local_addr_udp = _local;
+        m_remote_addr_udp = _remote;
+    }
+    
+    boost::asio::ip::udp::endpoint get_udp_local_endpoint()const { 
+        return m_local_addr_udp;
+    }
+
+    boost::asio::ip::udp::endpoint get_udp_remote_endpoint()const { 
+        return m_remote_addr_udp;
+    }
+
     void set_write_to_lwip(std::function<int()>&& _handler){ m_write_to_lwip = std::move(_handler); }
+    void set_close_callback(CloseCallback&& _cb){ m_close_cb = std::move(_cb); }
+    void set_close_from_tundev_flag(){ m_close_from_tundev_flag = true;}
 
     void start() override;
     void destroy(bool pipeline_call = false) override;
@@ -68,5 +97,7 @@ public:
 
     bool is_destroyed()const { return m_destroyed; }
 
+    bool try_to_process_udp(const boost::asio::ip::udp::endpoint& _local, 
+        const boost::asio::ip::udp::endpoint& _remote, uint8_t* payload, size_t payload_length);
 };
 #endif //_TUNSESSION_H_

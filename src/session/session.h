@@ -23,6 +23,8 @@
 #include <ctime>
 #include <set>
 #include <memory>
+#include <stdexcept>
+
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/steady_timer.hpp>
@@ -68,7 +70,13 @@ public:
     };
 
     inline bool is_udp_forward()const { return is_udp_forward_session; }
-    virtual void recv_ack_cmd() { pipeline_ack_counter++;}
+    virtual void recv_ack_cmd() { 
+        if(is_udp_forward_session){
+            throw std::logic_error("recv_ack_cmd cannot be called in is_udp_forward_session");
+        }
+        
+        pipeline_ack_counter++;
+    }
     inline bool is_wait_for_pipeline_ack()const { return pipeline_wait_for_ack; }
 
     inline bool pre_call_ack_func(){

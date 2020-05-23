@@ -27,6 +27,9 @@ else()
     add_definitions(-Wall -Wextra)
 endif()
 
+# force 1.73 boost compiling warning note
+add_definitions(-DBOOST_BIND_GLOBAL_PLACEHOLDERS=1)
+
 # badvpn definitions for tun2socks
 add_definitions(-DBADVPN_THREADWORK_USE_PTHREAD=1 -DBADVPN_LINUX=1 -DBADVPN_BREACTOR_BADVPN=1)
 add_definitions(-D_GNU_SOURCE=1 -DBADVPN_USE_SIGNALFD=1 -DBADVPN_USE_EPOLL=1)
@@ -44,7 +47,7 @@ include_directories(
     badvpn/lwip/src/include/ipv4
     badvpn/lwip/src/include/ipv6
     badvpn/lwip/src/include
-    badvpn/misc
+    badvpn
 )
 
 add_executable(trojan
@@ -107,8 +110,6 @@ add_executable(trojan
     badvpn/lwip/src/core/ipv6/ip6_frag.c 
     badvpn/lwip/src/core/ipv6/nd6.c
 )
-
-
 
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)

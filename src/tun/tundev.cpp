@@ -6,12 +6,18 @@
 #include <assert.h>
 #include <boost/asio/ip/address_v4.hpp>
 
+#include <misc/ipv4_proto.h>
+#include <misc/udp_proto.h>
+
 #include "proto/ipv4_header.h"
 #include "proto/ipv6_header.h"
+
 #include "core/log.h"
 #include "core/service.h"
 #include "tun/tunsession.h"
 #include "tun/lwip_tcp_client.h"
+#include "tun/tunsession.h"
+
 
 
 using namespace std;
@@ -20,7 +26,7 @@ using namespace boost::asio::ip;
 TUNDev* TUNDev::sm_tundev = nullptr;
 
 TUNDev::TUNDev(Service* _service, const std::string& _tun_name, 
-        const std::string& _ipaddr, const std::string& _netmask, int _mtu, int _outside_tun_fd) : 
+        const std::string& _ipaddr, const std::string& _netmask, size_t _mtu, int _outside_tun_fd) : 
     m_netif_configured(false),
     m_tcp_listener(nullptr),    
     m_service(_service),
@@ -50,9 +56,9 @@ TUNDev::TUNDev(Service* _service, const std::string& _tun_name,
             throw runtime_error("[tun] error configuring device");
         }
 
-        if(ifr.ifr_mtu != m_mtu){
-            m_mtu = ifr.ifr_mtu;
-            _log_with_date_time("[tun] ifr.ifr_mtu:" + to_string(ifr.ifr_mtu), Log::WARN);
+        if(ifr.ifr_mtu > 0 && (size_t)ifr.ifr_mtu != m_mtu){
+            m_mtu = (size_t)ifr.ifr_mtu;
+            _log_with_date_time("[tun] ifr.ifr_mtu:" + to_string(m_mtu), Log::WARN);
         }
     }
 
@@ -126,11 +132,17 @@ TUNDev::~TUNDev(){
 
     m_quitting = true;
 
-    _log_with_date_time("[tun] destoryed, clear all tcp_client:" + to_string(m_tcp_clients.size()));
+    _log_with_date_time("[tun] destoryed, clear all tcp_clients: " + to_string(m_tcp_clients.size()) + " udp_clients: " + to_string(m_udp_clients.size()));
     for(auto it = m_tcp_clients.begin();it != m_tcp_clients.end();it++){
         it->get()->close_client(true, true);
     }
     m_tcp_clients.clear();
+
+    for(auto it = m_udp_clients.begin();it != m_udp_clients.end();it++){
+        it->get()->set_close_from_tundev_flag();
+        it->get()->destroy();
+    }
+    m_udp_clients.clear();
 
     // free listener
     if (m_tcp_listener) {
@@ -243,16 +255,162 @@ err_t TUNDev::listener_accept_func(struct tcp_pcb *newpcb, err_t err){
     return  ERR_OK;
 }
 
-bool TUNDev::try_to_process_udp_packet(const uint8_t*, size_t){
-    // TODO
-    return false;
+int TUNDev::handle_write_upd_data(std::shared_ptr<TUNSession> _session){
+    assert (_session->is_udp_forward());
+
+    auto data_len = _session->recv_buf_size();
+    if(data_len == 0){
+        return 0;
+    }
+    
+    auto header_length = sizeof(struct ipv4_header) + sizeof(struct udp_header);
+    auto max_len = min((size_t)numeric_limits<uint16_t>::max(), (size_t)m_mtu);
+    max_len = max_len - header_length;
+    if (data_len > max_len) {
+        data_len = max_len;
+    }
+
+    auto data = (uint8_t*)_session->recv_buf();
+
+    auto local_endpoint = _session->get_udp_local_endpoint();
+    auto remote_endpoint = _session->get_udp_remote_endpoint();
+
+    auto local_addr = (struct sockaddr_in*) local_endpoint.data();
+    auto remote_addr = (struct sockaddr_in*) remote_endpoint.data();
+
+    // build IP header
+    struct ipv4_header ipv4_hdr;
+    ipv4_hdr.version4_ihl4 = IPV4_MAKE_VERSION_IHL(sizeof(ipv4_hdr));
+    ipv4_hdr.ds = hton8(0);
+    ipv4_hdr.total_length = hton16(sizeof(ipv4_hdr) + sizeof(struct udp_header) + data_len);
+    ipv4_hdr.identification = hton16(0);
+    ipv4_hdr.flags3_fragmentoffset13 = hton16(0);
+    ipv4_hdr.ttl = hton8(64);
+    ipv4_hdr.protocol = hton8(IPV4_PROTOCOL_UDP);
+    ipv4_hdr.checksum = hton16(0);
+    ipv4_hdr.source_address = hton32(remote_addr->sin_addr.s_addr);
+    ipv4_hdr.destination_address = hton32(local_addr->sin_addr.s_addr);
+    ipv4_hdr.checksum = ipv4_checksum(&ipv4_hdr, NULL, 0);
+
+    // build UDP header
+    struct udp_header udp_hdr;
+    udp_hdr.source_port = hton16(remote_endpoint.port());
+    udp_hdr.dest_port = hton16(local_endpoint.port());
+    udp_hdr.length = hton16(sizeof(udp_hdr) + data_len);
+    udp_hdr.checksum = hton16(0);
+    udp_hdr.checksum = udp_checksum(&udp_hdr, data, data_len, ipv4_hdr.source_address, ipv4_hdr.destination_address);
+
+    // compose packet
+    memcpy(m_device_write_buf, &ipv4_hdr, sizeof(ipv4_hdr));
+    memcpy(m_device_write_buf + sizeof(ipv4_hdr), &udp_hdr, sizeof(udp_hdr));
+    memcpy(m_device_write_buf + sizeof(ipv4_hdr) + sizeof(udp_hdr), data, data_len);
+
+    _log_with_endpoint(local_endpoint, "<- " + remote_endpoint.address().to_string() + ":" + to_string(remote_endpoint.port()) + " length:" + to_string(data_len));
+
+    auto sent_data_length = header_length + data_len;
+
+    write(m_tun_fd, m_device_write_buf, sent_data_length);
+// 
+    // write packet
+    // m_boost_sd.async_write_some(boost::asio::buffer(m_device_write_buf, header_length + data_len), [this, _session, header_length](boost::system::error_code ec, size_t wrote_length){
+    //     if(!ec){
+    //         _log_with_date_time("async_write_some done!");
+
+    //         if(wrote_length > header_length){
+                
+                //auto sent_data_length = header_length + data_len) wrote_length - header_length;
+                _session->recv_buf_consume(sent_data_length);
+                _session->recv_buf_sent(sent_data_length);
+
+                if(_session->recv_buf_size() > 0){
+                    handle_write_upd_data(_session);
+                }
+        //    }            
+        // }else{
+        //     _session->destroy();
+        // }
+    //});
+
+    return 0;
+}
+
+int TUNDev::try_to_process_udp_packet(uint8_t* data, int data_len){
+    uint8_t ip_version = 0;
+    if (data_len > 0) {
+        ip_version = (data[0] >> 4) & 0xF;
+    }
+
+    if(ip_version == 4){
+        // ignore non-UDP packets
+        if (data_len < (int)sizeof(struct ipv4_header) || data[offsetof(struct ipv4_header, protocol)] != IPV4_PROTOCOL_UDP) {
+            return 0;
+        }
+
+        // parse IPv4 header
+        struct ipv4_header ipv4_hdr;
+        if (!ipv4_check(data, data_len, &ipv4_hdr, &data, &data_len)) {
+            return 1;
+        }
+
+        // parse UDP
+        struct udp_header udp_hdr;
+        if (!udp_check(data, data_len, &udp_hdr, &data, &data_len)) {
+            return 1;
+        }
+
+        // verify UDP checksum
+        uint16_t checksum_in_packet = udp_hdr.checksum;
+        udp_hdr.checksum = 0;
+        uint16_t checksum_computed = udp_checksum(&udp_hdr, data, data_len, ipv4_hdr.source_address, ipv4_hdr.destination_address);
+        if (checksum_in_packet != checksum_computed) {
+            return 1;
+        }
+
+        auto local_endpoint = udp::endpoint(make_address_v4((address_v4::uint_type)ntoh32(ipv4_hdr.source_address)), ntoh16(udp_hdr.source_port));
+        auto remote_endpoint = udp::endpoint(make_address_v4((address_v4::uint_type)ntoh32(ipv4_hdr.destination_address)), ntoh16(udp_hdr.dest_port));
+
+        _log_with_endpoint(local_endpoint, "-> " + remote_endpoint.address().to_string() + ":" + to_string(remote_endpoint.port()) + " length:" + to_string(data_len));
+
+        for(auto it = m_udp_clients.begin();it != m_udp_clients.end();it++){
+            if(it->get()->try_to_process_udp(local_endpoint, remote_endpoint, data, data_len)){
+                return 1;
+            }
+        }
+
+        auto session = make_shared<TUNSession>(m_service, true);
+        session->set_udp_connect(local_endpoint, remote_endpoint);
+        session->set_write_to_lwip([this, session](){ 
+            return handle_write_upd_data(session); 
+        });
+
+        session->set_close_callback([this](TUNSession* _session){
+            for(auto it = m_udp_clients.begin(); it != m_udp_clients.end(); it++){
+                if(it->get() == _session){
+                    m_udp_clients.erase(it);
+                    break;
+                }
+            }
+        });
+        
+        session->out_async_send((const char*)data, data_len, [](boost::system::error_code){}); // send as buf
+        
+        m_service->start_session(session, true, [this, session, local_endpoint, remote_endpoint](boost::system::error_code ec){
+            if(!ec){
+                session->start();
+                m_udp_clients.emplace_back(session);
+            }            
+        });
+
+        return 1;     
+
+    }else if(ip_version == 6){
+        // TODO
+    }
+
+    return 0;
 }
 
 void TUNDev::input_netif_packet(const uint8_t* data, size_t packet_len){
-    if (try_to_process_udp_packet(data, packet_len)) {
-        return;
-    }            
-
     struct pbuf *p = pbuf_alloc(PBUF_RAW, packet_len, PBUF_POOL);
     if (!p) {
         _log_with_date_time("[tun] device read: pbuf_alloc failed");
@@ -286,42 +444,44 @@ void TUNDev::parse_packet(){
 
     if(ip_version == 4 || ip_version == 6){
 
-        istringstream is(m_packet_parse_buff);
         uint16_t total_length = 0;
 
         if(ip_version == 4){
-            ipv4_header ipv4_hdr;        
-            is >> ipv4_hdr;
-            if(is){
-                total_length = ipv4_hdr.total_length();
+            if(data_len < sizeof(struct ipv4_header)){
+                return;
             }
+            struct ipv4_header ipv4_hdr;
+            memcpy(&ipv4_hdr, data, sizeof(ipv4_hdr));
+            total_length = ntoh16(ipv4_hdr.total_length);
+
+            //_log_with_date_time("parse_packet length:" + to_string(data_len) + " ipv4 protocol: " + to_string((int)ipv4_hdr.protocol) + " total_length: " + to_string(total_length));
             
         }else{
-            ipv6_header ipv6_hdr;
-            is >> ipv6_hdr;
-            if(is){
-                total_length = ipv6_hdr.payload_length() + ipv6_header::HEADER_FIXED_LENGTH;
+            if(data_len < sizeof(struct ipv6_header)){
+                return;
             }
+            struct ipv6_header ipv6_hdr;
+            memcpy(&ipv6_hdr, data, sizeof(ipv6_hdr));
+            total_length = ntoh16(ipv6_hdr.payload_length)  + sizeof(ipv6_hdr);
+
+            //_log_with_date_time("parse_packet length:" + to_string(data_len) + " ipv6 next header: " + to_string((int)ipv6_hdr.next_header) + " total_length: " + to_string(total_length));
         }
 
-        if(total_length != 0){
-            if(total_length <= data_len){
+        if(total_length <= data_len){
+            auto result = try_to_process_udp_packet(data, (int)total_length);
+            if(result == 0){
                 input_netif_packet(data, total_length);
-
-                if(data_len == total_length){
-                    //_log_with_date_time("full packet process");
-                    m_packet_parse_buff.clear();
-                }else{
-                    //_log_with_date_time("split packet process--------------");
-                    m_packet_parse_buff = m_packet_parse_buff.substr(total_length);
-                    parse_packet();
-                }
             }
-        }else{
-            if(is.bad()){
+            
+            if(data_len == total_length){
+                //_log_with_date_time("full packet process");
                 m_packet_parse_buff.clear();
+            }else{
+                //_log_with_date_time("split packet process--------------");
+                m_packet_parse_buff = m_packet_parse_buff.substr(total_length);
+                parse_packet();
             }
-        }
+        }        
 
     }else{
         m_packet_parse_buff.clear();
@@ -339,9 +499,7 @@ void TUNDev::async_read(){
         }
 
         if(!ec){
-            //_log_with_date_time("TUNDev::async_read length: " + to_string(data_len));
             m_sd_read_buffer.commit(data_len);
-
             auto data = boost::asio::buffer_cast<const char*>(m_sd_read_buffer.data());
             m_packet_parse_buff.append(data, data_len);
 

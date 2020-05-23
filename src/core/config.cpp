@@ -163,7 +163,7 @@ void Config::populate(const ptree &tree) {
     tun.tun_name = tree.get("tun.tun_name", "");
     tun.net_ip = tree.get("tun.net_ip", "");
     tun.net_mask = tree.get("tun.net_mask", "");
-    tun.mtu = tree.get("tun.mtu", int(1500));
+    tun.mtu = tree.get("tun.mtu", size_t(1500));
     tun.tun_fd = tree.get("tun.tun_fd", int(-1));
 }
 

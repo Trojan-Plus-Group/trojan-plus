@@ -11,7 +11,7 @@
 #include "core/service.h"
 #include "tun/tunsession.h"
 
-class lwip_tcp_client : std::enable_shared_from_this<lwip_tcp_client> {
+class lwip_tcp_client : public std::enable_shared_from_this<lwip_tcp_client> {
 public:
     typedef std::function<void(lwip_tcp_client*)> CloseCallback;
 private:

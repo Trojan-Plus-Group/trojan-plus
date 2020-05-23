@@ -29,7 +29,8 @@
 // The wire format of an IPv4 header is:
 // https://en.wikipedia.org/wiki/IPv6_packet#Fixed_header
 
-
+namespace trojan{
+    
 class ipv6_header {
 public:
     enum {
@@ -60,5 +61,7 @@ private:
 
     unsigned char rep_[HEADER_FIXED_LENGTH];
 };
+
+}
 
 #endif  // IPV6_HEADER_HPP

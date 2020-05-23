@@ -23,6 +23,7 @@ lwip_tcp_client::lwip_tcp_client(struct tcp_pcb *_pcb, shared_ptr<TUNSession> _s
 
     m_tun_session->set_tcp_connect(m_local_addr, m_remote_addr);
     m_tun_session->set_write_to_lwip([this](){ return client_socks_recv_send_out(); });
+    m_tun_session->set_close_callback([this](TUNSession*){ close_client(true); });
 
     tcp_arg(m_pcb, this);
 
@@ -80,9 +81,11 @@ err_t lwip_tcp_client::client_recv_func(struct tcp_pcb *, struct pbuf *p, err_t 
 
         m_tun_session->out_async_send((const char*)send_buf, length, [this, length](boost::system::error_code ec){
             if(ec){
-                close_client(false);
+                close_client(true);
             }else{
-                tcp_recved(m_pcb, length);
+                if(!m_closed){
+                    tcp_recved(m_pcb, length);
+                }                
             }            
         });
     }
