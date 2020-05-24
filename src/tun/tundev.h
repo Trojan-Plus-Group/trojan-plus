@@ -25,7 +25,7 @@ class Service;
 class lwip_tcp_client;
 class TUNSession;
 // this class canot support ipv6
-class TUNDev{
+class TUNDev {
 
 private:
     static TUNDev* sm_tundev;
@@ -67,13 +67,16 @@ private:
     size_t m_mtu;
 
     bool m_quitting;
-    uint8_t* m_device_write_buf;
+    boost::asio::streambuf m_write_fill_buf;
+    boost::asio::streambuf m_writing_buf;
+    bool m_is_async_writing;
 
     boost::asio::streambuf m_sd_read_buffer;
     boost::asio::posix::stream_descriptor m_boost_sd;
     std::string m_packet_parse_buff;
 
     void async_read();
+    void async_write();
 
     int try_to_process_udp_packet(uint8_t* data, int data_len);
     void parse_packet();

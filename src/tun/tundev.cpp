@@ -5,6 +5,7 @@
 #include <functional>
 #include <assert.h>
 #include <boost/asio/ip/address_v4.hpp>
+#include <boost/asio/buffer.hpp>
 
 #include <misc/ipv4_proto.h>
 #include <misc/udp_proto.h>
@@ -34,6 +35,7 @@ TUNDev::TUNDev(Service* _service, const std::string& _tun_name,
     m_is_outsize_tun_fd(_outside_tun_fd != -1),
     m_mtu(_mtu), 
     m_quitting(false), 
+    m_is_async_writing(false),
     m_boost_sd(_service->service()) {
 
     assert(sm_tundev == nullptr);
@@ -56,10 +58,7 @@ TUNDev::TUNDev(Service* _service, const std::string& _tun_name,
             throw runtime_error("[tun] error configuring device");
         }
 
-        if(ifr.ifr_mtu > 0 && (size_t)ifr.ifr_mtu != m_mtu){
-            m_mtu = (size_t)ifr.ifr_mtu;
-            _log_with_date_time("[tun] ifr.ifr_mtu:" + to_string(m_mtu), Log::WARN);
-        }
+        _log_with_date_time("[tun] /dev/net/tun ifr.ifr_mtu: " + to_string(ifr.ifr_mtu), Log::WARN);
     }
 
     m_boost_sd.assign(m_tun_fd);
@@ -121,7 +120,6 @@ TUNDev::TUNDev(Service* _service, const std::string& _tun_name,
     // setup listener accept handler
     tcp_accept(m_tcp_listener,(tcp_accept_fn)&TUNDev::listener_accept_func);
 
-    m_device_write_buf = new uint8_t[m_mtu];
     async_read();
 }
 
@@ -195,32 +193,17 @@ err_t TUNDev::netif_output_func(struct netif *, struct pbuf *p, const ip4_addr_t
     if (m_quitting) {
         return ERR_OK;
     }
-    
-    // if there is just one chunk, send it directly, else via buffer
-    if (!p->next) {
-        if (p->len > m_mtu) {
-            _log_with_date_time("[tun] netif func output: no space left");
-            return ERR_OK;
-        }
-        auto write_len = write(m_tun_fd, (uint8_t *)p->payload, p->len);
-        if(write_len != p->len){
-            _log_with_date_time("[tun] netif func output: haven't writen full length! wrote " + to_string(write_len) + " need " + to_string(p->len) );
-        }
-    } else {
-        int len = 0;
+
+    if(p != NULL){            
         do {
-            if (p->len > m_mtu - len) {
-                _log_with_date_time("[tun] netif func output: no space left");
-                return ERR_OK;
-            }
-            memcpy(m_device_write_buf + len, p->payload, p->len);
-            len += p->len;
+            if(p->len > 0){
+                auto write_buff = boost::asio::buffer_cast<uint8_t*>(m_write_fill_buf.prepare(p->len));
+                memcpy(write_buff, (uint8_t *)p->payload, p->len);
+                m_write_fill_buf.commit(p->len);
+            }            
         } while ((p = p->next) != NULL);
-        
-        auto write_len = write(m_tun_fd, m_device_write_buf, len);
-        if(write_len != len){
-            _log_with_date_time("[tun] netif func output: haven't writen full length2 ! wrote " + to_string(write_len) + " need " + to_string(len) );
-        }
+
+        async_write();
     }
 
     return ERR_OK;
@@ -301,36 +284,26 @@ int TUNDev::handle_write_upd_data(std::shared_ptr<TUNSession> _session){
     udp_hdr.checksum = udp_checksum(&udp_hdr, data, data_len, ipv4_hdr.source_address, ipv4_hdr.destination_address);
 
     // compose packet
-    memcpy(m_device_write_buf, &ipv4_hdr, sizeof(ipv4_hdr));
-    memcpy(m_device_write_buf + sizeof(ipv4_hdr), &udp_hdr, sizeof(udp_hdr));
-    memcpy(m_device_write_buf + sizeof(ipv4_hdr) + sizeof(udp_hdr), data, data_len);
+    auto packat_length = header_length + data_len;
+    auto write_buf = boost::asio::buffer_cast<uint8_t*>(m_write_fill_buf.prepare(packat_length));
+    
+    memcpy(write_buf, &ipv4_hdr, sizeof(ipv4_hdr));
+    memcpy(write_buf + sizeof(ipv4_hdr), &udp_hdr, sizeof(udp_hdr));
+    memcpy(write_buf + sizeof(ipv4_hdr) + sizeof(udp_hdr), data, data_len);
+
+    m_write_fill_buf.commit(packat_length);
 
     _log_with_endpoint(local_endpoint, "<- " + remote_endpoint.address().to_string() + ":" + to_string(remote_endpoint.port()) + " length:" + to_string(data_len));
 
-    auto sent_data_length = header_length + data_len;
+    async_write();
 
-    write(m_tun_fd, m_device_write_buf, sent_data_length);
-// 
-    // write packet
-    // m_boost_sd.async_write_some(boost::asio::buffer(m_device_write_buf, header_length + data_len), [this, _session, header_length](boost::system::error_code ec, size_t wrote_length){
-    //     if(!ec){
-    //         _log_with_date_time("async_write_some done!");
+    _session->recv_buf_consume(data_len);
+    _session->recv_buf_sent(data_len);
 
-    //         if(wrote_length > header_length){
-                
-                //auto sent_data_length = header_length + data_len) wrote_length - header_length;
-                _session->recv_buf_consume(sent_data_length);
-                _session->recv_buf_sent(sent_data_length);
-
-                if(_session->recv_buf_size() > 0){
-                    handle_write_upd_data(_session);
-                }
-        //    }            
-        // }else{
-        //     _session->destroy();
-        // }
-    //});
-
+    if(_session->recv_buf_size() > 0){
+        handle_write_upd_data(_session);
+    }
+    
     return 0;
 }
 
@@ -413,20 +386,20 @@ int TUNDev::try_to_process_udp_packet(uint8_t* data, int data_len){
 void TUNDev::input_netif_packet(const uint8_t* data, size_t packet_len){
     struct pbuf *p = pbuf_alloc(PBUF_RAW, packet_len, PBUF_POOL);
     if (!p) {
-        _log_with_date_time("[tun] device read: pbuf_alloc failed");
+        _log_with_date_time("[tun] device read: pbuf_alloc failed", Log::ERROR);
         return;
     }
     
     // write packet to pbuf            
     if(pbuf_take(p, (void*)data, packet_len) != ERR_OK){
-        _log_with_date_time("[tun] device read: pbuf_take failed");
+        _log_with_date_time("[tun] device read: pbuf_take failed", Log::ERROR);
         pbuf_free(p);
         return;
     }
     
     // pass pbuf to input
     if (m_netif.input(p, &m_netif) != ERR_OK) {
-        _log_with_date_time("[tun] device read: input failed");
+        _log_with_date_time("[tun] device read: input failed", Log::ERROR);
         pbuf_free(p);
         return;
     }
@@ -488,18 +461,46 @@ void TUNDev::parse_packet(){
     }
 }
 
+void TUNDev::async_write(){
+    if(m_is_async_writing || m_quitting || m_write_fill_buf.size() == 0){
+        return;
+    }
+
+    m_is_async_writing = true;
+
+    // we need to copy write fill buff to a fixed writing buff and then send
+    m_writing_buf.consume(m_writing_buf.size());
+
+    auto max_write_size = min(m_mtu, m_write_fill_buf.size());
+    auto copied = boost::asio::buffer_copy(m_writing_buf.prepare(max_write_size), m_write_fill_buf.data());
+    m_writing_buf.commit(copied);    
+
+    //_log_with_date_time("[tun] TUNDev::async_write size:" + to_string(m_writing_buf.size()));
+    boost::asio::async_write(m_boost_sd, m_writing_buf, [this](boost::system::error_code ec, size_t wrote_length){
+        m_is_async_writing = false;
+        if(!ec){
+            //_log_with_date_time("[tun] TUNDev::async_write wrote size:" + to_string(wrote_length));
+            m_write_fill_buf.consume(wrote_length);
+            if(m_write_fill_buf.size() > 0){
+                async_write();
+            }            
+        }else{
+            _log_with_date_time("[tun] error to write tundev:" + ec.message(), Log::ERROR);
+            m_write_fill_buf.consume(m_write_fill_buf.size());
+        }      
+    });
+}
+
 void TUNDev::async_read(){
-
     m_sd_read_buffer.consume(m_sd_read_buffer.size());
-
-    const auto max_buff_size = m_mtu;
-    m_boost_sd.async_read_some(m_sd_read_buffer.prepare(max_buff_size),[this, max_buff_size](boost::system::error_code ec, size_t data_len){
+    m_boost_sd.async_read_some(m_sd_read_buffer.prepare(m_mtu),[this](boost::system::error_code ec, size_t data_len){
         if(m_quitting){
             return;
         }
 
         if(!ec){
             m_sd_read_buffer.commit(data_len);
+
             auto data = boost::asio::buffer_cast<const char*>(m_sd_read_buffer.data());
             m_packet_parse_buff.append(data, data_len);
 
