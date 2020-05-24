@@ -74,7 +74,7 @@ private:
     boost::asio::streambuf m_sd_read_buffer;
     boost::asio::posix::stream_descriptor m_boost_sd;
     std::string m_packet_parse_buff;
-
+    
     void async_read();
     void async_write();
 

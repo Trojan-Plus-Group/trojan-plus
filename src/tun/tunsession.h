@@ -18,6 +18,7 @@ private:
 
     Service* m_service;
     boost::asio::streambuf m_recv_buf;
+    boost::asio::streambuf m_recv_udp_buf;
     size_t m_recv_buf_ack_length;
 
     boost::asio::ssl::stream<boost::asio::ip::tcp::socket> m_out_socket;
@@ -42,6 +43,7 @@ private:
 
     void out_async_read();
     void reset_udp_timeout();
+    void parse_udp_packet_data();
 
     void out_async_send_impl(std::string data_to_send, Pipeline::SentHandler&& _handler);
 public:

@@ -52,16 +52,21 @@ void TUNSession::start(){
             }
             out_async_read();
         });
-        string().swap(m_send_buf); // free the recv buff
+        m_send_buf.clear();
     };
 
     if(m_service->is_use_pipeline()){
         cb();
     }else{
         m_service->config.prepare_ssl_reuse(m_out_socket);
-        auto self = shared_from_this();
-        connect_remote_server_ssl(this, m_service->config.remote_addr, to_string(m_service->config.remote_port), 
-            m_out_resolver, m_out_socket, m_local_addr,  cb);
+        if(is_udp_forward()){
+            connect_remote_server_ssl(this, m_service->config.remote_addr, to_string(m_service->config.remote_port), 
+                m_out_resolver, m_out_socket, m_local_addr_udp ,  cb);
+        }else{
+            connect_remote_server_ssl(this, m_service->config.remote_addr, to_string(m_service->config.remote_port), 
+                m_out_resolver, m_out_socket, m_local_addr,  cb);
+        }
+        
     }
 }
 
@@ -86,7 +91,11 @@ void TUNSession::destroy(bool pipeline_call){
     }
     m_destroyed = true;
 
-    _log_with_endpoint(m_local_addr, "TUNSession session_id: " + to_string(session_id) + " disconnected ", Log::INFO);
+    if(is_udp_forward()){
+        _log_with_endpoint(m_local_addr_udp, "TUNSession session_id: " + to_string(session_id) + " disconnected ", Log::INFO);
+    }else{
+        _log_with_endpoint(m_local_addr, "TUNSession session_id: " + to_string(session_id) + " disconnected ", Log::INFO);
+    }    
 
     m_wait_ack_handler.clear();
     m_out_resolver.cancel();   
@@ -112,13 +121,50 @@ void TUNSession::pipeline_out_recv(string&& data){
     }    
 }
 
+void TUNSession::parse_udp_packet_data(){
+
+    for(;;){
+        if(m_recv_udp_buf.size() == 0){
+            return;
+        }
+
+        auto data = boost::asio::buffer_cast<const char*>(m_recv_udp_buf.data());
+        auto data_len = m_recv_udp_buf.size();
+
+        // parse trojan protocol
+        UDPPacket packet;
+        size_t packet_len;
+        if(!packet.parse(string(data, data_len), packet_len)){
+            if(data_len > numeric_limits<uint16_t>::max()){
+                _log_with_endpoint(get_udp_local_endpoint(), "[tun] error UDPPacket.parse! destroy it.", Log::ERROR);
+                destroy();
+                return;
+            }else{
+                _log_with_endpoint(get_udp_local_endpoint(), "[tun] error UDPPacket.parse! Might need to read more...", Log::WARN);
+            }
+            return;
+        }
+        m_recv_udp_buf.consume(packet_len);
+
+        ostream os(&m_recv_buf);
+        os << packet.payload;
+        m_recv_buf_ack_length += packet.payload.length();
+    }
+}
+
 void TUNSession::out_async_read() {
     if(m_service->is_use_pipeline()){
         m_pipeline_data_cache.async_read([this](const string &data) {
-            ostream os(&m_recv_buf);
-            os << data;
+            if(is_udp_forward()){
+                ostream os(&m_recv_udp_buf);
+                os << data;
+                parse_udp_packet_data();
+            }else{
+                ostream os(&m_recv_buf);
+                os << data;
 
-            m_recv_buf_ack_length += data.length();
+                m_recv_buf_ack_length += data.length();
+            }
             
             reset_udp_timeout();
 
@@ -130,15 +176,22 @@ void TUNSession::out_async_read() {
         });
     }else{
         auto self = shared_from_this();
-        m_out_socket.async_read_some(m_recv_buf.prepare(Session::MAX_BUF_LENGTH), [this, self](const boost::system::error_code error, size_t length) {
+        boost::asio::streambuf& recv_buf = is_udp_forward() ? m_recv_udp_buf : m_recv_buf;
+        m_out_socket.async_read_some(recv_buf.prepare(Session::MAX_BUF_LENGTH), [this, self](const boost::system::error_code error, size_t length) {
             if (error) {
                 output_debug_info_ec(error);
                 destroy();
                 return;
             }
-            m_recv_buf.commit(length);
-            m_recv_buf_ack_length += length;
-            
+
+            if(is_udp_forward()){
+                m_recv_udp_buf.commit(length);
+                parse_udp_packet_data();
+            }else{
+                m_recv_buf.commit(length);
+                m_recv_buf_ack_length += length;
+            }
+
             reset_udp_timeout();
 
             if(m_write_to_lwip() < 0){
@@ -195,20 +248,29 @@ void TUNSession::out_async_send_impl(std::string data_to_send, Pipeline::SentHan
     }
 }
 void TUNSession::out_async_send(const char* _data, size_t _length, Pipeline::SentHandler&& _handler){
-
-    string data_to_send;
-    if(is_udp_forward()){
-        data_to_send.append(UDPPacket::generate(m_remote_addr_udp.address().to_string(), m_remote_addr_udp.port(), string(_data, _length)));
-    }else{
-        data_to_send.append(_data, _length);
-    }
-
     if(!m_connected){
-        m_send_buf += data_to_send;
+        if(m_send_buf.length() < numeric_limits<uint16_t>::max()){ // 100 is more greater than ip/udp header
+            string data_to_send;
+            if(is_udp_forward()){
+                data_to_send.append(UDPPacket::generate(m_remote_addr_udp, string(_data, _length)));
+            }else{
+                data_to_send.append(_data, _length);
+            }
+            m_send_buf.append(data_to_send);
+        }
         return;
+    }else{        
+        m_send_buf.clear();
+        if(is_udp_forward()){
+            m_send_buf.append(UDPPacket::generate(m_remote_addr_udp, string(_data, _length)));
+        }else{
+            m_send_buf.append(_data, _length);
+        }
+        
+        out_async_send_impl(m_send_buf, move(_handler));
     }
-
-    out_async_send_impl(data_to_send, move(_handler));    
+    
+    
 }
 
 void TUNSession::recv_buf_sent(uint16_t _length){
@@ -239,7 +301,7 @@ void TUNSession::recv_buf_sent(uint16_t _length){
 bool TUNSession::try_to_process_udp(const boost::asio::ip::udp::endpoint& _local, 
         const boost::asio::ip::udp::endpoint& _remote, uint8_t* payload, size_t payload_length){
             
-    if(is_udp_forward_session){
+    if(is_udp_forward()){
         if(_local == m_local_addr_udp && _remote == m_remote_addr_udp){
             out_async_send((const char*)payload, payload_length, [](boost::system::error_code){});
             return true;
