@@ -22,7 +22,7 @@ endif()
 
 set(CMAKE_CXX_STANDARD 11)
 if(MSVC)
-    add_definitions(-D_CRT_SECURE_NO_WARNINGS)
+    add_definitions(-D_CRT_SECURE_NO_WARNINGS -D_WIN32_WINNT=0x0601)
 else()
     add_definitions(-Wall -Wextra)
 endif()
