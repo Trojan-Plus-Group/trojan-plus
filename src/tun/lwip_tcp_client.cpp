@@ -23,7 +23,11 @@ lwip_tcp_client::lwip_tcp_client(struct tcp_pcb *_pcb, shared_ptr<TUNSession> _s
 
     m_tun_session->set_tcp_connect(m_local_addr, m_remote_addr);
     m_tun_session->set_write_to_lwip([this](){ return client_socks_recv_send_out(); });
-    m_tun_session->set_close_callback([this](TUNSession*){ close_client(true); });
+    m_tun_session->set_close_callback([this](TUNSession* session){ 
+        if(session->recv_buf_ack_length() == 0){ // need to wait send remain buff
+            close_client(true); 
+        }        
+    });
 
     tcp_arg(m_pcb, this);
 
@@ -38,9 +42,10 @@ lwip_tcp_client::lwip_tcp_client(struct tcp_pcb *_pcb, shared_ptr<TUNSession> _s
 void lwip_tcp_client::client_log(const char *fmt, ...){
     if(Log::level == Log::ALL){
         char buf[256];
-        int n = snprintf(buf, sizeof(buf), "[lwip] %s:%d->%s:%d ", 
+        int n = snprintf(buf, sizeof(buf), "[lwip] [%s:%d->%s:%d] [pcb:0x%lx session_id:%d] ", 
             m_local_addr.address().to_string().c_str(), m_local_addr.port(),
-            m_remote_addr.address().to_string().c_str(), m_remote_addr.port());
+            m_remote_addr.address().to_string().c_str(), m_remote_addr.port(), 
+            (uint64_t)m_pcb, (int)m_tun_session->session_id);
 
         va_list vl;
         va_start(vl, fmt);
@@ -53,11 +58,18 @@ void lwip_tcp_client::client_log(const char *fmt, ...){
 
 void lwip_tcp_client::client_err_func(err_t err){
     client_log("client_err_func (%d)", (int)err);
-    close_client(false);
+
+    // do NOT call close_client with tcp_close/tcp_abort, otherwise it will assert to free double
+    // this client_err_func will be called by lwip and then lwip system will be free pcb
+    close_session(false);
 }
 
 err_t lwip_tcp_client::client_recv_func(struct tcp_pcb *, struct pbuf *p, err_t err){
     
+    if(m_aborted){
+        return ERR_ABRT;
+    }
+
     if (!p || err != ERR_OK) {
         client_log("client_recv_func closed");
         close_client(false);
@@ -94,6 +106,10 @@ err_t lwip_tcp_client::client_recv_func(struct tcp_pcb *, struct pbuf *p, err_t 
 }
 
 err_t lwip_tcp_client::client_sent_func(struct tcp_pcb *, u16_t len){
+
+    if(m_aborted){
+        return ERR_ABRT;
+    }
 
     m_tun_session->recv_buf_sent(len);
 
@@ -167,18 +183,30 @@ int lwip_tcp_client::client_socks_recv_send_out(){
     return 0;
 }
 
-void lwip_tcp_client::close_client(bool _abort, bool _call_by_tun_dev /*= false*/){
+void lwip_tcp_client::close_session(bool _call_by_tun_dev){
     if(m_closed || m_aborted){
         return;
     }
 
     m_closed = true;
 
+    m_tun_session->destroy();
+    if(!_call_by_tun_dev){
+        m_close_cb(this);
+    } 
+
     // remove callbacks
     tcp_err(m_pcb, NULL);
     tcp_recv(m_pcb, NULL);
     tcp_sent(m_pcb, NULL);
+}
 
+void lwip_tcp_client::close_client(bool _abort, bool _call_by_tun_dev /*= false*/){
+    if(m_closed || m_aborted){
+        return;
+    }
+
+    close_session(_call_by_tun_dev);
     if(_abort){
         client_log("close_client abort");
         m_aborted = true;
@@ -186,6 +214,7 @@ void lwip_tcp_client::close_client(bool _abort, bool _call_by_tun_dev /*= false*
     }else{
         // free m_pcb
         err_t err = tcp_close(m_pcb);
+        client_log("close_client");
         if (err != ERR_OK){
             client_log("tcp_close failed (%d)", err);
             m_aborted = true;
@@ -194,11 +223,6 @@ void lwip_tcp_client::close_client(bool _abort, bool _call_by_tun_dev /*= false*
         }
     }
     
-    m_pcb = nullptr;
-    m_tun_session->destroy();
-
-    if(!_call_by_tun_dev){
-        m_close_cb(this);
-    }    
+    m_pcb = nullptr;       
 }
 

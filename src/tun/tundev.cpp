@@ -464,6 +464,13 @@ int TUNDev::try_to_process_udp_packet(uint8_t* data, int data_len){
 }
 
 void TUNDev::async_write(){
+
+    // if(m_write_fill_buf.size() == 0){ return; }
+    // auto wrote = m_boost_sd.write_some(m_write_fill_buf.data());
+    // m_write_fill_buf.consume(wrote);
+
+
+
     if(m_is_async_writing || m_quitting || m_write_fill_buf.size() == 0){
         return;
     }
