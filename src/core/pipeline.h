@@ -114,8 +114,8 @@ public:
         ReadDataCache(): is_waiting(false){}
         inline void push_data(std::string&& data) {
             if (is_waiting) {
-                read_handler(data);
                 is_waiting = false;
+                read_handler(data);                
             }else{
                 data_queue += data;
             }
