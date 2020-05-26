@@ -163,6 +163,7 @@ TUNDev::~TUNDev(){
 err_t TUNDev::netif_init_func(struct netif *netif){
     netif->name[0] = 'h';
     netif->name[1] = 'o';
+    netif->mtu = m_mtu;
     netif->output = static_netif_output_func;
     return ERR_OK;
 }
