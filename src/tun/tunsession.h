@@ -14,6 +14,7 @@ class TUNSession : public Session{
 
 public:
     typedef std::function<void(TUNSession*)> CloseCallback;
+    typedef std::function<int(TUNSession*)> WriteToLwipCallback;
 private:
 
     Service* m_service;
@@ -29,7 +30,7 @@ private:
     bool m_close_from_tundev_flag;
     bool m_connected;
     std::string m_send_buf;
-    std::function<int()> m_write_to_lwip;
+    WriteToLwipCallback m_write_to_lwip;
     std::list<Pipeline::SentHandler> m_wait_ack_handler;
     Pipeline::ReadDataCache m_pipeline_data_cache;
 
@@ -68,7 +69,7 @@ public:
         return m_remote_addr_udp;
     }
 
-    void set_write_to_lwip(std::function<int()>&& _handler){ m_write_to_lwip = std::move(_handler); }
+    void set_write_to_lwip(WriteToLwipCallback&& _handler){ m_write_to_lwip = std::move(_handler); }
     void set_close_callback(CloseCallback&& _cb){ m_close_cb = std::move(_cb); }
     void set_close_from_tundev_flag(){ m_close_from_tundev_flag = true;}
 

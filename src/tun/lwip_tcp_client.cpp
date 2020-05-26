@@ -22,7 +22,7 @@ lwip_tcp_client::lwip_tcp_client(struct tcp_pcb *_pcb, shared_ptr<TUNSession> _s
     m_local_addr = tcp::endpoint(make_address_v4((address_v4::uint_type)ntoh32(_pcb->remote_ip.u_addr.ip4.addr)), _pcb->remote_port);
 
     m_tun_session->set_tcp_connect(m_local_addr, m_remote_addr);
-    m_tun_session->set_write_to_lwip([this](){ return client_socks_recv_send_out(); });
+    m_tun_session->set_write_to_lwip([this](TUNSession*){ return client_socks_recv_send_out(); });
     m_tun_session->set_close_callback([this](TUNSession* session){ 
         if(session->recv_buf_ack_length() == 0){ // need to wait send remain buff
             close_client(true); 

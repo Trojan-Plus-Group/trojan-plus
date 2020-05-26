@@ -35,7 +35,6 @@ TUNDev::TUNDev(Service* _service, const std::string& _tun_name,
     m_is_outsize_tun_fd(_outside_tun_fd != -1),
     m_mtu(_mtu), 
     m_quitting(false), 
-    m_is_async_writing(false),
     m_boost_sd(_service->service()) {
 
     assert(sm_tundev == nullptr);
@@ -203,7 +202,7 @@ err_t TUNDev::netif_output_func(struct netif *, struct pbuf *p, const ip4_addr_t
             }            
         } while ((p = p->next) != NULL);
 
-        async_write();
+        write_to_tun();
     }
 
     return ERR_OK;
@@ -318,7 +317,7 @@ void TUNDev::parse_packet(){
 }
 
 
-int TUNDev::handle_write_upd_data(std::shared_ptr<TUNSession> _session){
+int TUNDev::handle_write_upd_data(TUNSession* _session){
     assert (_session->is_udp_forward());
 
     auto data_len = _session->recv_buf_size();
@@ -373,7 +372,7 @@ int TUNDev::handle_write_upd_data(std::shared_ptr<TUNSession> _session){
 
     _log_with_endpoint(local_endpoint, "<- " + remote_endpoint.address().to_string() + ":" + to_string(remote_endpoint.port()) + " length:" + to_string(data_len));
 
-    async_write();
+    write_to_tun();
 
     _session->recv_buf_consume(data_len);
     _session->recv_buf_sent(data_len);
@@ -430,8 +429,8 @@ int TUNDev::try_to_process_udp_packet(uint8_t* data, int data_len){
 
         auto session = make_shared<TUNSession>(m_service, true);
         session->set_udp_connect(local_endpoint, remote_endpoint);
-        session->set_write_to_lwip([this, session](){ 
-            return handle_write_upd_data(session); 
+        session->set_write_to_lwip([this](TUNSession* _se){ 
+            return handle_write_upd_data(_se); 
         });
 
         session->set_close_callback([this](TUNSession* _session){
@@ -463,41 +462,30 @@ int TUNDev::try_to_process_udp_packet(uint8_t* data, int data_len){
     return 0;
 }
 
-void TUNDev::async_write(){
-
-    // if(m_write_fill_buf.size() == 0){ return; }
-    // auto wrote = m_boost_sd.write_some(m_write_fill_buf.data());
-    // m_write_fill_buf.consume(wrote);
-
-
-
-    if(m_is_async_writing || m_quitting || m_write_fill_buf.size() == 0){
+void TUNDev::write_to_tun(){
+    if(m_quitting){
         return;
     }
 
-    m_is_async_writing = true;
+    while(m_write_fill_buf.size() > 0){
+        boost::system::error_code ec;
+        size_t wrote;
+        if(m_write_fill_buf.size() > m_mtu){
+            auto copied = boost::asio::buffer_copy(m_writing_buf.prepare(m_mtu), m_write_fill_buf.data(), m_mtu);
+            m_writing_buf.commit(copied);
 
-    // we need to copy write fill buff to a fixed writing buff and then send
-    m_writing_buf.consume(m_writing_buf.size());
-
-    auto max_write_size = min(m_mtu, m_write_fill_buf.size());
-    auto copied = boost::asio::buffer_copy(m_writing_buf.prepare(max_write_size), m_write_fill_buf.data());
-    m_writing_buf.commit(copied);    
-
-    //_log_with_date_time("[tun] TUNDev::async_write size:" + to_string(m_writing_buf.size()));
-    boost::asio::async_write(m_boost_sd, m_writing_buf, [this](boost::system::error_code ec, size_t wrote_length){
-        m_is_async_writing = false;
-        if(!ec){
-            //_log_with_date_time("[tun] TUNDev::async_write wrote size:" + to_string(wrote_length));
-            m_write_fill_buf.consume(wrote_length);
-            if(m_write_fill_buf.size() > 0){
-                async_write();
-            }            
+            wrote = m_boost_sd.write_some(m_writing_buf.data(), ec);
+            m_writing_buf.consume(m_writing_buf.size());
         }else{
-            _log_with_date_time("[tun] error to write tundev:" + ec.message(), Log::ERROR);
+            wrote = m_boost_sd.write_some(m_write_fill_buf.data(), ec);                  
+        }
+
+        if(!ec && wrote > 0){
+            m_write_fill_buf.consume(wrote);
+        }else{
             m_write_fill_buf.consume(m_write_fill_buf.size());
-        }      
-    });
+        }  
+    }
 }
 
 void TUNDev::async_read(){
@@ -514,8 +502,9 @@ void TUNDev::async_read(){
             m_packet_parse_buff.append(data, data_len);
 
             parse_packet();
-            async_read();
         }
+
+        async_read();
     });
 
     // sleep for test

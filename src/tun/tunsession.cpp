@@ -169,7 +169,7 @@ void TUNSession::out_async_read() {
             reset_udp_timeout();
 
             // don't need to call m_recv_buf.commit(length);
-            if(m_write_to_lwip() < 0){
+            if(m_write_to_lwip(this) < 0){
                 output_debug_info();
                 destroy();
             }
@@ -194,7 +194,7 @@ void TUNSession::out_async_read() {
 
             reset_udp_timeout();
 
-            if(m_write_to_lwip() < 0){
+            if(m_write_to_lwip(this) < 0){
                 output_debug_info();
                 destroy();
             }
