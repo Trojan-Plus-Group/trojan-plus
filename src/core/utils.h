@@ -170,7 +170,7 @@ public :
     inline void push_data(std::string&& data) {
         if (is_waiting) {
             is_waiting = false;
-            read_handler(data);                
+            read_handler(data);
         }else{
             data_queue += data;
         }

@@ -320,7 +320,7 @@ void TUNDev::parse_packet(){
 
 int TUNDev::handle_write_upd_data(TUNSession* _session){
     assert (_session->is_udp_forward());
-
+    
     auto data_len = _session->recv_buf_size();
     if(data_len == 0){
         return 0;

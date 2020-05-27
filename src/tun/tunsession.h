@@ -33,7 +33,6 @@ private:
     std::string m_send_buf;
     WriteToLwipCallback m_write_to_lwip;
     std::list<SentHandler> m_wait_ack_handler;
-    ReadDataCache m_pipeline_data_cache;
 
     boost::asio::ip::tcp::endpoint m_local_addr;
     boost::asio::ip::tcp::endpoint m_remote_addr;
