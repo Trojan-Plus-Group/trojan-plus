@@ -321,9 +321,9 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, string&
             }
             if (ssl.verify_hostname) {
 #if BOOST_VERSION >= 107300
-                ssl_context.set_verify_callback(host_name_verification(config.ssl.sni));
+                ssl_context.set_verify_callback(host_name_verification(ssl.sni));
 #else
-                ssl_context.set_verify_callback(rfc2818_verification(config.ssl.sni));
+                ssl_context.set_verify_callback(rfc2818_verification(ssl.sni));
 #endif
             }
             X509_VERIFY_PARAM *param = X509_VERIFY_PARAM_new();

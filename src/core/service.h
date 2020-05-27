@@ -76,7 +76,7 @@ public:
     
     void reload_cert();  
 
-    void start_session(std::shared_ptr<Session> session, bool is_udp_forward, SentHandler&& started_handler);
+    void start_session(std::shared_ptr<Session> session, SentHandler&& started_handler);
 
     void session_async_send_to_pipeline(Session& session, PipelineRequest::Command cmd, const std::string& data, SentHandler&& sent_handler);
     void session_async_send_to_pipeline_icmp(const std::string& data, SentHandler&& sent_handler);

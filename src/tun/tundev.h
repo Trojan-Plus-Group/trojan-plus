@@ -14,11 +14,33 @@
 #include <lwip/nd6.h>
 #include <lwip/ip6_frag.h>
 
+
+#ifdef __linux__
 #include <linux/input.h>
+#include <linux/if_tun.h>
+#endif
 
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/streambuf.hpp>
 #include <boost/asio/posix/stream_descriptor.hpp>
+
+#ifndef _WIN32 
+    typedef boost::asio::posix::stream_descriptor BoostStreamDescriptor;
+#else
+    class BoostStreamDescriptor{
+    public:
+        BoostStreamDescriptor(boost::asio::io_context&){}
+        void assign(int){}
+
+        template <typename ConstBufferSequence>
+        std::size_t write_some(const ConstBufferSequence& buffers, boost::system::error_code& ec) { return 0; }
+
+        template <typename ConstBufferSequence, typename Handler>
+        void async_read_some(const ConstBufferSequence&, Handler&&) {}
+
+        void close(){}
+    };
+#endif
 
 
 class Service;
@@ -75,7 +97,8 @@ private:
     boost::asio::streambuf m_writing_buf;
 
     boost::asio::streambuf m_sd_read_buffer;
-    boost::asio::posix::stream_descriptor m_boost_sd;
+    BoostStreamDescriptor m_boost_sd;
+
     std::string m_packet_parse_buff;
     
     void async_read();

@@ -8,14 +8,21 @@
 
 #include <misc/byteorder.h>
 
-#define PACK_STRUCT_BEGIN
-#define PACK_STRUCT_END
-#if defined(__GNUC__) && defined(__MINGW32__)
-// Workaround https://gcc.gnu.org/bugzilla/show_bug.cgi?id=52991
-#define PACK_STRUCT_STRUCT __attribute__((packed)) __attribute__((gcc_struct))
+#ifndef _WIN32
+    #define PACK_STRUCT_BEGIN
+    #define PACK_STRUCT_END
+    #if defined(__GNUC__) && defined(__MINGW32__)
+        // Workaround https://gcc.gnu.org/bugzilla/show_bug.cgi?id=52991
+        #define PACK_STRUCT_STRUCT __attribute__((packed)) __attribute__((gcc_struct))
+    #else
+        #define PACK_STRUCT_STRUCT __attribute__((packed))
+    #endif
 #else
-#define PACK_STRUCT_STRUCT __attribute__((packed))
-#endif
+    #define PACK_STRUCT_BEGIN
+    #define PACK_STRUCT_END
+    #define PACK_STRUCT_STRUCT
+#endif //_WIN32
+
 
 #define LWIP_PLATFORM_DIAG(x) { fprintf(stdout, "%s: lwip diag failure: %s\n", __FUNCTION__, (x)); }
 #define LWIP_PLATFORM_ASSERT(x) { fprintf(stderr, "%s: lwip assertion failure: %s\n", __FUNCTION__, (x)); abort(); }

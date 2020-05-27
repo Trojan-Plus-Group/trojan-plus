@@ -59,8 +59,7 @@ private:
     void udp_recv(const std::string &data, const boost::asio::ip::udp::endpoint &endpoint);
     void udp_sent();
     
-    std::weak_ptr<Session> pipeline;
-    bool use_pipeline;
+    std::weak_ptr<Session> pipeline_session;
     bool has_queried_out;
 public:
     ServerSession(Service* _service, const Config& config, boost::asio::ssl::context &ssl_context, Authenticator *auth, const std::string &plain_http_response);
@@ -69,10 +68,8 @@ public:
     void destroy(bool pipeline_call = false) override;
     void out_async_read();
 
-    void pipeline_in_recv(std::string &&data);
+    void set_pipeline_session(std::shared_ptr<Session> _session){ pipeline_session = _session;}
     bool is_destoryed() const { return status == DESTROY; }
-
-    std::weak_ptr<Session> get_pipeline(){ return pipeline; }
 };
 
 #endif // _SERVERSESSION_H_

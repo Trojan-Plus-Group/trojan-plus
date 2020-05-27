@@ -37,7 +37,6 @@ protected:
         INVALID,
         DESTROY
     } status;
-    bool is_udp;
     bool first_packet_recv;
     boost::asio::ip::tcp::socket in_socket;
     boost::asio::ssl::stream<boost::asio::ip::tcp::socket>out_socket;

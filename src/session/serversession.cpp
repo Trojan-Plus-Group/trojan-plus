@@ -36,7 +36,6 @@ ServerSession::ServerSession(Service* _service, const Config& config, boost::asi
     udp_resolver(_service->get_io_context()),
     auth(auth),
     plain_http_response(plain_http_response),
-    use_pipeline(false),
     has_queried_out(false) {}
 
 tcp::socket& ServerSession::accept_socket() {
@@ -47,7 +46,7 @@ void ServerSession::start() {
     
     start_time = time(nullptr);
 
-    if(!use_pipeline){
+    if(!pipeline_com.is_using_pipeline()){
         boost::system::error_code ec;
         in_endpoint = in_socket.next_layer().remote_endpoint(ec);
         if (ec) {
@@ -78,19 +77,9 @@ void ServerSession::start() {
     }
 }
 
-void ServerSession::pipeline_in_recv(string &&data) {
-    if (!use_pipeline) {
-        throw logic_error("cannot call pipeline_in_recv without pipeline!");
-    }
-
-    if (status != DESTROY) {
-        pipeline_data_cache.push_data(std::move(data));
-    }
-}
-
 void ServerSession::in_async_read() {
-    if(use_pipeline){
-        pipeline_data_cache.async_read([this](const string &data) {
+    if(pipeline_com.is_using_pipeline()){
+        pipeline_com.pipeline_data_cache.async_read([this](const string &data) {
             in_recv(data);
         });
     }else{
@@ -108,9 +97,9 @@ void ServerSession::in_async_read() {
 
 void ServerSession::in_async_write(const string &data) {
     auto self = shared_from_this();
-    if(use_pipeline){
-        if(!pipeline.expired()){
-            (static_cast<PipelineSession*>(pipeline.lock().get()))->session_write_data(*this, data, [this, self](const boost::system::error_code){
+    if(pipeline_com.is_using_pipeline()){
+        if(!pipeline_session.expired()){
+            (static_cast<PipelineSession*>(pipeline_session.lock().get()))->session_write_data(*this, data, [this, self](const boost::system::error_code){
                 in_sent();
             });            
         }else{
@@ -161,8 +150,8 @@ void ServerSession::out_async_write(const string &data) {
             return;
         }
         
-        if(use_pipeline && !pipeline.expired()){
-            (static_cast<PipelineSession*>(pipeline.lock().get()))->session_write_ack(*this, [this, self](const boost::system::error_code){
+        if(pipeline_com.is_using_pipeline() && !pipeline_session.expired()){
+            (static_cast<PipelineSession*>(pipeline_session.lock().get()))->session_write_ack(*this, [this, self](const boost::system::error_code){
                 out_sent();
             });
         }else{
@@ -384,7 +373,7 @@ void ServerSession::destroy(bool pipeline_call /*= false*/) {
 
     shutdown_ssl_socket(this, in_socket);    
 
-    if(!pipeline_call && use_pipeline && !pipeline.expired()){
-        (static_cast<PipelineSession*>(pipeline.lock().get()))->remove_session_after_destroy(*this);
+    if(!pipeline_call && pipeline_com.is_using_pipeline() && !pipeline_session.expired()){
+        (static_cast<PipelineSession*>(pipeline_session.lock().get()))->remove_session_after_destroy(*this);
     }
 }

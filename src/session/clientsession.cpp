@@ -32,7 +32,6 @@ using namespace boost::asio::ssl;
 ClientSession::ClientSession(Service* _service, const Config& config, context &ssl_context) :
     SocketSession(_service, config),
     status(HANDSHAKE),
-    is_udp(false),
     first_packet_recv(false),
     in_socket(_service->get_io_context()),
     out_socket(_service->get_io_context(), ssl_context){
@@ -230,8 +229,8 @@ void ClientSession::in_recv(const string &data) {
                 status = INVALID;
                 return;
             }
-            is_udp = req.command == TrojanRequest::UDP_ASSOCIATE;
-            if (is_udp) {
+            is_udp_forward_session = req.command == TrojanRequest::UDP_ASSOCIATE;
+            if (is_udp_forward_session) {
                 in_udp_endpoint = udp::endpoint(in_socket.local_endpoint().address(), 0);
                 boost::system::error_code ec;
                 udp_socket.open(in_udp_endpoint.protocol(), ec);
@@ -280,7 +279,7 @@ void ClientSession::in_sent() {
         case REQUEST: {
             status = CONNECT;
             in_async_read();
-            if (is_udp) {
+            if (is_udp_forward()) {
                 udp_async_read();
             }
             request_remote();
@@ -303,7 +302,7 @@ void ClientSession::request_remote(){
     auto self = shared_from_this();
     auto cb = [this, self](){
         boost::system::error_code ec;
-        if (is_udp) {
+        if (is_udp_forward()) {
             if (!first_packet_recv) {
                 udp_socket.cancel(ec);
             }

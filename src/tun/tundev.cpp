@@ -1,7 +1,6 @@
 
 #include "tundev.h"
 
-#include <linux/if_tun.h>
 #include <functional>
 #include <assert.h>
 #include <boost/asio/ip/address_v4.hpp>
@@ -18,8 +17,6 @@
 #include "tun/tunsession.h"
 #include "tun/lwip_tcp_client.h"
 #include "tun/tunsession.h"
-
-
 
 using namespace std;
 using namespace boost::asio::ip;
@@ -41,6 +38,7 @@ TUNDev::TUNDev(Service* _service, const std::string& _tun_name,
     sm_tundev = this;
 
     if(m_tun_fd == -1){
+#ifdef __linux__
         // open TUN device, check detail information:
         // https://www.kernel.org/doc/Documentation/networking/tuntap.txt          
         if ((m_tun_fd = open("/dev/net/tun", O_RDWR)) < 0) {
@@ -58,6 +56,9 @@ TUNDev::TUNDev(Service* _service, const std::string& _tun_name,
         }
 
         _log_with_date_time("[tun] /dev/net/tun ifr.ifr_mtu: " + to_string(ifr.ifr_mtu), Log::WARN);
+#else
+        throw logic_error("[tun] cannot enable tun run type in NON-linux system ! " + _tun_name);
+#endif //__linux__
     }
 
     m_boost_sd.assign(m_tun_fd);
@@ -153,8 +154,7 @@ TUNDev::~TUNDev(){
     }
 
     if(m_tun_fd != -1 && !m_is_outsize_tun_fd){
-        close(m_tun_fd);
-        m_tun_fd = -1;
+        m_boost_sd.close();
     }
 
     sm_tundev = nullptr;
@@ -225,7 +225,7 @@ err_t TUNDev::listener_accept_func(struct tcp_pcb *newpcb, err_t err){
         }
     });
     
-    m_service->start_session(session, false, [this, session, tcp_client](boost::system::error_code ec){
+    m_service->start_session(session, [this, session, tcp_client](boost::system::error_code ec){
         if(!ec){
             session->start();
             m_tcp_clients.emplace_back(tcp_client);
@@ -446,10 +446,11 @@ int TUNDev::try_to_process_udp_packet(uint8_t* data, int data_len){
         session->out_async_send((const char*)data, data_len, [](boost::system::error_code){}); // send as buf
         m_udp_clients.emplace_back(session);
 
-        m_service->start_session(session, true, [session, local_endpoint, remote_endpoint](boost::system::error_code ec){
+        m_service->start_session(session, [session, local_endpoint, remote_endpoint](boost::system::error_code ec){
             if(!ec){
                 session->start();                
             }else{
+                output_debug_info_ec(ec);
                 session->destroy();
             }
         });

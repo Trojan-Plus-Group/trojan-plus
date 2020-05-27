@@ -180,15 +180,16 @@ void PipelineSession::process_streaming_data(){
             });
 
             auto session = make_shared<ServerSession>(service, config, ssl_context, auth, plain_http_response);
+            session->set_pipeline_session(shared_from_this());
             session->get_pipeline_component().set_session_id(req.session_id);
-            session->get_pipeline_component().set_use_pipeline(false);
+            session->get_pipeline_component().set_use_pipeline();            
             session->in_endpoint = in_endpoint;
             session->start();
             sessions.emplace_back(session);
             _log_with_endpoint(in_endpoint, "PipelineSession starts a session " + to_string(req.session_id) + ", now remain " + to_string(sessions.size()));
         }else if(req.command == PipelineRequest::DATA){
             auto found = find_and_process_session(req.session_id, [&](SessionsList::iterator& it){ 
-                it->get()->pipeline_in_recv(move(req.packet_data));
+                it->get()->get_pipeline_component().pipeline_in_recv(move(req.packet_data));
             });
 
             if(!found){

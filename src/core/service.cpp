@@ -316,7 +316,7 @@ void Service::prepare_pipelines(){
     }
 }
 
-void Service::start_session(std::shared_ptr<Session> session, bool is_udp_forward, SentHandler&& started_handler) {
+void Service::start_session(std::shared_ptr<Session> session, SentHandler&& started_handler) {
     if(config.experimental.pipeline_num > 0 && config.run_type != Config::SERVER){
         
         prepare_pipelines();
@@ -357,7 +357,7 @@ void Service::start_session(std::shared_ptr<Session> session, bool is_udp_forwar
         }
 
         _log_with_date_time("pipeline " + to_string(pipeline->get_pipeline_id()) + " start session_id:" + to_string(session->get_session_id()), Log::INFO);
-        session.get()->get_pipeline_component().set_use_pipeline(is_udp_forward);
+        session.get()->get_pipeline_component().set_use_pipeline();
         pipeline->session_start(*(session.get()), move(started_handler));
     }else{
         started_handler(boost::system::error_code());
@@ -485,7 +485,7 @@ void Service::async_accept() {
             auto endpoint = session->accept_socket().remote_endpoint(ec);
             if (!ec) {
                 _log_with_endpoint(endpoint, "incoming connection");
-                start_session(session, false, [session](boost::system::error_code ec){
+                start_session(session, [session](boost::system::error_code ec){
                     if(ec){
                         session->destroy();    
                     }else{
@@ -556,7 +556,7 @@ void Service::udp_async_read() {
                 }
             });
 
-            start_session(session, true, [this, session, data](boost::system::error_code ec){
+            start_session(session, [this, session, data](boost::system::error_code ec){
                 if(!ec){
                     udp_sessions.emplace_back(session);
                     session->start_udp(data);

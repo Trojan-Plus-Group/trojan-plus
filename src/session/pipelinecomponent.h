@@ -39,21 +39,9 @@ public:
     inline SessionIdType get_session_id() const { return m_session_id; }
     void set_session_id(SessionIdType _id) { m_session_id = _id; }
     
-    inline void set_use_pipeline(bool _is_udp_forward) { 
-        m_is_use_pipeline = true;
-        m_is_udp = _is_udp_forward;
-    };
-
-    inline bool is_using_pipeline(){
-        return m_is_use_pipeline;
-    }
-    
-    void recv_ack_cmd() {
-        if(m_is_udp){
-            throw std::logic_error("[pipeline] udp forwarding do NOT need recv_ack_cmd");
-        }
-        pipeline_ack_counter++;
-    }
+    inline void set_use_pipeline() { m_is_use_pipeline = true; };
+    inline bool is_using_pipeline(){ return m_is_use_pipeline; }
+    inline void recv_ack_cmd() { pipeline_ack_counter++; }
 
     inline bool is_wait_for_pipeline_ack()const { return pipeline_wait_for_ack; }    
 

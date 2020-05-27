@@ -10,7 +10,6 @@ PipelineComponent::PipelineComponent(Service* _service, const Config& _config):
     m_service(_service),
     m_session_id(0),
     m_is_use_pipeline(false),
-    m_is_udp(false),
     pipeline_ack_counter(0),
     pipeline_wait_for_ack(false),
     pipeline_first_call_ack(true){
