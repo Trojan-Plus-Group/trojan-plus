@@ -21,9 +21,7 @@
 #define _SESSION_H_
 
 #include <ctime>
-#include <set>
 #include <memory>
-#include <stdexcept>
 
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/udp.hpp>
@@ -44,17 +42,22 @@ protected:
 
     Service* service; 
     const Config& config;
-    PipelineComponent pipleline_com;
-
+    PipelineComponent pipeline_com;
+    bool is_udp_forward_session;
 public:
     Session(Service* _service, const Config& _config);
 
     virtual void start() = 0;
     virtual ~Session();
     virtual void destroy(bool pipeline_call = false) = 0;
+    virtual void recv_ack_cmd(){
+        pipeline_com.recv_ack_cmd();
+    }
 
-    PipelineComponent::SessionIdType session_id(){ return pipleline_com.get_session_id(); }
-    PipelineComponent& pipeline_component(){ return pipleline_com; }
+    inline bool is_udp_forward()const { return is_udp_forward_session; }
+
+    PipelineComponent::SessionIdType get_session_id(){ return pipeline_com.get_session_id(); }
+    PipelineComponent& get_pipeline_component(){ return pipeline_com; }
 };
 
 #endif // _SESSION_H_

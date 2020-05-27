@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <set>
+#include <stdexcept>
 
 #include "core/pipeline.h"
 
@@ -21,10 +22,10 @@ private:
     SessionIdType m_session_id;
     Service* m_service;
     bool m_is_use_pipeline;
+    bool m_is_udp;
 public:
-    PipelineComponent(Service* _service);
-
-    bool is_udp_forward_session;
+    PipelineComponent(Service* _service, const Config& _config);
+    
     int pipeline_ack_counter;
     bool pipeline_wait_for_ack;
     bool pipeline_first_call_ack;
@@ -37,19 +38,22 @@ public:
     inline SessionIdType get_session_id() const { return m_session_id; }
     void set_session_id(SessionIdType _id) { m_session_id = _id; }
     
-    inline void set_use_pipeline(bool is_udp_forward) { 
+    inline void set_use_pipeline(bool _is_udp_forward) { 
         m_is_use_pipeline = true;
-        is_udp_forward_session = is_udp_forward;
+        m_is_udp = _is_udp_forward;
     };
 
-    inline bool is_udp_forward()const { return is_udp_forward_session; }
-    virtual void recv_ack_cmd() { 
-        if(is_udp_forward_session){
-            throw std::logic_error("recv_ack_cmd cannot be called in is_udp_forward_session");
+    inline bool is_using_pipeline(){
+        return m_is_use_pipeline;
+    }
+    
+    void recv_ack_cmd() {
+        if(m_is_udp){
+            throw std::logic_error("[pipeline] udp forwarding do NOT need recv_ack_cmd");
         }
-        
         pipeline_ack_counter++;
     }
+
     inline bool is_wait_for_pipeline_ack()const { return pipeline_wait_for_ack; }    
 
     inline bool pre_call_ack_func(){

@@ -20,13 +20,14 @@
 #include "natsession.h"
 #include "proto/trojanrequest.h"
 #include "ssl/sslsession.h"
+#include "core/utils.h"
 
 using namespace std;
 using namespace boost::asio::ip;
 using namespace boost::asio::ssl;
 
-NATSession::NATSession(Service* _service, context &ssl_context) :
-    ClientSession(_service, ssl_context){
+NATSession::NATSession(Service* _service, const Config& config, context &ssl_context) :
+    ClientSession(_service, config, ssl_context){
     status = CONNECT;
 }
 

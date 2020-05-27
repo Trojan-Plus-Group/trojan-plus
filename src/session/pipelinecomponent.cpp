@@ -2,10 +2,15 @@
 #include "pipelinecomponent.h"
 #include "core/service.h"
 
+using namespace std;
+PipelineComponent::SessionIdType PipelineComponent::s_session_id_counter = 0;
+set<PipelineComponent::SessionIdType> PipelineComponent::s_session_used_ids;
+
 PipelineComponent::PipelineComponent(Service* _service, const Config& _config): 
     m_is_use_pipeline(false),
     m_service(_service),
-    session_id(0){
+    m_session_id(0),
+    m_is_udp(false){
     pipeline_ack_counter = static_cast<int>(m_service->config.experimental.pipeline_ack_window);
 }
 
@@ -15,14 +20,14 @@ void PipelineComponent::allocate_session_id(){
     }
 
     do{
-        session_id = s_session_id_counter++;        
-    }while(s_session_used_ids.find(session_id) != s_session_used_ids.end());
+        m_session_id = s_session_id_counter++;        
+    }while(s_session_used_ids.find(m_session_id) != s_session_used_ids.end());
 
-    s_session_used_ids.insert(session_id);
+    s_session_used_ids.insert(m_session_id);
 }
 
 void PipelineComponent::free_session_id(){
-    s_session_used_ids.erase(session_id);
+    s_session_used_ids.erase(m_session_id);
 }
 
 void PipelineComponent::pipeline_in_recv(string &&data) {
@@ -30,7 +35,5 @@ void PipelineComponent::pipeline_in_recv(string &&data) {
         throw logic_error("cannot call pipeline_in_recv without pipeline!");
     }
 
-    if (status != DESTROY) {
-        pipeline_data_cache.push_data(std::move(data));
-    }
+    pipeline_data_cache.push_data(std::move(data));
 }

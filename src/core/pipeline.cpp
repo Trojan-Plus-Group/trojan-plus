@@ -78,8 +78,11 @@ void Pipeline::session_async_send_cmd(PipelineRequest::Command cmd, Session& ses
         sent_handler(boost::asio::error::broken_pipe);
         return;
     }
-    _log_with_date_time("pipeline " + to_string(get_pipeline_id()) + " session_id: " + to_string(session.session_id) + " --> send to server cmd: " +  PipelineRequest::get_cmd_string(cmd) + " data length:" + to_string(send_data.length()));
-    sending_data_cache.push_data(PipelineRequest::generate(cmd, session.session_id, send_data), move(sent_handler));
+
+    _log_with_date_time("pipeline " + to_string(get_pipeline_id()) + " session_id: " + to_string(session.get_session_id()) + 
+        " --> send to server cmd: " + PipelineRequest::get_cmd_string(cmd) + " data length:" + to_string(send_data.length()));
+
+    sending_data_cache.push_data(PipelineRequest::generate(cmd, session.get_session_id(), send_data), move(sent_handler));
 }
 
 void Pipeline::session_async_send_icmp(const std::string& send_data, SentHandler&& sent_handler) {
@@ -106,7 +109,7 @@ void Pipeline::session_destroyed(Session& session){
                 ++it;
             }            
         }
-        _log_with_date_time("pipeline " + to_string(get_pipeline_id()) + " send command to close session_id: " + to_string(session.session_id));
+        _log_with_date_time("pipeline " + to_string(get_pipeline_id()) + " send command to close session_id: " + to_string(session.get_session_id()));
         session_async_send_cmd(PipelineRequest::CLOSE, session, "", [](boost::system::error_code){});
     }
 }
@@ -158,22 +161,14 @@ void Pipeline::out_async_recv(){
                     auto it = sessions.begin();
                     while (it != sessions.end()) {
                         auto session = it->get();
-                        if (session->session_id == req.session_id) {
+                        if (session->get_session_id() == req.session_id) {
                             if (req.command == PipelineRequest::CLOSE) {
                                 session->destroy(true);
                                 it = sessions.erase(it);
                             } else if (req.command == PipelineRequest::ACK) {
-                                if (session->is_udp_forward()) {
-                                    _log_with_date_time("UDP don't need ACK command", Log::ERROR);
-                                } else {
-                                    session->recv_ack_cmd();
-                                }
+                                session->recv_ack_cmd();
                             } else {
-                                if (session->is_udp_forward()) {
-                                    static_cast<UDPForwardSession*>(session)->pipeline_out_recv(move(req.packet_data));
-                                } else {
-                                    static_cast<ClientSession*>(session)->pipeline_out_recv(move(req.packet_data));
-                                }
+                                session->get_pipeline_component().pipeline_in_recv(move(req.packet_data));
                             }
                             found = true;
                             break;

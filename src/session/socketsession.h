@@ -28,7 +28,7 @@ protected:
     boost::asio::ip::udp::endpoint udp_recv_endpoint;
     
 public:
-    SocketSession(Service* _service);
+    SocketSession(Service* _service, const Config& config);
 
     virtual boost::asio::ip::tcp::socket& accept_socket() = 0;
 

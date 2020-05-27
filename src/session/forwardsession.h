@@ -29,7 +29,7 @@ class ForwardSession : public NATSession {
 protected:
     std::pair<std::string, uint16_t> get_target_endpoint() override;
 public:
-    ForwardSession(Service* _service, boost::asio::ssl::context &ssl_context);
+    ForwardSession(Service* _service, const Config& config, boost::asio::ssl::context &ssl_context);
 };
 
 #endif // _FORWARDSESSION_H_

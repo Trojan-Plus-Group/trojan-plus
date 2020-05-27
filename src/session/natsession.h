@@ -30,7 +30,7 @@ protected:
     void in_sent() override;
 
 public:
-    NATSession(Service* _service, boost::asio::ssl::context &ssl_context);
+    NATSession(Service* _service, const Config& config, boost::asio::ssl::context &ssl_context);
     void start() override;
 };
 

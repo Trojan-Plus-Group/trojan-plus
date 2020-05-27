@@ -32,9 +32,9 @@ using namespace std;
 using namespace boost::asio::ip;
 using namespace boost::asio::ssl;
 
-UDPForwardSession::UDPForwardSession(Service* _service, context &ssl_context, 
+UDPForwardSession::UDPForwardSession(Service* _service, const Config& config, context &ssl_context, 
     const udp::endpoint &endpoint,const std::pair<std::string, uint16_t>& targetdst, UDPWrite in_write) :
-    SocketSession(_service),
+    SocketSession(_service, config),
     status(CONNECT),
     in_write(move(in_write)),
     out_socket(_service->service(), ssl_context),
@@ -45,12 +45,12 @@ UDPForwardSession::UDPForwardSession(Service* _service, context &ssl_context,
     udp_recv_endpoint = endpoint;
     udp_target_endpoint = udp::endpoint(boost::asio::ip::make_address(udp_target.first), udp_target.second);    
     in_endpoint = tcp::endpoint(endpoint.address(), endpoint.port());
-
-    allocate_session_id()();
+    is_udp_forward_session = true;
+    pipeline_com.allocate_session_id();
 }
 
 UDPForwardSession::~UDPForwardSession(){
-    free_session_id()();
+    pipeline_com.free_session_id();
 }
 
 tcp::socket& UDPForwardSession::accept_socket() {
@@ -86,9 +86,9 @@ void UDPForwardSession::start_udp(const std::string& data) {
     out_write_buf = TrojanRequest::generate(config.password.cbegin()->first, udp_target.first, udp_target.second, false);
     process(udp_recv_endpoint, data);
 
-    _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(session_id()) + " forwarding UDP packets to " + udp_target.first + ':' + to_string(udp_target.second) + " via " + config.remote_addr + ':' + to_string(config.remote_port), Log::INFO);
+    _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(get_session_id()) + " forwarding UDP packets to " + udp_target.first + ':' + to_string(udp_target.second) + " via " + config.remote_addr + ':' + to_string(config.remote_port), Log::INFO);
 
-    if(pipeline_client_service){    
+    if(pipeline_com.is_using_pipeline()){    
         cb();
     }else{
         config.prepare_ssl_reuse(out_socket);
@@ -104,19 +104,11 @@ bool UDPForwardSession::process(const udp::endpoint &endpoint, const string &dat
     return true;
 }
 
-void UDPForwardSession::pipeline_out_recv(string &&data) {
-    if (!pipeline_client_service) {
-        throw logic_error("cannot call pipeline_out_recv without pipeline!");
-    }
-    
-    if (status != DESTROY) {
-        pipeline_data_cache.push_data(std::move(data));
-    }
-}
+
 
 void UDPForwardSession::out_async_read() {
-    if (pipeline_client_service) {
-        pipeline_data_cache.async_read([this](const string &data) {
+    if (pipeline_com.is_using_pipeline()) {
+        pipeline_com.pipeline_data_cache.async_read([this](const string &data) {
             out_recv(data);
         });
     } else {
@@ -133,8 +125,8 @@ void UDPForwardSession::out_async_read() {
 
 void UDPForwardSession::out_async_write(const string &data) {
     auto self = shared_from_this();
-    if(pipeline_client_service){
-        pipeline_client_service->session_async_send_to_pipeline(*this, PipelineRequest::DATA, data, [this, self](const boost::system::error_code error) {
+    if(pipeline_com.is_using_pipeline()){
+        service->session_async_send_to_pipeline(*this, PipelineRequest::DATA, data, [this, self](const boost::system::error_code error) {
             if (error) {
                 destroy();
                 return;
@@ -158,7 +150,7 @@ void UDPForwardSession::timer_async_wait(){
     auto self = shared_from_this();
     gc_timer.async_wait([this, self](const boost::system::error_code error) {
         if (!error) {
-            _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(session_id()) + " UDP session timeout");
+            _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(get_session_id()) + " UDP session timeout");
             destroy();
         }
     });
@@ -172,7 +164,7 @@ void UDPForwardSession::in_recv(const string &data) {
     timer_async_wait();
     string packet = UDPPacket::generate(udp_target.first, udp_target.second, data);
     size_t length = data.length();
-    _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(session_id()) + " sent a UDP packet of length " + to_string(length) + " bytes to " + udp_target.first + ':' + to_string(udp_target.second));
+    _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(get_session_id()) + " sent a UDP packet of length " + to_string(length) + " bytes to " + udp_target.first + ':' + to_string(udp_target.second));
     sent_len += length;
     if (status == FORWARD) {
         status = FORWARDING;
@@ -193,13 +185,13 @@ void UDPForwardSession::out_recv(const string &data) {
             bool is_packet_valid = packet.parse(udp_data_buf, packet_len);
             if (!is_packet_valid) {
                 if (udp_data_buf.length() > MAX_BUF_LENGTH) {
-                    _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(session_id()) + " UDP packet too long", Log::ERROR);
+                    _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(get_session_id()) + " UDP packet too long", Log::ERROR);
                     destroy();
                     return;
                 }
                 break;
             }
-            _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(session_id()) + " received a UDP packet of length " + to_string(packet.length) + " bytes from " + packet.address.address + ':' + to_string(packet.address.port));
+            _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(get_session_id()) + " received a UDP packet of length " + to_string(packet.length) + " bytes from " + packet.address.address + ':' + to_string(packet.address.port));
             udp_data_buf = udp_data_buf.substr(packet_len);
             recv_len += packet.length;
 
@@ -237,7 +229,7 @@ void UDPForwardSession::destroy(bool pipeline_call /*= false*/) {
         return;
     }
     status = DESTROY;
-    _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(session_id()) + " disconnected, " + to_string(recv_len) + " bytes received, " + to_string(sent_len) + " bytes sent, lasted for " + to_string(time(nullptr) - start_time) + " seconds", Log::INFO);
+    _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(get_session_id()) + " disconnected, " + to_string(recv_len) + " bytes received, " + to_string(sent_len) + " bytes sent, lasted for " + to_string(time(nullptr) - start_time) + " seconds", Log::INFO);
     resolver.cancel();
     gc_timer.cancel();
 
@@ -248,7 +240,7 @@ void UDPForwardSession::destroy(bool pipeline_call /*= false*/) {
 
     shutdown_ssl_socket(this, out_socket);
     
-    if(!pipeline_call && pipeline_client_service){
-        pipeline_client_service->session_destroy_in_pipeline(*this);
+    if(!pipeline_call && pipeline_com.is_using_pipeline()){
+        service->session_destroy_in_pipeline(*this);
     }
 }

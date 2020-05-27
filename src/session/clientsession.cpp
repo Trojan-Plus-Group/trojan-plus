@@ -29,18 +29,18 @@ using namespace std;
 using namespace boost::asio::ip;
 using namespace boost::asio::ssl;
 
-ClientSession::ClientSession(Service* _service, context &ssl_context) :
-    SocketSession(_service),
+ClientSession::ClientSession(Service* _service, const Config& config, context &ssl_context) :
+    SocketSession(_service, config),
     status(HANDSHAKE),
     is_udp(false),
     first_packet_recv(false),
     in_socket(_service->service()),
     out_socket(_service->service(), ssl_context){
-        allocate_session_id()();
+    pipeline_com.allocate_session_id();
 }
 
 ClientSession::~ClientSession(){
-    free_session_id()(); 
+    pipeline_com.free_session_id(); 
 }
 
 tcp::socket& ClientSession::accept_socket() {
@@ -67,18 +67,18 @@ void ClientSession::start() {
 }
 void ClientSession::recv_ack_cmd(){
     SocketSession::recv_ack_cmd();
-    if(is_wait_for_pipeline_ack()){
+    if(pipeline_com.is_wait_for_pipeline_ack()){
         in_async_read();
     }
 }
 
 void ClientSession::in_async_read() {
-    if(pipeline_client_service && status == FORWARD){
-        if(!pre_call_ack_func()){
+    if(pipeline_com.is_using_pipeline() && status == FORWARD){
+        if(!pipeline_com.pre_call_ack_func()){
             _log_with_endpoint(in_endpoint, "Cannot ClientSession::in_async_read ! Is waiting for ack");
             return;
         }
-        _log_with_endpoint(in_endpoint, "Permit to ClientSession::in_async_read! ack:" + to_string(pipeline_ack_counter));
+        _log_with_endpoint(in_endpoint, "Permit to ClientSession::in_async_read! ack:" + to_string(pipeline_com.pipeline_ack_counter));
     }
 
     auto self = shared_from_this();
@@ -105,8 +105,8 @@ void ClientSession::in_async_write(const string &data) {
             return;
         }
 
-        if(pipeline_client_service && status == FORWARD){
-            pipeline_client_service->session_async_send_to_pipeline(*this, PipelineRequest::ACK, "", [this, self](const boost::system::error_code error) {
+        if(pipeline_com.is_using_pipeline() && status == FORWARD){
+            service->session_async_send_to_pipeline(*this, PipelineRequest::ACK, "", [this, self](const boost::system::error_code error) {
                 if (error) {
                     output_debug_info_ec(error);
                     destroy();
@@ -121,19 +121,9 @@ void ClientSession::in_async_write(const string &data) {
     });
 }
 
-void ClientSession::pipeline_out_recv(string&& data){
-    if (!pipeline_client_service) {
-        throw logic_error("cannot call pipeline_out_recv without pipeline!");
-    }
-
-    if (status != DESTROY) {
-        pipeline_data_cache.push_data(std::move(data));
-    }    
-}
-
 void ClientSession::out_async_read() {
-    if(pipeline_client_service){
-        pipeline_data_cache.async_read([this](const string &data) {
+    if(pipeline_com.is_using_pipeline()){
+        pipeline_com.pipeline_data_cache.async_read([this](const string &data) {
             out_recv(data);
         });
     }else{
@@ -151,8 +141,8 @@ void ClientSession::out_async_read() {
 
 void ClientSession::out_async_write(const string &data) {
     auto self = shared_from_this();
-    if(pipeline_client_service){
-        pipeline_client_service->session_async_send_to_pipeline(*this, PipelineRequest::DATA, data, [this, self](const boost::system::error_code error) {
+    if(pipeline_com.is_using_pipeline()){
+        service->session_async_send_to_pipeline(*this, PipelineRequest::DATA, data, [this, self](const boost::system::error_code error) {
             if (error) {
                 output_debug_info_ec(error);
                 destroy();
@@ -206,7 +196,7 @@ void ClientSession::in_recv(const string &data) {
     switch (status) {
         case HANDSHAKE: {
             if (data.length() < 2 || data[0] != 5 || data.length() != (unsigned int)(unsigned char)data[1] + 2) {
-                _log_with_endpoint(in_endpoint, "session_id: " + to_string(session_id()) + " unknown protocol", Log::ERROR);
+                _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + " unknown protocol", Log::ERROR);
                 destroy();
                 return;
             }
@@ -218,7 +208,7 @@ void ClientSession::in_recv(const string &data) {
                 }
             }
             if (!has_method) {
-                _log_with_endpoint(in_endpoint, "session_id: " + to_string(session_id()) + " unsupported auth method", Log::ERROR);
+                _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + " unsupported auth method", Log::ERROR);
                 in_async_write(string("\x05\xff", 2));
                 status = INVALID;
                 return;
@@ -228,14 +218,14 @@ void ClientSession::in_recv(const string &data) {
         }
         case REQUEST: {
             if (data.length() < 7 || data[0] != 5 || data[2] != 0) {
-                _log_with_endpoint(in_endpoint, "session_id: " + to_string(session_id()) + " bad request", Log::ERROR);
+                _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + " bad request", Log::ERROR);
                 destroy();
                 return;
             }
             out_write_buf = config.password.cbegin()->first + "\r\n" + data[1] + data.substr(3) + "\r\n";
             TrojanRequest req;
             if (req.parse(out_write_buf) == -1) {
-                _log_with_endpoint(in_endpoint, "session_id: " + to_string(session_id()) + " unsupported command", Log::ERROR);
+                _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + " unsupported command", Log::ERROR);
                 in_async_write(string("\x05\x07\x00\x01\x00\x00\x00\x00\x00\x00", 10));
                 status = INVALID;
                 return;
@@ -252,10 +242,10 @@ void ClientSession::in_recv(const string &data) {
                 }
                 udp_socket.bind(in_udp_endpoint);
                 
-                _log_with_endpoint(in_endpoint, "session_id: " + to_string(session_id()) + " requested UDP associate to " + req.address.address + ':' + to_string(req.address.port) + ", open UDP socket " + udp_socket.local_endpoint().address().to_string() + ':' + to_string(udp_socket.local_endpoint().port()) + " for relay", Log::INFO);
+                _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + " requested UDP associate to " + req.address.address + ':' + to_string(req.address.port) + ", open UDP socket " + udp_socket.local_endpoint().address().to_string() + ':' + to_string(udp_socket.local_endpoint().port()) + " for relay", Log::INFO);
                 in_async_write(string("\x05\x00\x00", 3) + SOCKS5Address::generate(udp_socket.local_endpoint()));
             } else {
-                _log_with_endpoint(in_endpoint, "session_id: " + to_string(session_id()) + " requested connection to " + req.address.address + ':' + to_string(req.address.port), Log::INFO);
+                _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + " requested connection to " + req.address.address + ':' + to_string(req.address.port), Log::INFO);
                 in_async_write(string("\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00", 10));
             }
             break;
@@ -272,7 +262,7 @@ void ClientSession::in_recv(const string &data) {
             break;
         }
         case UDP_FORWARD: {
-            _log_with_endpoint(in_endpoint, "session_id: " + to_string(session_id()) + " unexpected data from TCP port", Log::ERROR);
+            _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + " unexpected data from TCP port", Log::ERROR);
             destroy();
             break;
         }
@@ -328,7 +318,7 @@ void ClientSession::request_remote(){
         out_async_write(out_write_buf);
     };
 
-    if(pipeline_client_service){
+    if(pipeline_com.is_using_pipeline()){
         cb();
     }else{  
         connect_remote_server_ssl(this, config.remote_addr, to_string(config.remote_port), resolver, out_socket, in_endpoint,cb);
@@ -358,7 +348,7 @@ void ClientSession::udp_recv(const string &data, const udp::endpoint&) {
         return;
     }
     if (data.length() < 3 || data[0] || data[1] || data[2]) {
-        _log_with_endpoint(in_udp_endpoint, "session_id: " + to_string(session_id()) + " bad UDP packet", Log::ERROR);
+        _log_with_endpoint(in_udp_endpoint, "session_id: " + to_string(get_session_id()) + " bad UDP packet", Log::ERROR);
         destroy();
         return;
     }
@@ -366,12 +356,12 @@ void ClientSession::udp_recv(const string &data, const udp::endpoint&) {
     size_t address_len;
     bool is_addr_valid = address.parse(data.substr(3), address_len);
     if (!is_addr_valid) {
-        _log_with_endpoint(in_udp_endpoint, "session_id: " + to_string(session_id()) + " bad UDP packet", Log::ERROR);
+        _log_with_endpoint(in_udp_endpoint, "session_id: " + to_string(get_session_id()) + " bad UDP packet", Log::ERROR);
         destroy();
         return;
     }
     size_t length = data.length() - 3 - address_len;
-    _log_with_endpoint(in_udp_endpoint, "session_id: " + to_string(session_id()) + " sent a UDP packet of length " + to_string(length) + " bytes to " + address.address + ':' + to_string(address.port));
+    _log_with_endpoint(in_udp_endpoint, "session_id: " + to_string(get_session_id()) + " sent a UDP packet of length " + to_string(length) + " bytes to " + address.address + ':' + to_string(address.port));
     string packet = data.substr(3, address_len) + char(uint8_t(length >> 8)) + char(uint8_t(length & 0xFF)) + "\r\n" + data.substr(address_len + 3);
     sent_len += length;
     if (status == CONNECT) {
@@ -389,19 +379,19 @@ void ClientSession::udp_sent() {
         bool is_packet_valid = packet.parse(udp_data_buf, packet_len);
         if (!is_packet_valid) {
             if (udp_data_buf.length() > MAX_BUF_LENGTH) {
-                _log_with_endpoint(in_udp_endpoint, "session_id: " + to_string(session_id()) + " UDP packet too long", Log::ERROR);
+                _log_with_endpoint(in_udp_endpoint, "session_id: " + to_string(get_session_id()) + " UDP packet too long", Log::ERROR);
                 destroy();
                 return;
             }
             out_async_read();
             return;
         }
-        _log_with_endpoint(in_udp_endpoint, "session_id: " + to_string(session_id()) + " received a UDP packet of length " + to_string(packet.length) + " bytes from " + packet.address.address + ':' + to_string(packet.address.port));
+        _log_with_endpoint(in_udp_endpoint, "session_id: " + to_string(get_session_id()) + " received a UDP packet of length " + to_string(packet.length) + " bytes from " + packet.address.address + ':' + to_string(packet.address.port));
         SOCKS5Address address;
         size_t address_len;
         bool is_addr_valid = address.parse(udp_data_buf, address_len);
         if (!is_addr_valid) {
-            _log_with_endpoint(in_udp_endpoint, "session_id: " + to_string(session_id()) + " udp_sent: invalid UDP packet address", Log::ERROR);
+            _log_with_endpoint(in_udp_endpoint, "session_id: " + to_string(get_session_id()) + " udp_sent: invalid UDP packet address", Log::ERROR);
             destroy();
             return;
         }
@@ -419,7 +409,7 @@ void ClientSession::destroy(bool pipeline_call /*= false*/) {
         return;
     }
     status = DESTROY;
-    _log_with_endpoint(in_endpoint, "session_id: " + to_string(session_id()) + " disconnected, " + to_string(recv_len) + " bytes received, " + to_string(sent_len) + " bytes sent, lasted for " + to_string(time(nullptr) - start_time) + " seconds", Log::INFO);
+    _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + " disconnected, " + to_string(recv_len) + " bytes received, " + to_string(sent_len) + " bytes sent, lasted for " + to_string(time(nullptr) - start_time) + " seconds", Log::INFO);
     boost::system::error_code ec;
     resolver.cancel();
     if (in_socket.is_open()) {
@@ -434,7 +424,7 @@ void ClientSession::destroy(bool pipeline_call /*= false*/) {
 
     shutdown_ssl_socket(this, out_socket);
 
-    if(!pipeline_call && pipeline_client_service){
-        pipeline_client_service->session_destroy_in_pipeline(*this);
+    if(!pipeline_call && pipeline_com.is_using_pipeline()){
+        service->session_destroy_in_pipeline(*this);
     }
 }

@@ -20,13 +20,11 @@
 #include "session.h"
 using namespace std;
 
-PipelineComponent::SessionIdType Session::s_session_id_counter = 0;
-set<PipelineComponent::SessionIdType> Session::s_session_used_ids;
-
 Session::Session(Service* _service, const Config& _config) :
     config(_config),
     service(_service),
-    pipleline_com(_service, _config){
+    pipeline_com(_service, _config),
+    is_udp_forward_session(false){
     
 }
 

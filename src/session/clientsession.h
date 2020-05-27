@@ -61,13 +61,12 @@ protected:
     bool prepare_session();
     void request_remote();
 public:
-    ClientSession(Service* _service, boost::asio::ssl::context &ssl_context);
+    ClientSession(Service* _service, const Config& config, boost::asio::ssl::context &ssl_context);
     ~ClientSession();
     boost::asio::ip::tcp::socket &accept_socket() override;
     void start() override;
     void destroy(bool pipeline_call = false) override;
     
-    void pipeline_out_recv(std::string&& data);
     void recv_ack_cmd() override;
 };
 

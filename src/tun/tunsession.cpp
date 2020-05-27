@@ -11,7 +11,7 @@
 using namespace std;
 
 TUNSession::TUNSession(Service* _service, bool _is_udp) : 
-    Session(_service->config, _service->service()),
+    Session(_service, _service->config),
     m_service(_service), 
     m_recv_buf_ack_length(0),
     m_out_socket(_service->service(), _service->get_ssl_context()),
@@ -22,11 +22,11 @@ TUNSession::TUNSession(Service* _service, bool _is_udp) :
     m_udp_timout_timer(_service->service()){
 
     is_udp_forward_session = _is_udp;
-    allocate_session_id()();
+    pipeline_com.allocate_session_id();
 }
 
 TUNSession::~TUNSession(){
-    free_session_id()();
+    pipeline_com.free_session_id();
 }
 
 void TUNSession::start(){
@@ -103,21 +103,11 @@ void TUNSession::destroy(bool pipeline_call){
     shutdown_ssl_socket(this, m_out_socket);
 
     if(!pipeline_call && m_service->is_use_pipeline()){
-        pipeline_client_service->session_destroy_in_pipeline(*this);
+        service->session_destroy_in_pipeline(*this);
     }
 
     if(!m_close_from_tundev_flag){
         m_close_cb(this);
-    }    
-}
-
-void TUNSession::pipeline_out_recv(string&& data){
-    if (!m_service->is_use_pipeline()) {
-        throw logic_error("cannot call pipeline_out_recv without pipeline!");
-    }
-
-    if (!is_destroyed()) {
-        m_pipeline_data_cache.push_data(move(data));
     }    
 }
 
@@ -222,12 +212,12 @@ void TUNSession::out_async_send_impl(std::string data_to_send, Pipeline::SentHan
 
                 _handler(error);
             }else{
-                if(!pre_call_ack_func()){
+                if(!pipeline_com.pre_call_ack_func()){
                     m_wait_ack_handler.emplace_back(move(_handler));
                     _log_with_endpoint(m_local_addr, "Cannot TUNSession::out_async_send ! Is waiting for ack");
                     return;
                 }
-                _log_with_endpoint(m_local_addr, "Permit to TUNSession::out_async_send ! ack:" + to_string(pipeline_ack_counter));
+                _log_with_endpoint(m_local_addr, "Permit to TUNSession::out_async_send ! ack:" + to_string(pipeline_com.pipeline_ack_counter));
 
                 _handler(error);
             }            

@@ -356,7 +356,7 @@ void Service::start_session(std::shared_ptr<Session> session, bool is_udp_forwar
             throw logic_error("pipeline fatal logic!");
         }
 
-        _log_with_date_time("pipeline " + to_string(pipeline->get_pipeline_id()) + " start session_id:" + to_string(session->session_id()), Log::INFO);
+        _log_with_date_time("pipeline " + to_string(pipeline->get_pipeline_id()) + " start session_id:" + to_string(session->get_session_id()), Log::INFO);
         session.get()->set_use_pipeline(this, is_udp_forward);
         pipeline->session_start(*(session.get()), move(started_handler));
     }else{
@@ -415,7 +415,7 @@ void Service::session_destroy_in_pipeline(Session& session){
         }else{
             auto p = it->lock().get();
             if(p->is_in_pipeline(session)){
-                _log_with_date_time("pipeline " + to_string(p->get_pipeline_id()) + " destroy session_id:" + to_string(session.session_id()));
+                _log_with_date_time("pipeline " + to_string(p->get_pipeline_id()) + " destroy session_id:" + to_string(session.get_session_id()));
                 p->session_destroyed(session);
                 break;
             }
@@ -456,20 +456,20 @@ void Service::async_accept() {
     if (config.run_type == Config::SERVER) {
         if(config.experimental.pipeline_num > 0){
             // start a pipeline mode in server run_type
-            auto pipeline = make_shared<PipelineSession>(config, io_context, ssl_context, auth, plain_http_response);
+            auto pipeline = make_shared<PipelineSession>(this, config, ssl_context, auth, plain_http_response);
             pipeline->set_icmpd(icmp_processor);
 
             session = pipeline;
         }else{
-            session = make_shared<ServerSession>(config, io_context, ssl_context, auth, plain_http_response);
+            session = make_shared<ServerSession>(this, config, io_context, ssl_context, auth, plain_http_response);
         }        
     } else {
         if (config.run_type == Config::FORWARD) {
-            session = make_shared<ForwardSession>(config, io_context, ssl_context);
+            session = make_shared<ForwardSession>(this, config, io_context, ssl_context);
         } else if (config.run_type == Config::NAT) {
-            session = make_shared<NATSession>(config, io_context, ssl_context);
+            session = make_shared<NATSession>(this, config, io_context, ssl_context);
         } else {
-            session = make_shared<ClientSession>(config, io_context, ssl_context);
+            session = make_shared<ClientSession>(this, config, io_context, ssl_context);
         }      
     }
     

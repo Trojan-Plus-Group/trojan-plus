@@ -77,7 +77,6 @@ public:
     void destroy(bool pipeline_call = false) override;
 
     void out_async_send(const char* _data, size_t _length, Pipeline::SentHandler&& _handler);
-    void pipeline_out_recv(std::string&& data);
     void recv_ack_cmd() override;
 
     void recv_buf_sent(uint16_t _length);

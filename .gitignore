@@ -53,3 +53,4 @@ compile_commands.json
 CTestTestfile.cmake
 build/
 crt/
+win32-build/

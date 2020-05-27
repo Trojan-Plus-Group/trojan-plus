@@ -28,8 +28,8 @@ using namespace std;
 using namespace boost::asio::ip;
 using namespace boost::asio::ssl;
 
-ServerSession::ServerSession(Service* _service, boost::asio::ssl::context &ssl_context, Authenticator *auth, const std::string &plain_http_response) :
-    SocketSession(_service),
+ServerSession::ServerSession(Service* _service, const Config& config, boost::asio::ssl::context &ssl_context, Authenticator *auth, const std::string &plain_http_response) :
+    SocketSession(_service, config),
     status(HANDSHAKE),
     in_socket(_service->service(), ssl_context),
     out_socket(_service->service()),
@@ -38,12 +38,6 @@ ServerSession::ServerSession(Service* _service, boost::asio::ssl::context &ssl_c
     plain_http_response(plain_http_response),
     use_pipeline(false),
     has_queried_out(false) {}
-
-void ServerSession::set_use_pipeline(weak_ptr<Session> pl, Service* _pipeline_service){
-    pipeline = pl;
-    use_pipeline = true;
-    pipeline_client_service = _pipeline_service;
-}
 
 tcp::socket& ServerSession::accept_socket() {
     return (tcp::socket&)in_socket.next_layer();
@@ -137,12 +131,13 @@ void ServerSession::in_async_write(const string &data) {
 }
 
 void ServerSession::out_async_read() {
-    if(use_pipeline){
-        if(!pre_call_ack_func()){
-            _log_with_endpoint(in_endpoint, "session_id: " + to_string(session_id()) + " cannot ServerSession::out_async_read ! Is waiting for ack");
+    if(pipeline_com.is_using_pipeline()){
+        if(!pipeline_com.pre_call_ack_func()){
+            _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + " cannot ServerSession::out_async_read ! Is waiting for ack");
             return;
         }
-        _log_with_endpoint(in_endpoint, "session_id: " + to_string(session_id()) + " permit to ServerSession::out_async_read aysnc! ack:" + to_string(pipeline_ack_counter));
+        _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + 
+            " permit to ServerSession::out_async_read aysnc! ack:" + to_string(pipeline_com.pipeline_ack_counter));
     }
 
     auto self = shared_from_this();
@@ -220,13 +215,13 @@ void ServerSession::in_recv(const string &data) {
                 if (auth && auth->auth(req.password)) {
                     valid = true;
                     auth_password = req.password;
-                    _log_with_endpoint(in_endpoint, "session_id: " + to_string(session_id()) + " authenticated by authenticator (" + req.password.substr(0, 7) + ')', Log::INFO);
+                    _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + " authenticated by authenticator (" + req.password.substr(0, 7) + ')', Log::INFO);
                 }
             } else {
-                _log_with_endpoint(in_endpoint, "session_id: " + to_string(session_id()) + " authenticated as " + password_iterator->second, Log::INFO);
+                _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + " authenticated as " + password_iterator->second, Log::INFO);
             }
             if (!valid) {
-                _log_with_endpoint(in_endpoint, "session_id: " + to_string(session_id()) + " valid trojan request structure but possibly incorrect password (" + req.password + ')', Log::WARN);
+                _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + " valid trojan request structure but possibly incorrect password (" + req.password + ')', Log::WARN);
             }
         }
         string query_addr = valid ? req.address.address : config.remote_addr;
@@ -247,16 +242,16 @@ void ServerSession::in_recv(const string &data) {
             out_write_buf = req.payload;
             if (req.command == TrojanRequest::UDP_ASSOCIATE) {
                 out_udp_endpoint = udp::endpoint(make_address(req.address.address), req.address.port);
-                _log_with_endpoint(out_udp_endpoint, "session_id: " + to_string(session_id()) + " requested UDP associate to " + req.address.address + ':' + to_string(req.address.port), Log::INFO);
+                _log_with_endpoint(out_udp_endpoint, "session_id: " + to_string(get_session_id()) + " requested UDP associate to " + req.address.address + ':' + to_string(req.address.port), Log::INFO);
                 status = UDP_FORWARD;
                 udp_data_buf = out_write_buf;
                 udp_sent();
                 return;
             } else {
-                _log_with_endpoint(in_endpoint, "session_id: " + to_string(session_id()) + " requested connection to " + req.address.address + ':' + to_string(req.address.port), Log::INFO);
+                _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + " requested connection to " + req.address.address + ':' + to_string(req.address.port), Log::INFO);
             }
         } else {
-            _log_with_endpoint(in_endpoint, "session_id: " + to_string(session_id()) + " not trojan request, connecting to " + query_addr + ':' + query_port, Log::WARN);
+            _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + " not trojan request, connecting to " + query_addr + ':' + query_port, Log::WARN);
             out_write_buf = data;
         }
         sent_len += out_write_buf.length();
@@ -306,7 +301,7 @@ void ServerSession::out_sent() {
 void ServerSession::udp_recv(const string &data, const udp::endpoint &endpoint) {
     if (status == UDP_FORWARD) {
         size_t length = data.length();
-        _log_with_endpoint(out_udp_endpoint, "session_id: " + to_string(session_id()) + " received a UDP packet of length " + to_string(length) + " bytes from " + endpoint.address().to_string() + ':' + to_string(endpoint.port()));
+        _log_with_endpoint(out_udp_endpoint, "session_id: " + to_string(get_session_id()) + " received a UDP packet of length " + to_string(length) + " bytes from " + endpoint.address().to_string() + ':' + to_string(endpoint.port()));
         recv_len += length;
         in_async_write(UDPPacket::generate(endpoint, data));
     }
@@ -319,20 +314,20 @@ void ServerSession::udp_sent() {
         bool is_packet_valid = packet.parse(udp_data_buf, packet_len);
         if (!is_packet_valid) {
             if (udp_data_buf.length() > MAX_BUF_LENGTH) {
-                _log_with_endpoint(out_udp_endpoint, "session_id: " + to_string(session_id()) + " UDP packet too long", Log::ERROR);
+                _log_with_endpoint(out_udp_endpoint, "session_id: " + to_string(get_session_id()) + " UDP packet too long", Log::ERROR);
                 destroy();
                 return;
             }
             in_async_read();
             return;
         }
-        _log_with_endpoint(out_udp_endpoint, "session_id: " + to_string(session_id()) + " sent a UDP packet of length " + to_string(packet.length) + " bytes to " + packet.address.address + ':' + to_string(packet.address.port));
+        _log_with_endpoint(out_udp_endpoint, "session_id: " + to_string(get_session_id()) + " sent a UDP packet of length " + to_string(packet.length) + " bytes to " + packet.address.address + ':' + to_string(packet.address.port));
         udp_data_buf = udp_data_buf.substr(packet_len);
         string query_addr = packet.address.address;
         auto self = shared_from_this();
         udp_resolver.async_resolve(query_addr, to_string(packet.address.port), [this, self, packet, query_addr](const boost::system::error_code error, udp::resolver::results_type results) {
             if (error || results.empty()) {
-                _log_with_endpoint(out_udp_endpoint, "session_id: " + to_string(session_id()) + " cannot resolve remote server hostname " + query_addr + ": " + error.message(), Log::ERROR);
+                _log_with_endpoint(out_udp_endpoint, "session_id: " + to_string(get_session_id()) + " cannot resolve remote server hostname " + query_addr + ": " + error.message(), Log::ERROR);
                 destroy();
                 return;
             }
@@ -346,7 +341,7 @@ void ServerSession::udp_sent() {
                     }
                 }
             }
-            _log_with_endpoint(out_udp_endpoint, "session_id: " + to_string(session_id()) + " " + query_addr + " is resolved to " + iterator->endpoint().address().to_string(), Log::ALL);
+            _log_with_endpoint(out_udp_endpoint, "session_id: " + to_string(get_session_id()) + " " + query_addr + " is resolved to " + iterator->endpoint().address().to_string(), Log::ALL);
             if (!udp_socket.is_open()) {
                 auto protocol = iterator->endpoint().protocol();
                 boost::system::error_code ec;
@@ -370,7 +365,7 @@ void ServerSession::destroy(bool pipeline_call /*= false*/) {
         return;
     }
     status = DESTROY;
-    _log_with_endpoint(in_endpoint, "session_id: " + to_string(session_id()) + " disconnected, " + to_string(recv_len) + " bytes received, " + to_string(sent_len) + " bytes sent, lasted for " + to_string(time(nullptr) - start_time) + " seconds", Log::INFO);
+    _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + " disconnected, " + to_string(recv_len) + " bytes received, " + to_string(sent_len) + " bytes sent, lasted for " + to_string(time(nullptr) - start_time) + " seconds", Log::INFO);
     if (auth && !auth_password.empty()) {
         auth->record(auth_password, recv_len, sent_len);
     }

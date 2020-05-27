@@ -49,7 +49,7 @@ void lwip_tcp_client::client_log(const char *fmt, ...){
 #endif
             m_local_addr.address().to_string().c_str(), m_local_addr.port(),
             m_remote_addr.address().to_string().c_str(), m_remote_addr.port(), 
-            (uint64_t)m_pcb, (int)m_tun_session->session_id());
+            (uint64_t)m_pcb, (int)m_tun_session->get_session_id());
 
         va_list vl;
         va_start(vl, fmt);

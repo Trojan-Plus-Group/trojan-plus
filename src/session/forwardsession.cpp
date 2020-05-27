@@ -21,8 +21,8 @@
 using namespace std;
 using namespace boost::asio::ssl;
 
-ForwardSession::ForwardSession(Service* _service, context &ssl_context) :
-    NATSession(_service, ssl_context){}
+ForwardSession::ForwardSession(Service* _service, const Config& config, context &ssl_context) :
+    NATSession(_service, config, ssl_context){}
 
 pair<string, uint16_t> ForwardSession::get_target_endpoint() {
     return make_pair(config.target_addr, config.target_port);

@@ -18,11 +18,11 @@
  */
 
 #include "socketsession.h"
+#include "core/service.h"
+
 using namespace std;
-
-
-SocketSession::SocketSession(Service* _service) : 
-    Session(_service),
+SocketSession::SocketSession(Service* _service, const Config& config) : 
+    Session(_service, config),
     recv_len(0),
     sent_len(0),
     resolver(_service->service()),
