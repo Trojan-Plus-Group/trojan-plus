@@ -41,7 +41,16 @@ Log::LogCallback Log::log_callback{};
 void Log::log(const string &message, Level level) {
     if (level >= Log::level) {
 #ifdef ENABLE_ANDROID_LOG
-        __android_log_print(ANDROID_LOG_ERROR, "trojan", "%s\n",
+        int log_level;
+        switch(level){
+            case Log::ALL:  log_level = ANDROID_LOG_VERBOSE; break;
+            case Log::INFO: log_level = ANDROID_LOG_DEBUG; break;
+            case Log::WARN: log_level = ANDROID_LOG_WARN; break;
+            case Log::ERROR: log_level = ANDROID_LOG_ERROR; break;
+            case Log::FATAL: log_level = ANDROID_LOG_FATAL; break;
+            default: log_level = ANDROID_LOG_DEBUG; break;
+        }
+        __android_log_print(log_level, "trojan", "%s\n",
                             message.c_str());
 #else
         fprintf(output_stream, "%s\n", message.c_str());

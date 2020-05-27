@@ -6,8 +6,7 @@ using namespace std;
 PipelineComponent::SessionIdType PipelineComponent::s_session_id_counter = 0;
 set<PipelineComponent::SessionIdType> PipelineComponent::s_session_used_ids;
 
-PipelineComponent::PipelineComponent(Service* _service, const Config& _config): 
-    m_service(_service),
+PipelineComponent::PipelineComponent(const Config& _config): 
     m_session_id(0),
     m_is_use_pipeline(false),
     pipeline_ack_counter(0),

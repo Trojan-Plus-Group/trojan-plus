@@ -28,6 +28,17 @@ else()
     add_definitions(-Wall -Wextra)
 endif()
 
+if(ANDROID)
+    option(ENABLE_ANDROID_LOG "Build with LogCat output" ON)
+    if(ENABLE_ANDROID_LOG)
+        add_definitions(-DENABLE_ANDROID_LOG=1)
+        set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -llog")
+        set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -llog")
+        set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -llog")
+        set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -llog")
+    endif()
+endif()
+
 # force 1.73 boost compiling warning note
 add_definitions(-DBOOST_BIND_GLOBAL_PLACEHOLDERS=1)
 

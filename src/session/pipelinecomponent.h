@@ -20,12 +20,10 @@ private:
     static SessionIdType s_session_id_counter;
     static std::set<SessionIdType>  s_session_used_ids;
 
-    Service* m_service;
     SessionIdType m_session_id;    
     bool m_is_use_pipeline;
-    bool m_is_udp;
 public:
-    PipelineComponent(Service* _service, const Config& _config);
+    PipelineComponent(const Config& _config);
     
     int pipeline_ack_counter;
     bool pipeline_wait_for_ack;

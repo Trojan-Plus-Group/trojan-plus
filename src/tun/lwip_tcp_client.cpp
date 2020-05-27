@@ -42,7 +42,7 @@ lwip_tcp_client::lwip_tcp_client(struct tcp_pcb *_pcb, shared_ptr<TUNSession> _s
 void lwip_tcp_client::client_log(const char *fmt, ...){
     if(Log::level == Log::ALL){
         char buf[256];
-#ifdef __ANDROID__
+#if defined(__ANDROID__) && (!defined(__aarch64__) && !defined(__x86_64__))
         int n = snprintf(buf, sizeof(buf), "[lwip] [%s:%d->%s:%d] [pcb:0x%llx session_id:%d] ", 
 #else
         int n = snprintf(buf, sizeof(buf), "[lwip] [%s:%d->%s:%d] [pcb:0x%lx session_id:%d] ", 

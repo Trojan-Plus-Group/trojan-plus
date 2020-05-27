@@ -100,7 +100,7 @@ std::pair<std::string, uint16_t> recv_target_endpoint(int _fd){
     }
     return make_pair(ipstr, port);
 #else // ENABLE_NAT
-    return make_pair("", 0);
+    return make_pair("", (uint16_t)_fd);
 #endif // ENABLE_NAT
 }
 
