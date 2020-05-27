@@ -23,6 +23,7 @@
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/ssl.hpp>
+#include <boost/version.hpp>
 #include <functional>
 #include <list>
 #include <string>
