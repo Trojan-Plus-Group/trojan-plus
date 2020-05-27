@@ -27,6 +27,7 @@
 #include "core/authenticator.h"
 #include "core/pipeline.h"
 
+class Service;
 class ServerSession : public SocketSession {
 private:
     enum Status {
@@ -61,8 +62,7 @@ private:
     bool use_pipeline;
     bool has_queried_out;
 public:
-    ServerSession(const Config &config, boost::asio::io_context &io_context, boost::asio::ssl::context &ssl_context, Authenticator *auth, const std::string &plain_http_response);
-    void set_use_pipeline(std::weak_ptr<Session> pipeline);
+    ServerSession(Service* _service, boost::asio::ssl::context &ssl_context, Authenticator *auth, const std::string &plain_http_response);
     boost::asio::ip::tcp::socket &accept_socket() override;
     void start() override;
     void destroy(bool pipeline_call = false) override;

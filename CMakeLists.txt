@@ -20,6 +20,7 @@ if(CMAKE_BUILD_TYPE STREQUAL Release)
     endif()
 endif()
 
+
 set(CMAKE_CXX_STANDARD 11)
 if(MSVC)
     add_definitions(-D_CRT_SECURE_NO_WARNINGS -D_WIN32_WINNT=0x0601)
@@ -34,11 +35,6 @@ add_definitions(-DBOOST_BIND_GLOBAL_PLACEHOLDERS=1)
 add_definitions(-DBADVPN_THREADWORK_USE_PTHREAD=1 -DBADVPN_LINUX=1 -DBADVPN_BREACTOR_BADVPN=1)
 add_definitions(-D_GNU_SOURCE=1 -DBADVPN_USE_SIGNALFD=1 -DBADVPN_USE_EPOLL=1)
 add_definitions(-DBADVPN_LITTLE_ENDIAN=1 -DBADVPN_THREAD_SAFE=1)
-
-# remove lwip_tcp_client.cpp compiling warning
-set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -Wno-pmf-conversions")
-set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -Wno-pmf-conversions")
-
 
 include_directories(
     src

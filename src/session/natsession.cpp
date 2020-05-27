@@ -20,55 +20,18 @@
 #include "natsession.h"
 #include "proto/trojanrequest.h"
 #include "ssl/sslsession.h"
+
 using namespace std;
 using namespace boost::asio::ip;
 using namespace boost::asio::ssl;
 
-// These 2 definitions are respectively from linux/netfilter_ipv4.h and
-// linux/netfilter_ipv6/ip6_tables.h. Including them will 1) cause linux-headers
-// to be one of trojan's dependencies, which is not good, and 2) prevent trojan
-// from even compiling.
-#ifndef SO_ORIGINAL_DST
-#define SO_ORIGINAL_DST 80
-#endif // SO_ORIGINAL_DST
-#ifndef IP6T_SO_ORIGINAL_DST
-#define IP6T_SO_ORIGINAL_DST 80
-#endif // IP6T_SO_ORIGINAL_DST
-
-NATSession::NATSession(const Config &config, boost::asio::io_context &io_context, context &ssl_context) :
-    ClientSession(config, io_context, ssl_context){
+NATSession::NATSession(Service* _service, context &ssl_context) :
+    ClientSession(_service, ssl_context){
     status = CONNECT;
 }
 
 pair<string, uint16_t> NATSession::get_target_endpoint() {
-#ifdef ENABLE_NAT
-    int fd = in_socket.native_handle();
-    // Taken from https://github.com/shadowsocks/shadowsocks-libev/blob/v3.3.1/src/redir.c.
-    sockaddr_storage destaddr;
-    memset(&destaddr, 0, sizeof(sockaddr_storage));
-    socklen_t socklen = sizeof(destaddr);
-    int error = getsockopt(fd, SOL_IPV6, IP6T_SO_ORIGINAL_DST, &destaddr, &socklen);
-    if (error) {
-        error = getsockopt(fd, SOL_IP, SO_ORIGINAL_DST, &destaddr, &socklen);
-        if (error) {
-            return make_pair("", 0);
-        }
-    }
-    char ipstr[INET6_ADDRSTRLEN];
-    uint16_t port;
-    if (destaddr.ss_family == AF_INET) {
-        auto *sa = (sockaddr_in*) &destaddr;
-        inet_ntop(AF_INET, &(sa->sin_addr), ipstr, INET_ADDRSTRLEN);
-        port = ntohs(sa->sin_port);
-    } else {
-        auto *sa = (sockaddr_in6*) &destaddr;
-        inet_ntop(AF_INET6, &(sa->sin6_addr), ipstr, INET6_ADDRSTRLEN);
-        port = ntohs(sa->sin6_port);
-    }
-    return make_pair(ipstr, port);
-#else // ENABLE_NAT
-    return make_pair("", 0);
-#endif // ENABLE_NAT
+    return recv_target_endpoint(in_socket.native_handle());
 }
 
 void NATSession::start() {

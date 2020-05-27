@@ -31,7 +31,7 @@ class PipelineRequest {
 public:
 
     std::string packet_data;
-    Session::SessionIdType session_id;
+    PipelineComponent::SessionIdType session_id;
     enum Command {
         CONNECT = 0,
         DATA,
@@ -41,7 +41,7 @@ public:
         MAX_COMMANDS,
         MAX_ICMP_LENGTH = std::numeric_limits<uint16_t>::max(),
         MAX_DATA_LENGTH = std::numeric_limits<uint32_t>::max(),
-        MAX_SESSION_ID_LENGTH = std::numeric_limits<Session::SessionIdType>::max()
+        MAX_SESSION_ID_LENGTH = std::numeric_limits<PipelineComponent::SessionIdType>::max()
     } command;
     int parse(std::string &data);
     inline std::string get_cmd_string() const { return get_cmd_string(command); }
@@ -55,7 +55,7 @@ public:
             default:return "UNKNOW!!";
         }
     }
-    static std::string generate(enum Command cmd, Session::SessionIdType session_id, const std::string& data);
+    static std::string generate(enum Command cmd, PipelineComponent::SessionIdType session_id, const std::string& data);
 };
 
 #endif // _PIPELINEREQUEST_H_

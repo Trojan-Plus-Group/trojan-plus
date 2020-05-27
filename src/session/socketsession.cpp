@@ -21,10 +21,10 @@
 using namespace std;
 
 
-SocketSession::SocketSession(const Config &config, boost::asio::io_context &io_context) : 
-    Session(config, io_context),
+SocketSession::SocketSession(Service* _service) : 
+    Session(_service),
     recv_len(0),
     sent_len(0),
-    resolver(io_context),
-    udp_socket(io_context){
+    resolver(_service->service()),
+    udp_socket(_service->service()){
 }

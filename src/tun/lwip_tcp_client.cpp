@@ -32,9 +32,9 @@ lwip_tcp_client::lwip_tcp_client(struct tcp_pcb *_pcb, shared_ptr<TUNSession> _s
     tcp_arg(m_pcb, this);
 
     // setup handlers
-    tcp_err(m_pcb, (tcp_err_fn)&lwip_tcp_client::client_err_func);
-    tcp_recv(m_pcb, (tcp_recv_fn)&lwip_tcp_client::client_recv_func);
-    tcp_sent(m_pcb, (tcp_sent_fn)&lwip_tcp_client::client_sent_func);
+    tcp_err(m_pcb, static_client_err_func);
+    tcp_recv(m_pcb, static_client_recv_func);
+    tcp_sent(m_pcb, static_client_sent_func);
 
     client_log("accepted");
 }
@@ -42,10 +42,14 @@ lwip_tcp_client::lwip_tcp_client(struct tcp_pcb *_pcb, shared_ptr<TUNSession> _s
 void lwip_tcp_client::client_log(const char *fmt, ...){
     if(Log::level == Log::ALL){
         char buf[256];
+#ifdef __ANDROID__
+        int n = snprintf(buf, sizeof(buf), "[lwip] [%s:%d->%s:%d] [pcb:0x%llx session_id:%d] ", 
+#else
         int n = snprintf(buf, sizeof(buf), "[lwip] [%s:%d->%s:%d] [pcb:0x%lx session_id:%d] ", 
+#endif
             m_local_addr.address().to_string().c_str(), m_local_addr.port(),
             m_remote_addr.address().to_string().c_str(), m_remote_addr.port(), 
-            (uint64_t)m_pcb, (int)m_tun_session->session_id);
+            (uint64_t)m_pcb, (int)m_tun_session->session_id());
 
         va_list vl;
         va_start(vl, fmt);

@@ -22,11 +22,11 @@ TUNSession::TUNSession(Service* _service, bool _is_udp) :
     m_udp_timout_timer(_service->service()){
 
     is_udp_forward_session = _is_udp;
-    allocate_session_id();
+    allocate_session_id()();
 }
 
 TUNSession::~TUNSession(){
-    free_session_id();
+    free_session_id()();
 }
 
 void TUNSession::start(){
@@ -78,7 +78,7 @@ void TUNSession::reset_udp_timeout(){
         auto self = shared_from_this();
         m_udp_timout_timer.async_wait([this, self](const boost::system::error_code error) {
             if (!error) {
-                _log_with_endpoint(m_remote_addr_udp, "session_id: " + to_string(session_id) + " UDP TUNSession timeout");
+                _log_with_endpoint(m_remote_addr_udp, "session_id: " + to_string(session_id()) + " UDP TUNSession timeout");
                 destroy();
             }
         });
@@ -92,9 +92,9 @@ void TUNSession::destroy(bool pipeline_call){
     m_destroyed = true;
 
     if(is_udp_forward()){
-        _log_with_endpoint(m_local_addr_udp, "TUNSession session_id: " + to_string(session_id) + " disconnected ", Log::INFO);
+        _log_with_endpoint(m_local_addr_udp, "TUNSession session_id: " + to_string(session_id()) + " disconnected ", Log::INFO);
     }else{
-        _log_with_endpoint(m_local_addr, "TUNSession session_id: " + to_string(session_id) + " disconnected ", Log::INFO);
+        _log_with_endpoint(m_local_addr, "TUNSession session_id: " + to_string(session_id()) + " disconnected ", Log::INFO);
     }    
 
     m_wait_ack_handler.clear();

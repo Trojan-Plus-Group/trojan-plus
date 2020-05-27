@@ -26,6 +26,7 @@
 #include "core/pipeline.h"
 #include "socketsession.h"
 
+class Service;
 class UDPForwardSession : public SocketSession {
 public:
     typedef std::function<void(const boost::asio::ip::udp::endpoint&, const std::string&)> UDPWrite;
@@ -53,7 +54,7 @@ private:
     void out_sent();
     void timer_async_wait();
 public:
-    UDPForwardSession(const Config &config, boost::asio::io_context &io_context, boost::asio::ssl::context &ssl_context, 
+    UDPForwardSession(Service* _service, boost::asio::ssl::context &ssl_context, 
         const boost::asio::ip::udp::endpoint &endpoint, const std::pair<std::string, uint16_t>& targetdst, UDPWrite in_write);
     ~UDPForwardSession();
     

@@ -74,6 +74,36 @@ static pair<string, uint16_t> get_addr(struct sockaddr_storage addr) {
     return make_pair("", 0);
 }
 
+std::pair<std::string, uint16_t> recv_target_endpoint(int _fd){
+#ifdef ENABLE_NAT
+    // Taken from https://github.com/shadowsocks/shadowsocks-libev/blob/v3.3.1/src/redir.c.
+    sockaddr_storage destaddr;
+    memset(&destaddr, 0, sizeof(sockaddr_storage));
+    socklen_t socklen = sizeof(destaddr);
+    int error = getsockopt(_fd, SOL_IPV6, IP6T_SO_ORIGINAL_DST, &destaddr, &socklen);
+    if (error) {
+        error = getsockopt(_fd, SOL_IP, SO_ORIGINAL_DST, &destaddr, &socklen);
+        if (error) {
+            return make_pair("", 0);
+        }
+    }
+    char ipstr[INET6_ADDRSTRLEN];
+    uint16_t port;
+    if (destaddr.ss_family == AF_INET) {
+        auto *sa = (sockaddr_in*) &destaddr;
+        inet_ntop(AF_INET, &(sa->sin_addr), ipstr, INET_ADDRSTRLEN);
+        port = ntohs(sa->sin_port);
+    } else {
+        auto *sa = (sockaddr_in6*) &destaddr;
+        inet_ntop(AF_INET6, &(sa->sin6_addr), ipstr, INET6_ADDRSTRLEN);
+        port = ntohs(sa->sin6_port);
+    }
+    return make_pair(ipstr, port);
+#else // ENABLE_NAT
+    return make_pair("", 0);
+#endif // ENABLE_NAT
+}
+
 // copied from shadowsocks-libev udpreplay.c
 // it works if in NAT mode
 pair<string, uint16_t> recv_tproxy_udp_msg(int fd, boost::asio::ip::udp::endpoint &recv_endpoint, char *buf, int &buf_len, int &ttl) {
@@ -179,6 +209,10 @@ bool prepare_nat_udp_target_bind(int fd, bool is_ipv4, const boost::asio::ip::ud
 }
 
 #else
+
+std::pair<std::string, uint16_t> recv_target_endpoint(int _native_fd){
+    throw runtime_error("NAT is not supported in Windows");
+}
 
 std::pair<std::string, uint16_t> recv_tproxy_udp_msg(int fd, boost::asio::ip::udp::endpoint& recv_endpoint, char* buf, int& buf_len, int& ttl){
     throw runtime_error("NAT is not supported in Windows");

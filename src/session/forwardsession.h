@@ -24,11 +24,12 @@
 #include "natsession.h"
 #include <boost/asio/ssl.hpp>
 
+class Service;
 class ForwardSession : public NATSession {
 protected:
     std::pair<std::string, uint16_t> get_target_endpoint() override;
 public:
-    ForwardSession(const Config &config, boost::asio::io_context &io_context, boost::asio::ssl::context &ssl_context);
+    ForwardSession(Service* _service, boost::asio::ssl::context &ssl_context);
 };
 
 #endif // _FORWARDSESSION_H_

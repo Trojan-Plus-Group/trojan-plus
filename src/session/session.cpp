@@ -20,33 +20,14 @@
 #include "session.h"
 using namespace std;
 
-Session::SessionIdType Session::s_session_id_counter = 0;
-set<Session::SessionIdType> Session::s_session_used_ids;
+PipelineComponent::SessionIdType Session::s_session_id_counter = 0;
+set<PipelineComponent::SessionIdType> Session::s_session_used_ids;
 
-Session::Session(const Config &config, boost::asio::io_context &io_context) :
-    pipeline_client_service(nullptr),
-    pipeline_wait_for_ack(false),
-    pipeline_first_call_ack(true),
-    config(config),
-    io_context(io_context),
-    session_id(0) {
-    pipeline_ack_counter = static_cast<int>(config.experimental.pipeline_ack_window);
+Session::Session(Service* _service, const Config& _config) :
+    config(_config),
+    service(_service),
+    pipleline_com(_service, _config){
+    
 }
 
 Session::~Session() = default;
-
-void Session::allocate_session_id(){
-    if(s_session_used_ids.size() >= numeric_limits<SessionIdType>::max()){
-        throw logic_error("session id is over !! pipeline reached the session id limits !!");
-    }
-
-    do{
-        session_id = s_session_id_counter++;        
-    }while(s_session_used_ids.find(session_id) != s_session_used_ids.end());
-
-    s_session_used_ids.insert(session_id);
-}
-
-void Session::free_session_id(){
-    s_session_used_ids.erase(session_id);
-}

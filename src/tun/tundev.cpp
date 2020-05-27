@@ -117,7 +117,7 @@ TUNDev::TUNDev(Service* _service, const std::string& _tun_name,
     tcp_arg(m_tcp_listener, this);
 
     // setup listener accept handler
-    tcp_accept(m_tcp_listener,(tcp_accept_fn)&TUNDev::listener_accept_func);
+    tcp_accept(m_tcp_listener, static_listener_accept_func);
 
     async_read();
 }
@@ -446,7 +446,7 @@ int TUNDev::try_to_process_udp_packet(uint8_t* data, int data_len){
         session->out_async_send((const char*)data, data_len, [](boost::system::error_code){}); // send as buf
         m_udp_clients.emplace_back(session);
 
-        m_service->start_session(session, true, [this, session, local_endpoint, remote_endpoint](boost::system::error_code ec){
+        m_service->start_session(session, true, [session, local_endpoint, remote_endpoint](boost::system::error_code ec){
             if(!ec){
                 session->start();                
             }else{

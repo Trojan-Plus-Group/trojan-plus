@@ -25,6 +25,7 @@
 #include "socketsession.h"
 #include "core/pipeline.h"
 
+class Service;
 class ClientSession : public SocketSession {
 protected:
     enum Status {
@@ -41,7 +42,7 @@ protected:
     boost::asio::ip::tcp::socket in_socket;
     boost::asio::ssl::stream<boost::asio::ip::tcp::socket>out_socket;
     boost::asio::ip::udp::endpoint in_udp_endpoint;
-    Pipeline::ReadDataCache pipeline_data_cache;
+    
 
     void in_async_read();
     void in_async_write(const std::string &data);
@@ -60,7 +61,7 @@ protected:
     bool prepare_session();
     void request_remote();
 public:
-    ClientSession(const Config &config, boost::asio::io_context &io_context, boost::asio::ssl::context &ssl_context);
+    ClientSession(Service* _service, boost::asio::ssl::context &ssl_context);
     ~ClientSession();
     boost::asio::ip::tcp::socket &accept_socket() override;
     void start() override;

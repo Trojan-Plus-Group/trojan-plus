@@ -31,6 +31,17 @@
 
 #include "log.h"
 
+// These 2 definitions are respectively from linux/netfilter_ipv4.h and
+// linux/netfilter_ipv6/ip6_tables.h. Including them will 1) cause linux-headers
+// to be one of trojan's dependencies, which is not good, and 2) prevent trojan
+// from even compiling.
+#ifndef SO_ORIGINAL_DST
+#define SO_ORIGINAL_DST 80
+#endif // SO_ORIGINAL_DST
+#ifndef IP6T_SO_ORIGINAL_DST
+#define IP6T_SO_ORIGINAL_DST 80
+#endif // IP6T_SO_ORIGINAL_DST
+
 #ifdef ENABLE_REUSE_PORT
 typedef boost::asio::detail::socket_option::boolean<SOL_SOCKET, SO_REUSEPORT> reuse_port;
 #endif  // ENABLE_REUSE_PORT
@@ -190,6 +201,7 @@ void shutdown_ssl_socket(ThisPtr this_ptr, boost::asio::ssl::stream<boost::asio:
     }
 }
 
+std::pair<std::string, uint16_t> recv_target_endpoint(int _native_fd);
 std::pair<std::string, uint16_t> recv_tproxy_udp_msg(int fd, boost::asio::ip::udp::endpoint& recv_endpoint, char* buf, int& buf_len, int& ttl);
 bool prepare_nat_udp_bind(int fd, bool is_ipv4, bool recv_ttl);
 bool prepare_nat_udp_target_bind(int fd, bool is_ipv4, const boost::asio::ip::udp::endpoint& udp_target_endpoint);

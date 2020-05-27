@@ -30,6 +30,7 @@
 #include "core/authenticator.h"
 #include "core/pipeline.h"
 
+class Service*
 class ServerSession;
 class PipelineSession : public SocketSession {
     typedef std::list<std::shared_ptr<ServerSession>> SessionsList;
@@ -62,10 +63,9 @@ class PipelineSession : public SocketSession {
     void in_async_read();
     void in_recv(const std::string& data);
     void in_send(PipelineRequest::Command cmd, ServerSession& session, const std::string& session_data, Pipeline::SentHandler&& sent_handler);
-    bool find_and_process_session(Session::SessionIdType session_id, std::function<void(SessionsList::iterator&)> processor);
+    bool find_and_process_session(PipelineComponent::SessionIdType session_id, std::function<void(SessionsList::iterator&)> processor);
 public:
-    PipelineSession(const Config &config, boost::asio::io_context &io_context, 
-        boost::asio::ssl::context &ssl_context, Authenticator *auth, const std::string &plain_http_response);
+    PipelineSession(Service* _service, boost::asio::ssl::context &ssl_context, Authenticator *auth, const std::string &plain_http_response);
     void destroy(bool pipeline_call = false);
 
     boost::asio::ip::tcp::socket& accept_socket();

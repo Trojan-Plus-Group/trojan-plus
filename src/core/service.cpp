@@ -356,7 +356,7 @@ void Service::start_session(std::shared_ptr<Session> session, bool is_udp_forwar
             throw logic_error("pipeline fatal logic!");
         }
 
-        _log_with_date_time("pipeline " + to_string(pipeline->get_pipeline_id()) + " start session_id:" + to_string(session->session_id), Log::INFO);
+        _log_with_date_time("pipeline " + to_string(pipeline->get_pipeline_id()) + " start session_id:" + to_string(session->session_id()), Log::INFO);
         session.get()->set_use_pipeline(this, is_udp_forward);
         pipeline->session_start(*(session.get()), move(started_handler));
     }else{
@@ -415,7 +415,7 @@ void Service::session_destroy_in_pipeline(Session& session){
         }else{
             auto p = it->lock().get();
             if(p->is_in_pipeline(session)){
-                _log_with_date_time("pipeline " + to_string(p->get_pipeline_id()) + " destroy session_id:" + to_string(session.session_id));
+                _log_with_date_time("pipeline " + to_string(p->get_pipeline_id()) + " destroy session_id:" + to_string(session.session_id()));
                 p->session_destroyed(session);
                 break;
             }

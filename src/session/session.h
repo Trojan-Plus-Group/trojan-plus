@@ -28,69 +28,33 @@
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/steady_timer.hpp>
+
 #include "core/config.h"
+#include "session/pipelinecomponent.h"
 
 class Service;
 class Session : public std::enable_shared_from_this<Session> {
+
 public:
-    typedef uint16_t SessionIdType;
     enum {
         MAX_BUF_LENGTH = 8192,
     };
 
-private:
-
-    // session id counter for pipeline mode
-    static SessionIdType s_session_id_counter;
-    static std::set<SessionIdType>  s_session_used_ids;
-
 protected:
-    Service* pipeline_client_service;
-    bool is_udp_forward_session;
-    int pipeline_ack_counter;
-    bool pipeline_wait_for_ack;
-    bool pipeline_first_call_ack;
-    
-    void allocate_session_id();
-    void free_session_id();
+
+    Service* service; 
+    const Config& config;
+    PipelineComponent pipleline_com;
+
 public:
-    Session(const Config &config, boost::asio::io_context &io_context);
+    Session(Service* _service, const Config& _config);
 
     virtual void start() = 0;
     virtual ~Session();
     virtual void destroy(bool pipeline_call = false) = 0;
 
-    const Config &config;
-    boost::asio::io_context &io_context;
-
-    SessionIdType session_id;
-    inline void set_use_pipeline(Service* service, bool is_udp_forward) { 
-        pipeline_client_service = service; 
-        is_udp_forward_session = is_udp_forward;
-    };
-
-    inline bool is_udp_forward()const { return is_udp_forward_session; }
-    virtual void recv_ack_cmd() { 
-        if(is_udp_forward_session){
-            throw std::logic_error("recv_ack_cmd cannot be called in is_udp_forward_session");
-        }
-        
-        pipeline_ack_counter++;
-    }
-    inline bool is_wait_for_pipeline_ack()const { return pipeline_wait_for_ack; }
-
-    inline bool pre_call_ack_func(){
-        if(!pipeline_first_call_ack){
-            if(pipeline_ack_counter <= 0){
-                pipeline_wait_for_ack = true;
-                return false;
-            }
-            pipeline_ack_counter--;
-        }
-        pipeline_wait_for_ack = false;
-        pipeline_first_call_ack = false;
-        return true;
-    }
+    PipelineComponent::SessionIdType session_id(){ return pipleline_com.get_session_id(); }
+    PipelineComponent& pipeline_component(){ return pipleline_com; }
 };
 
 #endif // _SESSION_H_

@@ -41,6 +41,10 @@ private:
         return sm_tundev->netif_output_func(netif, p, ipaddr);
     }
 
+    static err_t static_listener_accept_func(void *arg, struct tcp_pcb *newpcb, err_t err){
+        return ((TUNDev*)arg)->listener_accept_func(newpcb, err);
+    }
+
 private:
 
     // lwip TUN netif device handler

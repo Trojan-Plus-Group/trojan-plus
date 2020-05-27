@@ -11,6 +11,7 @@
 #include "core/config.h"
 #include "session.h"
 
+class Service;
 class SocketSession : public Session {
 protected:    
     uint8_t in_read_buf[MAX_BUF_LENGTH]{};
@@ -27,7 +28,7 @@ protected:
     boost::asio::ip::udp::endpoint udp_recv_endpoint;
     
 public:
-    SocketSession(const Config &config, boost::asio::io_context &io_context);
+    SocketSession(Service* _service);
 
     virtual boost::asio::ip::tcp::socket& accept_socket() = 0;
 

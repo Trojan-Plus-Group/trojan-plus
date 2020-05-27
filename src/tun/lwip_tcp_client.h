@@ -12,6 +12,19 @@
 #include "tun/tunsession.h"
 
 class lwip_tcp_client : public std::enable_shared_from_this<lwip_tcp_client> {
+
+    static void static_client_err_func(void *arg, err_t err){
+        ((lwip_tcp_client*)arg)->client_err_func(err);
+    }
+
+    static err_t static_client_recv_func(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err){
+        return ((lwip_tcp_client*)arg)->client_recv_func(tpcb, p, err);
+    }
+
+    static err_t static_client_sent_func(void *arg, struct tcp_pcb *tpcb, uint16_t len){
+        return ((lwip_tcp_client*)arg)->client_sent_func(tpcb, len);
+    }
+
 public:
     typedef std::function<void(lwip_tcp_client*)> CloseCallback;
 private:
