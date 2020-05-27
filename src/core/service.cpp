@@ -235,7 +235,7 @@ void Service::prepare_pipelines(){
         }
 
         for (; curr_num < config.experimental.pipeline_num; curr_num++ ) {
-            auto pipeline = make_shared<Pipeline>(config, io_context, ssl_context);
+            auto pipeline = make_shared<Pipeline>(this, config, ssl_context);
             pipeline->start();
             pipelines.emplace_back(pipeline);
             changed = true;
@@ -262,7 +262,7 @@ void Service::prepare_pipelines(){
                 }
 
                 for (; curr_num < config.experimental.pipeline_num; curr_num++ ) {
-                    auto pipeline = make_shared<Pipeline>(*balance_config, io_context, *balance_ssl);
+                    auto pipeline = make_shared<Pipeline>(this, *balance_config, *balance_ssl);
                     pipeline->start();
                     pipelines.emplace_back(pipeline);
                     changed = true;
@@ -316,7 +316,7 @@ void Service::prepare_pipelines(){
     }
 }
 
-void Service::start_session(std::shared_ptr<Session> session, bool is_udp_forward, Pipeline::SentHandler&& started_handler) {
+void Service::start_session(std::shared_ptr<Session> session, bool is_udp_forward, SentHandler&& started_handler) {
     if(config.experimental.pipeline_num > 0 && config.run_type != Config::SERVER){
         
         prepare_pipelines();
@@ -357,14 +357,14 @@ void Service::start_session(std::shared_ptr<Session> session, bool is_udp_forwar
         }
 
         _log_with_date_time("pipeline " + to_string(pipeline->get_pipeline_id()) + " start session_id:" + to_string(session->get_session_id()), Log::INFO);
-        session.get()->set_use_pipeline(this, is_udp_forward);
+        session.get()->get_pipeline_component().set_use_pipeline(is_udp_forward);
         pipeline->session_start(*(session.get()), move(started_handler));
     }else{
         started_handler(boost::system::error_code());
     }
 }
 
-void Service::session_async_send_to_pipeline(Session &session, PipelineRequest::Command cmd, const std::string &data, Pipeline::SentHandler&& sent_handler) {
+void Service::session_async_send_to_pipeline(Session &session, PipelineRequest::Command cmd, const std::string &data, SentHandler&& sent_handler) {
     if(config.experimental.pipeline_num > 0 && config.run_type != Config::SERVER){
         
         Pipeline* pipeline = nullptr;
@@ -461,15 +461,15 @@ void Service::async_accept() {
 
             session = pipeline;
         }else{
-            session = make_shared<ServerSession>(this, config, io_context, ssl_context, auth, plain_http_response);
+            session = make_shared<ServerSession>(this, config, ssl_context, auth, plain_http_response);
         }        
     } else {
         if (config.run_type == Config::FORWARD) {
-            session = make_shared<ForwardSession>(this, config, io_context, ssl_context);
+            session = make_shared<ForwardSession>(this, config, ssl_context);
         } else if (config.run_type == Config::NAT) {
-            session = make_shared<NATSession>(this, config, io_context, ssl_context);
+            session = make_shared<NATSession>(this, config, ssl_context);
         } else {
-            session = make_shared<ClientSession>(this, config, io_context, ssl_context);
+            session = make_shared<ClientSession>(this, config, ssl_context);
         }      
     }
     
@@ -540,7 +540,7 @@ void Service::udp_async_read() {
             }
             
             _log_with_endpoint(udp_recv_endpoint, "new UDP session");
-            auto session = make_shared<UDPForwardSession>(config, io_context, ssl_context, udp_recv_endpoint, targetdst, 
+            auto session = make_shared<UDPForwardSession>(this, config, ssl_context, udp_recv_endpoint, targetdst, 
              [this](const udp::endpoint &endpoint, const string &data) {
                 if(config.run_type == Config::NAT){
                     throw logic_error("[udp] logic fatal error, cannot call in_write function for NAT type!");

@@ -14,12 +14,12 @@ TUNSession::TUNSession(Service* _service, bool _is_udp) :
     Session(_service, _service->config),
     m_service(_service), 
     m_recv_buf_ack_length(0),
-    m_out_socket(_service->service(), _service->get_ssl_context()),
-    m_out_resolver(_service->service()),
+    m_out_socket(_service->get_io_context(), _service->get_ssl_context()),
+    m_out_resolver(_service->get_io_context()),
     m_destroyed(false),
     m_close_from_tundev_flag(false),
     m_connected(false),
-    m_udp_timout_timer(_service->service()){
+    m_udp_timout_timer(_service->get_io_context()){
 
     is_udp_forward_session = _is_udp;
     pipeline_com.allocate_session_id();
@@ -78,7 +78,7 @@ void TUNSession::reset_udp_timeout(){
         auto self = shared_from_this();
         m_udp_timout_timer.async_wait([this, self](const boost::system::error_code error) {
             if (!error) {
-                _log_with_endpoint(m_remote_addr_udp, "session_id: " + to_string(session_id()) + " UDP TUNSession timeout");
+                _log_with_endpoint(m_remote_addr_udp, "session_id: " + to_string(get_session_id()) + " UDP TUNSession timeout");
                 destroy();
             }
         });
@@ -92,9 +92,9 @@ void TUNSession::destroy(bool pipeline_call){
     m_destroyed = true;
 
     if(is_udp_forward()){
-        _log_with_endpoint(m_local_addr_udp, "TUNSession session_id: " + to_string(session_id()) + " disconnected ", Log::INFO);
+        _log_with_endpoint(m_local_addr_udp, "TUNSession session_id: " + to_string(get_session_id()) + " disconnected ", Log::INFO);
     }else{
-        _log_with_endpoint(m_local_addr, "TUNSession session_id: " + to_string(session_id()) + " disconnected ", Log::INFO);
+        _log_with_endpoint(m_local_addr, "TUNSession session_id: " + to_string(get_session_id()) + " disconnected ", Log::INFO);
     }    
 
     m_wait_ack_handler.clear();
@@ -199,7 +199,7 @@ void TUNSession::recv_ack_cmd(){
     }
 }
 
-void TUNSession::out_async_send_impl(std::string data_to_send, Pipeline::SentHandler&& _handler){
+void TUNSession::out_async_send_impl(std::string data_to_send, SentHandler&& _handler){
     auto self = shared_from_this();
     if(m_service->is_use_pipeline()){
 
@@ -237,7 +237,7 @@ void TUNSession::out_async_send_impl(std::string data_to_send, Pipeline::SentHan
         });
     }
 }
-void TUNSession::out_async_send(const char* _data, size_t _length, Pipeline::SentHandler&& _handler){
+void TUNSession::out_async_send(const char* _data, size_t _length, SentHandler&& _handler){
     if(!m_connected){
         if(m_send_buf.length() < numeric_limits<uint16_t>::max()){ // 100 is more greater than ip/udp header
             string data_to_send;

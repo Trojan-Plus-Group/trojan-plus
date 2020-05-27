@@ -26,6 +26,7 @@
 #include "pipelinesession.h"
 #include "core/authenticator.h"
 #include "core/pipeline.h"
+#include "core/utils.h"
 
 class Service;
 class ServerSession : public SocketSession {
@@ -43,7 +44,7 @@ private:
     Authenticator *auth;
     std::string auth_password;
     const std::string &plain_http_response;
-    Pipeline::ReadDataCache pipeline_data_cache;
+    ReadDataCache pipeline_data_cache;
     
     void in_async_read();
     void in_async_write(const std::string &data);

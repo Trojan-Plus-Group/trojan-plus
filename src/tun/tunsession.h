@@ -8,6 +8,7 @@
 
 #include "session/session.h"
 #include "core/pipeline.h"
+#include "core/utils.h"
 
 class Service;
 class TUNSession : public Session{
@@ -31,8 +32,8 @@ private:
     bool m_connected;
     std::string m_send_buf;
     WriteToLwipCallback m_write_to_lwip;
-    std::list<Pipeline::SentHandler> m_wait_ack_handler;
-    Pipeline::ReadDataCache m_pipeline_data_cache;
+    std::list<SentHandler> m_wait_ack_handler;
+    ReadDataCache m_pipeline_data_cache;
 
     boost::asio::ip::tcp::endpoint m_local_addr;
     boost::asio::ip::tcp::endpoint m_remote_addr;
@@ -46,7 +47,7 @@ private:
     void reset_udp_timeout();
     void parse_udp_packet_data();
 
-    void out_async_send_impl(std::string data_to_send, Pipeline::SentHandler&& _handler);
+    void out_async_send_impl(std::string data_to_send, SentHandler&& _handler);
 public:
     TUNSession(Service* _service, bool _is_udp);
     ~TUNSession();
@@ -76,7 +77,7 @@ public:
     void start() override;
     void destroy(bool pipeline_call = false) override;
 
-    void out_async_send(const char* _data, size_t _length, Pipeline::SentHandler&& _handler);
+    void out_async_send(const char* _data, size_t _length, SentHandler&& _handler);
     void recv_ack_cmd() override;
 
     void recv_buf_sent(uint16_t _length);

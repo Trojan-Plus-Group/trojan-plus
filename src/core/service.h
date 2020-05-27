@@ -70,15 +70,15 @@ public:
     void run();
     void stop();
 
-    boost::asio::io_context &service() { return io_context; }
+    boost::asio::io_context& get_io_context() { return io_context; }
     boost::asio::ssl::context& get_ssl_context(){ return ssl_context; }
     
     void reload_cert();  
 
-    void start_session(std::shared_ptr<Session> session, bool is_udp_forward, Pipeline::SentHandler&& started_handler);
+    void start_session(std::shared_ptr<Session> session, bool is_udp_forward, SentHandler&& started_handler);
 
-    void session_async_send_to_pipeline(Session& session, PipelineRequest::Command cmd, const std::string& data, Pipeline::SentHandler&& sent_handler);
-    void session_async_send_to_pipeline_icmp(const std::string& data, Pipeline::SentHandler&& sent_handler);
+    void session_async_send_to_pipeline(Session& session, PipelineRequest::Command cmd, const std::string& data, SentHandler&& sent_handler);
+    void session_async_send_to_pipeline_icmp(const std::string& data, SentHandler&& sent_handler);
     void session_destroy_in_pipeline(Session& session);    
 
     bool is_use_pipeline() const { return config.experimental.pipeline_num > 0; }

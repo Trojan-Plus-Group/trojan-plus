@@ -66,6 +66,7 @@ add_executable(trojan
     src/session/serversession.cpp
     src/session/socketsession.cpp
     src/session/session.cpp
+    src/session/pipelinecomponent.cpp
     src/session/udpforwardsession.cpp
     src/session/pipelinesession.cpp
     src/ssl/ssldefaults.cpp

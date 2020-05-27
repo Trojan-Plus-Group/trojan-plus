@@ -41,11 +41,12 @@ public:
 protected:
 
     Service* service; 
-    const Config& config;
     PipelineComponent pipeline_com;
     bool is_udp_forward_session;
 public:
     Session(Service* _service, const Config& _config);
+    
+    const Config& config;
 
     virtual void start() = 0;
     virtual ~Session();
@@ -53,6 +54,8 @@ public:
     virtual void recv_ack_cmd(){
         pipeline_com.recv_ack_cmd();
     }
+
+    Service* get_service() { return service; }
 
     inline bool is_udp_forward()const { return is_udp_forward_session; }
 

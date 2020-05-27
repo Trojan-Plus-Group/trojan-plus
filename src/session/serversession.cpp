@@ -31,9 +31,9 @@ using namespace boost::asio::ssl;
 ServerSession::ServerSession(Service* _service, const Config& config, boost::asio::ssl::context &ssl_context, Authenticator *auth, const std::string &plain_http_response) :
     SocketSession(_service, config),
     status(HANDSHAKE),
-    in_socket(_service->service(), ssl_context),
-    out_socket(_service->service()),
-    udp_resolver(_service->service()),
+    in_socket(_service->get_io_context(), ssl_context),
+    out_socket(_service->get_io_context()),
+    udp_resolver(_service->get_io_context()),
     auth(auth),
     plain_http_response(plain_http_response),
     use_pipeline(false),

@@ -151,7 +151,7 @@ int main(int argc, const char *argv[]) {
                 Log::log("The config file looks good.", Log::OFF);
                 exit(EXIT_SUCCESS);
             }
-            signal_set sig(service.service());
+            signal_set sig(service.get_io_context());
             sig.add(SIGINT);
             sig.add(SIGTERM);
 #ifndef _WIN32

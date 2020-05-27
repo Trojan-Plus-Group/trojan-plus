@@ -26,6 +26,7 @@
 #include <stdint.h>
 
 #include "session/session.h"
+#include "session/pipelinecomponent.h"
 
 class PipelineRequest {
 public:

@@ -7,11 +7,14 @@ PipelineComponent::SessionIdType PipelineComponent::s_session_id_counter = 0;
 set<PipelineComponent::SessionIdType> PipelineComponent::s_session_used_ids;
 
 PipelineComponent::PipelineComponent(Service* _service, const Config& _config): 
-    m_is_use_pipeline(false),
     m_service(_service),
     m_session_id(0),
-    m_is_udp(false){
-    pipeline_ack_counter = static_cast<int>(m_service->config.experimental.pipeline_ack_window);
+    m_is_use_pipeline(false),
+    m_is_udp(false),
+    pipeline_ack_counter(0),
+    pipeline_wait_for_ack(false),
+    pipeline_first_call_ack(true){
+    pipeline_ack_counter = static_cast<int>(_config.experimental.pipeline_ack_window);
 }
 
 void PipelineComponent::allocate_session_id(){

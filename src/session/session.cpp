@@ -21,10 +21,10 @@
 using namespace std;
 
 Session::Session(Service* _service, const Config& _config) :
-    config(_config),
     service(_service),
     pipeline_com(_service, _config),
-    is_udp_forward_session(false){
+    is_udp_forward_session(false),
+    config(_config){
     
 }
 

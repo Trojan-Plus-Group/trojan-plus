@@ -35,7 +35,7 @@ TUNDev::TUNDev(Service* _service, const std::string& _tun_name,
     m_is_outsize_tun_fd(_outside_tun_fd != -1),
     m_mtu(_mtu), 
     m_quitting(false), 
-    m_boost_sd(_service->service()) {
+    m_boost_sd(_service->get_io_context()) {
 
     assert(sm_tundev == nullptr);
     sm_tundev = this;

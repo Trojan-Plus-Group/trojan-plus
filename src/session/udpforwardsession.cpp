@@ -37,10 +37,10 @@ UDPForwardSession::UDPForwardSession(Service* _service, const Config& config, co
     SocketSession(_service, config),
     status(CONNECT),
     in_write(move(in_write)),
-    out_socket(_service->service(), ssl_context),
-    gc_timer(_service->service()),
+    out_socket(_service->get_io_context(), ssl_context),
+    gc_timer(_service->get_io_context()),
     udp_target(targetdst) ,
-    udp_target_socket(_service->service()){
+    udp_target_socket(_service->get_io_context()){
 
     udp_recv_endpoint = endpoint;
     udp_target_endpoint = udp::endpoint(boost::asio::ip::make_address(udp_target.first), udp_target.second);    

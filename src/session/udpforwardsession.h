@@ -25,6 +25,7 @@
 
 #include "core/pipeline.h"
 #include "socketsession.h"
+#include "core/utils.h"
 
 class Service;
 class UDPForwardSession : public SocketSession {
@@ -44,7 +45,7 @@ private:
     boost::asio::ip::udp::socket udp_target_socket;
     boost::asio::ip::udp::endpoint udp_target_endpoint;
 
-    Pipeline::ReadDataCache pipeline_data_cache;
+    ReadDataCache pipeline_data_cache;
 
     void out_recv(const std::string &data);
     void in_recv(const std::string &data);

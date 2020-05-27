@@ -94,6 +94,99 @@ typedef boost::asio::detail::socket_option::boolean<SOL_SOCKET, SO_REUSEPORT> re
 #define PACKET_HEADER_SIZE (1 + 28 + 2 + 64)
 #define DEFAULT_PACKET_SIZE 1397  // 1492 - PACKET_HEADER_SIZE = 1397, the default MTU for UDP relay
 
+typedef std::function<void(const boost::system::error_code ec)> SentHandler;
+typedef std::function<void(const std::string& data, SentHandler handler)> AsyncWriter;
+typedef std::function<bool()> ConnectionFunc;
+typedef std::function<void(const std::string& data)> ReadHandler;
+
+class SendDataCache{
+    std::vector<SentHandler> handler_queue;
+    std::string data_queue;
+
+    std::string sending_data_buff;
+    std::vector<SentHandler> sending_data_handler;
+
+    bool is_async_sending;
+    AsyncWriter async_writer;
+    ConnectionFunc is_connected;
+
+public: 
+    SendDataCache() : is_async_sending(false) {
+        is_connected = []() { return true; };
+    }
+
+    inline void set_async_writer(AsyncWriter&& writer){
+        async_writer = std::move(writer);
+    }
+
+    inline void set_is_connected_func(ConnectionFunc&& func){
+        is_connected = std::move(func);
+    }
+
+    inline void insert_data(std::string&& data) {
+        data_queue = data + data_queue;
+        async_send();
+    }
+
+    inline void push_data(std::string&& data, SentHandler&& handler) {
+        data_queue += data;
+        handler_queue.emplace_back(std::move(handler));
+        async_send();
+    }
+
+    inline void async_send(){
+        if (data_queue.empty() || !is_connected() || is_async_sending) {
+            return;
+        }
+
+        is_async_sending = true;
+
+        sending_data_buff = data_queue;
+        data_queue.clear();
+
+        std::move(handler_queue.begin(), handler_queue.end(), std::back_inserter(sending_data_handler));
+        handler_queue.clear();
+
+        async_writer(sending_data_buff, [this](const boost::system::error_code ec) {
+            is_async_sending = false;
+
+            if (!ec) {
+                for (size_t i = 0;i < sending_data_handler.size();i++) {
+                    sending_data_handler[i](ec);
+                }
+                sending_data_handler.clear();
+                async_send();
+            }
+        });
+    }
+};
+
+class ReadDataCache{
+    std::string data_queue;
+    ReadHandler read_handler;
+    bool is_waiting;
+public :
+    ReadDataCache(): is_waiting(false){}
+    inline void push_data(std::string&& data) {
+        if (is_waiting) {
+            is_waiting = false;
+            read_handler(data);                
+        }else{
+            data_queue += data;
+        }
+    }
+
+    inline void async_read(ReadHandler&& handler) {
+        if (data_queue.empty()) {
+            is_waiting = true;
+            read_handler = std::move(handler);
+        }else{
+            handler(data_queue);
+            data_queue.clear();
+        }
+    }
+};
+
 template <typename ThisT, typename EndPoint>
 void connect_out_socket(ThisT this_ptr, std::string addr, std::string port, boost::asio::ip::tcp::resolver& resolver,
                         boost::asio::ip::tcp::socket& out_socket, EndPoint in_endpoint, std::function<void()> connected_handler) {
@@ -128,7 +221,7 @@ void connect_out_socket(ThisT this_ptr, std::string addr, std::string port, boos
         if (this_ptr->config.tcp.connect_time_out > 0) {
             // out_socket.async_connect will be stuck forever when the host is not reachable
             // we must set a timeout timer
-            timeout_timer = std::make_shared<boost::asio::steady_timer>(this_ptr->io_context);
+            timeout_timer = std::make_shared<boost::asio::steady_timer>(this_ptr->get_service()->get_io_context());
             timeout_timer->expires_after(std::chrono::seconds(this_ptr->config.tcp.connect_time_out));
             timeout_timer->async_wait([=](const boost::system::error_code error) {
                 if (!error) {
@@ -182,7 +275,7 @@ template <typename ThisPtr>
 void shutdown_ssl_socket(ThisPtr this_ptr, boost::asio::ssl::stream<boost::asio::ip::tcp::socket>& socket) {
     if (socket.next_layer().is_open()) {
         auto self = this_ptr->shared_from_this();
-        auto ssl_shutdown_timer = std::make_shared<boost::asio::steady_timer>(this_ptr->io_context);
+        auto ssl_shutdown_timer = std::make_shared<boost::asio::steady_timer>(this_ptr->get_service()->get_io_context());
         auto ssl_shutdown_cb = [self, ssl_shutdown_timer, &socket](const boost::system::error_code error) {
             if (error == boost::asio::error::operation_aborted) {
                 return;

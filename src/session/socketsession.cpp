@@ -25,6 +25,6 @@ SocketSession::SocketSession(Service* _service, const Config& config) :
     Session(_service, config),
     recv_len(0),
     sent_len(0),
-    resolver(_service->service()),
-    udp_socket(_service->service()){
+    resolver(_service->get_io_context()),
+    udp_socket(_service->get_io_context()){
 }

@@ -36,11 +36,11 @@ PipelineSession::PipelineSession(Service* _service, const Config& config, boost:
     status(HANDSHAKE),
     auth(auth),
     plain_http_response(plain_http_response),
-    live_socket(_service->service(), ssl_context),
-    gc_timer(_service->service()),
+    live_socket(_service->get_io_context(), ssl_context),
+    gc_timer(_service->get_io_context()),
     ssl_context(ssl_context){
 
-    sending_data_cache.set_async_writer([this](const std::string& data, Pipeline::SentHandler handler) {
+    sending_data_cache.set_async_writer([this](const std::string& data, SentHandler handler) {
         if(status == DESTROY){
             return;
         }
@@ -130,7 +130,7 @@ void PipelineSession::in_recv(const string &data) {
     }
 }
 
-void PipelineSession::in_send(PipelineRequest::Command cmd, ServerSession& session, const std::string& session_data, Pipeline::SentHandler&& sent_handler){
+void PipelineSession::in_send(PipelineRequest::Command cmd, ServerSession& session, const std::string& session_data, SentHandler&& sent_handler){
     auto found = find_and_process_session(session.get_session_id(), [&](SessionsList::iterator&){
         _log_with_endpoint(in_endpoint, "PipelineSession session_id: " + to_string(session.get_session_id()) + " <-- send cmd: " + PipelineRequest::get_cmd_string(cmd) + " length:" + to_string(session_data.length()));
         sending_data_cache.push_data(PipelineRequest::generate(cmd, session.get_session_id(), session_data), move(sent_handler));
@@ -229,15 +229,15 @@ void PipelineSession::process_streaming_data(){
     in_async_read();
 }
 
-void PipelineSession::session_write_ack(ServerSession& session, Pipeline::SentHandler&& sent_handler){
+void PipelineSession::session_write_ack(ServerSession& session, SentHandler&& sent_handler){
     in_send(PipelineRequest::ACK, session, "", move(sent_handler));
 }
 
-void PipelineSession::session_write_data(ServerSession& session, const std::string& session_data, Pipeline::SentHandler&& sent_handler){
+void PipelineSession::session_write_data(ServerSession& session, const std::string& session_data, SentHandler&& sent_handler){
     in_send(PipelineRequest::DATA, session, session_data, move(sent_handler));
 }
 
-void PipelineSession::session_write_icmp(const std::string& data, Pipeline::SentHandler&& sent_handler){
+void PipelineSession::session_write_icmp(const std::string& data, SentHandler&& sent_handler){
     _log_with_endpoint(in_endpoint, "PipelineSession <-- send cmd: ICMP length:" + to_string(data.length()));
     sending_data_cache.push_data(PipelineRequest::generate(PipelineRequest::ICMP, 0, data), move(sent_handler));
 }

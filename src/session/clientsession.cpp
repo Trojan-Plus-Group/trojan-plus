@@ -34,8 +34,8 @@ ClientSession::ClientSession(Service* _service, const Config& config, context &s
     status(HANDSHAKE),
     is_udp(false),
     first_packet_recv(false),
-    in_socket(_service->service()),
-    out_socket(_service->service(), ssl_context){
+    in_socket(_service->get_io_context()),
+    out_socket(_service->get_io_context(), ssl_context){
     pipeline_com.allocate_session_id();
 }
 
