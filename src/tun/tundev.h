@@ -89,7 +89,7 @@ private:
 
     Service* m_service;
     int m_tun_fd;
-    const bool m_is_outsize_tun_fd;
+    const bool m_is_outside_tun_fd;
     size_t m_mtu;
 
     bool m_quitting;

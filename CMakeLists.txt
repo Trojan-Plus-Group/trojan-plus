@@ -61,7 +61,7 @@ include_directories(
     badvpn
 )
 
-add_executable(trojan
+set(TROJAN_SOURCE_FILES 
     src/core/authenticator.cpp
     src/core/config.cpp
     src/core/log.cpp
@@ -122,6 +122,12 @@ add_executable(trojan
     badvpn/lwip/src/core/ipv6/ip6_frag.c 
     badvpn/lwip/src/core/ipv6/nd6.c
 )
+
+if(ANDROID)
+    add_library(trojan SHARED ${TROJAN_SOURCE_FILES})
+else()
+    add_executable(trojan ${TROJAN_SOURCE_FILES})
+endif()
 
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)

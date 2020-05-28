@@ -18,7 +18,14 @@
  */
 
 #include "utils.h"
+
+#ifdef __ANDROID__
+#include <signal.h>
+#include <jni.h>
+#endif //__ANDROID__
+
 #include "log.h"
+#include "core/service.h"
 
 using namespace std;
 
@@ -227,3 +234,60 @@ bool prepare_nat_udp_target_bind(int fd, bool is_ipv4, const boost::asio::ip::ud
 }
 
 #endif  // _WIN32
+
+
+#ifdef __ANDROID__
+
+int main(int argc, const char *argv[]);
+
+extern "C" {
+
+JNIEnv* g_android_java_env = NULL;
+jclass g_android_java_service_class = NULL;
+jmethodID g_android_java_protect_socket = NULL;
+
+JNIEXPORT void JNICALL Java_com_trojan_1plus_android_TrojanPlusVPNService_runMain (JNIEnv *env, jclass, jstring configPath){
+    g_android_java_env = env;
+
+    const char* path = g_android_java_env->GetStringUTFChars(configPath, 0);
+    const char* args[]={
+        "trojan",
+        "-c",
+        path
+    };
+    main(3, args);    
+    g_android_java_env = NULL;
+    g_android_java_service_class = NULL;
+    g_android_java_protect_socket = NULL;
+}
+
+JNIEXPORT void JNICALL Java_com_trojan_1plus_android_TrojanPlusVPNService_stopMain (JNIEnv *, jclass){
+    if(g_android_java_env != NULL){
+        raise(SIGUSR2);
+    }    
+}
+
+}
+
+void android_protect_socket(int fd){
+    if(g_android_java_env){
+        if(g_android_java_protect_socket == NULL){
+            g_android_java_service_class = g_android_java_env->FindClass("com/trojan_plus/android/TrojanPlusVPNService");
+            if(g_android_java_service_class != NULL){
+
+                g_android_java_protect_socket = g_android_java_env->GetStaticMethodID( g_android_java_service_class, "protectSocket","(I)V");
+
+                if (NULL == g_android_java_protect_socket) {
+                    _log_with_date_time("[jni] can't find method protectSocket from TrojanPlusVPNService", Log::ERROR);
+                    return;
+                }
+            }
+        }
+
+        if(g_android_java_protect_socket != NULL){
+             g_android_java_env->CallStaticVoidMethod(g_android_java_service_class, g_android_java_protect_socket, fd);
+        }
+    }
+}
+
+#endif

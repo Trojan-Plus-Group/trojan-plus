@@ -37,7 +37,7 @@ do
 
     make -j4
 
-    \cp -f trojan ${output_path}/libtrojan.so
+    \cp -f libtrojan.so ${output_path}/
 done
 
 

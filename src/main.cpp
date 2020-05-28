@@ -23,11 +23,14 @@
 #include <boost/program_options.hpp>
 #include <boost/version.hpp>
 #include <openssl/opensslv.h>
+
 #ifdef ENABLE_MYSQL
 #include <mysql.h>
 #endif // ENABLE_MYSQL
+
 #include "core/service.h"
 #include "core/version.h"
+
 using namespace std;
 using namespace boost::asio;
 namespace po = boost::program_options;
@@ -48,6 +51,9 @@ void signal_async_wait(signal_set &sig, Service &service, bool &restart) {
                 service.stop();
                 break;
 #ifndef _WIN32
+            case SIGUSR2: // for Android Close
+                service.stop();
+                break;
             case SIGHUP:
                 restart = true;
                 service.stop();
@@ -147,6 +153,7 @@ int main(int argc, const char *argv[]) {
                 config.load(config_file);
             }
             Service service(config, test);
+            
             if (test) {
                 Log::log("The config file looks good.", Log::OFF);
                 exit(EXIT_SUCCESS);
@@ -157,6 +164,7 @@ int main(int argc, const char *argv[]) {
 #ifndef _WIN32
             sig.add(SIGHUP);
             sig.add(SIGUSR1);
+            sig.add(SIGUSR2); // for Android Close
 #endif // _WIN32
             signal_async_wait(sig, service, restart);
             service.run();
@@ -166,10 +174,17 @@ int main(int argc, const char *argv[]) {
         } while (restart);
         _log_with_date_time("trojan service exit.", Log::WARN);
         Log::reset();
+
+#ifndef __ANDROID__
         exit(EXIT_SUCCESS);
+#endif
+
     } catch (const exception &e) {
         _log_with_date_time(string("fatal: ") + e.what(), Log::FATAL);
         _log_with_date_time("exiting. . . ", Log::FATAL);
+
+#ifndef __ANDROID__
         exit(EXIT_FAILURE);
+#endif
     }
 }

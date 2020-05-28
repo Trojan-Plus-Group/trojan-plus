@@ -94,6 +94,7 @@ typedef boost::asio::detail::socket_option::boolean<SOL_SOCKET, SO_REUSEPORT> re
 #define PACKET_HEADER_SIZE (1 + 28 + 2 + 64)
 #define DEFAULT_PACKET_SIZE 1397  // 1492 - PACKET_HEADER_SIZE = 1397, the default MTU for UDP relay
 
+
 typedef std::function<void(const boost::system::error_code ec)> SentHandler;
 typedef std::function<void(const std::string& data, SentHandler handler)> AsyncWriter;
 typedef std::function<bool()> ConnectionFunc;
@@ -187,6 +188,13 @@ public :
     }
 };
 
+
+#ifdef __ANDROID__
+void android_protect_socket(int fd);
+#else
+static void android_protect_socket(int){}
+#endif
+
 template <typename ThisT, typename EndPoint>
 void connect_out_socket(ThisT this_ptr, std::string addr, std::string port, boost::asio::ip::tcp::resolver& resolver,
                         boost::asio::ip::tcp::socket& out_socket, EndPoint in_endpoint, std::function<void()> connected_handler) {
@@ -201,9 +209,11 @@ void connect_out_socket(ThisT this_ptr, std::string addr, std::string port, boos
         boost::system::error_code ec;
         out_socket.open(iterator->endpoint().protocol(), ec);
         if (ec) {
+            output_debug_info_ec(ec);
             this_ptr->destroy();
             return;
         }
+        android_protect_socket(out_socket.native_handle());
         if (this_ptr->config.tcp.no_delay) {
             out_socket.set_option(boost::asio::ip::tcp::no_delay(true));
         }
@@ -250,6 +260,7 @@ void connect_out_socket(ThisT this_ptr, std::string addr, std::string port, boos
 template <typename ThisT, typename EndPoint>
 void connect_remote_server_ssl(ThisT this_ptr, std::string addr, std::string port, boost::asio::ip::tcp::resolver& resolver,
                                boost::asio::ssl::stream<boost::asio::ip::tcp::socket>& out_socket, EndPoint in_endpoint, std::function<void()> connected_handler) {
+
     connect_out_socket(this_ptr, addr, port, resolver, out_socket.next_layer(), in_endpoint, [=, &out_socket]() {
         out_socket.async_handshake(boost::asio::ssl::stream_base::client, [=, &out_socket](const boost::system::error_code error) {
             if (error) {

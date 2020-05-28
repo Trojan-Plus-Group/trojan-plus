@@ -29,7 +29,7 @@ TUNDev::TUNDev(Service* _service, const std::string& _tun_name,
     m_tcp_listener(nullptr),    
     m_service(_service),
     m_tun_fd(_outside_tun_fd), 
-    m_is_outsize_tun_fd(_outside_tun_fd != -1),
+    m_is_outside_tun_fd(_outside_tun_fd != -1),
     m_mtu(_mtu), 
     m_quitting(false), 
     m_boost_sd(_service->get_io_context()) {
@@ -153,8 +153,10 @@ TUNDev::~TUNDev(){
         m_netif_configured = false;
     }
 
-    if(m_tun_fd != -1 && !m_is_outsize_tun_fd){
+    if(m_tun_fd != -1 && !m_is_outside_tun_fd){
         m_boost_sd.close();
+    }else{
+        m_boost_sd.release();
     }
 
     sm_tundev = nullptr;
