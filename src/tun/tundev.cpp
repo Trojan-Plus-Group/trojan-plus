@@ -237,7 +237,8 @@ err_t TUNDev::listener_accept_func(struct tcp_pcb *newpcb, err_t err){
         }
     });
     
-    return  ERR_OK;
+    // start_session callback immediately and destory the session
+    return  session->is_destroyed() ? ERR_ABRT : ERR_OK;
 }
 
 

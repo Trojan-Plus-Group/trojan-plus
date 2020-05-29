@@ -42,14 +42,10 @@ lwip_tcp_client::lwip_tcp_client(struct tcp_pcb *_pcb, shared_ptr<TUNSession> _s
 void lwip_tcp_client::client_log(const char *fmt, ...){
     if(Log::level == Log::ALL){
         char buf[256];
-#if defined(__ANDROID__) && (!defined(__aarch64__) && !defined(__x86_64__))
         int n = snprintf(buf, sizeof(buf), "[lwip] [%s:%d->%s:%d] [pcb:0x%llx session_id:%d] ", 
-#else
-        int n = snprintf(buf, sizeof(buf), "[lwip] [%s:%d->%s:%d] [pcb:0x%lx session_id:%d] ", 
-#endif
             m_local_addr.address().to_string().c_str(), m_local_addr.port(),
             m_remote_addr.address().to_string().c_str(), m_remote_addr.port(), 
-            (uint64_t)m_pcb, (int)m_tun_session->get_session_id());
+            (unsigned long long)m_pcb, (int)m_tun_session->get_session_id());
 
         va_list vl;
         va_start(vl, fmt);
