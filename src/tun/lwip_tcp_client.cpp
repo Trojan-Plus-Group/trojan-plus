@@ -90,7 +90,6 @@ err_t lwip_tcp_client::client_recv_func(struct tcp_pcb *, struct pbuf *p, err_t 
         auto length = pbuf_copy_partial(p, send_buf, p->tot_len, 0);
         assert(length == p->tot_len);
         pbuf_free(p);
-
         m_tun_session->out_async_send((const char*)send_buf, length, [this, length](boost::system::error_code ec){
             if(ec){
                 close_client(true);
@@ -146,6 +145,10 @@ int lwip_tcp_client::client_socks_recv_send_out(){
     auto recv_size = m_tun_session->recv_buf_size();
     auto recv_data = m_tun_session->recv_buf();
 
+    if(recv_size == 0){
+        return 0;
+    }
+
     size_t wrote_size = 0;
     do {
         
@@ -169,7 +172,7 @@ int lwip_tcp_client::client_socks_recv_send_out(){
         recv_data += to_write;
 
         wrote_size += to_write;
-    } while (true);
+    } while (recv_size > 0);
     
     // start sending now
     err_t err = tcp_output(m_pcb);
