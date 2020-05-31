@@ -143,55 +143,6 @@ void TUNSession::parse_udp_packet_data(){
     }
 }
 
-void TUNSession::out_async_read() {
-    if(m_service->is_use_pipeline()){
-        get_pipeline_component().pipeline_data_cache.async_read([this](const string &data) {
-            if(is_udp_forward()){
-                ostream os(&m_recv_udp_buf);
-                os << data;
-                parse_udp_packet_data();
-            }else{
-                ostream os(&m_recv_buf);
-                os << data;
-
-                m_recv_buf_ack_length += data.length();
-            }
-            
-            reset_udp_timeout();
-
-            // don't need to call m_recv_buf.commit(length);
-            if(m_write_to_lwip(this) < 0){
-                output_debug_info();
-                destroy();
-            }
-        });
-    }else{
-        auto self = shared_from_this();
-        boost::asio::streambuf& recv_buf = is_udp_forward() ? m_recv_udp_buf : m_recv_buf;
-        m_out_socket.async_read_some(recv_buf.prepare(TCP_SND_BUF), [this, self](const boost::system::error_code error, size_t length) {
-            if (error) {
-                output_debug_info_ec(error);
-                destroy();
-                return;
-            }
-
-            if(is_udp_forward()){
-                m_recv_udp_buf.commit(length);
-                parse_udp_packet_data();
-            }else{
-                m_recv_buf.commit(length);
-                m_recv_buf_ack_length += length;
-            }
-
-            reset_udp_timeout();
-
-            if(m_write_to_lwip(this) < 0){
-                output_debug_info();
-                destroy();
-            }
-        });
-    }
-}
 void TUNSession::recv_ack_cmd(){
     Session::recv_ack_cmd();
     if(!m_wait_ack_handler.empty()){
@@ -262,32 +213,88 @@ void TUNSession::out_async_send(const char* _data, size_t _length, SentHandler&&
         
         out_async_send_impl(m_send_buf, move(_handler));
     }
-    
-    
 }
 
-void TUNSession::recv_buf_sent(uint16_t _length){
-    m_recv_buf_ack_length -= _length;
-
+void TUNSession::try_out_async_read(){
     if(is_destroyed()){
         return;
     }
+    
+    if(m_service->is_use_pipeline() && !is_udp_forward()){
+        auto self = shared_from_this();
+        m_service->session_async_send_to_pipeline(*this, PipelineRequest::ACK, "", [this, self](const boost::system::error_code error) {
+            if (error) {
+                output_debug_info_ec(error);
+                destroy();
+                return;
+            }
 
-    if(m_recv_buf_ack_length <= 0){
-        if(m_service->is_use_pipeline() && !is_udp_forward()){
-            auto self = shared_from_this();
-            m_service->session_async_send_to_pipeline(*this, PipelineRequest::ACK, "", [this, self](const boost::system::error_code error) {
-                if (error) {
-                    output_debug_info_ec(error);
-                    destroy();
-                    return;
-                }
-
-                out_async_read();
-            });
-        }else{
             out_async_read();
-        }
+        });
+    }else{
+        out_async_read();
+    }
+    
+}
+void TUNSession::recv_buf_sent(uint16_t _length){
+    m_recv_buf_ack_length -= _length;
+}
+
+void TUNSession::recv_buf_consume(uint16_t _length){
+    m_recv_buf.consume(_length);
+    if(m_recv_buf.size() == 0){
+        try_out_async_read();
+    }
+}
+
+void TUNSession::out_async_read() {
+    
+    if(m_service->is_use_pipeline()){    
+        get_pipeline_component().pipeline_data_cache.async_read([this](const string &data) {
+            if(is_udp_forward()){
+                ostream os(&m_recv_udp_buf);
+                os << data;
+                parse_udp_packet_data();
+            }else{
+                ostream os(&m_recv_buf);
+                os << data;
+
+                m_recv_buf_ack_length += data.length();
+            }
+            
+            reset_udp_timeout();
+
+            // don't need to call m_recv_buf.commit(length);
+            if(m_write_to_lwip(this) < 0){
+                output_debug_info();
+                destroy();
+            }
+        });
+    }else{
+        auto self = shared_from_this();
+        boost::asio::streambuf& recv_buf = is_udp_forward() ? m_recv_udp_buf : m_recv_buf;
+        m_out_socket.async_read_some(recv_buf.prepare(Session::MAX_BUF_LENGTH), [this, self](const boost::system::error_code error, size_t length) {
+            if (error) {
+                output_debug_info_ec(error);
+                destroy();
+                return;
+            }
+
+            if(is_udp_forward()){
+                m_recv_udp_buf.commit(length);
+                parse_udp_packet_data();
+            }else{
+                m_recv_buf.commit(length);
+                m_recv_buf_ack_length += length;
+            }
+
+            reset_udp_timeout();
+
+            if(m_write_to_lwip(this) < 0){
+                output_debug_info();
+                destroy();
+            }
+        });
     }
 }
 

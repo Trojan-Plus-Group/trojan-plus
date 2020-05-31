@@ -32,7 +32,7 @@ do
     output_path=${trojan_path}/android_lib/${arch}
     mkdir -p ${output_path}
 
-    cmake -DENABLE_ANDROID_LOG=ON -DCMAKE_TOOLCHAIN_FILE=${ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake \
+    cmake -DENABLE_ANDROID_LOG=ON -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=${ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake \
         -DANDROID_NDK=${ANDROID_NDK_HOME} -DCMAKE_BUILD_TYPE=Release -DANDROID_PLATFORM=${ANDROID_API} -DANDROID_ABI="${arch}" ..
 
     make -j4

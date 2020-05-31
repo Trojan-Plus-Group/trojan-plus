@@ -25,6 +25,7 @@ lwip_tcp_client::lwip_tcp_client(struct tcp_pcb *_pcb, shared_ptr<TUNSession> _s
     m_tun_session->set_write_to_lwip([this](TUNSession*){ return client_socks_recv_send_out(); });
     m_tun_session->set_close_callback([this](TUNSession* session){ 
         if(session->recv_buf_ack_length() == 0){ // need to wait send remain buff
+            output_debug_info();
             close_client(true); 
         }        
     });
@@ -71,12 +72,13 @@ err_t lwip_tcp_client::client_recv_func(struct tcp_pcb *, struct pbuf *p, err_t 
     }
 
     if (!p || err != ERR_OK) {
-        client_log("client_recv_func closed");
+        client_log("client_recv_func closed (%d)", (int)err);
         close_client(false);
     } else {
 
         if(m_tun_session->is_destroyed()){
             client_log("m_tun_session->is_destroyed closed");
+            output_debug_info();
             close_client(true);
             return ERR_ABRT;
         }
@@ -92,6 +94,7 @@ err_t lwip_tcp_client::client_recv_func(struct tcp_pcb *, struct pbuf *p, err_t 
         pbuf_free(p);
         m_tun_session->out_async_send((const char*)send_buf, length, [this, length](boost::system::error_code ec){
             if(ec){
+                output_debug_info_ec(ec);
                 close_client(true);
             }else{
                 if(!m_closed){
@@ -110,8 +113,6 @@ err_t lwip_tcp_client::client_sent_func(struct tcp_pcb *, u16_t len){
         return ERR_ABRT;
     }
 
-    m_tun_session->recv_buf_sent(len);
-
     if(m_tun_session->is_destroyed()){
         if(m_tun_session->recv_buf_ack_length() > 0){
             if(client_socks_recv_send_out() < 0){
@@ -120,15 +121,16 @@ err_t lwip_tcp_client::client_sent_func(struct tcp_pcb *, u16_t len){
                 return ERR_OK;
             }
         }
+        output_debug_info();
         close_client(true);
         return ERR_ABRT;
     }
 
     if(client_socks_recv_send_out() < 0){
         return ERR_ABRT;
-    }else{
-        return ERR_OK;
     }
+
+    m_tun_session->recv_buf_sent(len);
 
     return ERR_OK;
 }

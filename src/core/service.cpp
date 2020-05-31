@@ -185,6 +185,10 @@ void Service::run() {
     } else{
         throw logic_error("unknow run type error");
     }
+
+    if(config.experimental.pipeline_num > 0){
+        rt += " in pipeline mode";
+    }
     
     if(config.run_type != Config::CLIENT_TUN){
         async_accept();
@@ -193,9 +197,9 @@ void Service::run() {
         }
         tcp::endpoint local_endpoint = socket_acceptor.local_endpoint();
         
-        _log_with_date_time(string("trojan service (") + rt + ") started at " + local_endpoint.address().to_string() + ':' + to_string(local_endpoint.port()), Log::WARN);
+        _log_with_date_time(string("trojan plus service (") + rt + ") started at " + local_endpoint.address().to_string() + ':' + to_string(local_endpoint.port()), Log::FATAL);
     }else{
-        _log_with_date_time(string("trojan service (") + rt + ") started at [" + config.tun.tun_name + "] " + config.tun.net_ip + "/" + config.tun.net_mask, Log::WARN);
+        _log_with_date_time(string("trojan plus service (") + rt + ") started at [" + config.tun.tun_name + "] " + config.tun.net_ip + "/" + config.tun.net_mask, Log::FATAL);
     }
     io_context.run();
     _log_with_date_time("trojan service stopped", Log::WARN);

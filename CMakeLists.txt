@@ -62,36 +62,8 @@ include_directories(
 )
 
 set(TROJAN_SOURCE_FILES 
-    src/core/authenticator.cpp
-    src/core/config.cpp
-    src/core/log.cpp
-    src/core/service.cpp
-    src/core/version.cpp
-    src/core/pipeline.cpp
-    src/core/icmpd.cpp
-    src/core/utils.cpp
-    src/main.cpp
-    src/proto/socks5address.cpp
-    src/proto/trojanrequest.cpp
-    src/proto/udppacket.cpp
-    src/proto/pipelinerequest.cpp
-    src/session/clientsession.cpp
-    src/session/forwardsession.cpp
-    src/session/natsession.cpp
-    src/session/serversession.cpp
-    src/session/socketsession.cpp
-    src/session/session.cpp
-    src/session/pipelinecomponent.cpp
-    src/session/udpforwardsession.cpp
-    src/session/pipelinesession.cpp
-    src/ssl/ssldefaults.cpp
-    src/ssl/sslsession.cpp
-
-    src/tun/lwip_tcp_client.cpp
-    src/tun/tundev.cpp
-    src/tun/tunsession.cpp
-
     src/tun/lwip_custom/sys.c
+    
     badvpn/lwip/src/core/udp.c 
     badvpn/lwip/src/core/memp.c 
     badvpn/lwip/src/core/init.c 
@@ -121,6 +93,37 @@ set(TROJAN_SOURCE_FILES
     badvpn/lwip/src/core/ipv6/ip6.c 
     badvpn/lwip/src/core/ipv6/ip6_frag.c 
     badvpn/lwip/src/core/ipv6/nd6.c
+
+    src/core/authenticator.cpp
+    src/core/config.cpp
+    src/core/log.cpp
+    src/core/service.cpp
+    src/core/version.cpp
+    src/core/pipeline.cpp
+    src/core/icmpd.cpp
+    src/core/utils.cpp
+    src/main.cpp
+    src/proto/socks5address.cpp
+    src/proto/trojanrequest.cpp
+    src/proto/udppacket.cpp
+    src/proto/pipelinerequest.cpp
+    src/session/clientsession.cpp
+    src/session/forwardsession.cpp
+    src/session/natsession.cpp
+    src/session/serversession.cpp
+    src/session/socketsession.cpp
+    src/session/session.cpp
+    src/session/pipelinecomponent.cpp
+    src/session/udpforwardsession.cpp
+    src/session/pipelinesession.cpp
+    src/ssl/ssldefaults.cpp
+    src/ssl/sslsession.cpp
+
+    src/tun/lwip_tcp_client.cpp
+    src/tun/tundev.cpp
+    src/tun/tunsession.cpp
+
+    
 )
 
 if(ANDROID)

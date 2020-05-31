@@ -43,6 +43,7 @@ private:
     boost::asio::steady_timer m_udp_timout_timer;
 
     void out_async_read();
+    void try_out_async_read();
     void reset_udp_timeout();
     void parse_udp_packet_data();
 
@@ -85,9 +86,7 @@ public:
         return m_recv_buf_ack_length;
     }
 
-    void recv_buf_consume(uint16_t _length){
-        m_recv_buf.consume(_length);
-    }
+    void recv_buf_consume(uint16_t _length);
 
     size_t recv_buf_size() const {
         return m_recv_buf.size();
@@ -96,6 +95,7 @@ public:
     const uint8_t* recv_buf() const {
         return boost::asio::buffer_cast<const uint8_t*>(m_recv_buf.data());
     }
+
 
     bool is_destroyed()const { return m_destroyed; }
 
