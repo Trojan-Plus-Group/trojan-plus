@@ -21,6 +21,23 @@
 using namespace std;
 using namespace boost::asio::ip;
 
+extern struct tcp_pcb *tcp_bound_pcbs;
+extern struct tcp_pcb *tcp_active_pcbs;
+extern struct tcp_pcb *tcp_tw_pcbs;
+
+static void tcp_remove(struct tcp_pcb* pcb_list)
+{
+    struct tcp_pcb *pcb = pcb_list;
+    struct tcp_pcb *pcb2;
+
+    while(pcb != NULL)
+    {
+        pcb2 = pcb;
+        pcb = pcb->next;
+        tcp_abort(pcb2);
+    }
+}
+
 TUNDev* TUNDev::sm_tundev = nullptr;
 
 TUNDev::TUNDev(Service* _service, const std::string& _tun_name, 
@@ -152,6 +169,10 @@ TUNDev::~TUNDev(){
         netif_remove(&m_netif);
         m_netif_configured = false;
     }
+    
+    tcp_remove(tcp_bound_pcbs);
+    tcp_remove(tcp_active_pcbs);
+    tcp_remove(tcp_tw_pcbs);
 
     if(m_tun_fd != -1 && !m_is_outside_tun_fd){
         m_boost_sd.close();
@@ -197,15 +218,23 @@ err_t TUNDev::netif_output_func(struct netif *, struct pbuf *p, const ip4_addr_t
     }
 
     if(p != NULL){            
-        do {
-            if(p->len > 0){
-                auto write_buff = boost::asio::buffer_cast<uint8_t*>(m_write_fill_buf.prepare(p->len));
-                memcpy(write_buff, (uint8_t *)p->payload, p->len);
-                m_write_fill_buf.commit(p->len);
-            }            
-        } while ((p = p->next) != NULL);
+        if(p->next == NULL && p->len <= m_mtu){
+            boost::system::error_code ec;
+            m_boost_sd.write_some(boost::asio::buffer(p->payload, p->len), ec);
+            if(ec){
+                output_debug_info_ec(ec);
+            }
+        }else{
+            do {
+                if(p->len > 0){
+                    auto write_buff = boost::asio::buffer_cast<uint8_t*>(m_write_fill_buf.prepare(p->len));
+                    memcpy(write_buff, (uint8_t *)p->payload, p->len);
+                    m_write_fill_buf.commit(p->len);
+                }            
+            } while ((p = p->next) != NULL);
 
-        write_to_tun();
+            write_to_tun();
+        }
     }
 
     return ERR_OK;
@@ -374,7 +403,7 @@ int TUNDev::handle_write_upd_data(TUNSession* _session){
 
     m_write_fill_buf.commit(packat_length);
 
-    _log_with_endpoint(local_endpoint, "<- " + remote_endpoint.address().to_string() + ":" + to_string(remote_endpoint.port()) + " length:" + to_string(data_len));
+    //_log_with_endpoint(local_endpoint, "<- " + remote_endpoint.address().to_string() + ":" + to_string(remote_endpoint.port()) + " length:" + to_string(data_len));
 
     write_to_tun();
 
@@ -423,7 +452,7 @@ int TUNDev::try_to_process_udp_packet(uint8_t* data, int data_len){
         auto local_endpoint = udp::endpoint(make_address_v4((address_v4::uint_type)ntoh32(ipv4_hdr.source_address)), ntoh16(udp_hdr.source_port));
         auto remote_endpoint = udp::endpoint(make_address_v4((address_v4::uint_type)ntoh32(ipv4_hdr.destination_address)), ntoh16(udp_hdr.dest_port));
 
-        _log_with_endpoint(local_endpoint, "-> " + remote_endpoint.address().to_string() + ":" + to_string(remote_endpoint.port()) + " length:" + to_string(data_len));
+        //_log_with_endpoint(local_endpoint, "-> " + remote_endpoint.address().to_string() + ":" + to_string(remote_endpoint.port()) + " length:" + to_string(data_len));
 
         for(auto it = m_udp_clients.begin();it != m_udp_clients.end();it++){
             if(it->get()->try_to_process_udp(local_endpoint, remote_endpoint, data, data_len)){

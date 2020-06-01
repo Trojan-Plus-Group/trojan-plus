@@ -5,13 +5,11 @@ if [ ! -n "$1" ]; then
     exit 1;
 fi
 
+clean_build=0
+
 ANDROID_NDK_HOME=`realpath $1`
 
 trojan_path=`realpath .`
-build_path=${trojan_path}/android-build
-mkdir -p ${trojan_path}
-
-cd ${build_path}
 
 # Set the Android API levels
 ANDROID_API=24
@@ -25,12 +23,17 @@ android_architectures=(
 
 for i in "${!android_architectures[@]}"
 do
-    rm -rf ${build_path}/*
-
-    arch=${android_architectures[$i]};
-
+    arch=${android_architectures[$i]}
     output_path=${trojan_path}/android_lib/${arch}
+    build_path=${trojan_path}/android-build-${arch}
+    mkdir -p ${build_path}
     mkdir -p ${output_path}
+
+    if [ ${clean_build} = "1" ]; then
+        rm -rf ${build_path}/*
+    fi
+
+    cd ${build_path}   
 
     cmake -DENABLE_ANDROID_LOG=ON -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=${ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake \
         -DANDROID_NDK=${ANDROID_NDK_HOME} -DCMAKE_BUILD_TYPE=Release -DANDROID_PLATFORM=${ANDROID_API} -DANDROID_ABI="${arch}" ..
