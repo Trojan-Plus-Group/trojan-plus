@@ -322,7 +322,7 @@ void ServerSession::udp_sent() {
             return;
         }
         _log_with_endpoint(out_udp_endpoint, "session_id: " + to_string(get_session_id()) + " sent a UDP packet of length " + to_string(packet.length) + " bytes to " + packet.address.address + ':' + to_string(packet.address.port));
-        udp_data_buf.commit(packet_len);
+        udp_data_buf.consume(packet_len);
 
         string query_addr = packet.address.address;
         auto self = shared_from_this();
