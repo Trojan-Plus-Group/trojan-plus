@@ -23,6 +23,7 @@
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/ssl.hpp>
+#include <boost/asio/streambuf.hpp>
 #include <boost/version.hpp>
 #include <functional>
 #include <list>
@@ -48,7 +49,7 @@ private:
     std::string plain_http_response;
     boost::asio::ip::udp::socket udp_socket;
     std::list<std::weak_ptr<UDPForwardSession> > udp_sessions;
-    uint8_t udp_read_buf[Session::MAX_BUF_LENGTH]{};
+    boost::asio::streambuf udp_read_buf;
     boost::asio::ip::udp::endpoint udp_recv_endpoint;
     void async_accept();
     void udp_async_read();

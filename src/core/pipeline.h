@@ -27,6 +27,7 @@
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ssl.hpp>
 #include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/streambuf.hpp>
 
 #include "proto/pipelinerequest.h"
 #include "core/config.h"
@@ -49,7 +50,7 @@ private:
     bool destroyed;
     boost::asio::ssl::stream<boost::asio::ip::tcp::socket>out_socket;
     bool connected;
-    char out_read_buf[MAX_BUF_LENGTH];
+    boost::asio::streambuf out_read_buf;
     std::string out_read_data;
     boost::asio::ip::tcp::resolver resolver; 
     std::vector<std::shared_ptr<Session>> sessions;

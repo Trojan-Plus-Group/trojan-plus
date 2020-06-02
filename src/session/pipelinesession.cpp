@@ -92,14 +92,16 @@ void PipelineSession::start(){
 }
 
 void PipelineSession::in_async_read(){
+    in_read_buf.consume(in_read_buf.size());
     auto self = shared_from_this();
-    live_socket.async_read_some(boost::asio::buffer(in_read_buf, MAX_BUF_LENGTH), [this, self](const boost::system::error_code error, size_t length) {
+    live_socket.async_read_some(in_read_buf.prepare(MAX_BUF_LENGTH), [this, self](const boost::system::error_code error, size_t length) {
         if (error) {
             output_debug_info_ec(error);
             destroy();
             return;
         }
-        in_recv(string((const char*)in_read_buf, length));
+        in_read_buf.commit(length);
+        in_recv(string(boost::asio::buffer_cast<const char*>(in_read_buf.data()), length));
     });
 }
 

@@ -112,13 +112,14 @@ void UDPForwardSession::out_async_read() {
             out_recv(data);
         });
     } else {
+        out_read_buf.consume(out_read_buf.size());
         auto self = shared_from_this();
-        out_socket.async_read_some(boost::asio::buffer(out_read_buf, MAX_BUF_LENGTH), [this, self](const boost::system::error_code error, size_t length) {
+        out_socket.async_read_some(out_read_buf.prepare(MAX_BUF_LENGTH), [this, self](const boost::system::error_code error, size_t length) {
             if (error) {
                 destroy();
                 return;
             }
-            out_recv(string((const char*)out_read_buf, length));
+            out_recv(string(boost::asio::buffer_cast<const char*>(out_read_buf.data()), length));
         });
     }
 }

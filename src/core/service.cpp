@@ -518,19 +518,24 @@ void Service::udp_async_read() {
         if(config.run_type == Config::NAT){
             int read_length = (int)length;
             int ttl = -1;
-            targetdst = recv_tproxy_udp_msg(udp_socket.native_handle(), udp_recv_endpoint, (char *)udp_read_buf, read_length, ttl);
+            
+            targetdst = recv_tproxy_udp_msg(udp_socket.native_handle(), udp_recv_endpoint, 
+                (char*)udp_read_buf.prepare(Session::MAX_BUF_LENGTH).data(), read_length, ttl);
+
             length = read_length < 0 ? 0 : read_length;
+            udp_read_buf.commit(length);
 
             // in the first design, if we want to proxy icmp, we need to transfer TTL of udp to server and set TTL when server sends upd out
             // but now in most of traceroute programs just use icmp to trigger remote server back instead of udp, so we don't need pass TTL to server any more
             // we just keep this codes of retreiving TTL if it will be used for some future features.
             _log_with_date_time("[udp] get ttl:" + to_string(ttl));
         }else{
+            udp_read_buf.commit(length);
             targetdst = make_pair(config.target_addr, config.target_port);
         }
 
         if(targetdst.second != 0){                
-            string data((const char *)udp_read_buf, length);
+            string data(boost::asio::buffer_cast<const char *>(udp_read_buf.data()), length);
             for (auto it = udp_sessions.begin(); it != udp_sessions.end();) {
                 auto next = ++it;
                 --it;
@@ -574,10 +579,11 @@ void Service::udp_async_read() {
         udp_async_read();        
     };
 
+    udp_read_buf.consume(udp_read_buf.size());
     if(config.run_type == Config::NAT){
         udp_socket.async_receive_from(boost::asio::null_buffers(), udp_recv_endpoint, cb);
     }else{
-        udp_socket.async_receive_from(boost::asio::buffer(udp_read_buf, Session::MAX_BUF_LENGTH), udp_recv_endpoint, cb);
+        udp_socket.async_receive_from(udp_read_buf.prepare(Session::MAX_BUF_LENGTH), udp_recv_endpoint, cb);
     }    
 }
 

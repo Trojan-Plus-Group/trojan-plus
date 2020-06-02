@@ -127,13 +127,15 @@ bool Pipeline::is_in_pipeline(Session& session){
 }
 
 void Pipeline::out_async_recv(){
+    out_read_buf.consume(out_read_buf.size());
     auto self = shared_from_this();
-    out_socket.async_read_some(boost::asio::buffer(out_read_buf, MAX_BUF_LENGTH), [this, self](const boost::system::error_code error, size_t length) {
+    out_socket.async_read_some(out_read_buf.prepare(MAX_BUF_LENGTH), [this, self](const boost::system::error_code error, size_t length) {
         if (error) {
             output_debug_info_ec(error);
             destroy();
         }else{
-            out_read_data += string((const char*)out_read_buf, length);
+            out_read_buf.commit(length);
+            out_read_data.append(boost::asio::buffer_cast<const char*>(out_read_buf.data()), length);
 
             while(!out_read_data.empty()){
                 PipelineRequest req;

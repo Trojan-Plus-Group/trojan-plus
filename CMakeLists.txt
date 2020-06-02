@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.7.2)
 
 project(trojan CXX C)
+set(CMAKE_CXX_STANDARD 17)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/")
 if(NOT CMAKE_BUILD_TYPE)
@@ -20,8 +21,6 @@ if(CMAKE_BUILD_TYPE STREQUAL Release AND NOT MSVC)
     endif()
 endif()
 
-
-set(CMAKE_CXX_STANDARD 11)
 if(MSVC)
     add_definitions(-D_CRT_SECURE_NO_WARNINGS -D_WIN32_WINNT=0x0601)
 else()

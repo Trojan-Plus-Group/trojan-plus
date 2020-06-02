@@ -80,8 +80,9 @@ void ClientSession::in_async_read() {
         _log_with_endpoint(in_endpoint, "Permit to ClientSession::in_async_read! ack:" + to_string(pipeline_com.pipeline_ack_counter));
     }
 
+    in_read_buf.consume(in_read_buf.size());
     auto self = shared_from_this();
-    in_socket.async_read_some(boost::asio::buffer(in_read_buf, MAX_BUF_LENGTH), [this, self](const boost::system::error_code error, size_t length) {
+    in_socket.async_read_some(in_read_buf.prepare(MAX_BUF_LENGTH), [this, self](const boost::system::error_code error, size_t length) {
         if (error == boost::asio::error::operation_aborted) {
             return;
         }
@@ -90,7 +91,8 @@ void ClientSession::in_async_read() {
             destroy();
             return;
         }
-        in_recv(string((const char*)in_read_buf, length));
+        in_read_buf.consume(length);
+        in_recv(string(boost::asio::buffer_cast<const char*>(in_read_buf.data()), length));
     });
 }
 
@@ -126,14 +128,16 @@ void ClientSession::out_async_read() {
             out_recv(data);
         });
     }else{
+        out_read_buf.consume(out_read_buf.size());
         auto self = shared_from_this();
-        out_socket.async_read_some(boost::asio::buffer(out_read_buf, MAX_BUF_LENGTH), [this, self](const boost::system::error_code error, size_t length) {
+        out_socket.async_read_some(out_read_buf.prepare(MAX_BUF_LENGTH), [this, self](const boost::system::error_code error, size_t length) {
             if (error) {
                 output_debug_info_ec(error);
                 destroy();
                 return;
             }
-            out_recv(string((const char*)out_read_buf, length));
+            out_read_buf.commit(length);
+            out_recv(string(boost::asio::buffer_cast<const char*>(out_read_buf.data()), length));
         });
     }
 }
@@ -164,8 +168,9 @@ void ClientSession::out_async_write(const string &data) {
 }
 
 void ClientSession::udp_async_read() {
+    udp_read_buf.consume(udp_read_buf.size());
     auto self = shared_from_this();
-    udp_socket.async_receive_from(boost::asio::buffer(udp_read_buf, MAX_BUF_LENGTH), udp_recv_endpoint, [this, self](const boost::system::error_code error, size_t length) {
+    udp_socket.async_receive_from(udp_read_buf.prepare(MAX_BUF_LENGTH), udp_recv_endpoint, [this, self](const boost::system::error_code error, size_t length) {
         if (error == boost::asio::error::operation_aborted) {
             return;
         }
@@ -174,7 +179,8 @@ void ClientSession::udp_async_read() {
             destroy();
             return;
         }
-        udp_recv(string((const char*)udp_read_buf, length), udp_recv_endpoint);
+        udp_read_buf.commit(length);
+        udp_recv(string(boost::asio::buffer_cast<const char*>(udp_read_buf.data()), length), udp_recv_endpoint);
     });
 }
 

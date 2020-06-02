@@ -39,6 +39,7 @@
         void async_read_some(const ConstBufferSequence&, Handler&&) {}
 
         void close(){}
+        void release(){}
     };
 #endif
 
