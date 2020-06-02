@@ -29,6 +29,79 @@
 
 using namespace std;
 
+size_t streambuf_append(boost::asio::streambuf& target, const boost::asio::streambuf& append_buf){
+    if(append_buf.size() == 0){
+        return 0;
+    }
+
+    auto copied = boost::asio::buffer_copy(target.prepare(append_buf.size()), append_buf.data());
+    target.commit(copied);
+    return copied;
+}
+
+size_t streambuf_append(boost::asio::streambuf& target, const boost::asio::streambuf& append_buf, size_t start, size_t n){
+    if(start >= append_buf.size()){
+        return 0;
+    }
+
+    if((start + n) > append_buf.size()){
+        return 0;
+    }
+
+    auto dest = boost::asio::buffer_cast<uint8_t*>(target.prepare(append_buf.size()));
+    auto src = boost::asio::buffer_cast<const uint8_t*>(append_buf.data()) + start;
+    memcpy(dest, src, n);
+    target.commit(n);
+    return n;
+}
+
+size_t streambuf_append(boost::asio::streambuf& target, const char* append_str){
+    if(!append_str){
+        return 0;
+    }
+
+    auto length = strlen(append_str);
+    if(length == 0){
+        return 0;
+    }
+
+    auto copied = boost::asio::buffer_copy(target.prepare(length), boost::asio::buffer(append_str, length));
+    target.commit(copied);
+    return copied;
+}
+
+size_t streambuf_append(boost::asio::streambuf& target, char append_char){
+    auto cp = boost::asio::buffer_cast<char*>(target.prepare(1));
+    cp[0] = append_char;
+    target.commit(1);
+    return 1;
+}
+
+size_t streambuf_append(boost::asio::streambuf& target, const std::string_view& append_data){
+    if(append_data.length() == 0){
+        return 0;
+    }
+
+    auto copied = boost::asio::buffer_copy(target.prepare(append_data.length()), boost::asio::buffer(append_data.data(), append_data.length()));
+    target.commit(copied);
+    return copied;
+}
+
+size_t streambuf_append(boost::asio::streambuf& target, const std::string& append_data){
+    if(append_data.length() == 0){
+        return 0;
+    }
+
+    auto copied = boost::asio::buffer_copy(target.prepare(append_data.length()), boost::asio::buffer(append_data));
+    target.commit(copied);
+    return copied;
+}
+
+std::string_view streambuf_to_string_view(boost::asio::streambuf& target){
+    return std::string_view(boost::asio::buffer_cast<const char*>(target.data()), target.size());
+}
+
+
 #ifndef _WIN32  // nat mode does not support in windows platform
 // copied from shadowsocks-libev udpreplay.c
 static int get_dstaddr(struct msghdr *msg, struct sockaddr_storage *dstaddr) {

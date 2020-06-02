@@ -249,15 +249,12 @@ void TUNSession::recv_buf_consume(uint16_t _length){
 void TUNSession::out_async_read() {
     
     if(m_service->is_use_pipeline()){    
-        get_pipeline_component().pipeline_data_cache.async_read([this](const string &data) {
+        get_pipeline_component().pipeline_data_cache.async_read([this](const string_view &data) {
             if(is_udp_forward()){
-                ostream os(&m_recv_udp_buf);
-                os << data;
+                streambuf_append(m_recv_udp_buf, data);
                 parse_udp_packet_data();
             }else{
-                ostream os(&m_recv_buf);
-                os << data;
-
+                streambuf_append(m_recv_buf, data);
                 m_recv_buf_ack_length += data.length();
             }
             
@@ -272,13 +269,13 @@ void TUNSession::out_async_read() {
     }else{
         auto self = shared_from_this();
         boost::asio::streambuf& recv_buf = is_udp_forward() ? m_recv_udp_buf : m_recv_buf;
-        m_out_socket.async_read_some(recv_buf.prepare(Session::MAX_BUF_LENGTH), [this, self](const boost::system::error_code error, size_t length) {
+        m_out_socket.async_read_some(recv_buf.prepare(Session::MAX_BUF_LENGTH), [this, self, &recv_buf](const boost::system::error_code error, size_t length) {
             if (error) {
                 output_debug_info_ec(error);
                 destroy();
                 return;
             }
-
+            
             if(is_udp_forward()){
                 m_recv_udp_buf.commit(length);
                 parse_udp_packet_data();

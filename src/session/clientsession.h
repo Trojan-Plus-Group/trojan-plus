@@ -21,6 +21,7 @@
 #define _CLIENTSESSION_H_
 
 #include <boost/asio/ssl.hpp>
+#include <string_view>
 
 #include "socketsession.h"
 #include "core/pipeline.h"
@@ -41,20 +42,21 @@ protected:
     boost::asio::ip::tcp::socket in_socket;
     boost::asio::ssl::stream<boost::asio::ip::tcp::socket>out_socket;
     boost::asio::ip::udp::endpoint in_udp_endpoint;
-    
+    boost::asio::streambuf udp_recv_buf;
+    boost::asio::streambuf udp_send_buf;
 
     void in_async_read();
-    void in_async_write(const std::string &data);
+    void in_async_write(const std::string_view &data);
     void out_async_read();
-    void out_async_write(const std::string &data);
+    void out_async_write(const std::string_view &data);
     void out_sent();
     void udp_async_read();
-    void udp_async_write(const std::string &data, const boost::asio::ip::udp::endpoint &endpoint);
-    void udp_recv(const std::string &data, const boost::asio::ip::udp::endpoint &endpoint);
+    void udp_async_write(const std::string_view &data, const boost::asio::ip::udp::endpoint &endpoint);
+    void udp_recv(const std::string_view &data, const boost::asio::ip::udp::endpoint &endpoint);
     void udp_sent();
-    void out_recv(const std::string &data);
+    void out_recv(const std::string_view &data);
 
-    virtual void in_recv(const std::string &data);
+    virtual void in_recv(const std::string_view &data);
     virtual void in_sent();
 
     bool prepare_session();

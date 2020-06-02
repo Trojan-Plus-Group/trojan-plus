@@ -80,8 +80,8 @@ public:
 
     void start_session(std::shared_ptr<Session> session, SentHandler&& started_handler);
 
-    void session_async_send_to_pipeline(Session& session, PipelineRequest::Command cmd, const std::string& data, SentHandler&& sent_handler);
-    void session_async_send_to_pipeline_icmp(const std::string& data, SentHandler&& sent_handler);
+    void session_async_send_to_pipeline(Session& session, PipelineRequest::Command cmd, const std::string_view& data, SentHandler&& sent_handler);
+    void session_async_send_to_pipeline_icmp(const std::string_view& data, SentHandler&& sent_handler);
     void session_destroy_in_pipeline(Session& session);    
 
     bool is_use_pipeline() const { return config.experimental.pipeline_num > 0; }

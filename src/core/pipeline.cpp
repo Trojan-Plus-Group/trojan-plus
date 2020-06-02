@@ -39,13 +39,13 @@ Pipeline::Pipeline(Service* _service, const Config& config, boost::asio::ssl::co
     pipeline_id = s_pipeline_id_counter++;
 
     sending_data_cache.set_is_connected_func([this](){ return is_connected();});
-    sending_data_cache.set_async_writer([this](const std::string& data, SentHandler handler) {
+    sending_data_cache.set_async_writer([this](const boost::asio::streambuf& data, SentHandler handler) {
             if (destroyed) {
                 return;
             }
 
             auto self = shared_from_this();
-            boost::asio::async_write(out_socket, boost::asio::buffer(data), [this, self, handler](const boost::system::error_code error, size_t) {
+            boost::asio::async_write(out_socket, data.data(), [this, self, handler](const boost::system::error_code error, size_t) {
                 if (error) {
                     output_debug_info_ec(error);
                     destroy();
@@ -72,7 +72,7 @@ void Pipeline::start(){
     });
 }
 
-void Pipeline::session_async_send_cmd(PipelineRequest::Command cmd, Session& session, const std::string& send_data, SentHandler&& sent_handler){
+void Pipeline::session_async_send_cmd(PipelineRequest::Command cmd, Session& session, const std::string_view& send_data, SentHandler&& sent_handler){
     if(destroyed){
         sent_handler(boost::asio::error::broken_pipe);
         return;
@@ -84,7 +84,7 @@ void Pipeline::session_async_send_cmd(PipelineRequest::Command cmd, Session& ses
     sending_data_cache.push_data(PipelineRequest::generate(cmd, session.get_session_id(), send_data), move(sent_handler));
 }
 
-void Pipeline::session_async_send_icmp(const std::string& send_data, SentHandler&& sent_handler) {
+void Pipeline::session_async_send_icmp(const std::string_view& send_data, SentHandler&& sent_handler) {
     if (destroyed) {
         sent_handler(boost::asio::error::broken_pipe);
         return;
@@ -127,7 +127,6 @@ bool Pipeline::is_in_pipeline(Session& session){
 }
 
 void Pipeline::out_async_recv(){
-    out_read_buf.consume(out_read_buf.size());
     auto self = shared_from_this();
     out_socket.async_read_some(out_read_buf.prepare(MAX_BUF_LENGTH), [this, self](const boost::system::error_code error, size_t length) {
         if (error) {
@@ -135,11 +134,9 @@ void Pipeline::out_async_recv(){
             destroy();
         }else{
             out_read_buf.commit(length);
-            out_read_data.append(boost::asio::buffer_cast<const char*>(out_read_buf.data()), length);
-
-            while(!out_read_data.empty()){
+            while(out_read_buf.size() != 0){
                 PipelineRequest req;
-                int ret = req.parse(out_read_data);
+                int ret = req.parse(streambuf_to_string_view(out_read_buf));
                 if(ret == -1){
                     break;
                 }
@@ -154,7 +151,7 @@ void Pipeline::out_async_recv(){
 
                 if(req.command == PipelineRequest::ICMP){
                     if (icmp_processor) {
-                        icmp_processor->client_out_send(req.packet_data);
+                        icmp_processor->client_out_send(string(req.packet_data));
                     }
                 }else{                    
 
@@ -169,7 +166,7 @@ void Pipeline::out_async_recv(){
                             } else if (req.command == PipelineRequest::ACK) {
                                 session->recv_ack_cmd();
                             } else {
-                                session->get_pipeline_component().pipeline_in_recv(move(req.packet_data));
+                                session->get_pipeline_component().pipeline_in_recv(req.packet_data);
                             }
                             found = true;
                             break;
@@ -182,6 +179,8 @@ void Pipeline::out_async_recv(){
                         _log_with_date_time("pipeline " + to_string(get_pipeline_id()) + " cannot find session_id:" + to_string(req.session_id) + " current sessions:" + to_string(sessions.size()));
                     }
                 }
+
+                out_read_buf.consume(req.consume_length);
             }            
 
             out_async_recv();

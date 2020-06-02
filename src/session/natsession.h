@@ -26,7 +26,7 @@
 class NATSession : public ClientSession {
 protected:
     virtual std::pair<std::string, uint16_t> get_target_endpoint();
-    void in_recv(const std::string &data) override;
+    void in_recv(const std::string_view &data) override;
     void in_sent() override;
 
 public:

@@ -97,17 +97,25 @@ typedef boost::asio::detail::socket_option::boolean<SOL_SOCKET, SO_REUSEPORT> re
 #define PACKET_HEADER_SIZE (1 + 28 + 2 + 64)
 #define DEFAULT_PACKET_SIZE 1397  // 1492 - PACKET_HEADER_SIZE = 1397, the default MTU for UDP relay
 
+size_t streambuf_append(boost::asio::streambuf& target, const boost::asio::streambuf& append_buf);
+size_t streambuf_append(boost::asio::streambuf& target, const boost::asio::streambuf& append_buf, size_t start, size_t n);
+size_t streambuf_append(boost::asio::streambuf& target, const char* append_str);
+size_t streambuf_append(boost::asio::streambuf& target, char append_char);
+size_t streambuf_append(boost::asio::streambuf& target, const std::string_view& append_data);
+size_t streambuf_append(boost::asio::streambuf& target, const std::string& append_data);
+std::string_view streambuf_to_string_view(boost::asio::streambuf& target);
 
 typedef std::function<void(const boost::system::error_code ec)> SentHandler;
-typedef std::function<void(const std::string& data, SentHandler handler)> AsyncWriter;
+typedef std::function<void(const boost::asio::streambuf& data, SentHandler handler)> AsyncWriter;
 typedef std::function<bool()> ConnectionFunc;
-typedef std::function<void(const std::string& data)> ReadHandler;
+typedef std::function<void(const std::string_view& data)> ReadHandler;
 
 class SendDataCache{
     std::vector<SentHandler> handler_queue;
-    std::string data_queue;
+    boost::asio::streambuf data_queue;
+    boost::asio::streambuf copy_data_queue;
 
-    std::string sending_data_buff;
+    boost::asio::streambuf sending_data_buff;
     std::vector<SentHandler> sending_data_handler;
 
     bool is_async_sending;
@@ -127,26 +135,35 @@ public:
         is_connected = std::move(func);
     }
 
-    inline void insert_data(std::string&& data) {
-        data_queue = data + data_queue;
+    inline void insert_data(const std::string_view& data) {
+        
+        copy_data_queue.consume(copy_data_queue.size());
+        streambuf_append(copy_data_queue, data_queue);
+        data_queue.consume(data_queue.size());
+
+        streambuf_append(data_queue, data);
+        streambuf_append(data_queue, copy_data_queue);
+
         async_send();
     }
 
-    inline void push_data(std::string&& data, SentHandler&& handler) {
-        data_queue += data;
+    inline void push_data(const std::string_view& data, SentHandler&& handler) {
+        streambuf_append(data_queue, data);
+
         handler_queue.emplace_back(std::move(handler));
         async_send();
     }
 
     inline void async_send(){
-        if (data_queue.empty() || !is_connected() || is_async_sending) {
+        if (data_queue.size() == 0 || !is_connected() || is_async_sending) {
             return;
         }
 
         is_async_sending = true;
 
-        sending_data_buff = data_queue;
-        data_queue.clear();
+        sending_data_buff.consume(sending_data_buff.size());
+        streambuf_append(sending_data_buff, data_queue);
+        data_queue.consume(data_queue.size());
 
         std::move(handler_queue.begin(), handler_queue.end(), std::back_inserter(sending_data_handler));
         handler_queue.clear();
@@ -166,27 +183,27 @@ public:
 };
 
 class ReadDataCache{
-    std::string data_queue;
+    boost::asio::streambuf data_queue;
     ReadHandler read_handler;
     bool is_waiting;
 public :
     ReadDataCache(): is_waiting(false){}
-    inline void push_data(std::string&& data) {
+    inline void push_data(const std::string_view& data) {
         if (is_waiting) {
             is_waiting = false;
             read_handler(data);
         }else{
-            data_queue += data;
+            streambuf_append(data_queue, data);
         }
     }
 
     inline void async_read(ReadHandler&& handler) {
-        if (data_queue.empty()) {
+        if (data_queue.size() == 0) {
             is_waiting = true;
             read_handler = std::move(handler);
         }else{
-            handler(data_queue);
-            data_queue.clear();
+            handler(streambuf_to_string_view(data_queue));
+            data_queue.consume(data_queue.size());
         }
     }
 };

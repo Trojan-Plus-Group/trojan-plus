@@ -40,13 +40,13 @@ PipelineSession::PipelineSession(Service* _service, const Config& config, boost:
     gc_timer(_service->get_io_context()),
     ssl_context(ssl_context){
 
-    sending_data_cache.set_async_writer([this](const std::string& data, SentHandler handler) {
+    sending_data_cache.set_async_writer([this](const boost::asio::streambuf& data, SentHandler handler) {
         if(status == DESTROY){
             return;
         }
 
         auto self = shared_from_this();
-        boost::asio::async_write(live_socket, boost::asio::buffer(data), [this, self, handler](const boost::system::error_code ec, size_t) {
+        boost::asio::async_write(live_socket, data.data(), [this, self, handler](const boost::system::error_code ec, size_t) {
             if (ec) {
                 output_debug_info_ec(ec);
                 destroy();
@@ -101,7 +101,7 @@ void PipelineSession::in_async_read(){
             return;
         }
         in_read_buf.commit(length);
-        in_recv(string(boost::asio::buffer_cast<const char*>(in_read_buf.data()), length));
+        in_recv(streambuf_to_string_view(in_read_buf));
     });
 }
 
@@ -123,11 +123,10 @@ void PipelineSession::in_recv(const string_view &data) {
 
         gc_timer.cancel();
         status = STREAMING;
-        in_recv_streaming_data += data.substr(npos + 2);
-        process_streaming_data();
-        
+        streambuf_append(in_recv_streaming_data, data.substr(npos + 2));
+        process_streaming_data();        
     }else if(status == STREAMING){
-        in_recv_streaming_data += data;
+        streambuf_append(in_recv_streaming_data, data);
         process_streaming_data();
     }
 }
@@ -160,9 +159,9 @@ bool PipelineSession::find_and_process_session(PipelineComponent::SessionIdType 
 
 void PipelineSession::process_streaming_data(){
 
-    while(!in_recv_streaming_data.empty()){
+    while(in_recv_streaming_data.size() != 0){
         PipelineRequest req;
-        int ret = req.parse(in_recv_streaming_data);
+        int ret = req.parse(streambuf_to_string_view(in_recv_streaming_data));
         if(ret == -1){
             break;
         }
@@ -220,13 +219,15 @@ void PipelineSession::process_streaming_data(){
             }
         }else if(req.command == PipelineRequest::ICMP){
             if(icmp_processor){
-                icmp_processor->server_out_send(req.packet_data, shared_from_this());
+                icmp_processor->server_out_send(string(req.packet_data), shared_from_this());
             }
         }else{
             _log_with_endpoint(in_endpoint, "PipelineSession error command");
             destroy();
             return;
         }
+
+        in_recv_streaming_data.consume(req.consume_length);
     }    
 
     in_async_read();

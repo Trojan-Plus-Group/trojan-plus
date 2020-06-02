@@ -368,7 +368,7 @@ void Service::start_session(std::shared_ptr<Session> session, SentHandler&& star
     }
 }
 
-void Service::session_async_send_to_pipeline(Session &session, PipelineRequest::Command cmd, const std::string &data, SentHandler&& sent_handler) {
+void Service::session_async_send_to_pipeline(Session &session, PipelineRequest::Command cmd, const std::string_view &data, SentHandler&& sent_handler) {
     if(config.experimental.pipeline_num > 0 && config.run_type != Config::SERVER){
         
         Pipeline* pipeline = nullptr;
@@ -397,7 +397,7 @@ void Service::session_async_send_to_pipeline(Session &session, PipelineRequest::
     }
 }
 
-void Service::session_async_send_to_pipeline_icmp(const std::string& data, std::function<void(boost::system::error_code ec)>&& sent_handler){
+void Service::session_async_send_to_pipeline_icmp(const std::string_view& data, std::function<void(boost::system::error_code ec)>&& sent_handler){
     if (config.experimental.pipeline_num > 0 && config.run_type != Config::SERVER) {
         Pipeline *pipeline = search_default_pipeline();
         if (!pipeline) {
@@ -534,14 +534,13 @@ void Service::udp_async_read() {
             targetdst = make_pair(config.target_addr, config.target_port);
         }
 
-        if(targetdst.second != 0){                
-            string data(boost::asio::buffer_cast<const char *>(udp_read_buf.data()), length);
+        if(targetdst.second != 0){
             for (auto it = udp_sessions.begin(); it != udp_sessions.end();) {
                 auto next = ++it;
                 --it;
                 if (it->expired()) {
                     udp_sessions.erase(it);
-                } else if (it->lock()->process(udp_recv_endpoint, data)) {
+                } else if (it->lock()->process(udp_recv_endpoint, streambuf_to_string_view(udp_read_buf))) {
                     udp_async_read();
                     return;
                 }
@@ -565,11 +564,13 @@ void Service::udp_async_read() {
                 }
             });
 
+            auto data = get_sending_data_allocator().allocate(streambuf_to_string_view(udp_read_buf));
             start_session(session, [this, session, data](boost::system::error_code ec){
                 if(!ec){
                     udp_sessions.emplace_back(session);
-                    session->start_udp(data);
-                }                
+                    session->start_udp(streambuf_to_string_view(*data));
+                }
+                get_sending_data_allocator().free(data);
             });
               
         }else{

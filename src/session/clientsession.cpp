@@ -91,12 +91,12 @@ void ClientSession::in_async_read() {
             destroy();
             return;
         }
-        in_read_buf.consume(length);
-        in_recv(string(boost::asio::buffer_cast<const char*>(in_read_buf.data()), length));
+        in_read_buf.commit(length);
+        in_recv(streambuf_to_string_view(in_read_buf));
     });
 }
 
-void ClientSession::in_async_write(const string &data) {
+void ClientSession::in_async_write(const string_view &data) {
     auto self = shared_from_this();
     auto data_copy = get_service()->get_sending_data_allocator().allocate(data);
     boost::asio::async_write(in_socket, data_copy->data(), [this, self, data_copy](const boost::system::error_code error, size_t) {
@@ -125,7 +125,7 @@ void ClientSession::in_async_write(const string &data) {
 
 void ClientSession::out_async_read() {
     if(pipeline_com.is_using_pipeline()){
-        pipeline_com.pipeline_data_cache.async_read([this](const string &data) {
+        pipeline_com.pipeline_data_cache.async_read([this](const string_view &data) {
             out_recv(data);
         });
     }else{
@@ -138,12 +138,12 @@ void ClientSession::out_async_read() {
                 return;
             }
             out_read_buf.commit(length);
-            out_recv(string(boost::asio::buffer_cast<const char*>(out_read_buf.data()), length));
+            out_recv(streambuf_to_string_view(out_read_buf));
         });
     }
 }
 
-void ClientSession::out_async_write(const string &data) {
+void ClientSession::out_async_write(const string_view &data) {
     auto self = shared_from_this();
     if(pipeline_com.is_using_pipeline()){
         service->session_async_send_to_pipeline(*this, PipelineRequest::DATA, data, [this, self](const boost::system::error_code error) {
@@ -182,11 +182,11 @@ void ClientSession::udp_async_read() {
             return;
         }
         udp_read_buf.commit(length);
-        udp_recv(string(boost::asio::buffer_cast<const char*>(udp_read_buf.data()), length), udp_recv_endpoint);
+        udp_recv(streambuf_to_string_view(udp_read_buf), udp_recv_endpoint);
     });
 }
 
-void ClientSession::udp_async_write(const string &data, const udp::endpoint &endpoint) {
+void ClientSession::udp_async_write(const string_view &data, const udp::endpoint &endpoint) {
     auto self = shared_from_this();
     auto data_copy = get_service()->get_sending_data_allocator().allocate(data);
     udp_socket.async_send_to(data_copy->data(), endpoint, [this, self, data_copy](const boost::system::error_code error, size_t) {
@@ -200,7 +200,7 @@ void ClientSession::udp_async_write(const string &data, const udp::endpoint &end
     });
 }
 
-void ClientSession::in_recv(const string &data) {
+void ClientSession::in_recv(const string_view &data) {
     switch (status) {
         case HANDSHAKE: {
             if (data.length() < 2 || data[0] != 5 || data.length() != (unsigned int)(unsigned char)data[1] + 2) {
@@ -230,9 +230,16 @@ void ClientSession::in_recv(const string &data) {
                 destroy();
                 return;
             }
-            out_write_buf = config.password.cbegin()->first + "\r\n" + data[1] + data.substr(3) + "\r\n";
+            out_write_buf.consume(out_write_buf.size());
+
+            streambuf_append(out_write_buf, config.password.cbegin()->first);
+            streambuf_append(out_write_buf, "\r\n");
+            streambuf_append(out_write_buf, data[1]);
+            streambuf_append(out_write_buf, data.substr(3));
+            streambuf_append(out_write_buf, "\r\n");
+
             TrojanRequest req;
-            if (req.parse(out_write_buf) == -1) {
+            if (req.parse(streambuf_to_string_view(out_write_buf)) == -1) {
                 _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + " unsupported command", Log::ERROR);
                 in_async_write(string("\x05\x07\x00\x01\x00\x00\x00\x00\x00\x00", 10));
                 status = INVALID;
@@ -261,7 +268,7 @@ void ClientSession::in_recv(const string &data) {
         case CONNECT: {
             sent_len += data.length();
             first_packet_recv = true;
-            out_write_buf += data;
+            streambuf_append(out_write_buf, data);
             break;
         }
         case FORWARD: {
@@ -323,7 +330,7 @@ void ClientSession::request_remote(){
             status = FORWARD;
         }
         out_async_read();
-        out_async_write(out_write_buf);
+        out_async_write(streambuf_to_string_view(out_write_buf));
     };
 
     if(pipeline_com.is_using_pipeline()){
@@ -333,12 +340,12 @@ void ClientSession::request_remote(){
     }    
 }
 
-void ClientSession::out_recv(const string &data) {
+void ClientSession::out_recv(const string_view &data) {
     if (status == FORWARD) {
         recv_len += data.length();
         in_async_write(data);
     } else if (status == UDP_FORWARD) {
-        udp_data_buf += data;
+        streambuf_append(udp_data_buf, data);
         udp_sent();
     }
 }
@@ -351,7 +358,7 @@ void ClientSession::out_sent() {
     }
 }
 
-void ClientSession::udp_recv(const string &data, const udp::endpoint&) {
+void ClientSession::udp_recv(const string_view &data, const udp::endpoint&) {
     if (data.length() == 0) {
         return;
     }
@@ -370,23 +377,37 @@ void ClientSession::udp_recv(const string &data, const udp::endpoint&) {
     }
     size_t length = data.length() - 3 - address_len;
     _log_with_endpoint(in_udp_endpoint, "session_id: " + to_string(get_session_id()) + " sent a UDP packet of length " + to_string(length) + " bytes to " + address.address + ':' + to_string(address.port));
-    string packet = data.substr(3, address_len) + char(uint8_t(length >> 8)) + char(uint8_t(length & 0xFF)) + "\r\n" + data.substr(address_len + 3);
     sent_len += length;
     if (status == CONNECT) {
         first_packet_recv = true;
-        out_write_buf += packet;
+
+        streambuf_append(out_write_buf, data.substr(3, address_len));
+        streambuf_append(out_write_buf, char(uint8_t(length >> 8)));
+        streambuf_append(out_write_buf, char(uint8_t(length & 0xFF)));
+        streambuf_append(out_write_buf, "\r\n");
+        streambuf_append(out_write_buf, data.substr(address_len + 3));
+
     } else if (status == UDP_FORWARD) {
-        out_async_write(packet);
+        udp_recv_buf.consume(udp_recv_buf.size());
+
+        streambuf_append(udp_recv_buf, data.substr(3, address_len));
+        streambuf_append(udp_recv_buf, char(uint8_t(length >> 8)));
+        streambuf_append(udp_recv_buf, char(uint8_t(length & 0xFF)));
+        streambuf_append(udp_recv_buf, "\r\n");
+        streambuf_append(udp_recv_buf, data.substr(address_len + 3));
+
+        out_async_write(streambuf_to_string_view(udp_recv_buf));
     }
 }
 
 void ClientSession::udp_sent() {
     if (status == UDP_FORWARD) {
+        auto parse_data = streambuf_to_string_view(udp_data_buf);
         UDPPacket packet;
         size_t packet_len;
-        bool is_packet_valid = packet.parse(udp_data_buf, packet_len);
+        bool is_packet_valid = packet.parse(parse_data, packet_len);
         if (!is_packet_valid) {
-            if (udp_data_buf.length() > MAX_BUF_LENGTH) {
+            if (udp_data_buf.size() > MAX_BUF_LENGTH) {
                 _log_with_endpoint(in_udp_endpoint, "session_id: " + to_string(get_session_id()) + " UDP packet too long", Log::ERROR);
                 destroy();
                 return;
@@ -397,16 +418,22 @@ void ClientSession::udp_sent() {
         _log_with_endpoint(in_udp_endpoint, "session_id: " + to_string(get_session_id()) + " received a UDP packet of length " + to_string(packet.length) + " bytes from " + packet.address.address + ':' + to_string(packet.address.port));
         SOCKS5Address address;
         size_t address_len;
-        bool is_addr_valid = address.parse(udp_data_buf, address_len);
+        bool is_addr_valid = address.parse(parse_data, address_len);
         if (!is_addr_valid) {
             _log_with_endpoint(in_udp_endpoint, "session_id: " + to_string(get_session_id()) + " udp_sent: invalid UDP packet address", Log::ERROR);
             destroy();
             return;
         }
-        string reply = string("\x00\x00\x00", 3) + udp_data_buf.substr(0, address_len) + packet.payload;
-        udp_data_buf = udp_data_buf.substr(packet_len);
+
+        udp_send_buf.consume(udp_send_buf.size());
+        streambuf_append(udp_send_buf, "\x00\x00\x00");
+        streambuf_append(udp_send_buf, udp_data_buf, 0, address_len);
+        streambuf_append(udp_send_buf, packet.payload);
+        
+        udp_data_buf.consume(packet_len);
+
         recv_len += packet.length;
-        udp_async_write(reply, udp_recv_endpoint);
+        udp_async_write(streambuf_to_string_view(udp_send_buf), udp_recv_endpoint);
     }
 }
 

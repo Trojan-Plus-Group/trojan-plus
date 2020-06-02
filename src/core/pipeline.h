@@ -51,7 +51,6 @@ private:
     boost::asio::ssl::stream<boost::asio::ip::tcp::socket>out_socket;
     bool connected;
     boost::asio::streambuf out_read_buf;
-    std::string out_read_data;
     boost::asio::ip::tcp::resolver resolver; 
     std::vector<std::shared_ptr<Session>> sessions;
     uint32_t pipeline_id;
@@ -69,8 +68,8 @@ public:
     Service* get_service() { return service; }
 
     void session_start(Session& session,  SentHandler&& started_handler);
-    void session_async_send_cmd(PipelineRequest::Command cmd, Session& session, const std::string& send_data, SentHandler&& sent_handler);
-    void session_async_send_icmp(const std::string& send_data, SentHandler&& sent_handler);
+    void session_async_send_cmd(PipelineRequest::Command cmd, Session& session, const std::string_view& send_data, SentHandler&& sent_handler);
+    void session_async_send_icmp(const std::string_view& send_data, SentHandler&& sent_handler);
     void session_destroyed(Session& session);
 
     inline bool is_connected()const { return connected; }

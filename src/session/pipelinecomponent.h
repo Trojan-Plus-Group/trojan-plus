@@ -30,7 +30,7 @@ public:
     bool pipeline_first_call_ack;
 
     ReadDataCache pipeline_data_cache;
-    void pipeline_in_recv(std::string &&data);
+    void pipeline_in_recv(const std::string_view& data);
 
     void allocate_session_id();
     void free_session_id();

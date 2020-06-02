@@ -27,7 +27,7 @@ using namespace std;
 
 // please don't return uint16_t for the performance, maybe byte align problem
 static 
-size_t parse_uint16(int start_pos, const string& data){
+size_t parse_uint16(int start_pos, const string_view& data){
     return size_t(uint8_t(data[0 + start_pos])) << 8 | 
            size_t(uint8_t(data[1 + start_pos]));
 }
@@ -39,7 +39,7 @@ void generate_uint16(string& data, uint16_t value){
 }
 
 static 
-uint32_t parse_uint32(int start_pos, const string& data){
+uint32_t parse_uint32(int start_pos, const string_view& data){
     return uint32_t(uint8_t(data[0 + start_pos])) << 24 | 
            uint32_t(uint8_t(data[1 + start_pos])) << 16 | 
            uint32_t(uint8_t(data[2 + start_pos])) << 8 | 
@@ -54,7 +54,7 @@ void generate_uint32(string& data, uint32_t value){
     data += char(value & 0xff);
 }
 
-int PipelineRequest::parse(std::string &data){
+int PipelineRequest::parse(const string_view &data){
     /*
         +-------------------+-------------------------+
         | 1 byte as command | diff options by command |
@@ -100,8 +100,7 @@ int PipelineRequest::parse(std::string &data){
 
         session_id = parse_uint16(1, data);       
         packet_data = data.substr(DATA_CMD_HEADER_LENGTH, trojan_request_length);
-        data = data.substr(DATA_CMD_HEADER_LENGTH + trojan_request_length);
-
+        consume_length = DATA_CMD_HEADER_LENGTH + trojan_request_length;
     }
     else if(command == ICMP){
         const size_t ICMP_CMD_HEADER_LENGTH = 3;
@@ -117,7 +116,7 @@ int PipelineRequest::parse(std::string &data){
 
         session_id = 0;
         packet_data = data.substr(ICMP_CMD_HEADER_LENGTH, icmp_length);
-        data = data.substr(ICMP_CMD_HEADER_LENGTH + icmp_length);
+        consume_length = ICMP_CMD_HEADER_LENGTH + icmp_length;
     }
     else{
 
@@ -126,7 +125,7 @@ int PipelineRequest::parse(std::string &data){
             return -1;
         }
         session_id = parse_uint16(1, data);
-        data = data.substr(CMD_HEADER_LENGTH);
+        consume_length = CMD_HEADER_LENGTH;
         // no packet data;
     }
 

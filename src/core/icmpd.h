@@ -88,8 +88,8 @@ public :
     void start_recv();
 
     void set_service(Service* service, bool client_or_server) {
-     m_service = service;
-     m_client_or_server = client_or_server;
+        m_service = service;
+        m_client_or_server = client_or_server;
     }
 
     void server_out_send(const std::string& data, std::weak_ptr<Session> pipeline_session);

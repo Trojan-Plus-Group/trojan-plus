@@ -45,17 +45,18 @@ void NATSession::start() {
             return;
         }
         _log_with_endpoint(in_endpoint, "forwarding to " + target_addr + ':' + to_string(target_port) + " via " + config.remote_addr + ':' + to_string(config.remote_port), Log::INFO);
-        out_write_buf = TrojanRequest::generate(config.password.cbegin()->first, target_addr, target_port, true);
-        
+
+        out_write_buf.consume(out_write_buf.size());
+        streambuf_append(out_write_buf, TrojanRequest::generate(config.password.cbegin()->first, target_addr, target_port, true));        
         request_remote();
     }
 }
 
-void NATSession::in_recv(const string &data) {
+void NATSession::in_recv(const string_view &data) {
     if (status == CONNECT) {
         sent_len += data.length();
         first_packet_recv = true;
-        out_write_buf += data;
+        streambuf_append(out_write_buf, data);
     } else if (status == FORWARD) {
         sent_len += data.length();
         out_async_write(data);

@@ -79,7 +79,7 @@ void ServerSession::start() {
 
 void ServerSession::in_async_read() {
     if(pipeline_com.is_using_pipeline()){
-        pipeline_com.pipeline_data_cache.async_read([this](const string &data) {
+        pipeline_com.pipeline_data_cache.async_read([this](const string_view &data) {
             in_recv(data);
         });
     }else{
@@ -91,7 +91,8 @@ void ServerSession::in_async_read() {
                 destroy();
                 return;
             }
-            in_recv(string_view(boost::asio::buffer_cast<const char*>(in_read_buf.data()), length));
+            in_read_buf.commit(length);
+            in_recv(streambuf_to_string_view(in_read_buf));
         });
     }
 }
@@ -140,7 +141,7 @@ void ServerSession::out_async_read() {
             return;
         }
         out_read_buf.commit(length);
-        out_recv(string(boost::asio::buffer_cast<const char*>(out_read_buf.data()), length));
+        out_recv(streambuf_to_string_view(out_read_buf));
     });
 }
 
@@ -175,7 +176,7 @@ void ServerSession::udp_async_read() {
             return;
         }
         udp_read_buf.commit(length);
-        udp_recv(string(boost::asio::buffer_cast<const char*>(udp_read_buf.data()), length), udp_recv_endpoint);
+        udp_recv(streambuf_to_string_view(udp_read_buf), udp_recv_endpoint);
     });
 }
 
@@ -198,7 +199,7 @@ void ServerSession::in_recv(const string_view &data) {
         
         if(has_queried_out){
             // pipeline session will call this in_recv directly so that the HANDSHAKE status will remain for a while
-            out_write_buf += data;
+            streambuf_append(out_write_buf, data);
             sent_len += data.length();
             return;
         }
@@ -235,13 +236,15 @@ void ServerSession::in_recv(const string_view &data) {
             auto it = config.ssl.alpn_port_override.find(string(alpn_out, alpn_out + alpn_len));
             return it == config.ssl.alpn_port_override.end() ? config.remote_port : it->second;
         }());
+        out_write_buf.consume(out_write_buf.size());
         if (valid) {
-            out_write_buf = req.payload;
+            streambuf_append(out_write_buf, req.payload);
             if (req.command == TrojanRequest::UDP_ASSOCIATE) {
                 out_udp_endpoint = udp::endpoint(make_address(req.address.address), req.address.port);
                 _log_with_endpoint(out_udp_endpoint, "session_id: " + to_string(get_session_id()) + " requested UDP associate to " + req.address.address + ':' + to_string(req.address.port), Log::INFO);
                 status = UDP_FORWARD;
-                udp_data_buf = out_write_buf;
+                udp_data_buf.consume(udp_data_buf.size());
+                streambuf_append(udp_data_buf, out_write_buf);
                 udp_sent();
                 return;
             } else {
@@ -249,17 +252,17 @@ void ServerSession::in_recv(const string_view &data) {
             }
         } else {
             _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + " not trojan request, connecting to " + query_addr + ':' + query_port, Log::WARN);
-            out_write_buf = data;
+            streambuf_append(out_write_buf, data);
         }
-        sent_len += out_write_buf.length();
+        sent_len += out_write_buf.size();
         has_queried_out = true;
 
         auto self = shared_from_this();
         connect_out_socket(this, query_addr, query_port, resolver, out_socket, in_endpoint, [this, self](){
             status = FORWARD;
             out_async_read();
-            if (!out_write_buf.empty()) {
-                out_async_write(out_write_buf);
+            if (out_write_buf.size() != 0) {
+                out_async_write(streambuf_to_string_view(out_write_buf));
             } else {
                 in_async_read();
             }
@@ -269,7 +272,7 @@ void ServerSession::in_recv(const string_view &data) {
         sent_len += data.length();
         out_async_write(data);
     } else if (status == UDP_FORWARD) {
-        udp_data_buf += data;
+        streambuf_append(udp_data_buf, data);
         udp_sent();
     }
 }
@@ -308,9 +311,9 @@ void ServerSession::udp_sent() {
     if (status == UDP_FORWARD) {
         UDPPacket packet;
         size_t packet_len;
-        bool is_packet_valid = packet.parse(udp_data_buf, packet_len);
+        bool is_packet_valid = packet.parse(streambuf_to_string_view(udp_data_buf), packet_len);
         if (!is_packet_valid) {
-            if (udp_data_buf.length() > MAX_BUF_LENGTH) {
+            if (udp_data_buf.size() > MAX_BUF_LENGTH) {
                 _log_with_endpoint(out_udp_endpoint, "session_id: " + to_string(get_session_id()) + " UDP packet too long", Log::ERROR);
                 destroy();
                 return;
@@ -319,7 +322,8 @@ void ServerSession::udp_sent() {
             return;
         }
         _log_with_endpoint(out_udp_endpoint, "session_id: " + to_string(get_session_id()) + " sent a UDP packet of length " + to_string(packet.length) + " bytes to " + packet.address.address + ':' + to_string(packet.address.port));
-        udp_data_buf = udp_data_buf.substr(packet_len);
+        udp_data_buf.commit(packet_len);
+
         string query_addr = packet.address.address;
         auto self = shared_from_this();
         udp_resolver.async_resolve(query_addr, to_string(packet.address.port), [this, self, packet, query_addr](const boost::system::error_code error, udp::resolver::results_type results) {

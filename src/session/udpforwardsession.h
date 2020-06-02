@@ -47,10 +47,10 @@ private:
 
     ReadDataCache pipeline_data_cache;
 
-    void out_recv(const std::string &data);
-    void in_recv(const std::string &data);
+    void out_recv(const std::string_view &data);
+    void in_recv(const std::string_view &data);
     void out_async_read();
-    void out_async_write(const std::string &data);
+    void out_async_write(const std::string_view &data);
     
     void out_sent();
     void timer_async_wait();
@@ -61,9 +61,9 @@ public:
     
     boost::asio::ip::tcp::socket& accept_socket() override;
     void start() override;
-    void start_udp(const std::string& data);
+    void start_udp(const std::string_view& data);
     void destroy(bool pipeline_call = false) override;
-    bool process(const boost::asio::ip::udp::endpoint &endpoint, const std::string &data);
+    bool process(const boost::asio::ip::udp::endpoint &endpoint, const std::string_view &data);
 };
 
 #endif // _UDPFORWARDSESSION_H_

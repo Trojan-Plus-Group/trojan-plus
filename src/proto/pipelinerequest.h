@@ -31,8 +31,8 @@
 
 class PipelineRequest {
 public:
-
-    std::string packet_data;
+    size_t consume_length{};
+    std::string_view packet_data;
     PipelineComponent::SessionIdType session_id;
     enum Command {
         CONNECT = 0,
@@ -45,7 +45,7 @@ public:
         MAX_DATA_LENGTH = std::numeric_limits<uint32_t>::max(),
         MAX_SESSION_ID_LENGTH = std::numeric_limits<PipelineComponent::SessionIdType>::max()
     } command;
-    int parse(std::string &data);
+    int parse(const std::string_view &data);
     inline const char* get_cmd_string() const { return get_cmd_string(command); }
     static inline const char* get_cmd_string(enum Command cmd){
         switch(cmd){

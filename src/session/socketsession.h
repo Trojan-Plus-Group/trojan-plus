@@ -22,8 +22,8 @@ protected:
     uint64_t recv_len;
     uint64_t sent_len;
     time_t start_time{};
-    std::string out_write_buf;
-    std::string udp_data_buf;
+    boost::asio::streambuf out_write_buf;
+    boost::asio::streambuf udp_data_buf;
     boost::asio::ip::tcp::resolver resolver;
     
     boost::asio::ip::udp::socket udp_socket;
