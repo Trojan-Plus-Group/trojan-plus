@@ -197,7 +197,7 @@ class SendingDataAllocator{
     std::list<std::shared_ptr<boost::asio::streambuf>> free_bufs;
 
 public:
-    std::shared_ptr<boost::asio::streambuf> allocate(const std::string& data){        
+    std::shared_ptr<boost::asio::streambuf> allocate(const std::string_view& data){        
         auto buf = std::shared_ptr<boost::asio::streambuf>(nullptr);
         if(free_bufs.empty()){
             buf = std::make_shared<boost::asio::streambuf>();

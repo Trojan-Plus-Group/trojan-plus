@@ -133,7 +133,7 @@ int PipelineRequest::parse(std::string &data){
     return packet_data.length();
 }
 
-std::string PipelineRequest::generate(enum Command cmd, PipelineComponent::SessionIdType session_id, const std::string& data){
+std::string PipelineRequest::generate(enum Command cmd, PipelineComponent::SessionIdType session_id, const std::string_view& data){
     
     // if(session_id > MAX_SESSION_ID_LENGTH){
     //     throw logic_error("PipelineRequest::generate session_id " + to_string(session_id) + " > numeric_limits<uint16_t>::max() " + to_string(MAX_SESSION_ID_LENGTH));

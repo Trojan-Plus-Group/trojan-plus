@@ -21,7 +21,7 @@
 using namespace std;
 using namespace boost::asio::ip;
 
-bool UDPPacket::parse(const string &data, size_t &udp_packet_len) {
+bool UDPPacket::parse(const string_view &data, size_t &udp_packet_len) {
     if (data.length() <= 0) {
         return false;
     }
@@ -39,7 +39,7 @@ bool UDPPacket::parse(const string &data, size_t &udp_packet_len) {
     return true;
 }
 
-string UDPPacket::generate(const udp::endpoint &endpoint, const string &payload) {
+string UDPPacket::generate(const udp::endpoint &endpoint, const string_view &payload) {
     string ret = SOCKS5Address::generate(endpoint);
     ret += char(uint8_t(payload.length() >> 8));
     ret += char(uint8_t(payload.length() & 0xFF));
@@ -48,7 +48,7 @@ string UDPPacket::generate(const udp::endpoint &endpoint, const string &payload)
     return ret;
 }
 
-string UDPPacket::generate(const string &domainname, uint16_t port, const string &payload) {
+string UDPPacket::generate(const string &domainname, uint16_t port, const string_view &payload) {
     string ret = "\x03";
     ret += char(uint8_t(domainname.length()));
     ret += domainname;

@@ -20,6 +20,7 @@
 #ifndef _SERVERSESSION_H_
 #define _SERVERSESSION_H_
 
+#include <string_view>
 #include <boost/asio/ssl.hpp>
 
 #include "socketsession.h"
@@ -47,16 +48,16 @@ private:
     ReadDataCache pipeline_data_cache;
     
     void in_async_read();
-    void in_async_write(const std::string &data);
+    void in_async_write(const std::string_view &data);
     void in_sent();
-    void in_recv(const std::string &data);
+    void in_recv(const std::string_view &data);
     
-    void out_async_write(const std::string &data);
-    void out_recv(const std::string &data);
+    void out_async_write(const std::string_view &data);
+    void out_recv(const std::string_view &data);
     void out_sent();
     void udp_async_read();
-    void udp_async_write(const std::string &data, const boost::asio::ip::udp::endpoint &endpoint);
-    void udp_recv(const std::string &data, const boost::asio::ip::udp::endpoint &endpoint);
+    void udp_async_write(const std::string_view &data, const boost::asio::ip::udp::endpoint &endpoint);
+    void udp_recv(const std::string_view &data, const boost::asio::ip::udp::endpoint &endpoint);
     void udp_sent();
     
     std::weak_ptr<Session> pipeline_session;

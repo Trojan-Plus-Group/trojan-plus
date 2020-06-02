@@ -20,7 +20,7 @@
 #include "trojanrequest.h"
 using namespace std;
 
-int TrojanRequest::parse(const string &data) {
+int TrojanRequest::parse(const std::string_view &data){
     size_t first = data.find("\r\n");
     if (first == string::npos) {
         return -1;

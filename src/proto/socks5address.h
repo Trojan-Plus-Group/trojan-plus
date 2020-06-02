@@ -22,6 +22,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <boost/asio/ip/udp.hpp>
 
 class SOCKS5Address {
@@ -33,7 +34,7 @@ public:
     } address_type;
     std::string address;
     uint16_t port;
-    bool parse(const std::string &data, size_t &address_len);
+    bool parse(const std::string_view &data, size_t &address_len);
     static std::string generate(const boost::asio::ip::udp::endpoint &endpoint);
 };
 

@@ -91,12 +91,12 @@ void ServerSession::in_async_read() {
                 destroy();
                 return;
             }
-            in_recv(string(boost::asio::buffer_cast<const char*>(in_read_buf.data()), length));
+            in_recv(string_view(boost::asio::buffer_cast<const char*>(in_read_buf.data()), length));
         });
     }
 }
 
-void ServerSession::in_async_write(const string &data) {
+void ServerSession::in_async_write(const string_view &data) {
     auto self = shared_from_this();
     if(pipeline_com.is_using_pipeline()){
         if(!pipeline_session.expired()){
@@ -144,7 +144,7 @@ void ServerSession::out_async_read() {
     });
 }
 
-void ServerSession::out_async_write(const string &data) {
+void ServerSession::out_async_write(const string_view &data) {
     auto self = shared_from_this();
     auto data_copy = get_service()->get_sending_data_allocator().allocate(data);
     boost::asio::async_write(out_socket, data_copy->data(), [this, self, data_copy](const boost::system::error_code error, size_t) {
@@ -179,7 +179,7 @@ void ServerSession::udp_async_read() {
     });
 }
 
-void ServerSession::udp_async_write(const string &data, const udp::endpoint &endpoint) {
+void ServerSession::udp_async_write(const string_view &data, const udp::endpoint &endpoint) {
     auto self = shared_from_this();
     auto data_copy = get_service()->get_sending_data_allocator().allocate(data);
     udp_socket.async_send_to(data_copy->data(), endpoint, [this, self, data_copy](const boost::system::error_code error, size_t) {
@@ -193,7 +193,7 @@ void ServerSession::udp_async_write(const string &data, const udp::endpoint &end
     });
 }
 
-void ServerSession::in_recv(const string &data) {
+void ServerSession::in_recv(const string_view &data) {
     if (status == HANDSHAKE) {
         
         if(has_queried_out){
@@ -282,7 +282,7 @@ void ServerSession::in_sent() {
     }
 }
 
-void ServerSession::out_recv(const string &data) {
+void ServerSession::out_recv(const string_view &data) {
     if (status == FORWARD) {
         recv_len += data.length();
         in_async_write(data);
@@ -295,7 +295,7 @@ void ServerSession::out_sent() {
     }
 }
 
-void ServerSession::udp_recv(const string &data, const udp::endpoint &endpoint) {
+void ServerSession::udp_recv(const string_view &data, const udp::endpoint &endpoint) {
     if (status == UDP_FORWARD) {
         size_t length = data.length();
         _log_with_endpoint(out_udp_endpoint, "session_id: " + to_string(get_session_id()) + " received a UDP packet of length " + to_string(length) + " bytes from " + endpoint.address().to_string() + ':' + to_string(endpoint.port()));

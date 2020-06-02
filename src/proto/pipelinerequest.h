@@ -22,6 +22,7 @@
 #define _PIPELINEREQUEST_H_
 
 #include <string>
+#include <string_view>
 #include <limits>
 #include <stdint.h>
 
@@ -45,8 +46,8 @@ public:
         MAX_SESSION_ID_LENGTH = std::numeric_limits<PipelineComponent::SessionIdType>::max()
     } command;
     int parse(std::string &data);
-    inline std::string get_cmd_string() const { return get_cmd_string(command); }
-    static inline std::string get_cmd_string(enum Command cmd){
+    inline const char* get_cmd_string() const { return get_cmd_string(command); }
+    static inline const char* get_cmd_string(enum Command cmd){
         switch(cmd){
             case CONNECT: return "CONNECT";
             case DATA: return "DATA";
@@ -56,7 +57,7 @@ public:
             default:return "UNKNOW!!";
         }
     }
-    static std::string generate(enum Command cmd, PipelineComponent::SessionIdType session_id, const std::string& data);
+    static std::string generate(enum Command cmd, PipelineComponent::SessionIdType session_id, const std::string_view& data);
 };
 
 #endif // _PIPELINEREQUEST_H_
