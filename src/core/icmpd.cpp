@@ -258,17 +258,19 @@ void icmpd::async_out_send(){
 
     auto send = m_sending_data_cache.front();
     auto self = shared_from_this();
-    auto data = make_shared<string>(send->sending_data);
-    m_socket.async_send_to(boost::asio::buffer(*data), icmp::endpoint(send->destination, 0), [this, self, data](const boost::system::error_code ec, size_t) {
+    
+    auto data_copy = m_service->get_sending_data_allocator().allocate(send->sending_data);
+    m_socket.async_send_to(data_copy->data(), icmp::endpoint(send->destination, 0), [this, self, data_copy](const boost::system::error_code ec, size_t) {
         if (ec) {
             ipv4_header ipv4_hdr;
             icmp_header icmp_hdr;
             string body;
 
-            std::istringstream is(*data);
-            read_icmp(is, data->length(), ipv4_hdr, icmp_hdr, body);
+            std::istream is(&(*data_copy));
+            read_icmp(is, data_copy->size(), ipv4_hdr, icmp_hdr, body);
             _log_with_date_time("[icmp] async_send_to error: " + ec.message() + " " + ipv4_hdr.source_address().to_string() + " -> " + ipv4_hdr.destination_address().to_string());
         }
+        m_service->get_sending_data_allocator().free(data_copy);
         m_is_sending_cache = false;
         async_out_send();
     });

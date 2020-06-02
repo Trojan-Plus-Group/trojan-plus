@@ -108,8 +108,9 @@ void ServerSession::in_async_write(const string &data) {
             destroy();
         }
     }else{
-        auto data_copy = make_shared<string>(data);
-        boost::asio::async_write(in_socket, boost::asio::buffer(*data_copy), [this, self, data_copy](const boost::system::error_code error, size_t) {
+        auto data_copy = get_service()->get_sending_data_allocator().allocate(data);
+        boost::asio::async_write(in_socket, data_copy->data(), [this, self, data_copy](const boost::system::error_code error, size_t) {
+            get_service()->get_sending_data_allocator().free(data_copy);
             if (error) {
                 output_debug_info_ec(error);
                 destroy();
@@ -145,8 +146,9 @@ void ServerSession::out_async_read() {
 
 void ServerSession::out_async_write(const string &data) {
     auto self = shared_from_this();
-    auto data_copy = make_shared<string>(data);
-    boost::asio::async_write(out_socket, boost::asio::buffer(*data_copy), [this, self, data_copy](const boost::system::error_code error, size_t) {
+    auto data_copy = get_service()->get_sending_data_allocator().allocate(data);
+    boost::asio::async_write(out_socket, data_copy->data(), [this, self, data_copy](const boost::system::error_code error, size_t) {
+        get_service()->get_sending_data_allocator().free(data_copy);
         if (error) {
             output_debug_info_ec(error);
             destroy();
@@ -179,8 +181,9 @@ void ServerSession::udp_async_read() {
 
 void ServerSession::udp_async_write(const string &data, const udp::endpoint &endpoint) {
     auto self = shared_from_this();
-    auto data_copy = make_shared<string>(data);
-    udp_socket.async_send_to(boost::asio::buffer(*data_copy), endpoint, [this, self, data_copy](const boost::system::error_code error, size_t) {
+    auto data_copy = get_service()->get_sending_data_allocator().allocate(data);
+    udp_socket.async_send_to(data_copy->data(), endpoint, [this, self, data_copy](const boost::system::error_code error, size_t) {
+        get_service()->get_sending_data_allocator().free(data_copy);
         if (error) {
             output_debug_info_ec(error);
             destroy();

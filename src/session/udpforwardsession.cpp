@@ -134,9 +134,10 @@ void UDPForwardSession::out_async_write(const string &data) {
             }
             out_sent();
         });
-    }else{        
-        auto data_copy = make_shared<string>(data);
-        boost::asio::async_write(out_socket, boost::asio::buffer(*data_copy), [this, self, data_copy](const boost::system::error_code error, size_t) {
+    }else{
+        auto data_copy = get_service()->get_sending_data_allocator().allocate(data);
+        boost::asio::async_write(out_socket, data_copy->data(), [this, self, data_copy](const boost::system::error_code error, size_t) {
+            get_service()->get_sending_data_allocator().free(data_copy);
             if (error) {
                 destroy();
                 return;

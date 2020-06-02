@@ -25,9 +25,12 @@
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/ssl.hpp>
 #include <boost/asio/steady_timer.hpp>
+#include <boost/asio/streambuf.hpp>
 #include <functional>
 #include <list>
+#include <vector>
 #include <string>
+#include <exception>
 
 #include "log.h"
 
@@ -185,6 +188,45 @@ public :
             handler(data_queue);
             data_queue.clear();
         }
+    }
+};
+
+
+class SendingDataAllocator{
+    std::vector<std::shared_ptr<boost::asio::streambuf>> allocated;
+    std::list<std::shared_ptr<boost::asio::streambuf>> free_bufs;
+
+public:
+    std::shared_ptr<boost::asio::streambuf> allocate(const std::string& data){        
+        auto buf = std::shared_ptr<boost::asio::streambuf>(nullptr);
+        if(free_bufs.empty()){
+            buf = std::make_shared<boost::asio::streambuf>();
+            allocated.push_back(buf);
+        }else{
+            buf = free_bufs.front();
+            free_bufs.pop_front();
+        }
+        
+        memcpy(buf->prepare(data.length()).data(), &data[0], data.length());
+        buf->commit(data.length());
+        return buf;
+    }
+
+    void free(std::shared_ptr<boost::asio::streambuf> buf){ 
+        bool found = false;
+        for(auto it = allocated.begin(); it != allocated.end(); it++){
+            if(it->get() == buf.get()){
+                found = true;
+                break;
+            }
+        }
+
+        if(!found){
+            throw std::logic_error("cannot found in SendingDataAllocator!");
+        }
+
+        buf->consume(buf->size());
+        free_bufs.push_back(buf);
     }
 };
 

@@ -63,6 +63,7 @@ private:
 
     std::shared_ptr<TUNDev> m_tundev;
 
+    SendingDataAllocator m_sending_data_allocator;
 public:
     explicit Service(Config &config, bool test = false);
     ~Service();
@@ -85,5 +86,7 @@ public:
 
     bool is_use_pipeline() const { return config.experimental.pipeline_num > 0; }
     Pipeline* search_default_pipeline();
+
+    SendingDataAllocator& get_sending_data_allocator(){ return m_sending_data_allocator;}
 };
 #endif // _SERVICE_H_

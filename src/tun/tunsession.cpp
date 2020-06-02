@@ -177,11 +177,10 @@ void TUNSession::out_async_send_impl(std::string data_to_send, SentHandler&& _ha
             }            
         });
     }else{
-
-        auto data_copy = make_shared<string>(data_to_send);
-        boost::asio::async_write(m_out_socket, boost::asio::buffer(*data_copy), [this, self, data_copy, _handler](const boost::system::error_code error, size_t) {
+        auto data_copy = get_service()->get_sending_data_allocator().allocate(data_to_send);
+        boost::asio::async_write(m_out_socket, data_copy->data(), [this, self, data_copy, _handler](const boost::system::error_code error, size_t) {
+            get_service()->get_sending_data_allocator().free(data_copy);
             reset_udp_timeout();
-
             if (error) {
                 output_debug_info_ec(error);
                 destroy();
