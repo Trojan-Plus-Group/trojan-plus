@@ -269,7 +269,7 @@ void TUNSession::out_async_read() {
     }else{
         auto self = shared_from_this();
         boost::asio::streambuf& recv_buf = is_udp_forward() ? m_recv_udp_buf : m_recv_buf;
-        m_out_socket.async_read_some(recv_buf.prepare(Session::MAX_BUF_LENGTH), [this, self, &recv_buf](const boost::system::error_code error, size_t length) {
+        m_out_socket.async_read_some(recv_buf.prepare(Session::MAX_BUF_LENGTH), [this, self](const boost::system::error_code error, size_t length) {
             if (error) {
                 output_debug_info_ec(error);
                 destroy();
