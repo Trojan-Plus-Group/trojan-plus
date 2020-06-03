@@ -42,6 +42,7 @@ private:
     boost::asio::ip::tcp::socket out_socket;
     boost::asio::ip::udp::resolver udp_resolver;
     boost::asio::ip::udp::endpoint out_udp_endpoint;
+
     Authenticator *auth;
     std::string auth_password;
     const std::string &plain_http_response;
@@ -55,10 +56,10 @@ private:
     void out_async_write(const std::string_view &data);
     void out_recv(const std::string_view &data);
     void out_sent();
-    void udp_async_read();
-    void udp_async_write(const std::string_view &data, const boost::asio::ip::udp::endpoint &endpoint);
-    void udp_recv(const std::string_view &data, const boost::asio::ip::udp::endpoint &endpoint);
-    void udp_sent();
+    void out_udp_async_read();
+    void out_udp_async_write(const std::string_view &data, const boost::asio::ip::udp::endpoint &endpoint);
+    void out_udp_recv(const std::string_view &data, const boost::asio::ip::udp::endpoint &endpoint);
+    void out_udp_sent();
     
     std::weak_ptr<Session> pipeline_session;
     bool has_queried_out;

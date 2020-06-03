@@ -20,16 +20,17 @@
 #ifndef _UDPPACKET_H_
 #define _UDPPACKET_H_
 
+#include <boost/asio/streambuf.hpp>
 #include "socks5address.h"
 
 class UDPPacket {
 public:
     SOCKS5Address address;
     uint16_t length;
-    std::string payload;
+    std::string_view payload;
     bool parse(const std::string_view &data, size_t &udp_packet_len);
-    static std::string generate(const boost::asio::ip::udp::endpoint &endpoint, const std::string_view &payload);
-    static std::string generate(const std::string &domainname, uint16_t port, const std::string_view &payload);
+    static boost::asio::streambuf& generate(boost::asio::streambuf& buf, const boost::asio::ip::udp::endpoint &endpoint, const std::string_view &payload);
+    static boost::asio::streambuf& generate(boost::asio::streambuf& buf, const std::string &domainname, uint16_t port, const std::string_view &payload);
 };
 
 #endif // _UDPPACKET_H_

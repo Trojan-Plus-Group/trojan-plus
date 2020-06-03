@@ -70,6 +70,16 @@ size_t streambuf_append(boost::asio::streambuf& target, const char* append_str){
     return copied;
 }
 
+size_t streambuf_append(boost::asio::streambuf& target, const uint8_t* append_data, size_t append_length){
+    if(!append_data || append_length == 0){
+        return 0;
+    }
+
+    auto copied = boost::asio::buffer_copy(target.prepare(append_length), boost::asio::buffer(append_data, append_length));
+    target.commit(copied);
+    return copied;
+}
+
 size_t streambuf_append(boost::asio::streambuf& target, char append_char){
     auto cp = boost::asio::buffer_cast<char*>(target.prepare(1));
     cp[0] = append_char;

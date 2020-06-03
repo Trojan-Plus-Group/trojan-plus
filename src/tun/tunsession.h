@@ -15,12 +15,11 @@ class TUNSession : public Session{
 
 public:
     typedef std::function<void(TUNSession*)> CloseCallback;
-    typedef std::function<int(TUNSession*)> WriteToLwipCallback;
+    typedef std::function<int(TUNSession*, std::string_view*)> WriteToLwipCallback;
 private:
 
     Service* m_service;
     boost::asio::streambuf m_recv_buf;
-    boost::asio::streambuf m_recv_udp_buf;
     size_t m_recv_buf_ack_length;
 
     boost::asio::ssl::stream<boost::asio::ip::tcp::socket> m_out_socket;
@@ -30,7 +29,7 @@ private:
     CloseCallback m_close_cb;
     bool m_close_from_tundev_flag;
     bool m_connected;
-    std::string m_send_buf;
+    boost::asio::streambuf m_send_buf;
     WriteToLwipCallback m_write_to_lwip;
     std::list<SentHandler> m_wait_ack_handler;
 
@@ -45,9 +44,9 @@ private:
     void out_async_read();
     void try_out_async_read();
     void reset_udp_timeout();
-    void parse_udp_packet_data();
+    size_t parse_udp_packet_data(const std::string_view& data);
 
-    void out_async_send_impl(std::string data_to_send, SentHandler&& _handler);
+    void out_async_send_impl(const std::string_view& data_to_send, SentHandler&& _handler);
 public:
     TUNSession(Service* _service, bool _is_udp);
     ~TUNSession();
@@ -77,7 +76,7 @@ public:
     void start() override;
     void destroy(bool pipeline_call = false) override;
 
-    void out_async_send(const char* _data, size_t _length, SentHandler&& _handler);
+    void out_async_send(const uint8_t* _data, size_t _length, SentHandler&& _handler);
     void recv_ack_cmd() override;
 
     void recv_buf_sent(uint16_t _length);
@@ -100,6 +99,6 @@ public:
     bool is_destroyed()const { return m_destroyed; }
 
     bool try_to_process_udp(const boost::asio::ip::udp::endpoint& _local, 
-        const boost::asio::ip::udp::endpoint& _remote, uint8_t* payload, size_t payload_length);
+        const boost::asio::ip::udp::endpoint& _remote, const uint8_t* payload, size_t payload_length);
 };
 #endif //_TUNSESSION_H_

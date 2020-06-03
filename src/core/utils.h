@@ -100,6 +100,7 @@ typedef boost::asio::detail::socket_option::boolean<SOL_SOCKET, SO_REUSEPORT> re
 size_t streambuf_append(boost::asio::streambuf& target, const boost::asio::streambuf& append_buf);
 size_t streambuf_append(boost::asio::streambuf& target, const boost::asio::streambuf& append_buf, size_t start, size_t n);
 size_t streambuf_append(boost::asio::streambuf& target, const char* append_str);
+size_t streambuf_append(boost::asio::streambuf& target, const uint8_t* append_data, size_t append_length);
 size_t streambuf_append(boost::asio::streambuf& target, char append_char);
 size_t streambuf_append(boost::asio::streambuf& target, const std::string_view& append_data);
 size_t streambuf_append(boost::asio::streambuf& target, const std::string& append_data);

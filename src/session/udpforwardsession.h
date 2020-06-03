@@ -30,7 +30,7 @@
 class Service;
 class UDPForwardSession : public SocketSession {
 public:
-    typedef std::function<void(const boost::asio::ip::udp::endpoint&, const std::string&)> UDPWrite;
+    typedef std::function<void(const boost::asio::ip::udp::endpoint&, const std::string_view&)> UDPWrite;
 private:
     enum Status {
         CONNECT,

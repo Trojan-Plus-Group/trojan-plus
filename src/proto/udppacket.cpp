@@ -18,6 +18,9 @@
  */
 
 #include "udppacket.h"
+
+#include "core/utils.h"
+
 using namespace std;
 using namespace boost::asio::ip;
 
@@ -39,24 +42,24 @@ bool UDPPacket::parse(const string_view &data, size_t &udp_packet_len) {
     return true;
 }
 
-string UDPPacket::generate(const udp::endpoint &endpoint, const string_view &payload) {
-    string ret = SOCKS5Address::generate(endpoint);
-    ret += char(uint8_t(payload.length() >> 8));
-    ret += char(uint8_t(payload.length() & 0xFF));
-    ret += "\r\n";
-    ret += payload;
-    return ret;
+boost::asio::streambuf& UDPPacket::generate(boost::asio::streambuf& buf, const udp::endpoint &endpoint, const string_view &payload) {
+    SOCKS5Address::generate(buf, endpoint);
+    streambuf_append(buf, char(uint8_t(payload.length() >> 8)));
+    streambuf_append(buf, char(uint8_t(payload.length() & 0xFF)));
+    streambuf_append(buf, "\r\n");
+    streambuf_append(buf, payload);
+    return buf;
 }
 
-string UDPPacket::generate(const string &domainname, uint16_t port, const string_view &payload) {
-    string ret = "\x03";
-    ret += char(uint8_t(domainname.length()));
-    ret += domainname;
-    ret += char(uint8_t(port >> 8));
-    ret += char(uint8_t(port & 0xFF));
-    ret += char(uint8_t(payload.length() >> 8));
-    ret += char(uint8_t(payload.length() & 0xFF));
-    ret += "\r\n";
-    ret += payload;
-    return ret;
+boost::asio::streambuf& UDPPacket::generate(boost::asio::streambuf& buf, const string &domainname, uint16_t port, const string_view &payload) {
+    streambuf_append(buf, '\x03');
+    streambuf_append(buf, char(uint8_t(domainname.length())));
+    streambuf_append(buf, domainname);
+    streambuf_append(buf, char(uint8_t(port >> 8)));
+    streambuf_append(buf, char(uint8_t(port & 0xFF)));
+    streambuf_append(buf, char(uint8_t(payload.length() >> 8)));
+    streambuf_append(buf, char(uint8_t(payload.length() & 0xFF)));
+    streambuf_append(buf, "\r\n");
+    streambuf_append(buf, payload);
+    return buf;
 }

@@ -154,7 +154,7 @@ void ClientSession::out_async_write(const string_view &data) {
             }
             out_sent();
         });
-    }else{        
+    }else{
         auto data_copy = get_service()->get_sending_data_allocator().allocate(data);
         boost::asio::async_write(out_socket, data_copy->data(), [this, self, data_copy](const boost::system::error_code error, size_t) {
             get_service()->get_sending_data_allocator().free(data_copy);
@@ -245,6 +245,7 @@ void ClientSession::in_recv(const string_view &data) {
                 status = INVALID;
                 return;
             }
+
             is_udp_forward_session = req.command == TrojanRequest::UDP_ASSOCIATE;
             if (is_udp_forward_session) {
                 in_udp_endpoint = udp::endpoint(in_socket.local_endpoint().address(), 0);
@@ -258,11 +259,17 @@ void ClientSession::in_recv(const string_view &data) {
                 udp_socket.bind(in_udp_endpoint);
                 
                 _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + " requested UDP associate to " + req.address.address + ':' + to_string(req.address.port) + ", open UDP socket " + udp_socket.local_endpoint().address().to_string() + ':' + to_string(udp_socket.local_endpoint().port()) + " for relay", Log::INFO);
-                in_async_write(string("\x05\x00\x00", 3) + SOCKS5Address::generate(udp_socket.local_endpoint()));
+                
+                udp_send_buf.consume(udp_send_buf.size());
+                streambuf_append(udp_send_buf, (const uint8_t*)"\x05\x00\x00", 3);
+                SOCKS5Address::generate(udp_send_buf, udp_socket.local_endpoint());
+
+                in_async_write(streambuf_to_string_view(udp_send_buf));
             } else {
                 _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + " requested connection to " + req.address.address + ':' + to_string(req.address.port), Log::INFO);
-                in_async_write(string("\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00", 10));
+                in_async_write(string_view("\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00", 10));
             }
+
             break;
         }
         case CONNECT: {
@@ -381,6 +388,7 @@ void ClientSession::udp_recv(const string_view &data, const udp::endpoint&) {
     if (status == CONNECT) {
         first_packet_recv = true;
 
+        // same as UDPacket::generate: 
         streambuf_append(out_write_buf, data.substr(3, address_len));
         streambuf_append(out_write_buf, char(uint8_t(length >> 8)));
         streambuf_append(out_write_buf, char(uint8_t(length & 0xFF)));
@@ -390,6 +398,7 @@ void ClientSession::udp_recv(const string_view &data, const udp::endpoint&) {
     } else if (status == UDP_FORWARD) {
         udp_recv_buf.consume(udp_recv_buf.size());
 
+        // same as UDPacket::generate: 
         streambuf_append(udp_recv_buf, data.substr(3, address_len));
         streambuf_append(udp_recv_buf, char(uint8_t(length >> 8)));
         streambuf_append(udp_recv_buf, char(uint8_t(length & 0xFF)));

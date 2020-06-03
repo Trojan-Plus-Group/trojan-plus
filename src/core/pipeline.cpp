@@ -147,7 +147,7 @@ void Pipeline::out_async_recv(){
                     return;
                 }
 
-                _log_with_date_time("pipeline " + to_string(get_pipeline_id()) + " session_id: " + to_string(req.session_id) + " <-- recv from server cmd: " + req.get_cmd_string() + " data length:" + to_string(req.packet_data.length()));
+                _log_with_date_time_all("pipeline " + to_string(get_pipeline_id()) + " session_id: " + to_string(req.session_id) + " <-- recv from server cmd: " + req.get_cmd_string() + " data length:" + to_string(req.packet_data.length()));
 
                 if(req.command == PipelineRequest::ICMP){
                     if (icmp_processor) {
@@ -176,7 +176,7 @@ void Pipeline::out_async_recv(){
                     }
 
                     if (!found) {
-                        _log_with_date_time("pipeline " + to_string(get_pipeline_id()) + " cannot find session_id:" + to_string(req.session_id) + " current sessions:" + to_string(sessions.size()));
+                        _log_with_date_time("pipeline " + to_string(get_pipeline_id()) + " cannot find session_id:" + to_string(req.session_id) + " current sessions:" + to_string(sessions.size()), Log::ERROR);
                     }
                 }
 
@@ -193,7 +193,7 @@ void Pipeline::destroy(){
         return;
     }
     destroyed = true;
-    _log_with_date_time("pipeline " + to_string(get_pipeline_id()) + " destroyed. close all " + to_string(sessions.size()) + " sessions in this pipeline.");
+    _log_with_date_time("pipeline " + to_string(get_pipeline_id()) + " destroyed. close all " + to_string(sessions.size()) + " sessions in this pipeline.", Log::INFO);
 
     // close all sessions
     for(auto it = sessions.begin(); it != sessions.end(); ++it){

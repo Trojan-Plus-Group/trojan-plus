@@ -549,7 +549,7 @@ void Service::udp_async_read() {
             
             _log_with_endpoint(udp_recv_endpoint, "new UDP session");
             auto session = make_shared<UDPForwardSession>(this, config, ssl_context, udp_recv_endpoint, targetdst, 
-             [this](const udp::endpoint &endpoint, const string &data) {
+             [this](const udp::endpoint &endpoint, const string_view &data) {
                 if(config.run_type == Config::NAT){
                     throw logic_error("[udp] logic fatal error, cannot call in_write function for NAT type!");
                 }else{

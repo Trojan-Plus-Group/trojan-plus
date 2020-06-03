@@ -19,8 +19,12 @@
 
 #include "socks5address.h"
 #include <cstdio>
+
+#include "core/utils.h"
+
 using namespace std;
 using namespace boost::asio::ip;
+
 
 bool SOCKS5Address::parse(const string_view &data, size_t &address_len) {
     if (data.length() == 0 || (data[0] != IPv4 && data[0] != DOMAINNAME && data[0] != IPv6)) {
@@ -73,26 +77,26 @@ bool SOCKS5Address::parse(const string_view &data, size_t &address_len) {
     return false;
 }
 
-string SOCKS5Address::generate(const udp::endpoint &endpoint) {
+void SOCKS5Address::generate(boost::asio::streambuf& buf, const udp::endpoint &endpoint) {
     if (endpoint.address().is_unspecified()) {
-        return string("\x01\x00\x00\x00\x00\x00\x00", 7);
+        streambuf_append(buf, (const uint8_t*)"\x01\x00\x00\x00\x00\x00\x00", 7);
+        return;
     }
-    string ret;
+
     if (endpoint.address().is_v4()) {
-        ret += '\x01';
+        streambuf_append(buf, '\x01');
         auto ip = endpoint.address().to_v4().to_bytes();
         for (int i = 0; i < 4; ++i) {
-            ret += char(ip[i]);
+            streambuf_append(buf, char(ip[i]));
         }
     }
     if (endpoint.address().is_v6()) {
-        ret += '\x04';
+        streambuf_append(buf, '\x04');
         auto ip = endpoint.address().to_v6().to_bytes();
         for (int i = 0; i < 16; ++i) {
-            ret += char(ip[i]);
+            streambuf_append(buf, char(ip[i]));
         }
     }
-    ret += char(uint8_t(endpoint.port() >> 8));
-    ret += char(uint8_t(endpoint.port() & 0xFF));
-    return ret;
+    streambuf_append(buf, char(uint8_t(endpoint.port() >> 8)));
+    streambuf_append(buf, char(uint8_t(endpoint.port() & 0xFF)));
 }

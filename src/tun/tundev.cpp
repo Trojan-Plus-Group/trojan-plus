@@ -350,14 +350,14 @@ void TUNDev::parse_packet(){
 }
 
 
-int TUNDev::handle_write_upd_data(TUNSession* _session){
+int TUNDev::handle_write_upd_data(TUNSession* _session, string_view& data_str){
     assert (_session->is_udp_forward());
     
-    auto data_len = _session->recv_buf_size();
+    auto data_len = data_str.length();
     if(data_len == 0){
         return 0;
     }
-    auto data = (uint8_t*)_session->recv_buf();    
+    auto data = (uint8_t*)data_str.data();    
     auto header_length = sizeof(struct ipv4_header) + sizeof(struct udp_header);
     auto max_len = min((size_t)numeric_limits<uint16_t>::max(), (size_t)m_mtu);
     max_len = max_len - header_length;
@@ -403,15 +403,13 @@ int TUNDev::handle_write_upd_data(TUNSession* _session){
 
     m_write_fill_buf.commit(packat_length);
 
-    //_log_with_endpoint(local_endpoint, "<- " + remote_endpoint.address().to_string() + ":" + to_string(remote_endpoint.port()) + " length:" + to_string(data_len));
+    _log_with_endpoint_all(local_endpoint, "<- " + remote_endpoint.address().to_string() + ":" + to_string(remote_endpoint.port()) + " length:" + to_string(data_len));
 
     write_to_tun();
 
-    _session->recv_buf_consume(data_len);
-    _session->recv_buf_sent(data_len);
-
-    if(_session->recv_buf_size() > 0){
-        handle_write_upd_data(_session);
+    data_str = data_str.substr(data_len);
+    if(data_str.length() > 0){
+        handle_write_upd_data(_session, data_str);
     }
     
     return 0;
@@ -452,7 +450,7 @@ int TUNDev::try_to_process_udp_packet(uint8_t* data, int data_len){
         auto local_endpoint = udp::endpoint(make_address_v4((address_v4::uint_type)ntoh32(ipv4_hdr.source_address)), ntoh16(udp_hdr.source_port));
         auto remote_endpoint = udp::endpoint(make_address_v4((address_v4::uint_type)ntoh32(ipv4_hdr.destination_address)), ntoh16(udp_hdr.dest_port));
 
-        //_log_with_endpoint(local_endpoint, "-> " + remote_endpoint.address().to_string() + ":" + to_string(remote_endpoint.port()) + " length:" + to_string(data_len));
+        _log_with_endpoint_all(local_endpoint, "-> " + remote_endpoint.address().to_string() + ":" + to_string(remote_endpoint.port()) + " length:" + to_string(data_len));
 
         for(auto it = m_udp_clients.begin();it != m_udp_clients.end();it++){
             if(it->get()->try_to_process_udp(local_endpoint, remote_endpoint, data, data_len)){
@@ -462,8 +460,9 @@ int TUNDev::try_to_process_udp_packet(uint8_t* data, int data_len){
 
         auto session = make_shared<TUNSession>(m_service, true);
         session->set_udp_connect(local_endpoint, remote_endpoint);
-        session->set_write_to_lwip([this](TUNSession* _se){ 
-            return handle_write_upd_data(_se); 
+        session->set_write_to_lwip([this](TUNSession* _se, string_view* _data){ 
+            assert(_data != nullptr);
+            return handle_write_upd_data(_se, *_data); 
         });
 
         session->set_close_callback([this](TUNSession* _session){
@@ -475,7 +474,7 @@ int TUNDev::try_to_process_udp_packet(uint8_t* data, int data_len){
             }
         });
         
-        session->out_async_send((const char*)data, data_len, [](boost::system::error_code){}); // send as buf
+        session->out_async_send(data, data_len, [](boost::system::error_code){}); // send as buf
         m_udp_clients.emplace_back(session);
 
         m_service->start_session(session, [session, local_endpoint, remote_endpoint](boost::system::error_code ec){

@@ -24,6 +24,7 @@
 #include <string>
 #include <string_view>
 #include <boost/asio/ip/udp.hpp>
+#include <boost/asio/streambuf.hpp>
 
 class SOCKS5Address {
 public:
@@ -35,7 +36,7 @@ public:
     std::string address;
     uint16_t port;
     bool parse(const std::string_view &data, size_t &address_len);
-    static std::string generate(const boost::asio::ip::udp::endpoint &endpoint);
+    static void generate(boost::asio::streambuf& buf, const boost::asio::ip::udp::endpoint &endpoint);
 };
 
 #endif // _SOCKS5ADDRESS_H_

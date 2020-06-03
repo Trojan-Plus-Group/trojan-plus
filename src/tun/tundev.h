@@ -108,7 +108,7 @@ private:
     int try_to_process_udp_packet(uint8_t* data, int data_len);
     void parse_packet();
     void input_netif_packet(const uint8_t* data, size_t packet_len);
-    int handle_write_upd_data(TUNSession* _session);
+    int handle_write_upd_data(TUNSession* _session, std::string_view& data);
 public : 
     TUNDev(Service* _service, const std::string& _tun_name, 
         const std::string& _ipaddr, const std::string& _netmask, size_t _mtu, int _outside_tun_fd = -1);

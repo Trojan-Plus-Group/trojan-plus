@@ -79,6 +79,7 @@ void UDPForwardSession::start_udp(const std::string_view& data) {
         
         status = FORWARDING;
         out_async_read();
+
         out_async_write(streambuf_to_string_view(out_write_buf));
         out_write_buf.consume(out_write_buf.size());
     };
@@ -166,15 +167,16 @@ void UDPForwardSession::in_recv(const string_view &data) {
     }
     gc_timer.cancel();
     timer_async_wait();
-    string packet = UDPPacket::generate(udp_target.first, udp_target.second, data);
+    
     size_t length = data.length();
     _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(get_session_id()) + " sent a UDP packet of length " + to_string(length) + " bytes to " + udp_target.first + ':' + to_string(udp_target.second));
     sent_len += length;
+
+    UDPPacket::generate(out_write_buf, udp_target.first, udp_target.second, data);
     if (status == FORWARD) {
-        status = FORWARDING;
-        out_async_write(packet);
-    } else {
-        streambuf_append(out_write_buf, packet);
+        status = FORWARDING;   
+        out_async_write(streambuf_to_string_view(out_write_buf));
+        out_write_buf.consume(out_write_buf.size());
     }
 }
 
@@ -197,9 +199,6 @@ void UDPForwardSession::out_recv(const string_view &data) {
             }
             _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(get_session_id()) + " received a UDP packet of length " + to_string(packet.length) + " bytes from " + packet.address.address + ':' + to_string(packet.address.port));
             
-            udp_data_buf.consume(packet_len);
-            recv_len += packet.length;
-
             if(config.run_type == Config::NAT){
                 boost::system::error_code ec;
                 udp_target_socket.send_to(boost::asio::buffer(packet.payload), udp_recv_endpoint, 0 , ec);
@@ -212,7 +211,10 @@ void UDPForwardSession::out_recv(const string_view &data) {
                 } 
             }else{
                 in_write(udp_recv_endpoint, packet.payload);
-            }            
+            }
+
+            udp_data_buf.consume(packet_len);
+            recv_len += packet.length;          
         }
         out_async_read();
     }

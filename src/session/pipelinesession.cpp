@@ -114,11 +114,11 @@ void PipelineSession::in_recv(const string_view &data) {
         }
 
         if(data.substr(0, npos) != config.password.cbegin()->first){
-            _log_with_endpoint(in_endpoint, "PipelineSession error password");
+            _log_with_endpoint(in_endpoint, "PipelineSession error password", Log::ERROR);
             destroy();
             return;
         }else{
-            _log_with_endpoint(in_endpoint, "PipelineSession handshake done!");
+            _log_with_endpoint(in_endpoint, "PipelineSession handshake done!", Log::INFO);
         }
 
         gc_timer.cancel();
@@ -133,7 +133,7 @@ void PipelineSession::in_recv(const string_view &data) {
 
 void PipelineSession::in_send(PipelineRequest::Command cmd, ServerSession& session, const std::string_view& session_data, SentHandler&& sent_handler){
     auto found = find_and_process_session(session.get_session_id(), [&](SessionsList::iterator&){
-        _log_with_endpoint(in_endpoint, "PipelineSession session_id: " + to_string(session.get_session_id()) + " <-- send cmd: " + PipelineRequest::get_cmd_string(cmd) + " length:" + to_string(session_data.length()));
+        _log_with_endpoint_all(in_endpoint, "PipelineSession session_id: " + to_string(session.get_session_id()) + " <-- send cmd: " + PipelineRequest::get_cmd_string(cmd) + " length:" + to_string(session_data.length()));
         sending_data_cache.push_data(PipelineRequest::generate(cmd, session.get_session_id(), session_data), move(sent_handler));
     });
 
@@ -167,12 +167,12 @@ void PipelineSession::process_streaming_data(){
         }
 
         if(ret == -2){
-            _log_with_endpoint(in_endpoint, "PipelineSession error request format");
+            _log_with_endpoint(in_endpoint, "PipelineSession error request format", Log::ERROR);
             destroy();
             return;
         }
 
-        _log_with_endpoint(in_endpoint, "PipelineSession session_id: " + to_string(req.session_id) + " --> recv cmd: " + req.get_cmd_string() + " length:" + to_string(req.packet_data.length()));
+        _log_with_endpoint_all(in_endpoint, "PipelineSession session_id: " + to_string(req.session_id) + " --> recv cmd: " + req.get_cmd_string() + " length:" + to_string(req.packet_data.length()));
 
         if(req.command == PipelineRequest::CONNECT){
             find_and_process_session(req.session_id, [this](SessionsList::iterator& it){
@@ -187,7 +187,7 @@ void PipelineSession::process_streaming_data(){
             session->in_endpoint = in_endpoint;
             session->start();
             sessions.emplace_back(session);
-            _log_with_endpoint(in_endpoint, "PipelineSession starts a session " + to_string(req.session_id) + ", now remain " + to_string(sessions.size()));
+            _log_with_endpoint_all(in_endpoint, "PipelineSession starts a session " + to_string(req.session_id) + ", now remain " + to_string(sessions.size()));
         }else if(req.command == PipelineRequest::DATA){
             auto found = find_and_process_session(req.session_id, [&](SessionsList::iterator& it){ 
                 it->get()->get_pipeline_component().pipeline_in_recv(move(req.packet_data));
@@ -222,7 +222,7 @@ void PipelineSession::process_streaming_data(){
                 icmp_processor->server_out_send(string(req.packet_data), shared_from_this());
             }
         }else{
-            _log_with_endpoint(in_endpoint, "PipelineSession error command");
+            _log_with_endpoint(in_endpoint, "PipelineSession error command", Log::ERROR);
             destroy();
             return;
         }
@@ -242,7 +242,7 @@ void PipelineSession::session_write_data(ServerSession& session, const std::stri
 }
 
 void PipelineSession::session_write_icmp(const std::string_view& data, SentHandler&& sent_handler){
-    _log_with_endpoint(in_endpoint, "PipelineSession <-- send cmd: ICMP length:" + to_string(data.length()));
+    _log_with_endpoint_all(in_endpoint, "PipelineSession <-- send cmd: ICMP length:" + to_string(data.length()));
     sending_data_cache.push_data(PipelineRequest::generate(PipelineRequest::ICMP, 0, data), move(sent_handler));
 }
 
@@ -262,7 +262,7 @@ void PipelineSession::remove_session_after_destroy(ServerSession& session){
         find_and_process_session(session.get_session_id(), [this, &session](SessionsList::iterator& it){
             in_send(PipelineRequest::CLOSE, session, "",[](const boost::system::error_code){});
             sessions.erase(it);
-            _log_with_endpoint(in_endpoint, "PipelineSession remove session " + to_string(session.get_session_id()) + ", now remain " + to_string(sessions.size()));
+            _log_with_endpoint_all(in_endpoint, "PipelineSession remove session " + to_string(session.get_session_id()) + ", now remain " + to_string(sessions.size()));
         });
     }    
 }
@@ -274,7 +274,7 @@ void PipelineSession::destroy(bool /*pipeline_call = false*/){
     status = DESTROY;
     gc_timer.cancel();
 
-    _log_with_endpoint(in_endpoint, "PipelineSession remove all sessions: " + to_string(sessions.size()));
+    _log_with_endpoint(in_endpoint, "PipelineSession remove all sessions: " + to_string(sessions.size()), Log::INFO);
 
     // clear all sessions which attached this PipelineSession
     for(auto it = sessions.begin(); it != sessions.end();it++){
