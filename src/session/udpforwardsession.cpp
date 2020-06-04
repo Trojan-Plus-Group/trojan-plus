@@ -39,7 +39,7 @@ UDPForwardSession::UDPForwardSession(Service* _service, const Config& config, co
     in_write(move(in_write)),
     out_socket(_service->get_io_context(), ssl_context),
     gc_timer(_service->get_io_context()),
-    udp_target(targetdst) ,
+    udp_target(targetdst),
     udp_target_socket(_service->get_io_context()){
 
     udp_recv_endpoint = endpoint;
@@ -90,7 +90,7 @@ void UDPForwardSession::start_udp(const std::string_view& data) {
 
     _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(get_session_id()) + " forwarding UDP packets to " + udp_target.first + ':' + to_string(udp_target.second) + " via " + config.remote_addr + ':' + to_string(config.remote_port), Log::INFO);
 
-    if(pipeline_com.is_using_pipeline()){    
+    if(pipeline_com.is_using_pipeline()){
         cb();
     }else{
         config.prepare_ssl_reuse(out_socket);
@@ -105,8 +105,6 @@ bool UDPForwardSession::process(const udp::endpoint &endpoint, const string_view
     in_recv(data);
     return true;
 }
-
-
 
 void UDPForwardSession::out_async_read() {
     if (pipeline_com.is_using_pipeline()) {

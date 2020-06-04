@@ -122,7 +122,6 @@ class SendDataCache{
     std::vector<SentHandler> handler_queue;
     boost::asio::streambuf data_queue;
     
-
     boost::asio::streambuf sending_data_buff;
     std::vector<SentHandler> sending_data_handler;
 
@@ -130,9 +129,25 @@ class SendDataCache{
     AsyncWriter async_writer;
     ConnectionFunc is_connected;
 
+    bool destroyed;
+
 public: 
-    SendDataCache() : is_async_sending(false) {
+    SendDataCache() : is_async_sending(false),destroyed(false) {
         is_connected = []() { return true; };
+    }
+
+    ~SendDataCache(){
+        destroyed = true;
+        
+        for (size_t i = 0;i < sending_data_handler.size();i++) {
+            sending_data_handler[i](boost::asio::error::broken_pipe);
+        }
+        sending_data_handler.clear();
+
+        for (size_t i = 0;i < handler_queue.size();i++) {
+            handler_queue[i](boost::asio::error::broken_pipe);
+        }
+        handler_queue.clear();
     }
 
     inline void set_async_writer(AsyncWriter&& writer){
@@ -163,7 +178,7 @@ public:
     }
 
     inline void async_send(){
-        if (data_queue.size() == 0 || !is_connected() || is_async_sending) {
+        if (data_queue.size() == 0 || !is_connected() || is_async_sending || destroyed) {
             return;
         }
 
@@ -177,13 +192,15 @@ public:
         handler_queue.clear();
 
         async_writer(sending_data_buff, [this](const boost::system::error_code ec) {
-            is_async_sending = false;
+            for (size_t i = 0;i < sending_data_handler.size();i++) {
+                sending_data_handler[i](ec);
+            }
+            sending_data_handler.clear();
 
-            if (!ec) {
-                for (size_t i = 0;i < sending_data_handler.size();i++) {
-                    sending_data_handler[i](ec);
-                }
-                sending_data_handler.clear();
+            // above "sending_data_handler[i](ec);" might call this async_send function, 
+            // so we must set is_async_sending as false after it
+            is_async_sending = false;            
+            if (!ec) {    
                 async_send();
             }
         });
@@ -246,7 +263,7 @@ public:
         }
 
         if(!found){
-            throw std::logic_error("cannot found in SendingDataAllocator!");
+            throw std::logic_error("cannot find the buf in SendingDataAllocator!");
         }
 
         buf->consume(buf->size());

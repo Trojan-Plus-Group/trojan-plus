@@ -105,8 +105,13 @@ void ServerSession::in_async_write(const string_view& data) {
     auto self = shared_from_this();
     if(pipeline_com.is_using_pipeline()){
         if(!pipeline_session.expired()){
-            (static_cast<PipelineSession*>(pipeline_session.lock().get()))->session_write_data(*this, data, [this, self](const boost::system::error_code){
-                in_sent();
+            (static_cast<PipelineSession*>(pipeline_session.lock().get()))->session_write_data(*this, data, [this, self](const boost::system::error_code ec){
+                if(ec){
+                    output_debug_info_ec(ec);
+                    destroy();
+                    return;
+                }
+                in_sent();                              
             });            
         }else{
             output_debug_info();
@@ -165,8 +170,13 @@ void ServerSession::out_async_write(const string_view &data) {
         }
         
         if(pipeline_com.is_using_pipeline() && !pipeline_session.expired()){
-            (static_cast<PipelineSession*>(pipeline_session.lock().get()))->session_write_ack(*this, [this, self](const boost::system::error_code){
-                out_sent();
+            (static_cast<PipelineSession*>(pipeline_session.lock().get()))->session_write_ack(*this, [this, self](const boost::system::error_code ec){
+                if(ec){
+                    output_debug_info_ec(ec);
+                    destroy();
+                    return;
+                } 
+                out_sent();             
             });
         }else{
             out_sent();
