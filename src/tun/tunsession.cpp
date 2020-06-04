@@ -14,6 +14,7 @@ using namespace std;
 TUNSession::TUNSession(Service* _service, bool _is_udp) : 
     Session(_service, _service->config),
     m_service(_service), 
+    m_recv_buf_guard(false),
     m_recv_buf_ack_length(0),
     m_out_socket(_service->get_io_context(), _service->get_ssl_context()),
     m_out_resolver(_service->get_io_context()),
@@ -146,10 +147,10 @@ void TUNSession::out_async_send_impl(const std::string_view& data_to_send, SentH
                 if(!is_udp_forward()){
                     if(!pipeline_com.pre_call_ack_func()){
                         m_wait_ack_handler.emplace_back(move(_handler));
-                        _log_with_endpoint_all(m_local_addr, "Cannot TUNSession::out_async_send ! Is waiting for ack");
+                        _log_with_endpoint_ALL(m_local_addr, "session_id: " + to_string(get_session_id()) + " cannot TUNSession::out_async_send ! Is waiting for ack");
                         return;
                     }
-                    _log_with_endpoint_all(m_local_addr, "Permit to TUNSession::out_async_send ! ack:" + to_string(pipeline_com.pipeline_ack_counter));
+                    _log_with_endpoint_ALL(m_local_addr, "session_id: " + to_string(get_session_id()) + " permit to TUNSession::out_async_send ! ack:" + to_string(pipeline_com.pipeline_ack_counter));
                 }
             }
             _handler(error);         
@@ -289,8 +290,10 @@ void TUNSession::out_async_read() {
             
         });
     }else{
+        _guard_read_buf_begin(m_recv_buf);
         auto self = shared_from_this();
         m_out_socket.async_read_some(m_recv_buf.prepare(Session::MAX_BUF_LENGTH), [this, self](const boost::system::error_code error, size_t length) {
+            _guard_read_buf_end(m_recv_buf);
             if (error) {
                 output_debug_info_ec(error);
                 destroy();

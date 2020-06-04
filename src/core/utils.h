@@ -104,17 +104,24 @@ size_t streambuf_append(boost::asio::streambuf& target, const uint8_t* append_da
 size_t streambuf_append(boost::asio::streambuf& target, char append_char);
 size_t streambuf_append(boost::asio::streambuf& target, const std::string_view& append_data);
 size_t streambuf_append(boost::asio::streambuf& target, const std::string& append_data);
-std::string_view streambuf_to_string_view(boost::asio::streambuf& target);
+std::string_view streambuf_to_string_view(const boost::asio::streambuf& target);
+
+unsigned short get_checksum(const boost::asio::streambuf& buf);
+unsigned short get_checksum(const std::string_view& str);
+unsigned short get_checksum(const std::string& str);
+
+void write_data_to_file(int id, const std::string& tag, const std::string_view& data);
 
 typedef std::function<void(const boost::system::error_code ec)> SentHandler;
 typedef std::function<void(const boost::asio::streambuf& data, SentHandler handler)> AsyncWriter;
 typedef std::function<bool()> ConnectionFunc;
 typedef std::function<void(const std::string_view& data)> ReadHandler;
+typedef std::function<void(boost::asio::streambuf& buf)> PushDataHandler;
 
 class SendDataCache{
     std::vector<SentHandler> handler_queue;
     boost::asio::streambuf data_queue;
-    boost::asio::streambuf copy_data_queue;
+    
 
     boost::asio::streambuf sending_data_buff;
     std::vector<SentHandler> sending_data_handler;
@@ -138,7 +145,7 @@ public:
 
     inline void insert_data(const std::string_view& data) {
         
-        copy_data_queue.consume(copy_data_queue.size());
+        boost::asio::streambuf copy_data_queue;
         streambuf_append(copy_data_queue, data_queue);
         data_queue.consume(data_queue.size());
 
@@ -148,8 +155,8 @@ public:
         async_send();
     }
 
-    inline void push_data(const std::string_view& data, SentHandler&& handler) {
-        streambuf_append(data_queue, data);
+    inline void push_data(PushDataHandler&& push, SentHandler&& handler) {
+        push(data_queue);
 
         handler_queue.emplace_back(std::move(handler));
         async_send();
@@ -215,7 +222,7 @@ class SendingDataAllocator{
     std::list<std::shared_ptr<boost::asio::streambuf>> free_bufs;
 
 public:
-    std::shared_ptr<boost::asio::streambuf> allocate(const std::string_view& data){        
+    std::shared_ptr<boost::asio::streambuf> allocate(const std::string_view& data){
         auto buf = std::shared_ptr<boost::asio::streambuf>(nullptr);
         if(free_bufs.empty()){
             buf = std::make_shared<boost::asio::streambuf>();
@@ -225,8 +232,7 @@ public:
             free_bufs.pop_front();
         }
         
-        memcpy(buf->prepare(data.length()).data(), &data[0], data.length());
-        buf->commit(data.length());
+        streambuf_append(*buf, data);
         return buf;
     }
 

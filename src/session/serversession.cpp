@@ -83,9 +83,11 @@ void ServerSession::in_async_read() {
             in_recv(data);
         });
     }else{
+        _guard_read_buf_begin(in_read_buf);
         in_read_buf.consume(in_read_buf.size());
         auto self = shared_from_this();
         in_socket.async_read_some(in_read_buf.prepare(MAX_BUF_LENGTH), [this, self](const boost::system::error_code error, size_t length) {
+            _guard_read_buf_end(in_read_buf);
             if (error) {
                 output_debug_info_ec(error);
                 destroy();
@@ -98,6 +100,8 @@ void ServerSession::in_async_read() {
 }
 
 void ServerSession::in_async_write(const string_view& data) {
+    _log_with_date_time_ALL("ServerSession::in_async_write session_id: " + to_string(get_session_id()) + " length: " + to_string(data.length()) + " checksum: " + to_string(get_checksum(data)));
+    _write_data_to_file(get_session_id(), "ServerSession_in_async_write", data);
     auto self = shared_from_this();
     if(pipeline_com.is_using_pipeline()){
         if(!pipeline_session.expired()){
@@ -132,9 +136,11 @@ void ServerSession::out_async_read() {
             " permit to ServerSession::out_async_read aysnc! ack:" + to_string(pipeline_com.pipeline_ack_counter));
     }
 
+    _guard_read_buf_begin(out_read_buf);
     out_read_buf.consume(out_read_buf.size());
     auto self = shared_from_this();
     out_socket.async_read_some(out_read_buf.prepare(MAX_BUF_LENGTH), [this, self](const boost::system::error_code error, size_t length) {
+        _guard_read_buf_end(out_read_buf);
         if (error) {
             output_debug_info_ec(error);
             destroy();
@@ -146,6 +152,8 @@ void ServerSession::out_async_read() {
 }
 
 void ServerSession::out_async_write(const string_view &data) {
+    _log_with_date_time_ALL("ServerSession::out_async_write session_id: " + to_string(get_session_id()) + " length: " + to_string(data.length()) + " checksum: " + to_string(get_checksum(data)));
+    _write_data_to_file(get_session_id(), "ServerSession_out_async_write", data);
     auto self = shared_from_this();
     auto data_copy = get_service()->get_sending_data_allocator().allocate(data);
     boost::asio::async_write(out_socket, data_copy->data(), [this, self, data_copy](const boost::system::error_code error, size_t) {
@@ -167,9 +175,11 @@ void ServerSession::out_async_write(const string_view &data) {
 }
 
 void ServerSession::out_udp_async_read() {
+    _guard_read_buf_begin(udp_read_buf);
     udp_read_buf.consume(udp_read_buf.size());
     auto self = shared_from_this();
     udp_socket.async_receive_from(udp_read_buf.prepare(MAX_BUF_LENGTH), udp_recv_endpoint, [this, self](const boost::system::error_code error, size_t length) {
+        _guard_read_buf_end(udp_read_buf);
         if (error) {
             output_debug_info_ec(error);
             destroy();
@@ -195,6 +205,8 @@ void ServerSession::out_udp_async_write(const string_view &data, const udp::endp
 }
 
 void ServerSession::in_recv(const string_view &data) {
+    _log_with_date_time_ALL("ServerSession::in_recv session_id: " + to_string(get_session_id()) + " length: " + to_string(data.length()) + " checksum: " + to_string(get_checksum(data)));
+    _write_data_to_file(get_session_id(), "ServerSession_in_recv", data);
     if (status == HANDSHAKE) {
         
         if(has_queried_out){
@@ -284,6 +296,8 @@ void ServerSession::in_sent() {
 }
 
 void ServerSession::out_recv(const string_view &data) {
+    _log_with_date_time_ALL("ServerSession::out_recv session_id: " + to_string(get_session_id()) + " length: " + to_string(data.length()) + " checksum: " + to_string(get_checksum(data)));
+    _write_data_to_file(get_session_id(), "ServerSession_out_recv", data);
     if (status == FORWARD) {
         recv_len += data.length();
         in_async_write(data);

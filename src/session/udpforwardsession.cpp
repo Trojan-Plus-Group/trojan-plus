@@ -114,9 +114,11 @@ void UDPForwardSession::out_async_read() {
             out_recv(data);
         });
     } else {
+        _guard_read_buf_begin(out_read_buf);
         out_read_buf.consume(out_read_buf.size());
         auto self = shared_from_this();
         out_socket.async_read_some(out_read_buf.prepare(MAX_BUF_LENGTH), [this, self](const boost::system::error_code error, size_t length) {
+            _guard_read_buf_end(out_read_buf);
             if (error) {
                 destroy();
                 return;
@@ -201,7 +203,7 @@ void UDPForwardSession::out_recv(const string_view &data) {
             
             if(config.run_type == Config::NAT){
                 boost::system::error_code ec;
-                udp_target_socket.send_to(boost::asio::buffer(packet.payload), udp_recv_endpoint, 0 , ec);
+                udp_target_socket.send_to(boost::asio::buffer(packet.payload.data(), packet.payload.length()), udp_recv_endpoint, 0 , ec);
                 if (ec == boost::asio::error::no_permission) {
                     _log_with_endpoint(udp_recv_endpoint, "[udp] dropped a packet due to firewall policy or rate limit");
                 } else if (ec) {

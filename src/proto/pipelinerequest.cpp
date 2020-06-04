@@ -33,9 +33,9 @@ size_t parse_uint16(int start_pos, const string_view& data){
 }
 
 static 
-void generate_uint16(string& data, uint16_t value){
-    data += char(value >> 8 & 0xff);
-    data += char(value & 0xff);
+void generate_uint16(boost::asio::streambuf& data, uint16_t value){
+    streambuf_append(data, char(value >> 8 & 0xff));
+    streambuf_append(data, char(value & 0xff));
 }
 
 static 
@@ -47,11 +47,11 @@ uint32_t parse_uint32(int start_pos, const string_view& data){
 }
 
 static 
-void generate_uint32(string& data, uint32_t value){
-    data += char(value >> 24);
-    data += char(value >> 16 & 0xff);
-    data += char(value >> 8 & 0xff);
-    data += char(value & 0xff);
+void generate_uint32(boost::asio::streambuf& data, uint32_t value){
+    streambuf_append(data, char(value >> 24));
+    streambuf_append(data, char(value >> 16 & 0xff));
+    streambuf_append(data, char(value >> 8 & 0xff));
+    streambuf_append(data, char(value & 0xff));
 }
 
 int PipelineRequest::parse(const string_view &data){
@@ -70,7 +70,7 @@ int PipelineRequest::parse(const string_view &data){
         +------+-----------------------+------------------------+
 
         +------+--------------------=---+------------------------+
-        | ICMP | 2 bytes as data length | 4 bytes as data length |
+        | ICMP | 2 bytes as data length |        data            |
         +------+-------------------==---+------------------------+
     */
 
@@ -132,26 +132,25 @@ int PipelineRequest::parse(const string_view &data){
     return packet_data.length();
 }
 
-std::string PipelineRequest::generate(enum Command cmd, PipelineComponent::SessionIdType session_id, const std::string_view& data){
+boost::asio::streambuf& PipelineRequest::generate(boost::asio::streambuf& buf, enum Command cmd, PipelineComponent::SessionIdType session_id, const std::string_view& data){
     
     // if(session_id > MAX_SESSION_ID_LENGTH){
     //     throw logic_error("PipelineRequest::generate session_id " + to_string(session_id) + " > numeric_limits<uint16_t>::max() " + to_string(MAX_SESSION_ID_LENGTH));
     // }
 
-    string ret_data;
-    ret_data += char(uint8_t(cmd));
-
+    streambuf_append(buf, char(uint8_t(cmd)));
+    
     if (cmd == ICMP) {
         auto data_length = data.length();
         if (data_length >= MAX_ICMP_LENGTH) {
             throw logic_error("PipelineRequest::generate data.length() " + to_string(data_length) + " > MAX_ICMP_LENGTH " + to_string(MAX_ICMP_LENGTH));
         }
 
-        generate_uint16(ret_data, (uint16_t)data_length);
-        ret_data += data;
+        generate_uint16(buf, (uint16_t)data_length);
+        streambuf_append(buf, data);
 
     } else {
-        generate_uint16(ret_data, session_id);
+        generate_uint16(buf, session_id);
 
         if (cmd == DATA) {
             auto data_length = data.length();
@@ -159,10 +158,10 @@ std::string PipelineRequest::generate(enum Command cmd, PipelineComponent::Sessi
                 throw logic_error("PipelineRequest::generate data.length() " + to_string(data_length) + " > MAX_DATA_LENGTH " + to_string(MAX_DATA_LENGTH));
             }
 
-            generate_uint32(ret_data, data_length);
-            ret_data += data;
+            generate_uint32(buf, data_length);
+            streambuf_append(buf, data);
         }
     }
 
-    return ret_data;
+    return buf;
 }

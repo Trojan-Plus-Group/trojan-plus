@@ -20,6 +20,7 @@ private:
 
     Service* m_service;
     boost::asio::streambuf m_recv_buf;
+    bool m_recv_buf_guard;
     size_t m_recv_buf_ack_length;
 
     boost::asio::ssl::stream<boost::asio::ip::tcp::socket> m_out_socket;

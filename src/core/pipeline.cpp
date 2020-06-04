@@ -34,6 +34,7 @@ Pipeline::Pipeline(Service* _service, const Config& config, boost::asio::ssl::co
                                                              destroyed(false),
                                                              out_socket(_service->get_io_context(), ssl_context),
                                                              connected(false),
+                                                             out_read_buf_guard(false),
                                                              resolver(_service->get_io_context()),
                                                              config(config) {
     pipeline_id = s_pipeline_id_counter++;
@@ -78,10 +79,10 @@ void Pipeline::session_async_send_cmd(PipelineRequest::Command cmd, Session& ses
         return;
     }
 
-    _log_with_date_time("pipeline " + to_string(get_pipeline_id()) + " session_id: " + to_string(session.get_session_id()) + 
-        " --> send to server cmd: " + PipelineRequest::get_cmd_string(cmd) + " data length:" + to_string(send_data.length()));
+    _log_with_date_time_ALL("pipeline " + to_string(get_pipeline_id()) + " session_id: " + to_string(session.get_session_id()) + 
+        " --> send to server cmd: " + PipelineRequest::get_cmd_string(cmd) + " data length:" + to_string(send_data.length()) + " checksum: " + to_string(get_checksum(send_data)));
 
-    sending_data_cache.push_data(PipelineRequest::generate(cmd, session.get_session_id(), send_data), move(sent_handler));
+    sending_data_cache.push_data([&](boost::asio::streambuf& buf){PipelineRequest::generate(buf, cmd, session.get_session_id(), send_data);}, move(sent_handler));
 }
 
 void Pipeline::session_async_send_icmp(const std::string_view& send_data, SentHandler&& sent_handler) {
@@ -89,8 +90,8 @@ void Pipeline::session_async_send_icmp(const std::string_view& send_data, SentHa
         sent_handler(boost::asio::error::broken_pipe);
         return;
     }
-    _log_with_date_time("pipeline " + to_string(get_pipeline_id()) + " --> send to server cmd: ICMP data length:" + to_string(send_data.length()));
-    sending_data_cache.push_data(PipelineRequest::generate(PipelineRequest::ICMP, 0, send_data), move(sent_handler));
+    _log_with_date_time_ALL("pipeline " + to_string(get_pipeline_id()) + " --> send to server cmd: ICMP data length:" + to_string(send_data.length()));
+    sending_data_cache.push_data([&](boost::asio::streambuf& buf){PipelineRequest::generate(buf, PipelineRequest::ICMP, 0, send_data);}, move(sent_handler));
 }
 
 void Pipeline::session_start(Session& session, SentHandler&& started_handler){
@@ -99,16 +100,14 @@ void Pipeline::session_start(Session& session, SentHandler&& started_handler){
 }
 
 void Pipeline::session_destroyed(Session& session){
-    if(!destroyed){    
-        auto it = sessions.begin();
-        while(it != sessions.end()){
+    if(!destroyed){
+        for(auto it = sessions.begin(); it != sessions.end();it++){
             if(it->get() == &session){
-                it = sessions.erase(it);
-            }else{
-                ++it;
+                sessions.erase(it);
+                break;
             }            
         }
-        _log_with_date_time("pipeline " + to_string(get_pipeline_id()) + " send command to close session_id: " + to_string(session.get_session_id()));
+        _log_with_date_time_ALL("pipeline " + to_string(get_pipeline_id()) + " send command to close session_id: " + to_string(session.get_session_id()));
         session_async_send_cmd(PipelineRequest::CLOSE, session, "", [](boost::system::error_code){});
     }
 }
@@ -127,8 +126,10 @@ bool Pipeline::is_in_pipeline(Session& session){
 }
 
 void Pipeline::out_async_recv(){
+    _guard_read_buf_begin(out_read_buf);
     auto self = shared_from_this();
     out_socket.async_read_some(out_read_buf.prepare(MAX_BUF_LENGTH), [this, self](const boost::system::error_code error, size_t length) {
+        _guard_read_buf_end(out_read_buf);
         if (error) {
             output_debug_info_ec(error);
             destroy();
@@ -147,7 +148,8 @@ void Pipeline::out_async_recv(){
                     return;
                 }
 
-                _log_with_date_time_all("pipeline " + to_string(get_pipeline_id()) + " session_id: " + to_string(req.session_id) + " <-- recv from server cmd: " + req.get_cmd_string() + " data length:" + to_string(req.packet_data.length()));
+                _log_with_date_time_ALL("pipeline " + to_string(get_pipeline_id()) + " session_id: " + to_string(req.session_id) + " <-- recv from server cmd: " + 
+                    req.get_cmd_string() + " data length:" + to_string(req.packet_data.length()) + " checksum: " + to_string(get_checksum(req.packet_data)));
 
                 if(req.command == PipelineRequest::ICMP){
                     if (icmp_processor) {
@@ -156,8 +158,8 @@ void Pipeline::out_async_recv(){
                 }else{                    
 
                     bool found = false;
-                    auto it = sessions.begin();
-                    while (it != sessions.end()) {
+                    
+                    for (auto it = sessions.begin(); it != sessions.end(); it++) {
                         auto session = it->get();
                         if (session->get_session_id() == req.session_id) {
                             if (req.command == PipelineRequest::CLOSE) {
@@ -170,8 +172,6 @@ void Pipeline::out_async_recv(){
                             }
                             found = true;
                             break;
-                        } else {
-                            ++it;
                         }
                     }
 

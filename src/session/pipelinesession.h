@@ -52,10 +52,7 @@ class PipelineSession : public SocketSession {
     
     SessionsList sessions;
     boost::asio::ssl::stream<boost::asio::ip::tcp::socket> live_socket;
-
     boost::asio::steady_timer gc_timer;
-    boost::asio::streambuf in_recv_streaming_data;
-
     SendDataCache sending_data_cache;    
     boost::asio::ssl::context& ssl_context;
 

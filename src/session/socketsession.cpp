@@ -23,6 +23,9 @@
 using namespace std;
 SocketSession::SocketSession(Service* _service, const Config& config) : 
     Session(_service, config),
+    in_read_buf_guard(false),
+    out_read_buf_guard(false),
+    udp_read_buf_guard(false),
     recv_len(0),
     sent_len(0),
     resolver(_service->get_io_context()),

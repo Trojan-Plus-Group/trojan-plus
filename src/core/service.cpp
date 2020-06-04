@@ -554,7 +554,7 @@ void Service::udp_async_read() {
                     throw logic_error("[udp] logic fatal error, cannot call in_write function for NAT type!");
                 }else{
                     boost::system::error_code ec;
-                    udp_socket.send_to(boost::asio::buffer(data), endpoint, 0, ec);
+                    udp_socket.send_to(boost::asio::buffer(data.data(), data.length()), endpoint, 0, ec);
                         
                     if (ec == boost::asio::error::no_permission) {
                         _log_with_endpoint(udp_recv_endpoint, "[udp] dropped a packet due to firewall policy or rate limit");

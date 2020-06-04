@@ -19,6 +19,11 @@ protected:
     boost::asio::streambuf in_read_buf;
     boost::asio::streambuf out_read_buf;
     boost::asio::streambuf udp_read_buf;
+
+    bool in_read_buf_guard;
+    bool out_read_buf_guard;
+    bool udp_read_buf_guard;
+
     uint64_t recv_len;
     uint64_t sent_len;
     time_t start_time{};

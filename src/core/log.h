@@ -57,10 +57,17 @@ private:
 
 extern char __debug_str_buf[1024];
 
-#define _log_with_date_time_all(...) \
+#if 1
+    #define _write_data_to_file(...) \
+        do{ if(Log::level <= Log::ALL) write_data_to_file(__VA_ARGS__); }while(false)
+#else
+    #define _write_data_to_file(...) {}
+#endif
+
+#define _log_with_date_time_ALL(...) \
     do{if(Log::level <= Log::ALL) { Log::log_with_date_time(__VA_ARGS__, Log::ALL); }}while(false)
 
-#define _log_with_endpoint_all(...) \
+#define _log_with_endpoint_ALL(...) \
     do{if(Log::level <= Log::ALL) { Log::log_with_endpoint(__VA_ARGS__, Log::ALL); }}while(false)
 
 #define _log_with_date_time(...) \
@@ -73,9 +80,23 @@ extern char __debug_str_buf[1024];
     do{if(Log::level != Log::OFF) { Log::log(__VA_ARGS__); }}while(false)
 
 #define output_debug_info_ec(ec) \
-    do{if(Log::level != Log::OFF) { Log::log_with_date_time(std::string((sprintf(__debug_str_buf, "%s:%d-<%s> ec:%s",__FILE__, __LINE__, __FUNCTION__,(ec.message().c_str())), __debug_str_buf))); }}while(false)
+    do{if(Log::level <= Log::ALL) { Log::log_with_date_time(std::string((sprintf(__debug_str_buf, "%s:%d-<%s> ec:%s",__FILE__, __LINE__, __FUNCTION__,(ec.message().c_str())), __debug_str_buf))); }}while(false)
 
 #define output_debug_info() \
-    do{if(Log::level != Log::OFF) { Log::log_with_date_time(std::string((sprintf(__debug_str_buf, "%s:%d-<%s>",__FILE__, __LINE__, __FUNCTION__), __debug_str_buf))); }}while(false)
+    do{if(Log::level <= Log::ALL) { Log::log_with_date_time(std::string((sprintf(__debug_str_buf, "%s:%d-<%s>",__FILE__, __LINE__, __FUNCTION__), __debug_str_buf))); }}while(false)
+
+#define _guard_read_buf_begin(guard_buf) \
+    do{ \
+        if((guard_buf##_guard)){ \
+            auto info = std::string((sprintf(__debug_str_buf, "%s:%d-<%s>",__FILE__, __LINE__, __FUNCTION__), __debug_str_buf)); \
+            throw std::logic_error("!! guard_read_buf failed! Cannot enter this function before _guard_read_buf_end  !! " + info); \
+        } \
+        (guard_buf##_guard) = true; \
+    }while(false)
+
+#define _guard_read_buf_end(guard_buf) \
+    do{ \
+        (guard_buf##_guard) = false; \
+    }while(false)
 
 #endif // _LOG_H_

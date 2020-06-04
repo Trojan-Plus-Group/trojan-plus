@@ -19,6 +19,8 @@
 
 #include "utils.h"
 
+#include <fstream>
+
 #ifdef __ANDROID__
 #include <signal.h>
 #include <jni.h>
@@ -48,7 +50,7 @@ size_t streambuf_append(boost::asio::streambuf& target, const boost::asio::strea
         return 0;
     }
 
-    auto dest = boost::asio::buffer_cast<uint8_t*>(target.prepare(append_buf.size()));
+    auto dest = boost::asio::buffer_cast<uint8_t*>(target.prepare(n));
     auto src = boost::asio::buffer_cast<const uint8_t*>(append_buf.data()) + start;
     memcpy(dest, src, n);
     target.commit(n);
@@ -107,8 +109,36 @@ size_t streambuf_append(boost::asio::streambuf& target, const std::string& appen
     return copied;
 }
 
-std::string_view streambuf_to_string_view(boost::asio::streambuf& target){
+std::string_view streambuf_to_string_view(const boost::asio::streambuf& target){
     return std::string_view(boost::asio::buffer_cast<const char*>(target.data()), target.size());
+}
+
+
+unsigned short get_checksum(const std::string_view& str){
+    unsigned int sum = 0;
+
+    auto body_iter = str.cbegin();
+    while (body_iter != str.cend()) {
+        sum += (static_cast<uint8_t>(*body_iter++) << 8);
+        if (body_iter != str.end())
+            sum += static_cast<uint8_t>(*body_iter++);
+    }
+
+    return static_cast<unsigned short>(sum);
+}
+
+unsigned short get_checksum(const std::string& str){
+    return get_checksum(string_view(str));
+}
+
+unsigned short get_checksum(const boost::asio::streambuf& buf){
+    return get_checksum(streambuf_to_string_view(buf));
+}
+
+void write_data_to_file(int id, const std::string& tag, const std::string_view& data){
+    ofstream file(tag + "_" + to_string(id) + ".data", std::ofstream::out | std::ofstream::app);
+    file << data;
+    file.close();
 }
 
 

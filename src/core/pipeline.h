@@ -21,7 +21,7 @@
 #define _PIPELINE_H_
 
 #include <memory>
-#include <vector>
+#include <list>
 #include <functional>
 #include <time.h>
 #include <boost/asio/io_context.hpp>
@@ -51,8 +51,9 @@ private:
     boost::asio::ssl::stream<boost::asio::ip::tcp::socket>out_socket;
     bool connected;
     boost::asio::streambuf out_read_buf;
+    bool out_read_buf_guard;
     boost::asio::ip::tcp::resolver resolver; 
-    std::vector<std::shared_ptr<Session>> sessions;
+    std::list<std::shared_ptr<Session>> sessions;
     uint32_t pipeline_id;
     std::shared_ptr<icmpd> icmp_processor;
     boost::asio::ip::tcp::endpoint out_socket_endpoint;

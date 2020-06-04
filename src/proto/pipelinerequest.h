@@ -31,7 +31,7 @@
 
 class PipelineRequest {
 public:
-    size_t consume_length{};
+    size_t consume_length{0};
     std::string_view packet_data;
     PipelineComponent::SessionIdType session_id;
     enum Command {
@@ -57,7 +57,9 @@ public:
             default:return "UNKNOW!!";
         }
     }
-    static std::string generate(enum Command cmd, PipelineComponent::SessionIdType session_id, const std::string_view& data);
+    
+    static boost::asio::streambuf& generate(boost::asio::streambuf& buf, enum Command cmd, 
+        PipelineComponent::SessionIdType session_id, const std::string_view& data);
 };
 
 #endif // _PIPELINEREQUEST_H_
