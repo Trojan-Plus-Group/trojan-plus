@@ -317,10 +317,6 @@ void ClientSession::in_sent() {
         }
         case REQUEST: {
             status = CONNECT;
-            in_async_read();
-            if (is_udp_forward()) {
-                udp_async_read();
-            }
             request_remote();
             break;
         }
@@ -351,6 +347,10 @@ void ClientSession::request_remote(){
                 in_socket.cancel(ec);
             }
             status = FORWARD;
+        }
+
+        if (is_udp_forward()) {
+            udp_async_read();
         }
 
         out_async_read();
