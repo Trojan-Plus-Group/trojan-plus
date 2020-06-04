@@ -129,10 +129,10 @@ void ServerSession::in_async_write(const string_view& data) {
 void ServerSession::out_async_read() {
     if(pipeline_com.is_using_pipeline()){
         if(!pipeline_com.pre_call_ack_func()){
-            _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + " cannot ServerSession::out_async_read ! Is waiting for ack");
+            _log_with_endpoint_DEBUG(in_endpoint, "session_id: " + to_string(get_session_id()) + " cannot ServerSession::out_async_read ! Is waiting for ack");
             return;
         }
-        _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + 
+        _log_with_endpoint_DEBUG(in_endpoint, "session_id: " + to_string(get_session_id()) + 
             " permit to ServerSession::out_async_read aysnc! ack:" + to_string(pipeline_com.pipeline_ack_counter));
     }
 

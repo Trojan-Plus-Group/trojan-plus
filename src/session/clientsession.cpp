@@ -74,10 +74,10 @@ void ClientSession::recv_ack_cmd(){
 void ClientSession::in_async_read() {
     if(pipeline_com.is_using_pipeline() && status == FORWARD){
         if(!pipeline_com.pre_call_ack_func()){
-            _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + " Cannot ClientSession::in_async_read ! Is waiting for ack");
+            _log_with_endpoint_DEBUG(in_endpoint, "session_id: " + to_string(get_session_id()) + " Cannot ClientSession::in_async_read ! Is waiting for ack");
             return;
         }
-        _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + " Permit to ClientSession::in_async_read! ack:" + to_string(pipeline_com.pipeline_ack_counter));
+        _log_with_endpoint_DEBUG(in_endpoint, "session_id: " + to_string(get_session_id()) + " Permit to ClientSession::in_async_read! ack:" + to_string(pipeline_com.pipeline_ack_counter));
     }
 
     _guard_read_buf_begin(in_read_buf);    

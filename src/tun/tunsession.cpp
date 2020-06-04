@@ -147,10 +147,10 @@ void TUNSession::out_async_send_impl(const std::string_view& data_to_send, SentH
                 if(!is_udp_forward()){
                     if(!pipeline_com.pre_call_ack_func()){
                         m_wait_ack_handler.emplace_back(move(_handler));
-                        _log_with_endpoint_ALL(m_local_addr, "session_id: " + to_string(get_session_id()) + " cannot TUNSession::out_async_send ! Is waiting for ack");
+                        _log_with_endpoint_DEBUG(m_local_addr, "session_id: " + to_string(get_session_id()) + " cannot TUNSession::out_async_send ! Is waiting for ack");
                         return;
                     }
-                    _log_with_endpoint_ALL(m_local_addr, "session_id: " + to_string(get_session_id()) + " permit to TUNSession::out_async_send ! ack:" + to_string(pipeline_com.pipeline_ack_counter));
+                    _log_with_endpoint_DEBUG(m_local_addr, "session_id: " + to_string(get_session_id()) + " permit to TUNSession::out_async_send ! ack:" + to_string(pipeline_com.pipeline_ack_counter));
                 }
             }
             _handler(error);         
