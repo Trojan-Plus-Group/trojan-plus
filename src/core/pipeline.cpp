@@ -79,7 +79,7 @@ void Pipeline::session_async_send_cmd(PipelineRequest::Command cmd, Session& ses
         return;
     }
 
-    _log_with_date_time_DEBUG("pipeline " + to_string(get_pipeline_id()) + " session_id: " + to_string(session.get_session_id()) + 
+    _log_with_date_time_ALL("pipeline " + to_string(get_pipeline_id()) + " session_id: " + to_string(session.get_session_id()) + 
         " --> send to server cmd: " + PipelineRequest::get_cmd_string(cmd) + " data length:" + to_string(send_data.length()) + " checksum: " + to_string(get_checksum(send_data)));
 
     sending_data_cache.push_data([&](boost::asio::streambuf& buf){PipelineRequest::generate(buf, cmd, session.get_session_id(), send_data);}, move(sent_handler));
@@ -90,7 +90,7 @@ void Pipeline::session_async_send_icmp(const std::string_view& send_data, SentHa
         sent_handler(boost::asio::error::broken_pipe);
         return;
     }
-    _log_with_date_time_DEBUG("pipeline " + to_string(get_pipeline_id()) + " --> send to server cmd: ICMP data length:" + to_string(send_data.length()));
+    _log_with_date_time_ALL("pipeline " + to_string(get_pipeline_id()) + " --> send to server cmd: ICMP data length:" + to_string(send_data.length()));
     sending_data_cache.push_data([&](boost::asio::streambuf& buf){PipelineRequest::generate(buf, PipelineRequest::ICMP, 0, send_data);}, move(sent_handler));
 }
 
@@ -148,7 +148,7 @@ void Pipeline::out_async_recv(){
                     return;
                 }
 
-                _log_with_date_time_DEBUG("pipeline " + to_string(get_pipeline_id()) + " session_id: " + to_string(req.session_id) + " <-- recv from server cmd: " + 
+                _log_with_date_time_ALL("pipeline " + to_string(get_pipeline_id()) + " session_id: " + to_string(req.session_id) + " <-- recv from server cmd: " + 
                     req.get_cmd_string() + " data length:" + to_string(req.packet_data.length()) + " checksum: " + to_string(get_checksum(req.packet_data)));
 
                 if(req.command == PipelineRequest::ICMP){

@@ -134,7 +134,7 @@ void PipelineSession::in_recv(const string_view &) {
 
 void PipelineSession::in_send(PipelineRequest::Command cmd, ServerSession& session, const std::string_view& session_data, SentHandler&& sent_handler){
     auto found = find_and_process_session(session.get_session_id(), [&](SessionsList::iterator&){
-        _log_with_date_time_DEBUG(in_endpoint, "PipelineSession session_id: " + to_string(session.get_session_id()) + " <-- send cmd: " + 
+        _log_with_endpoint_ALL(in_endpoint, "PipelineSession session_id: " + to_string(session.get_session_id()) + " <-- send cmd: " + 
             PipelineRequest::get_cmd_string(cmd) + " length:" + to_string(session_data.length()) + " checksum: " + to_string(get_checksum(session_data)));
         sending_data_cache.push_data([&](boost::asio::streambuf& buf){PipelineRequest::generate(buf, cmd, session.get_session_id(), session_data);}, move(sent_handler));
     });
@@ -170,7 +170,7 @@ void PipelineSession::process_streaming_data(){
             return;
         }
 
-        _log_with_endpoint_DEBUG(in_endpoint, "PipelineSession session_id: " + to_string(req.session_id) + " --> recv cmd: " + 
+        _log_with_endpoint_ALL(in_endpoint, "PipelineSession session_id: " + to_string(req.session_id) + " --> recv cmd: " + 
             req.get_cmd_string() + " length:" + to_string(req.packet_data.length()) + " checksum: " + to_string(get_checksum(req.packet_data)));
 
         if(req.command == PipelineRequest::CONNECT){
@@ -241,7 +241,7 @@ void PipelineSession::session_write_data(ServerSession& session, const std::stri
 }
 
 void PipelineSession::session_write_icmp(const std::string_view& data, SentHandler&& sent_handler){
-    _log_with_date_time_DEBUG(in_endpoint, "PipelineSession <-- send cmd: ICMP length:" + to_string(data.length()));
+    _log_with_endpoint_ALL(in_endpoint, "PipelineSession <-- send cmd: ICMP length:" + to_string(data.length()));
     sending_data_cache.push_data([&](boost::asio::streambuf& buf){PipelineRequest::generate(buf, PipelineRequest::ICMP, 0, data);}, move(sent_handler));
 }
 

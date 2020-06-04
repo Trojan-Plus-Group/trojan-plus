@@ -347,10 +347,6 @@ void ClientSession::request_remote(){
             status = FORWARD;
         }
 
-        if (is_udp_forward()) {
-            udp_async_read();
-        }
-
         out_async_read();
         out_async_write(streambuf_to_string_view(out_write_buf));
     };
@@ -452,14 +448,14 @@ void ClientSession::udp_sent() {
         }
 
         udp_send_buf.consume(udp_send_buf.size());
-        streambuf_append(udp_send_buf, "\x00\x00\x00");
+        streambuf_append(udp_send_buf, (const uint8_t*)"\x00\x00\x00", 3);
         streambuf_append(udp_send_buf, udp_data_buf, 0, address_len);
         streambuf_append(udp_send_buf, packet.payload);
         
-        udp_data_buf.consume(packet_len);
-
         recv_len += packet.length;
         udp_async_write(streambuf_to_string_view(udp_send_buf), udp_recv_endpoint);
+
+        udp_data_buf.consume(packet_len);
     }
 }
 
