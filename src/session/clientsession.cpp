@@ -100,8 +100,8 @@ void ClientSession::in_async_read() {
 
 void ClientSession::in_async_write(const string_view &data) {
     
-    _log_with_date_time_ALL("ClientSession::in_async_write status: " + to_string((int)status) + " session_id: " + to_string(get_session_id()) + " length: " + to_string(data.length()) + " checksum: " + to_string(get_checksum(data)));
-    _write_data_to_file(get_session_id(), "ClientSession_in_async_write", data);
+    _log_with_date_time_DEBUG("ClientSession::in_async_write status: " + to_string((int)status) + " session_id: " + to_string(get_session_id()) + " length: " + to_string(data.length()) + " checksum: " + to_string(get_checksum(data)));
+    _write_data_to_file_DEBUG(get_session_id(), "ClientSession_in_async_write", data);
 
     auto self = shared_from_this();
     auto data_copy = get_service()->get_sending_data_allocator().allocate(data);
@@ -152,8 +152,8 @@ void ClientSession::out_async_read() {
 }
 
 void ClientSession::out_async_write(const string_view &data) {
-    _log_with_date_time_ALL("ClientSession::out_async_write status: " + to_string((int)status) + " session_id: " + to_string(get_session_id()) + " length: " + to_string(data.length()) + " checksum: " + to_string(get_checksum(data)));
-    _write_data_to_file(get_session_id(), "ClientSession_out_async_write", data);
+    _write_data_to_file_DEBUG("ClientSession::out_async_write status: " + to_string((int)status) + " session_id: " + to_string(get_session_id()) + " length: " + to_string(data.length()) + " checksum: " + to_string(get_checksum(data)));
+    _write_data_to_file_DEBUG(get_session_id(), "ClientSession_out_async_write", data);
     auto self = shared_from_this();
     if(pipeline_com.is_using_pipeline()){
         service->session_async_send_to_pipeline(*this, PipelineRequest::DATA, data, [this, self](const boost::system::error_code error) {
@@ -213,8 +213,8 @@ void ClientSession::udp_async_write(const string_view &data, const udp::endpoint
 }
 
 void ClientSession::in_recv(const string_view &data) {
-    _log_with_date_time_ALL("ClientSession::in_recv status: " + to_string((int)status) + " session_id: " + to_string(get_session_id()) + " length: " + to_string(data.length()) + " checksum: " + to_string(get_checksum(data)));
-    _write_data_to_file(get_session_id(), "ClientSession_in_recv", data);
+    _write_data_to_file_DEBUG("ClientSession::in_recv status: " + to_string((int)status) + " session_id: " + to_string(get_session_id()) + " length: " + to_string(data.length()) + " checksum: " + to_string(get_checksum(data)));
+    _write_data_to_file_DEBUG(get_session_id(), "ClientSession_in_recv", data);
     switch (status) {
         case HANDSHAKE: {
             if (data.length() < 2 || data[0] != 5 || data.length() != (unsigned int)(unsigned char)data[1] + 2) {
@@ -251,8 +251,6 @@ void ClientSession::in_recv(const string_view &data) {
             streambuf_append(out_write_buf, data[1]);
             streambuf_append(out_write_buf, data.substr(3));
             streambuf_append(out_write_buf, "\r\n");
-
-           _log_with_date_time_ALL("ClientSession::in_recv status: " + to_string((int)status) + " session_id: " + to_string(get_session_id()) + " out_write_buf length:"+ to_string(out_write_buf.size()));
 
             TrojanRequest req;
             if (req.parse(streambuf_to_string_view(out_write_buf)) == -1) {
@@ -365,8 +363,8 @@ void ClientSession::request_remote(){
 }
 
 void ClientSession::out_recv(const string_view &data) {
-    _log_with_date_time_ALL("ClientSession::out_recv session_id: " + to_string(get_session_id()) + " length: " + to_string(data.length()) + " checksum: " + to_string(get_checksum(data)));
-    _write_data_to_file(get_session_id(), "ClientSession_out_recv", data);
+    _write_data_to_file_DEBUG("ClientSession::out_recv session_id: " + to_string(get_session_id()) + " length: " + to_string(data.length()) + " checksum: " + to_string(get_checksum(data)));
+    _write_data_to_file_DEBUG(get_session_id(), "ClientSession_out_recv", data);
     if (status == FORWARD) {
         recv_len += data.length();
         in_async_write(data);
