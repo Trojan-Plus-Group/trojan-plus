@@ -484,5 +484,7 @@ void android_protect_socket(int fd){
         }
     }
 }
+#else
 
+void android_protect_socket(int){}
 #endif

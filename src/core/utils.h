@@ -208,12 +208,7 @@ public:
     }
 };
 
-
-#ifdef __ANDROID__
 void android_protect_socket(int fd);
-#else
-static void android_protect_socket(int){}
-#endif
 
 template <typename ThisT, typename EndPoint>
 void connect_out_socket(ThisT this_ptr, std::string addr, std::string port, boost::asio::ip::tcp::resolver& resolver,
