@@ -110,6 +110,8 @@ unsigned short get_checksum(const boost::asio::streambuf& buf);
 unsigned short get_checksum(const std::string_view& str);
 unsigned short get_checksum(const std::string& str);
 
+int get_hashCode(const std::string& str);
+
 void write_data_to_file(int id, const std::string& tag, const std::string_view& data);
 
 typedef std::function<void(const boost::system::error_code ec)> SentHandler;
@@ -132,79 +134,14 @@ class SendDataCache{
     bool destroyed;
 
 public: 
-    SendDataCache() : is_async_sending(false),destroyed(false) {
-        is_connected = []() { return true; };
-    }
+    SendDataCache();
+    ~SendDataCache();
 
-    ~SendDataCache(){
-        destroyed = true;
-        
-        for (size_t i = 0;i < sending_data_handler.size();i++) {
-            sending_data_handler[i](boost::asio::error::broken_pipe);
-        }
-        sending_data_handler.clear();
-
-        for (size_t i = 0;i < handler_queue.size();i++) {
-            handler_queue[i](boost::asio::error::broken_pipe);
-        }
-        handler_queue.clear();
-    }
-
-    inline void set_async_writer(AsyncWriter&& writer){
-        async_writer = std::move(writer);
-    }
-
-    inline void set_is_connected_func(ConnectionFunc&& func){
-        is_connected = std::move(func);
-    }
-
-    inline void insert_data(const std::string_view& data) {
-        
-        boost::asio::streambuf copy_data_queue;
-        streambuf_append(copy_data_queue, data_queue);
-        data_queue.consume(data_queue.size());
-
-        streambuf_append(data_queue, data);
-        streambuf_append(data_queue, copy_data_queue);
-
-        async_send();
-    }
-
-    inline void push_data(PushDataHandler&& push, SentHandler&& handler) {
-        push(data_queue);
-
-        handler_queue.emplace_back(std::move(handler));
-        async_send();
-    }
-
-    inline void async_send(){
-        if (data_queue.size() == 0 || !is_connected() || is_async_sending || destroyed) {
-            return;
-        }
-
-        is_async_sending = true;
-
-        sending_data_buff.consume(sending_data_buff.size());
-        streambuf_append(sending_data_buff, data_queue);
-        data_queue.consume(data_queue.size());
-
-        std::move(handler_queue.begin(), handler_queue.end(), std::back_inserter(sending_data_handler));
-        handler_queue.clear();
-
-        async_writer(sending_data_buff, [this](const boost::system::error_code ec) {
-            for (size_t i = 0;i < sending_data_handler.size();i++) {
-                sending_data_handler[i](ec);
-            }
-            sending_data_handler.clear();
-
-            // above "sending_data_handler[i](ec);" might call this async_send function, 
-            // so we must set is_async_sending as false after it
-            is_async_sending = false;            
-            if (!ec) {    
-                async_send();
-            }
-        });
-    }
+    void set_async_writer(AsyncWriter&& writer);
+    void set_is_connected_func(ConnectionFunc&& func);
+    void insert_data(const std::string_view& data);
+    void push_data(PushDataHandler&& push, SentHandler&& handler);
+    void async_send();
 };
 
 class ReadDataCache{

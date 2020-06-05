@@ -135,10 +135,92 @@ unsigned short get_checksum(const boost::asio::streambuf& buf){
     return get_checksum(streambuf_to_string_view(buf));
 }
 
+int get_hashCode(const std::string& str) {
+    int h = 0;
+    for (size_t i = 0; i < str.length(); i++) {
+        h = 31 * h + str[i];
+    }
+    return h;
+}
+
 void write_data_to_file(int id, const std::string& tag, const std::string_view& data){
     ofstream file(tag + "_" + to_string(id) + ".data", std::ofstream::out | std::ofstream::app);
     file << data;
     file.close();
+}
+
+SendDataCache::SendDataCache() : is_async_sending(false), destroyed(false) {
+    is_connected = []() { return true; };
+}
+
+SendDataCache::~SendDataCache() {
+    destroyed = true;
+
+    for (size_t i = 0; i < sending_data_handler.size(); i++) {
+        sending_data_handler[i](boost::asio::error::broken_pipe);
+    }
+    sending_data_handler.clear();
+
+    for (size_t i = 0; i < handler_queue.size(); i++) {
+        handler_queue[i](boost::asio::error::broken_pipe);
+    }
+    handler_queue.clear();
+}
+
+void SendDataCache::set_async_writer(AsyncWriter&& writer) {
+    async_writer = std::move(writer);
+}
+
+void SendDataCache::set_is_connected_func(ConnectionFunc&& func) {
+    is_connected = std::move(func);
+}
+
+void SendDataCache::insert_data(const std::string_view& data) {
+
+    boost::asio::streambuf copy_data_queue;
+    streambuf_append(copy_data_queue, data_queue);
+    data_queue.consume(data_queue.size());
+
+    streambuf_append(data_queue, data);
+    streambuf_append(data_queue, copy_data_queue);
+
+    async_send();
+}
+
+void SendDataCache::push_data(PushDataHandler&& push, SentHandler&& handler) {
+    push(data_queue);
+
+    handler_queue.emplace_back(std::move(handler));
+    async_send();
+}
+
+void SendDataCache::async_send() {
+    if (data_queue.size() == 0 || !is_connected() || is_async_sending || destroyed) {
+        return;
+    }
+
+    is_async_sending = true;
+
+    sending_data_buff.consume(sending_data_buff.size());
+    streambuf_append(sending_data_buff, data_queue);
+    data_queue.consume(data_queue.size());
+
+    std::move(handler_queue.begin(), handler_queue.end(), std::back_inserter(sending_data_handler));
+    handler_queue.clear();
+
+    async_writer(sending_data_buff, [this](const boost::system::error_code ec) {
+        for (size_t i = 0; i < sending_data_handler.size(); i++) {
+            sending_data_handler[i](ec);
+        }
+        sending_data_handler.clear();
+
+        // above "sending_data_handler[i](ec);" might call this async_send function, 
+        // so we must set is_async_sending as false after it
+        is_async_sending = false;
+        if (!ec) {
+            async_send();
+        }
+    });
 }
 
 

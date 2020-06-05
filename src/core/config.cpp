@@ -34,6 +34,7 @@
 #include <openssl/opensslv.h>
 #include "ssl/ssldefaults.h"
 #include "ssl/sslsession.h"
+#include "core/utils.h"
 
 using namespace std;
 using namespace boost::property_tree;
@@ -46,6 +47,7 @@ void Config::load(const string &filename) {
 }
 
 void Config::populate(const string &JSON) {
+    compare_hash = get_hashCode(JSON);
     istringstream s(JSON);
     ptree tree;
     read_json(s, tree);

@@ -50,7 +50,6 @@ Pipeline::Pipeline(Service* _service, const Config& config, boost::asio::ssl::co
                 if (error) {
                     output_debug_info_ec(error);
                     destroy();
-                    return;
                 }
 
                 handler(error);

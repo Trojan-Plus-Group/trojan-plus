@@ -233,10 +233,12 @@ void Service::prepare_pipelines(){
        
         size_t curr_num = 0;
         for (auto it = pipelines.begin(); it != pipelines.end(); it++) {
-            if (&(it->lock().get()->config) == &config) {
+            if (it->lock().get()->config == config) {
                 curr_num++;
             }
         }
+
+        _log_with_date_time("[pipeline] current exist pipelines: " + to_string(curr_num), Log::INFO);
 
         for (; curr_num < config.experimental.pipeline_num; curr_num++ ) {
             auto pipeline = make_shared<Pipeline>(this, config, ssl_context);
@@ -247,9 +249,9 @@ void Service::prepare_pipelines(){
             if (icmp_processor) {
                 pipeline->set_icmpd(icmp_processor);
             }
-            _log_with_date_time("[pipeline] start new pipeline, total:" + to_string(pipelines.size()), Log::INFO);
-        }
-        
+            _log_with_date_time("[pipeline] start new pipeline, current: " + to_string(pipelines.size()) 
+                + " max:" + to_string(config.experimental.pipeline_num), Log::INFO);
+        }        
 
         if (!config.experimental.pipeline_loadbalance_configs.empty()) {
             for (size_t i = 0; i < config.experimental._pipeline_loadbalance_configs.size(); i++) {
@@ -271,7 +273,8 @@ void Service::prepare_pipelines(){
                     pipelines.emplace_back(pipeline);
                     changed = true;
 
-                    _log_with_date_time("[pipeline] start a balance pipeline: " + config_file + " total:" + to_string(pipelines.size()), Log::INFO);
+                    _log_with_date_time("[pipeline] start a balance pipeline: " + config_file + " current:" + to_string(pipelines.size()) 
+                        + " max:" + to_string(config.experimental.pipeline_num), Log::INFO);
                 }
             }
 

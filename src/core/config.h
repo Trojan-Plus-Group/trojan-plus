@@ -111,8 +111,12 @@ public:
     static std::string SHA224(const std::string &message);
 
     void prepare_ssl_reuse(boost::asio::ssl::stream<boost::asio::ip::tcp::socket>& socket) const;
+
+    bool operator==(const Config& other) const{ return compare_hash == other.compare_hash; }
+    
 private:
     void populate(const boost::property_tree::ptree &tree);
+    int compare_hash = 0;
 };
 
 #endif // _CONFIG_H_
