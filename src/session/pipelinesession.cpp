@@ -109,8 +109,8 @@ void PipelineSession::in_async_read(){
 void PipelineSession::in_recv(const string_view &) {
     if(status == HANDSHAKE){
         string_view data = streambuf_to_string_view(in_read_buf);
-        int npos = data.find("\r\n");
-        if(npos == -1){
+        size_t npos = data.find("\r\n");
+        if(npos == string::npos){
             in_async_read();
             return;
         }

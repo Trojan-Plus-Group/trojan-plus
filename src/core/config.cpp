@@ -163,7 +163,7 @@ void Config::populate(const ptree &tree) {
     tun.tun_name = tree.get("tun.tun_name", "");
     tun.net_ip = tree.get("tun.net_ip", "");
     tun.net_mask = tree.get("tun.net_mask", "");
-    tun.mtu = tree.get("tun.mtu", size_t(1500));
+    tun.mtu = tree.get("tun.mtu", uint16_t(1500));
     tun.tun_fd = tree.get("tun.tun_fd", int(-1));
 }
 
@@ -213,7 +213,7 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, string&
         }
         if (ssl.alpn != "") {
             SSL_CTX_set_alpn_select_cb(native_context, [](SSL*, const unsigned char **out, unsigned char *outlen, const unsigned char *in, unsigned int inlen, void *config) -> int {
-                if (SSL_select_next_proto((unsigned char**)out, outlen, (unsigned char*)(((Config*)config)->ssl.alpn.c_str()), ((Config*)config)->ssl.alpn.length(), in, inlen) != OPENSSL_NPN_NEGOTIATED) {
+                if (SSL_select_next_proto((unsigned char**)out, outlen, (unsigned char*)(((Config*)config)->ssl.alpn.c_str()), (unsigned int)((Config*)config)->ssl.alpn.length(), in, inlen) != OPENSSL_NPN_NEGOTIATED) {
                     return SSL_TLSEXT_ERR_NOACK;
                 }
                 return SSL_TLSEXT_ERR_OK;
@@ -334,7 +334,7 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, string&
             ssl_context.set_verify_mode(verify_none);
         }
         if (ssl.alpn != "") {
-            SSL_CTX_set_alpn_protos(native_context, (unsigned char*)(ssl.alpn.c_str()), ssl.alpn.length());
+            SSL_CTX_set_alpn_protos(native_context, (unsigned char*)(ssl.alpn.c_str()), (unsigned int)ssl.alpn.length());
         }
         if (ssl.reuse_session) {
             SSL_CTX_set_session_cache_mode(native_context, SSL_SESS_CACHE_CLIENT);

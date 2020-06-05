@@ -41,7 +41,7 @@ static void tcp_remove(struct tcp_pcb* pcb_list)
 TUNDev* TUNDev::sm_tundev = nullptr;
 
 TUNDev::TUNDev(Service* _service, const std::string& _tun_name, 
-        const std::string& _ipaddr, const std::string& _netmask, size_t _mtu, int _outside_tun_fd) : 
+        const std::string& _ipaddr, const std::string& _netmask, uint16_t _mtu, int _outside_tun_fd) :
     m_netif_configured(false),
     m_tcp_listener(nullptr),    
     m_service(_service),
@@ -271,7 +271,7 @@ err_t TUNDev::listener_accept_func(struct tcp_pcb *newpcb, err_t err){
 }
 
 
-void TUNDev::input_netif_packet(const uint8_t* data, size_t packet_len){
+void TUNDev::input_netif_packet(const uint8_t* data, uint16_t packet_len){
     struct pbuf *p = pbuf_alloc(PBUF_RAW, packet_len, PBUF_POOL);
     if (!p) {
         _log_with_date_time("[tun] device read: pbuf_alloc failed", Log::ERROR);
@@ -358,8 +358,8 @@ int TUNDev::handle_write_upd_data(TUNSession* _session, string_view& data_str){
         return 0;
     }
     auto data = (uint8_t*)data_str.data();    
-    auto header_length = sizeof(struct ipv4_header) + sizeof(struct udp_header);
-    auto max_len = min((size_t)numeric_limits<uint16_t>::max(), (size_t)m_mtu);
+    auto header_length = (uint16_t)(sizeof(struct ipv4_header) + sizeof(struct udp_header));
+    auto max_len = min(numeric_limits<uint16_t>::max(), m_mtu);
     max_len = max_len - header_length;
     if (data_len > max_len) {
         data_len = max_len;
@@ -375,7 +375,7 @@ int TUNDev::handle_write_upd_data(TUNSession* _session, string_view& data_str){
     struct ipv4_header ipv4_hdr;
     ipv4_hdr.version4_ihl4 = IPV4_MAKE_VERSION_IHL(sizeof(ipv4_hdr));
     ipv4_hdr.ds = hton8(0);
-    ipv4_hdr.total_length = hton16(sizeof(ipv4_hdr) + sizeof(struct udp_header) + data_len);
+    ipv4_hdr.total_length = hton16(uint16_t(sizeof(ipv4_hdr) + sizeof(struct udp_header) + data_len));
     ipv4_hdr.identification = hton16(0);
     ipv4_hdr.flags3_fragmentoffset13 = hton16(0);
     ipv4_hdr.ttl = hton8(64);
@@ -389,9 +389,9 @@ int TUNDev::handle_write_upd_data(TUNSession* _session, string_view& data_str){
     struct udp_header udp_hdr;
     udp_hdr.source_port = hton16(remote_endpoint.port());
     udp_hdr.dest_port = hton16(local_endpoint.port());
-    udp_hdr.length = hton16(sizeof(udp_hdr) + data_len);
+    udp_hdr.length = hton16(uint16_t(sizeof(udp_hdr) + data_len));
     udp_hdr.checksum = hton16(0);
-    udp_hdr.checksum = udp_checksum(&udp_hdr, data, data_len, ipv4_hdr.source_address, ipv4_hdr.destination_address);
+    udp_hdr.checksum = udp_checksum(&udp_hdr, data, (uint16_t)data_len, ipv4_hdr.source_address, ipv4_hdr.destination_address);
 
     // compose packet
     auto packat_length = header_length + data_len;

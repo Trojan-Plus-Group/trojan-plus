@@ -98,7 +98,7 @@ int PipelineRequest::parse(const string_view &data){
             return -1;
         }
 
-        session_id = parse_uint16(1, data);       
+        session_id = (PipelineComponent::SessionIdType)parse_uint16(1, data);
         packet_data = data.substr(DATA_CMD_HEADER_LENGTH, trojan_request_length);
         consume_length = DATA_CMD_HEADER_LENGTH + trojan_request_length;
     }
@@ -124,12 +124,12 @@ int PipelineRequest::parse(const string_view &data){
         if(data.length() < CMD_HEADER_LENGTH){
             return -1;
         }
-        session_id = parse_uint16(1, data);
+        session_id = (PipelineComponent::SessionIdType)parse_uint16(1, data);
         consume_length = CMD_HEADER_LENGTH;
         // no packet data;
     }
 
-    return packet_data.length();
+    return (int)packet_data.length();
 }
 
 boost::asio::streambuf& PipelineRequest::generate(boost::asio::streambuf& buf, enum Command cmd, PipelineComponent::SessionIdType session_id, const std::string_view& data){
@@ -158,7 +158,7 @@ boost::asio::streambuf& PipelineRequest::generate(boost::asio::streambuf& buf, e
                 throw logic_error("PipelineRequest::generate data.length() " + to_string(data_length) + " > MAX_DATA_LENGTH " + to_string(MAX_DATA_LENGTH));
             }
 
-            generate_uint32(buf, data_length);
+            generate_uint32(buf, (uint32_t)data_length);
             streambuf_append(buf, data);
         }
     }

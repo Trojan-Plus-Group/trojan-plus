@@ -296,7 +296,7 @@ void connect_out_socket(ThisT this_ptr, std::string addr, std::string port, boos
             this_ptr->destroy();
             return;
         }
-        android_protect_socket(out_socket.native_handle());
+        android_protect_socket((int)out_socket.native_handle());
         if (this_ptr->config.tcp.no_delay) {
             out_socket.set_option(boost::asio::ip::tcp::no_delay(true));
         }

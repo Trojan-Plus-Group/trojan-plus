@@ -119,7 +119,7 @@ bool icmpd::read_icmp(std::istream& is, size_t length, ipv4_header& ipv4_hdr, ic
     is >> ipv4_hdr >> icmp_hdr;
 
     if(is){
-        int remain = length - ipv4_hdr.header_length() - icmp_header::HEADER_LENGTH;
+        int remain = (int)length - (int)ipv4_hdr.header_length() - icmp_header::HEADER_LENGTH;
         body.resize(remain, 0);
         if (remain > 0) {
             is.read(&body[0], remain);
@@ -194,7 +194,7 @@ void icmpd::start_recv() {
                                 body = os.str();
 
                                 icmp_hdr.assign_checksum(body);
-                                ipv4_hdr.total_length(ipv4_hdr.header_length() + icmp_header::HEADER_LENGTH + body.length());
+                                ipv4_hdr.total_length((unsigned short)(ipv4_hdr.header_length() + icmp_header::HEADER_LENGTH + body.length()));
                             }                            
                         }
                     }

@@ -91,7 +91,7 @@ private:
     Service* m_service;
     int m_tun_fd;
     const bool m_is_outside_tun_fd;
-    size_t m_mtu;
+    uint16_t m_mtu;
 
     bool m_quitting;
     boost::asio::streambuf m_write_fill_buf;
@@ -107,11 +107,11 @@ private:
 
     int try_to_process_udp_packet(uint8_t* data, int data_len);
     void parse_packet();
-    void input_netif_packet(const uint8_t* data, size_t packet_len);
+    void input_netif_packet(const uint8_t* data, uint16_t packet_len);
     int handle_write_upd_data(TUNSession* _session, std::string_view& data);
 public : 
     TUNDev(Service* _service, const std::string& _tun_name, 
-        const std::string& _ipaddr, const std::string& _netmask, size_t _mtu, int _outside_tun_fd = -1);
+        const std::string& _ipaddr, const std::string& _netmask, uint16_t _mtu, int _outside_tun_fd = -1);
     ~TUNDev();
     
     int get_tun_fd(){ return m_tun_fd;}

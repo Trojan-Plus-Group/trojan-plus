@@ -32,5 +32,5 @@
 
 u32_t sys_now (void)
 {
-    return time(NULL);
+    return (u32_t)time(NULL);
 }

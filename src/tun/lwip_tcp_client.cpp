@@ -184,7 +184,7 @@ int lwip_tcp_client::client_socks_recv_send_out(){
         return -1;
     }
 
-    m_tun_session->recv_buf_consume(wrote_size);
+    m_tun_session->recv_buf_consume((uint16_t)wrote_size);
     return 0;
 }
 

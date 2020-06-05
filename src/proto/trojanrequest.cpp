@@ -37,7 +37,7 @@ int TrojanRequest::parse(const std::string_view &data){
         return -1;
     }
     payload = payload.substr(address_len + 3);
-    return data.length();
+    return (int)data.length();
 }
 
 string TrojanRequest::generate(const string &password, const string &domainname, uint16_t port, bool tcp) {

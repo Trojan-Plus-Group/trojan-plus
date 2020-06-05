@@ -32,7 +32,7 @@ NATSession::NATSession(Service* _service, const Config& config, context &ssl_con
 }
 
 pair<string, uint16_t> NATSession::get_target_endpoint() {
-    return recv_target_endpoint(in_socket.native_handle());
+    return recv_target_endpoint((int)in_socket.native_handle());
 }
 
 void NATSession::start() {

@@ -69,7 +69,7 @@ void UDPForwardSession::start_udp(const std::string_view& data) {
         if(config.run_type == Config::NAT){
             udp_target_socket.open(udp_target_endpoint.protocol());
             bool is_ipv4 = udp_target_endpoint.protocol().family() == boost::asio::ip::tcp::v6().family();
-            if (prepare_nat_udp_target_bind(udp_target_socket.native_handle(), is_ipv4, udp_target_endpoint)) {
+            if (prepare_nat_udp_target_bind((int)udp_target_socket.native_handle(), is_ipv4, udp_target_endpoint)) {
                 udp_target_socket.bind(udp_target_endpoint);
             } else {
                 destroy();

@@ -100,7 +100,7 @@ public:
         std::string tun_name;
         std::string net_ip;
         std::string net_mask;
-        size_t mtu;
+        uint16_t mtu;
         int tun_fd;
     } tun;
 
