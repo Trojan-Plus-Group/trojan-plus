@@ -133,8 +133,6 @@ set(TROJAN_SOURCE_FILES
     src/tun/lwip_tcp_client.cpp
     src/tun/tundev.cpp
     src/tun/tunsession.cpp
-
-    
 )
 
 if(ANDROID)
@@ -148,16 +146,16 @@ find_package(Threads REQUIRED)
 target_link_libraries(trojan ${CMAKE_THREAD_LIBS_INIT})
 
 if (ANDROID)
-    set(ANDROID_MY_LIBS /root/trojan-plus-lib) 
+    set(ANDROID_MY_LIBS ${PROJECT_SOURCE_DIR}/trojan-plus-android-libs) 
     set(ANDROID_MY_LIBS_LIBRARIES 
-        ${ANDROID_MY_LIBS}/Android/lib/${ANDROID_ABI}/libboost_system.a
-        ${ANDROID_MY_LIBS}/Android/lib/${ANDROID_ABI}/libboost_program_options.a
-        ${ANDROID_MY_LIBS}/Android/lib/${ANDROID_ABI}/libssl.a 
-        ${ANDROID_MY_LIBS}/Android/lib/${ANDROID_ABI}/libcrypto.a)
+        ${ANDROID_MY_LIBS}/lib/${ANDROID_ABI}/libssl.a 
+        ${ANDROID_MY_LIBS}/lib/${ANDROID_ABI}/libcrypto.a
+        ${ANDROID_MY_LIBS}/lib/${ANDROID_ABI}/libboost_system.a
+        ${ANDROID_MY_LIBS}/lib/${ANDROID_ABI}/libboost_program_options.a)
 
     set(OPENSSL_VERSION 1.1.1)
 
-    include_directories(${ANDROID_MY_LIBS}/Android/include)
+    include_directories(${ANDROID_MY_LIBS}/include)
     target_link_libraries(trojan ${ANDROID_MY_LIBS_LIBRARIES})
 else()
     find_package(Boost 1.66.0 REQUIRED COMPONENTS system program_options)
