@@ -38,6 +38,12 @@ void TUNSession::start(){
     auto cb = [this, self](){
         m_connected  = true;
 
+        if(is_udp_forward()){
+            _log_with_endpoint(m_local_addr_udp, "TUNSession session_id: " + to_string(get_session_id()) + " started ", Log::INFO);
+        }else{
+            _log_with_endpoint(m_local_addr, "TUNSession session_id: " + to_string(get_session_id()) + " started ", Log::INFO);
+        }  
+
         auto insert_pwd = [this](){
             if(is_udp_forward()){
                 streambuf_append(m_send_buf, TrojanRequest::generate(config.password.cbegin()->first, 

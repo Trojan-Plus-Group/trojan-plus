@@ -477,6 +477,8 @@ int TUNDev::try_to_process_udp_packet(uint8_t* data, int data_len){
         session->out_async_send(data, data_len, [](boost::system::error_code){}); // send as buf
         m_udp_clients.emplace_back(session);
 
+        _log_with_endpoint(local_endpoint, "start to connected " + remote_endpoint.address().to_string() + ":" + to_string(remote_endpoint.port()), Log::INFO);
+
         m_service->start_session(session, [session, local_endpoint, remote_endpoint](boost::system::error_code ec){
             if(!ec){
                 session->start();                
