@@ -20,7 +20,7 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-if(CMAKE_BUILD_TYPE STREQUAL Release AND NOT MSVC)
+if(CMAKE_BUILD_TYPE STREQUAL Release AND NOT MSVC AND NOT APPLE)
     # reduce the sizeof binary, otherwise binary file will be very big
     set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -s")
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -s")
@@ -55,7 +55,11 @@ add_definitions(-DBOOST_BIND_GLOBAL_PLACEHOLDERS=1)
 
 # badvpn definitions for tun2socks
 if(NOT MSVC)
-    add_definitions(-DBADVPN_LINUX=1)
+    if(APPLE)
+        add_definitions(-DBADVPN_FREEBSD=1)
+    else()
+        add_definitions(-DBADVPN_LINUX=1)
+    endif()
 endif()
 
 add_definitions(-DBADVPN_THREADWORK_USE_PTHREAD=1 -DBADVPN_BREACTOR_BADVPN=1)
