@@ -7,8 +7,10 @@ stages:
     pool:
       vmImage: ubuntu-latest
     container:
-      image: trojangfw/centos-build:latest
+      image: trojanplusgroup/centos-build:latest
     steps:
+    - checkout: self
+      submodules: true
     - script: |
         set -euo pipefail
         echo 'target_link_libraries(trojan dl)' >> CMakeLists.txt
@@ -22,6 +24,8 @@ stages:
     pool:
       vmImage: macOS-latest
     steps:
+    - checkout: self
+      submodules: true
     - script: |
         set -euo pipefail
         brew install boost openssl@1.1
@@ -35,6 +39,8 @@ stages:
     pool:
       vmImage: windows-latest
     steps:
+    - checkout: self
+      submodules: true
     - bash: |
         set -euo pipefail
         curl -LO https://slproweb.com/download/Win64OpenSSL-1_1_1g.exe
