@@ -56,23 +56,16 @@ def request_post_file(file):
         return False
 
 def compre_porcess(files, executor, get_or_post):
-    i = 0
-    while i < len(files):
-        tasks = []
-        ii = 0
-        while ii < REQUEST_COUNT_ONCE and ( i + ii ) < len(files):
-            if get_or_post : 
-                tasks.append(executor.submit(request_get_file, files[ii + i]))
-            else:
-                tasks.append(executor.submit(request_post_file, files[ii + i]))
+    tasks = []
+    for f in files:
+        if get_or_post : 
+            tasks.append(executor.submit(request_get_file, f))
+        else:
+            tasks.append(executor.submit(request_post_file, f))
 
-            ii = ii + 1
-        
-        for result in as_completed(tasks):
-            if not result.result():
-                return False
-
-        i = i + len(tasks)
+    for result in as_completed(tasks):
+        if not result.result():
+            return False
 
     return True
         
