@@ -349,7 +349,6 @@ void ServerSession::out_udp_sent() {
             in_async_read();
             return;
         }
-        _log_with_endpoint(out_udp_endpoint, "session_id: " + to_string(get_session_id()) + " sent a UDP packet of length " + to_string(packet.length) + " bytes to " + packet.address.address + ':' + to_string(packet.address.port));
         
         auto self = shared_from_this();
         udp_resolver.async_resolve(packet.address.address, to_string(packet.address.port), [this, self, packet, packet_len](const boost::system::error_code error, udp::resolver::results_type results) {
@@ -368,7 +367,10 @@ void ServerSession::out_udp_sent() {
                     }
                 }
             }
-            _log_with_endpoint(out_udp_endpoint, "session_id: " + to_string(get_session_id()) + " " + packet.address.address + " is resolved to " + iterator->endpoint().address().to_string(), Log::ALL);
+            
+            _log_with_endpoint(out_udp_endpoint, "session_id: " + to_string(get_session_id()) + " " + packet.address.address + 
+                " is resolved to " + iterator->endpoint().address().to_string(), Log::ALL);
+
             if (!udp_socket.is_open()) {
                 auto protocol = iterator->endpoint().protocol();
                 boost::system::error_code ec;
@@ -378,10 +380,15 @@ void ServerSession::out_udp_sent() {
                     destroy();
                     return;
                 }
+                set_udp_send_recv_buf((int)udp_socket.native_handle(), config.udp_send_recv_buf);
                 udp_socket.bind(udp::endpoint(protocol, 0));
                 out_udp_async_read();
             }
+
             sent_len += packet.length;
+            _log_with_endpoint(out_udp_endpoint, "session_id: " + to_string(get_session_id()) + " sent a UDP packet of length " + to_string(packet.length) + 
+                " bytes to " + packet.address.address + ':' + to_string(packet.address.port));
+            
             out_udp_async_write(packet.payload, *iterator);
 
             // we must consume here after packet.payload has been writen
@@ -394,8 +401,12 @@ void ServerSession::destroy(bool pipeline_call /*= false*/) {
     if (status == DESTROY) {
         return;
     }
-    status = DESTROY;
-    _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + " disconnected, " + to_string(recv_len) + " bytes received, " + to_string(sent_len) + " bytes sent, lasted for " + to_string(time(nullptr) - start_time) + " seconds", Log::INFO);
+    status = DESTROY;    
+    
+    _log_with_endpoint(in_endpoint, (is_udp_forward() ? "[udp] session_id: " : "session_id: ") + to_string(get_session_id()) + 
+        " disconnected, " + to_string(recv_len) + " bytes received, " + to_string(sent_len) + 
+        " bytes sent, lasted for " + to_string(time(nullptr) - start_time) + " seconds", Log::INFO);
+
     if (auth && !auth_password.empty()) {
         auth->record(auth_password, recv_len, sent_len);
     }

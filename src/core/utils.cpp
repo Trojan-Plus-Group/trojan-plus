@@ -223,6 +223,37 @@ void SendDataCache::async_send() {
     });
 }
 
+bool set_udp_send_recv_buf(int fd, int buf_size){
+    if(buf_size > 0){
+        
+        int size = buf_size;
+        if (setsockopt(fd, SOL_SOCKET, SO_RCVBUF, 
+        #ifndef _WIN32
+            &size, 
+        #else
+            (const char*)&size,
+        #endif
+            sizeof(size))) {
+            _log_with_date_time("[udp] setsockopt SO_RCVBUF failed!", Log::ERROR);
+            return false;
+        }
+
+        size = buf_size;
+        if (setsockopt(fd, SOL_SOCKET, SO_SNDBUF, 
+        #ifndef _WIN32
+            &size, 
+        #else
+            (const char*)&size,
+        #endif
+            sizeof(size))) {
+            _log_with_date_time("[udp] setsockopt SO_SNDBUF failed!", Log::ERROR);
+            return false;
+        }
+    }
+
+    return true;
+}
+
 
 #ifndef _WIN32  // nat mode does not support in windows platform
 // copied from shadowsocks-libev udpreplay.c
@@ -356,7 +387,7 @@ pair<string, uint16_t> recv_tproxy_udp_msg(int fd, boost::asio::ip::udp::endpoin
     return make_pair("", 0);
 }
 
-bool prepare_nat_udp_bind(int fd, bool is_ipv4, bool recv_ttl) {
+bool prepare_nat_udp_bind(int fd, bool is_ipv4, bool recv_ttl, int buf_size) {
     
     int opt = 1;
     int sol;
@@ -390,11 +421,15 @@ bool prepare_nat_udp_bind(int fd, bool is_ipv4, bool recv_ttl) {
             _log_with_date_time("[udp] setsockopt IP_RECVOPTS/IPV6_RECVHOPLIMIT failed!", Log::ERROR);
         }
     }
+    
+    if(buf_size > 0){
+        set_udp_send_recv_buf(fd, buf_size);
+    }    
 
     return true;
 }
 
-bool prepare_nat_udp_target_bind(int fd, bool is_ipv4, const boost::asio::ip::udp::endpoint &udp_target_endpoint) {
+bool prepare_nat_udp_target_bind(int fd, bool is_ipv4, const boost::asio::ip::udp::endpoint &udp_target_endpoint, int buf_size) {
     int opt = 1;
     int sol = is_ipv4 ? SOL_IPV6 : SOL_IP;
     if (setsockopt(fd, sol, IP_TRANSPARENT, &opt, sizeof(opt))) {
@@ -405,6 +440,10 @@ bool prepare_nat_udp_target_bind(int fd, bool is_ipv4, const boost::asio::ip::ud
     if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt))) {
         _log_with_endpoint(udp_target_endpoint, "[udp] setsockopt SO_REUSEADDR failed!", Log::FATAL);
         return false;
+    }
+
+    if(buf_size > 0){
+        set_udp_send_recv_buf(fd, buf_size);
     }
 
     return true;
@@ -420,11 +459,11 @@ std::pair<std::string, uint16_t> recv_tproxy_udp_msg(int fd, boost::asio::ip::ud
     throw runtime_error("NAT is not supported in Windows");
 }
 
-bool prepare_nat_udp_bind(int fd, bool is_ipv4, bool recv_ttl){
+bool prepare_nat_udp_bind(int fd, bool is_ipv4, bool recv_ttl, int buf_size){
     throw runtime_error("NAT is not supported in Windows");
 }
 
-bool prepare_nat_udp_target_bind(int fd, bool is_ipv4, const boost::asio::ip::udp::endpoint& udp_target_endpoint) {
+bool prepare_nat_udp_target_bind(int fd, bool is_ipv4, const boost::asio::ip::udp::endpoint& udp_target_endpoint, int buf_size) {
     throw runtime_error("NAT is not supported in Windows");
 }
 

@@ -68,7 +68,7 @@ void UDPForwardSession::start_udp(const std::string_view& data) {
         if(config.run_type == Config::NAT){
             udp_target_socket.open(udp_target_endpoint.protocol());
             bool is_ipv4 = udp_target_endpoint.protocol().family() == boost::asio::ip::tcp::v6().family();
-            if (prepare_nat_udp_target_bind((int)udp_target_socket.native_handle(), is_ipv4, udp_target_endpoint)) {
+            if (prepare_nat_udp_target_bind((int)udp_target_socket.native_handle(), is_ipv4, udp_target_endpoint, config.udp_send_recv_buf)) {
                 udp_target_socket.bind(udp_target_endpoint);
             } else {
                 destroy();
@@ -157,8 +157,10 @@ void UDPForwardSession::in_recv(const string_view &data) {
     udp_timer_async_wait();
     
     size_t length = data.length();
-    _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(get_session_id()) + " sent a UDP packet of length " + to_string(length) + " bytes to " + udp_target.first + ':' + to_string(udp_target.second));
     sent_len += length;
+    
+    _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(get_session_id()) + " sent a UDP packet of length " + to_string(length) + 
+        " bytes to " + udp_target.first + ':' + to_string(udp_target.second) + " sent_len: " + to_string(sent_len));
 
     UDPPacket::generate(out_write_buf, udp_target.first, udp_target.second, data);
     if (status == FORWARD) {

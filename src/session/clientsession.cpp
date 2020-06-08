@@ -271,7 +271,8 @@ void ClientSession::in_recv(const string_view &data) {
                     destroy();
                     return;
                 }
-                udp_socket.bind(in_udp_endpoint);
+                set_udp_send_recv_buf((int)udp_socket.native_handle(), config.udp_send_recv_buf);
+                udp_socket.bind(in_udp_endpoint);                
                 
                 _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + " requested UDP associate to " + req.address.address + ':' + to_string(req.address.port) + ", open UDP socket " + udp_socket.local_endpoint().address().to_string() + ':' + to_string(udp_socket.local_endpoint().port()) + " for relay", Log::INFO);
                 
@@ -399,8 +400,11 @@ void ClientSession::udp_recv(const string_view &data, const udp::endpoint&) {
     udp_timer_async_wait();
 
     size_t length = data.length() - 3 - address_len;
-    _log_with_endpoint(in_udp_endpoint, "session_id: " + to_string(get_session_id()) + " sent a UDP packet of length " + to_string(length) + " bytes to " + address.address + ':' + to_string(address.port));
     sent_len += length;
+
+    _log_with_endpoint(in_udp_endpoint, "session_id: " + to_string(get_session_id()) + " sent a UDP packet of length " + to_string(length) + 
+        " bytes to " + address.address + ':' + to_string(address.port) + " sent_len: " + to_string(sent_len));
+
     if (status == CONNECT) {
         first_packet_recv = true;
 

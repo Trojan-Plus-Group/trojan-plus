@@ -85,6 +85,7 @@ void Config::populate(const ptree &tree) {
         }
     }
     udp_timeout = tree.get("udp_timeout", 60);
+    udp_send_recv_buf = tree.get("udp_send_recv_buf", -1);
     log_level = static_cast<Log::Level>(tree.get("log_level", int(1)));
     ssl.verify = tree.get("ssl.verify", true);
     ssl.verify_hostname = tree.get("ssl.verify_hostname", true);
