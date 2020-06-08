@@ -1,23 +1,36 @@
-import os
+import os, socket, threading, select
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse
+import fulltest_udp_proto
 
-curdir = ""
+serv_dir = ""
 
-mimedic = [
-    ('.html', 'text/html'),
-    ('.htm', 'text/html'),
-    ('.js', 'application/javascript'),
-    ('.css', 'text/css'),
-    ('.json', 'application/json'),
-    ('.png', 'image/png'),
-    ('.jpg', 'image/jpeg'),
-    ('.gif', 'image/gif'),
-    ('.txt', 'text/plain'),
-    ('.avi', 'video/x-msvideo'),
-]
+def run_udp(port):    
+    udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, fulltest_udp_proto.UDP_BUFF_SIZE * 10)
+    udp_socket.bind(('127.0.0.1', port))
+    
+    udp_processor = fulltest_udp_proto.UDPProcessor(serv_dir, udp_socket)
+    while True:
+        data, addr = udp_socket.recvfrom(fulltest_udp_proto.SEND_PACKET_LENGTH)
+        print(('Received UDP from %s:%s' % addr) + " length:" + str(len(data)))
+        udp_processor.recv(data, addr)
+                
 
 class ServerHandler(BaseHTTPRequestHandler):
+    mimedic = [
+        ('.html', 'text/html'),
+        ('.htm', 'text/html'),
+        ('.js', 'application/javascript'),
+        ('.css', 'text/css'),
+        ('.json', 'application/json'),
+        ('.png', 'image/png'),
+        ('.jpg', 'image/jpeg'),
+        ('.gif', 'image/gif'),
+        ('.txt', 'text/plain'),
+        ('.avi', 'video/x-msvideo'),
+    ]    
+
     def do_GET(self):
 
         filepath = urlparse(self.path).path
@@ -28,7 +41,7 @@ class ServerHandler(BaseHTTPRequestHandler):
 
         mimetype = None
         sendReply = False
-        for e in mimedic:
+        for e in ServerHandler.mimedic:
             if e[0] == fileext:
                 mimetype = e[1]
                 sendReply = True
@@ -36,7 +49,7 @@ class ServerHandler(BaseHTTPRequestHandler):
 
         if sendReply == True: 
             try:
-                with open(os.path.realpath(curdir + filepath),'rb') as f:
+                with open(os.path.realpath(serv_dir + filepath),'rb') as f:
                     content = f.read()
                     self.send_response(200)
                     self.send_header('Content-type',mimetype)
@@ -50,7 +63,7 @@ class ServerHandler(BaseHTTPRequestHandler):
         content_len = int(self.headers.get('Content-Length'))
         post_body = self.rfile.read(content_len)
 
-        with open(os.path.realpath(curdir + filepath),'rb') as f:
+        with open(os.path.realpath(serv_dir + filepath),'rb') as f:
             content = f.read()
             self.send_response(200)
             self.send_header('Content-type','text/plain')
@@ -65,8 +78,12 @@ def run(dir, port):
         print("can't find the directory [" + dir +"]")
         exit(1)
     else:
-        global curdir
-        curdir = dir + "/"
+        global serv_dir
+        serv_dir = dir + "/"
+
+    t = threading.Thread(target = run_udp, args = (port,))
+    t.daemon = True
+    t.start()
 
     httpd = HTTPServer(('', port), ServerHandler)
     httpd.serve_forever()
