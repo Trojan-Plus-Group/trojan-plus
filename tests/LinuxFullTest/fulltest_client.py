@@ -134,43 +134,48 @@ def start_query(socks_port, port, folder, log = True):
     global compare_folder
     global enable_log
     global serv_port
+    
+    origin_socket = socket.socket
 
     # setup socket as socks5 proxy
     if socks_port != 0 :
         socks.set_default_proxy(socks.SOCKS5, HOST_URL, socks_port)
         socket.socket = socks.socksocket
 
-    request_url_prefix = request_url_prefix + ':' + str(port) + '/'
-    compare_folder = folder + '/'
-    enable_log = log
-    serv_port = port
+    try:
+        request_url_prefix = request_url_prefix + ':' + str(port) + '/'
+        compare_folder = folder + '/'
+        enable_log = log
+        serv_port = port
 
-    # get the main index file
-    index = get_url(request_url_prefix).decode("utf-8")
-    files = []
-    for f in index.splitlines():
-        print_log("index file: " + f)
-        files.append(f)    
+        # get the main index file
+        index = get_url(request_url_prefix).decode("utf-8")
+        files = []
+        for f in index.splitlines():
+            print_log("index file: " + f)
+            files.append(f)    
 
-    if len(files) == 0:
-        print_log("read index file get error!!")
-        return False  
-    
-    with ThreadPoolExecutor(max_workers = REQUEST_COUNT_ONCE) as executor:
-        if not compare_process(files, executor, True, True):
-           return False
+        if len(files) == 0:
+            print_log("read index file get error!!")
+            return False  
+        
+        with ThreadPoolExecutor(max_workers = REQUEST_COUNT_ONCE) as executor:
+            if not compare_process(files, executor, True, True):
+                return False
 
-        if not compare_process(files, executor, False, True):
-           return False        
+            if not compare_process(files, executor, False, True):
+                return False        
 
-        if not compare_process(files, executor, True, False):
-           return False
+            if not compare_process(files, executor, True, False):
+                return False
 
-        if not compare_process(files, executor, False, False):
-           return False
+            if not compare_process(files, executor, False, False):
+                return False
 
-    print_log("SUCC")
-    return True
+        print_log("SUCC")
+        return True
+    finally:
+         socket.socket = origin_socket    
 
 if __name__ == '__main__':
     start_query(1062, 8080, "html")

@@ -1,4 +1,4 @@
-import os, socket, threading, select
+import os, socket, threading, select, sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse
 import fulltest_udp_proto
@@ -89,4 +89,8 @@ def run(dir, port):
     httpd.serve_forever()
 
 if __name__ == '__main__':
-    run('html', 8080)
+    print(__file__ + " args " + str(sys.argv))
+    if len(sys.argv) >= 3:  
+        run(sys.argv[1], int(sys.argv[2]))
+    else:
+        run('html', 8080)

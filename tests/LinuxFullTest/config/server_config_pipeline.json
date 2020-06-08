@@ -1,0 +1,52 @@
+{
+    "run_type": "server",
+    "local_addr": "0.0.0.0",
+    "local_port": 4650,
+    "remote_addr": "www.google.com",
+    "remote_port": 443,
+    "password": [
+        "88888888"
+    ],
+    "log_level": 1,
+    "udp_socket_buf":1024000,
+    "udp_recv_buf":65535,
+    "ssl": {
+        "cert": "config/server.crt",
+        "key": "config/server.key",
+        "key_password": "123456",
+        "cipher": "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384",
+        "cipher_tls13": "TLS_AES_128_GCM_SHA256:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_256_GCM_SHA384",
+        "prefer_server_cipher": true,
+        "alpn": [
+            "h2",
+            "http/1.1"
+        ],
+        "reuse_session": true,
+        "session_ticket": true,
+        "session_timeout": 600,
+        "plain_http_response": "",
+        "curves": "",
+        "dhparam": ""
+    },
+    "tcp": {
+        "prefer_ipv4": true,
+        "no_delay": true,
+        "keep_alive": true,
+        "reuse_port": true,
+        "fast_open": true,
+        "fast_open_qlen": 20,
+        "connect_time_out" : 1
+    },
+    "mysql": {
+        "enabled": false,
+        "server_addr": "127.0.0.1",
+        "server_port": 3306,
+        "database": "trojan",
+        "username": "trojan",
+        "password": ""
+    },
+    "experimental":{
+        "pipeline_num" : 10,
+        "pipeline_ack_window" : 3
+    }
+}
