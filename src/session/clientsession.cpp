@@ -262,6 +262,7 @@ void ClientSession::in_recv(const string_view &data) {
 
             is_udp_forward_session = req.command == TrojanRequest::UDP_ASSOCIATE;
             if (is_udp_forward_session) {
+                udp_timer_async_wait();
                 in_udp_endpoint = udp::endpoint(in_socket.local_endpoint().address(), 0);
                 boost::system::error_code ec;
                 udp_socket.open(in_udp_endpoint.protocol(), ec);
@@ -395,6 +396,8 @@ void ClientSession::udp_recv(const string_view &data, const udp::endpoint&) {
         destroy();
         return;
     }
+    udp_timer_async_wait();
+
     size_t length = data.length() - 3 - address_len;
     _log_with_endpoint(in_udp_endpoint, "session_id: " + to_string(get_session_id()) + " sent a UDP packet of length " + to_string(length) + " bytes to " + address.address + ':' + to_string(address.port));
     sent_len += length;
@@ -424,6 +427,7 @@ void ClientSession::udp_recv(const string_view &data, const udp::endpoint&) {
 
 void ClientSession::udp_sent() {
     if (status == UDP_FORWARD) {
+        udp_timer_async_wait();
         auto parse_data = streambuf_to_string_view(udp_data_buf);
         UDPPacket packet;
         size_t packet_len;
@@ -459,8 +463,6 @@ void ClientSession::udp_sent() {
     }
 }
 
-
-
 void ClientSession::destroy(bool pipeline_call /*= false*/) {
     if (status == DESTROY) {
         return;
@@ -469,12 +471,14 @@ void ClientSession::destroy(bool pipeline_call /*= false*/) {
     _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + " disconnected, " + to_string(recv_len) + " bytes received, " + to_string(sent_len) + " bytes sent, lasted for " + to_string(time(nullptr) - start_time) + " seconds", Log::INFO);
     boost::system::error_code ec;
     resolver.cancel();
+    
     if (in_socket.is_open()) {
         in_socket.cancel(ec);
         in_socket.shutdown(tcp::socket::shutdown_both, ec);
         in_socket.close(ec);
     }
     if (udp_socket.is_open()) {
+        udp_gc_timer.cancel(ec);
         udp_socket.cancel(ec);
         udp_socket.close(ec);
     }

@@ -40,7 +40,7 @@ private:
     } status;
     UDPWrite in_write;
     boost::asio::ssl::stream<boost::asio::ip::tcp::socket>out_socket;
-    boost::asio::steady_timer gc_timer;
+    
     std::pair<std::string, uint16_t> udp_target;
     boost::asio::ip::udp::socket udp_target_socket;
     boost::asio::ip::udp::endpoint udp_target_endpoint;
@@ -53,7 +53,6 @@ private:
     void out_async_write(const std::string_view &data);
     
     void out_sent();
-    void timer_async_wait();
 public:
     UDPForwardSession(Service* _service, const Config& config, boost::asio::ssl::context &ssl_context, 
         const boost::asio::ip::udp::endpoint &endpoint, const std::pair<std::string, uint16_t>& targetdst, UDPWrite in_write);

@@ -24,6 +24,8 @@ protected:
     bool out_read_buf_guard;
     bool udp_read_buf_guard;
 
+    boost::asio::steady_timer udp_gc_timer;
+
     uint64_t recv_len;
     uint64_t sent_len;
     time_t start_time{};
@@ -34,6 +36,7 @@ protected:
     boost::asio::ip::udp::socket udp_socket;
     boost::asio::ip::udp::endpoint udp_recv_endpoint;
     
+    void udp_timer_async_wait();
 public:
     SocketSession(Service* _service, const Config& config);
 

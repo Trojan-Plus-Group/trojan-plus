@@ -259,6 +259,9 @@ void ServerSession::in_recv(const string_view &data) {
         
         if (!use_alpn) {
             if (req.command == TrojanRequest::UDP_ASSOCIATE) {
+                is_udp_forward_session = true;
+                udp_timer_async_wait();
+
                 out_udp_endpoint = udp::endpoint(make_address(req.address.address), req.address.port);
                 _log_with_endpoint(out_udp_endpoint, "session_id: " + to_string(get_session_id()) + " requested UDP associate to " + req.address.address + ':' + to_string(req.address.port), Log::INFO);
                 status = UDP_FORWARD;
@@ -322,6 +325,7 @@ void ServerSession::out_sent() {
 
 void ServerSession::out_udp_recv(const string_view &data, const udp::endpoint &endpoint) {
     if (status == UDP_FORWARD) {
+        udp_timer_async_wait();
         size_t length = data.length();
         _log_with_endpoint(out_udp_endpoint, "session_id: " + to_string(get_session_id()) + " received a UDP packet of length " + to_string(length) + " bytes from " + endpoint.address().to_string() + ':' + to_string(endpoint.port()));
         recv_len += length;
@@ -332,6 +336,7 @@ void ServerSession::out_udp_recv(const string_view &data, const udp::endpoint &e
 
 void ServerSession::out_udp_sent() {
     if (status == UDP_FORWARD) {
+        udp_timer_async_wait();
         UDPPacket packet;
         size_t packet_len;
         bool is_packet_valid = packet.parse(streambuf_to_string_view(udp_data_buf), packet_len);

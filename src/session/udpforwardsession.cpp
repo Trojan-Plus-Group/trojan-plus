@@ -38,7 +38,6 @@ UDPForwardSession::UDPForwardSession(Service* _service, const Config& config, co
     status(CONNECT),
     in_write(move(in_write)),
     out_socket(_service->get_io_context(), ssl_context),
-    gc_timer(_service->get_io_context()),
     udp_target(targetdst),
     udp_target_socket(_service->get_io_context()){
 
@@ -61,7 +60,7 @@ void UDPForwardSession::start(){
 }
 
 void UDPForwardSession::start_udp(const std::string_view& data) {
-    timer_async_wait();
+    udp_timer_async_wait();
     start_time = time(nullptr);
 
     auto self = shared_from_this();
@@ -150,23 +149,12 @@ void UDPForwardSession::out_async_write(const string_view &data) {
     }
 }
 
-void UDPForwardSession::timer_async_wait(){
-    gc_timer.expires_after(chrono::seconds(config.udp_timeout));
-    auto self = shared_from_this();
-    gc_timer.async_wait([this, self](const boost::system::error_code error) {
-        if (!error) {
-            _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(get_session_id()) + " UDP session timeout");
-            destroy();
-        }
-    });
-}
-
 void UDPForwardSession::in_recv(const string_view &data) {
     if (status == DESTROY) {
         return;
     }
-    gc_timer.cancel();
-    timer_async_wait();
+
+    udp_timer_async_wait();
     
     size_t length = data.length();
     _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(get_session_id()) + " sent a UDP packet of length " + to_string(length) + " bytes to " + udp_target.first + ':' + to_string(udp_target.second));
@@ -182,8 +170,7 @@ void UDPForwardSession::in_recv(const string_view &data) {
 
 void UDPForwardSession::out_recv(const string_view &data) {
     if (status == FORWARD || status == FORWARDING) {
-        gc_timer.cancel();
-        timer_async_wait();
+        udp_timer_async_wait();
         streambuf_append(udp_data_buf, data);
         for (;;) {
             UDPPacket packet;
@@ -238,10 +225,11 @@ void UDPForwardSession::destroy(bool pipeline_call /*= false*/) {
     status = DESTROY;
     _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(get_session_id()) + " disconnected, " + to_string(recv_len) + " bytes received, " + to_string(sent_len) + " bytes sent, lasted for " + to_string(time(nullptr) - start_time) + " seconds", Log::INFO);
     resolver.cancel();
-    gc_timer.cancel();
-
+    
     if(udp_target_socket.is_open()){
-        udp_target_socket.cancel();
+        boost::system::error_code ec;
+        udp_gc_timer.cancel(ec);
+        udp_target_socket.cancel(ec);
         udp_target_socket.close();
     }
 
