@@ -188,7 +188,7 @@ void ServerSession::out_udp_async_read() {
     _guard_read_buf_begin(udp_read_buf);
     udp_read_buf.consume(udp_read_buf.size());
     auto self = shared_from_this();
-    udp_socket.async_receive_from(udp_read_buf.prepare(MAX_BUF_LENGTH), udp_recv_endpoint, [this, self](const boost::system::error_code error, size_t length) {
+    udp_socket.async_receive_from(udp_read_buf.prepare(config.udp_recv_buf), udp_recv_endpoint, [this, self](const boost::system::error_code error, size_t length) {
         _guard_read_buf_end(udp_read_buf);
         if (error) {
             output_debug_info_ec(error);
@@ -380,7 +380,7 @@ void ServerSession::out_udp_sent() {
                     destroy();
                     return;
                 }
-                set_udp_send_recv_buf((int)udp_socket.native_handle(), config.udp_send_recv_buf);
+                set_udp_send_recv_buf((int)udp_socket.native_handle(), config.udp_socket_buf);
                 udp_socket.bind(udp::endpoint(protocol, 0));
                 out_udp_async_read();
             }

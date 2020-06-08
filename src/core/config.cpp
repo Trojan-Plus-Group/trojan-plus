@@ -35,6 +35,7 @@
 #include "ssl/ssldefaults.h"
 #include "ssl/sslsession.h"
 #include "core/utils.h"
+#include "session/session.h"
 
 using namespace std;
 using namespace boost::property_tree;
@@ -85,7 +86,8 @@ void Config::populate(const ptree &tree) {
         }
     }
     udp_timeout = tree.get("udp_timeout", 60);
-    udp_send_recv_buf = tree.get("udp_send_recv_buf", -1);
+    udp_socket_buf = tree.get("udp_socket_buf", -1);
+    udp_recv_buf = tree.get("udp_socket_buf", int(Session::MAX_BUF_LENGTH));
     log_level = static_cast<Log::Level>(tree.get("log_level", int(1)));
     ssl.verify = tree.get("ssl.verify", true);
     ssl.verify_hostname = tree.get("ssl.verify_hostname", true);

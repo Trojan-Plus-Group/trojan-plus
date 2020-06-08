@@ -86,7 +86,7 @@ Service::Service(Config &config, bool test) :
                 if(config.run_type == Config::NAT){
                     bool is_ipv4 = udp_protocol.family() == boost::asio::ip::tcp::v4().family();
                     bool recv_ttl = config.run_type == Config::NAT && config.experimental.pipeline_proxy_icmp;
-                    if (!prepare_nat_udp_bind((int)udp_socket.native_handle(), is_ipv4, recv_ttl, config.udp_send_recv_buf)) {
+                    if (!prepare_nat_udp_bind((int)udp_socket.native_handle(), is_ipv4, recv_ttl, config.udp_socket_buf)) {
                         stop();
                         return;
                     }
@@ -523,7 +523,7 @@ void Service::udp_async_read() {
             int ttl = -1;
             
             targetdst = recv_tproxy_udp_msg((int)udp_socket.native_handle(), udp_recv_endpoint, 
-                (char*)udp_read_buf.prepare(Session::MAX_BUF_LENGTH).data(), read_length, ttl);
+                (char*)udp_read_buf.prepare(config.udp_recv_buf).data(), read_length, ttl);
 
             length = read_length < 0 ? 0 : read_length;
             udp_read_buf.commit(length);
@@ -587,7 +587,7 @@ void Service::udp_async_read() {
     if(config.run_type == Config::NAT){
         udp_socket.async_receive_from(boost::asio::null_buffers(), udp_recv_endpoint, cb);
     }else{
-        udp_socket.async_receive_from(udp_read_buf.prepare(Session::MAX_BUF_LENGTH), udp_recv_endpoint, cb);
+        udp_socket.async_receive_from(udp_read_buf.prepare(config.udp_recv_buf), udp_recv_endpoint, cb);
     }    
 }
 
