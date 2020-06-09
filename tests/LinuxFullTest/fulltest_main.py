@@ -9,7 +9,7 @@ TEST_FILES_SIZE = 8192 * 10
 TEST_SERVER_PORT = 8080
 TEST_PROXY_PORT = 10620
 
-TEST_INIT_MAX_RSS_IN_KB = 8 * (1024)
+TEST_INIT_MAX_RSS_IN_KB = 10 * (1024)
 TEST_TESTING_MAX_RSS_IN_KB = 20 * (1024)
 
 TEST_WATING_FOR_RSS_COOLDOWN_TIME_IN_SEC = 11
@@ -146,6 +146,8 @@ def main_stage(server_config, client_config, server_balance_config = None, is_fo
             return 1
 
         return 0
+    except:
+        output_log = True
     finally:
         close_process(client_process, output_log)
         close_process(server_process, output_log)
@@ -187,7 +189,6 @@ def main():
         if main_stage("server_config_pipeline.json", "client_config_pipeline.json", "server_config_pipeline_balance.json") != 0:
             output_log = True
             return 1
-        
 
         print("start trojan plus in forward run_type without pipeline...")
         if main_stage("server_config.json", prepare_forward_config("client_config.json"), is_foward = True) != 0:

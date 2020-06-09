@@ -72,9 +72,9 @@ def get_file_udp(file, length):
         traceback.print_exc()
         return False
 
-def request_get_file(file, tcp_or_udp):
+def request_get_file(file, tcp_or_udp, index):
     try:
-        print_log(("[TCP]" if tcp_or_udp else "[UDP]") + " request GET file: " + str(file))
+        print_log(str(index) + (" [TCP]" if tcp_or_udp else " [UDP]") + " request GET file: " + str(file))
         with open(compare_folder + file, "rb") as f:
             compare_txt = f.read()
 
@@ -93,9 +93,9 @@ def request_get_file(file, tcp_or_udp):
         traceback.print_exc()
         return False
 
-def request_post_file(file, tcp_or_udp):
+def request_post_file(file, tcp_or_udp, index):
     try:
-        print_log(("[TCP]" if tcp_or_udp else "[UDP]") + " request POST file: " + file)
+        print_log(str(index) + (" [TCP]" if tcp_or_udp else " [UDP]") + " request POST file: " + file)
         with open(compare_folder + file, "rb") as f:
             data = f.read()
             result = None
@@ -116,11 +116,13 @@ def request_post_file(file, tcp_or_udp):
 
 def compare_process(files, executor, get_or_post, tcp_or_udp):
     tasks = []
+    index = 0
     for f in files:
         if get_or_post : 
-            tasks.append(executor.submit(request_get_file, f, tcp_or_udp))
+            tasks.append(executor.submit(request_get_file, f, tcp_or_udp, index))
         else:
-            tasks.append(executor.submit(request_post_file, f, tcp_or_udp))
+            tasks.append(executor.submit(request_post_file, f, tcp_or_udp, index))
+        index = index + 1
 
     for result in as_completed(tasks):
         if not result.result():
@@ -148,6 +150,8 @@ def start_query(socks_port, port, folder, log = True):
         enable_log = log
         serv_port = port
 
+        print_log("start query index file....")
+
         # get the main index file
         index = get_url(request_url_prefix).decode("utf-8")
         files = []
@@ -159,27 +163,41 @@ def start_query(socks_port, port, folder, log = True):
             print_log("read index file get error!!")
             return False  
         
+        print_log("done!")
+
+        print_log("start query....")
         with ThreadPoolExecutor(max_workers = REQUEST_COUNT_ONCE) as executor:
             if not compare_process(files, executor, True, True):
                 return False
 
+            print_log("finish query get http...")
+
             if not compare_process(files, executor, False, True):
                 return False        
+
+            print_log("finish query post http...")
 
             if not compare_process(files, executor, True, False):
                 return False
 
+            print_log("finish query get udp...")
+
             if not compare_process(files, executor, False, False):
                 return False
+
+            print_log("finish query post udp...")
 
         print_log("SUCC")
         return True
     finally:
-         socket.socket = origin_socket    
+        socket.socket = origin_socket    
 
 if __name__ == '__main__':
     # client run_type:
-    #start_query(10620, 8080, "html")
+    start_query(10620, 8080, "html")
 
     # forward run_type:
-    start_query(0, 10620, "html")
+    #start_query(0, 10620, "html")
+
+    # for pure fulltest script run
+    #start_query(0, 8080, "html")
