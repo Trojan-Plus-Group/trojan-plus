@@ -4,7 +4,7 @@ from concurrent.futures import ThreadPoolExecutor , as_completed
 import fulltest_udp_proto
 
 HOST_URL="127.0.0.1"
-REQUEST_COUNT_ONCE = 5
+PARALLEL_REQUEST_COUNT = 2
 OPEN_URL_TIMOUT = 1
 SEND_PACKET_LENGTH = fulltest_udp_proto.SEND_PACKET_LENGTH
 UDP_BUFF_SIZE = fulltest_udp_proto.UDP_BUFF_SIZE
@@ -46,7 +46,7 @@ def post_file_udp(file, data):
             return udp_socket.recv(SEND_PACKET_LENGTH)
     except :
         traceback.print_exc()
-        return False
+        return 'please check traceback exceptions'
 
 def get_file_udp(file, length):
     try:
@@ -74,7 +74,7 @@ def get_file_udp(file, length):
 
 def request_get_file(file, tcp_or_udp, index):
     try:
-        print_log(str(index) + (" [TCP]" if tcp_or_udp else " [UDP]") + " request GET file: " + str(file))
+        #print_log(str(index) + (" [TCP]" if tcp_or_udp else " [UDP]") + " request GET file: " + str(file))
         with open(compare_folder + file, "rb") as f:
             compare_txt = f.read()
 
@@ -95,7 +95,7 @@ def request_get_file(file, tcp_or_udp, index):
 
 def request_post_file(file, tcp_or_udp, index):
     try:
-        print_log(str(index) + (" [TCP]" if tcp_or_udp else " [UDP]") + " request POST file: " + file)
+        #print_log(str(index) + (" [TCP]" if tcp_or_udp else " [UDP]") + " request POST file: " + file)
         with open(compare_folder + file, "rb") as f:
             data = f.read()
             result = None
@@ -156,17 +156,16 @@ def start_query(socks_port, port, folder, log = True):
         index = get_url(request_url_prefix).decode("utf-8")
         files = []
         for f in index.splitlines():
-            print_log("index file: " + f)
             files.append(f)    
 
         if len(files) == 0:
             print_log("read index file get error!!")
             return False  
         
-        print_log("done!")
+        print_log("read index files " + str(len(files)) + " done!")
 
         print_log("start query....")
-        with ThreadPoolExecutor(max_workers = REQUEST_COUNT_ONCE) as executor:
+        with ThreadPoolExecutor(max_workers = PARALLEL_REQUEST_COUNT) as executor:
             if not compare_process(files, executor, True, True):
                 return False
 
