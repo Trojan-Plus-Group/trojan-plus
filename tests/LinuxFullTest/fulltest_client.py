@@ -143,7 +143,7 @@ def start_query(socks_port, port, folder, log = True):
         socket.socket = socks.socksocket
 
     try:
-        request_url_prefix = request_url_prefix + ':' + str(port) + '/'
+        request_url_prefix = 'http://' + HOST_URL + ':' + str(port) + '/'
         compare_folder = folder + '/'
         enable_log = log
         serv_port = port
@@ -178,4 +178,8 @@ def start_query(socks_port, port, folder, log = True):
          socket.socket = origin_socket    
 
 if __name__ == '__main__':
-    start_query(1062, 8080, "html")
+    # client run_type:
+    #start_query(10620, 8080, "html")
+
+    # forward run_type:
+    start_query(0, 10620, "html")

@@ -60,3 +60,5 @@ win32-build/
 
 #for fulltest
 /tests/LinuxFullTest/html
+*.output
+*.tmpjson

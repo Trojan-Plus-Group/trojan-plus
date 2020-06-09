@@ -7,9 +7,10 @@
     "password": [
         "88888888"
     ],
-    "log_level": 1,
+    "udp_timeout":10,
     "udp_socket_buf":1024000,
     "udp_recv_buf":65535,
+    "log_level": 1,
     "ssl": {
         "cert": "config/server.crt",
         "key": "config/server.key",

@@ -63,6 +63,7 @@ class UDPProcessor:
             self.process(addr, self.recv_map[addr])        
 
     def process(self, addr, udp_data):
+        #print('len(udp_data.data) == ' + str(len(udp_data.data)) + ' udp_data.file_length() == '+ str(udp_data.file_length()))
         if len(udp_data.data) == udp_data.file_length():
             with open(os.path.realpath(self.serv_dir + udp_data.file()),'rb') as f:
                 cmp_content = f.read()
