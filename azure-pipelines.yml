@@ -52,7 +52,6 @@ stages:
 
 - stage: Test
   jobs:
-
   - job: Linux
     pool:
       vmImage: ubuntu-latest
@@ -70,6 +69,24 @@ stages:
         PIPELINE_WORKSPACE: $(Pipeline.Workspace)
     - publish: $(System.DefaultWorkingDirectory)/results
       artifact: LinuxTest
+
+  - job: Windows
+    pool:
+      vmImage: windows-latest
+    steps:
+    - download: current
+      artifact: WindowsBinary
+    - bash: |
+        set -euo pipefail
+        BINARY="$PIPELINE_WORKSPACE/WindowsBinary/trojan.exe"
+        py -3 -m pip install PySocks psutil
+        mkdir results
+        cd tests/LinuxFullTest/
+        py -3 fulltest_main.py $BINARY -g
+      env:
+        PIPELINE_WORKSPACE: $(Pipeline.Workspace)
+    - publish: $(System.DefaultWorkingDirectory)/results
+      artifact: WindowsFullTest
 
 - stage: Package
   jobs:
