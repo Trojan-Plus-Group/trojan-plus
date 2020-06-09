@@ -15,7 +15,7 @@ stages:
         set -euo pipefail
         echo 'target_link_libraries(trojan dl)' >> CMakeLists.txt
         cmake -DMYSQL_INCLUDE_DIR=/usr/local/include/mariadb -DMYSQL_LIBRARY=/usr/local/lib/mariadb/libmysqlclient.a -DDEFAULT_CONFIG=config.json -DFORCE_TCP_FASTOPEN=ON -DBoost_USE_STATIC_LIBS=ON .
-        make
+        make -j4
         strip -s trojan
     - publish: $(System.DefaultWorkingDirectory)/trojan
       artifact: LinuxBinary
@@ -30,7 +30,7 @@ stages:
         set -euo pipefail
         brew install boost openssl@1.1
         cmake -DBoost_USE_STATIC_LIBS=ON -DOPENSSL_INCLUDE_DIR=/usr/local/opt/openssl@1.1/include -DOPENSSL_CRYPTO_LIBRARY=/usr/local/opt/openssl@1.1/lib/libcrypto.a -DOPENSSL_SSL_LIBRARY=/usr/local/opt/openssl@1.1/lib/libssl.a -DDEFAULT_CONFIG=config.json -DENABLE_MYSQL=OFF -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 .
-        make
+        make -j4
         strip -SXTx trojan
     - publish: $(System.DefaultWorkingDirectory)/trojan
       artifact: macOSBinary
@@ -46,7 +46,7 @@ stages:
         curl -LO https://slproweb.com/download/Win64OpenSSL-1_1_1g.exe
         powershell ".\\Win64OpenSSL-1_1_1g.exe /silent /sp- /suppressmsgboxes /DIR='C:\\Program Files\\OpenSSL-Win64'"
         cmake -DBoost_INCLUDE_DIR="${BOOST_ROOT_1_72_0}/include" -DBoost_USE_STATIC_LIBS=ON -DOPENSSL_ROOT_DIR='C:/Program Files/OpenSSL-Win64' -DOPENSSL_USE_STATIC_LIBS=ON -DENABLE_MYSQL=OFF .
-        cmake --build . --config Release
+        cmake --build . --config Release --parallel 4
     - publish: $(System.DefaultWorkingDirectory)/Release/trojan.exe
       artifact: WindowsBinary
 
