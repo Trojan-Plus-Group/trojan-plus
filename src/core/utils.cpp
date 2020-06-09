@@ -387,7 +387,7 @@ pair<string, uint16_t> recv_tproxy_udp_msg(int fd, boost::asio::ip::udp::endpoin
     return make_pair("", 0);
 }
 
-bool prepare_nat_udp_bind(int fd, bool is_ipv4, bool recv_ttl, int buf_size) {
+bool prepare_nat_udp_bind(int fd, bool is_ipv4, bool recv_ttl) {
     
     int opt = 1;
     int sol;
@@ -422,10 +422,6 @@ bool prepare_nat_udp_bind(int fd, bool is_ipv4, bool recv_ttl, int buf_size) {
         }
     }
     
-    if(buf_size > 0){
-        set_udp_send_recv_buf(fd, buf_size);
-    }    
-
     return true;
 }
 
@@ -459,7 +455,7 @@ std::pair<std::string, uint16_t> recv_tproxy_udp_msg(int fd, boost::asio::ip::ud
     throw runtime_error("NAT is not supported in Windows");
 }
 
-bool prepare_nat_udp_bind(int fd, bool is_ipv4, bool recv_ttl, int buf_size){
+bool prepare_nat_udp_bind(int fd, bool is_ipv4, bool recv_ttl){
     throw runtime_error("NAT is not supported in Windows");
 }
 

@@ -86,12 +86,12 @@ Service::Service(Config &config, bool test) :
                 if(config.run_type == Config::NAT){
                     bool is_ipv4 = udp_protocol.family() == boost::asio::ip::tcp::v4().family();
                     bool recv_ttl = config.run_type == Config::NAT && config.experimental.pipeline_proxy_icmp;
-                    if (!prepare_nat_udp_bind((int)udp_socket.native_handle(), is_ipv4, recv_ttl, config.udp_socket_buf)) {
+                    if (!prepare_nat_udp_bind((int)udp_socket.native_handle(), is_ipv4, recv_ttl)) {
                         stop();
                         return;
                     }
                 }
-
+                set_udp_send_recv_buf((int)udp_socket.native_handle(), config.udp_socket_buf);
                 udp_socket.bind(udp_bind_endpoint);
             }
 
