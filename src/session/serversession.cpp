@@ -262,8 +262,12 @@ void ServerSession::in_recv(const string_view &data) {
                 is_udp_forward_session = true;
                 udp_timer_async_wait();
 
-                out_udp_endpoint = udp::endpoint(make_address(req.address.address), req.address.port);
+                if(req.address.address_type != SOCKS5Address::DOMAINNAME){
+                    out_udp_endpoint = udp::endpoint(make_address(req.address.address), req.address.port);
+                }              
+
                 _log_with_endpoint(out_udp_endpoint, "session_id: " + to_string(get_session_id()) + " requested UDP associate to " + req.address.address + ':' + to_string(req.address.port), Log::INFO);
+
                 status = UDP_FORWARD;
                 udp_data_buf.consume(udp_data_buf.size());
                 streambuf_append(udp_data_buf, req.payload);
@@ -357,6 +361,7 @@ void ServerSession::out_udp_sent() {
                 destroy();
                 return;
             }
+            
             auto iterator = results.begin();
             if (config.tcp.prefer_ipv4) {
                 for (auto it = results.begin(); it != results.end(); ++it) {
@@ -367,6 +372,8 @@ void ServerSession::out_udp_sent() {
                     }
                 }
             }
+
+            out_udp_endpoint = udp::endpoint(make_address(iterator->endpoint().address().to_string()), packet.address.port);
             
             _log_with_endpoint(out_udp_endpoint, "session_id: " + to_string(get_session_id()) + " " + packet.address.address + 
                 " is resolved to " + iterator->endpoint().address().to_string(), Log::ALL);
