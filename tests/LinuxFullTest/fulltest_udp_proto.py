@@ -4,15 +4,19 @@ from concurrent.futures import ThreadPoolExecutor , as_completed
 SEND_PACKET_LENGTH = 8192
 UDP_BUFF_SIZE = 1024 * 1024
 
-def send_get_func(serv_dir, addr, udp_data):
+server_udp_send_port_start = 40000
+
+def send_get_func(serv_dir, addr, udp_data, port):
     try:
         with open(os.path.realpath(serv_dir + udp_data.file()),'rb') as f:
             content = f.read()
 
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as us :
+                us.bind(("", port))
                 us.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, UDP_BUFF_SIZE)                
                 wait_index = 0
                 i = 0
+                #print("send_get_func send to " + str(addr))
                 while i < len(content):
                     sent = us.sendto(content[i:i + SEND_PACKET_LENGTH], addr)
                     i = i + sent           
@@ -63,16 +67,20 @@ class UDPProcessor:
             udp_data = UDPData(args, data[args_idx + 2:])
             self.recv_map[addr] = udp_data
         
-        if udp_data.method() == 'GET' : 
-            self.executor.submit(send_get_func, self.serv_dir, addr, udp_data)
+        global server_udp_send_port_start
+        if udp_data.method() == 'GET' :
+            self.executor.submit(send_get_func, self.serv_dir, addr, udp_data, server_udp_send_port_start)
+            server_udp_send_port_start = server_udp_send_port_start + 1
         else:
             #print('len(udp_data.data) == ' + str(len(udp_data.data)) + ' udp_data.file_length() == '+ str(udp_data.file_length()))
             if len(udp_data.data) == udp_data.file_length():
-                self.executor.submit(self.post_data, addr, self.recv_map[addr])
+                self.executor.submit(self.post_data, addr, self.recv_map[addr], server_udp_send_port_start)
                 self.recv_map.pop(addr)
+                server_udp_send_port_start = server_udp_send_port_start + 1
 
-    def post_data(self, addr, udp_data):
+    def post_data(self, addr, udp_data, port):
         with open(os.path.realpath(self.serv_dir + udp_data.file()),'rb') as f:
             cmp_content = f.read()
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as us :
+                us.bind(("", port))
                 us.sendto(b'OK' if cmp_content == udp_data.data else b'FAILED', addr)

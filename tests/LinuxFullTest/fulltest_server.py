@@ -93,4 +93,4 @@ if __name__ == '__main__':
     if len(sys.argv) >= 3:  
         run(sys.argv[1], int(sys.argv[2]))
     else:
-        run('html', 8080)
+        run('html', 18080)

@@ -14,6 +14,8 @@ compare_folder = "html"
 enable_log = True
 serv_port = 0
 
+client_udp_bind_port_start = 30000
+
 def print_log(log):
     if enable_log:
         print(log)
@@ -28,12 +30,39 @@ def post_url(url, data):
     f = urllib.request.urlopen(req, timeout = OPEN_URL_TIMOUT)
     return f.read()
 
-def post_file_udp(file, data):
+def get_file_udp(file, length, port):
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp_socket :
+            udp_socket.settimeout(1)
+            udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, UDP_BUFF_SIZE)
+            udp_socket.bind(("", port))
+
+            addr = (HOST_URL, serv_port)
+
+            param = urllib.parse.urlencode({'file':file, 'len':length, 'm':'GET'}).encode()
+            udp_socket.sendto(param + b'\r\n', addr)
+
+            data = b''
+            try:
+                while len(data) < length:
+                    data = data + udp_socket.recv(SEND_PACKET_LENGTH)
+
+                return data
+            except:
+                print_log("exception occur, data recv length: " + str(len(data)) + " port: " + str(port))
+                traceback.print_exc()
+                return False
+    except :
+        traceback.print_exc()
+        return False
+
+def post_file_udp(file, data, port):
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp_socket :
             udp_socket.settimeout(1)
             udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, UDP_BUFF_SIZE)
-
+            udp_socket.bind(("", port))
+            
             addr = (HOST_URL, serv_port)
 
             param = urllib.parse.urlencode({'file':file, 'len':len(data), 'm':'POST'}).encode()
@@ -56,32 +85,8 @@ def post_file_udp(file, data):
         traceback.print_exc()
         return 'please check traceback exceptions'
 
-def get_file_udp(file, length):
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp_socket :
-            udp_socket.settimeout(1)
-            udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, UDP_BUFF_SIZE)
 
-            addr = (HOST_URL, serv_port)
-
-            param = urllib.parse.urlencode({'file':file, 'len':length, 'm':'GET'}).encode()
-            udp_socket.sendto(param + b'\r\n', addr)
-
-            data = b''
-            try:
-                while len(data) < length:
-                    data = data + udp_socket.recv(SEND_PACKET_LENGTH)
-
-                return data
-            except:
-                print_log("exception occur, data recv length:" + str(len(data)))
-                traceback.print_exc()
-                return False
-    except :
-        traceback.print_exc()
-        return False
-
-def request_get_file(file, tcp_or_udp, index):
+def request_get_file(file, tcp_or_udp, index, udp_port):
     try:
         #print_log(str(index) + (" [TCP]" if tcp_or_udp else " [UDP]") + " request GET file: " + str(file))
         with open(compare_folder + file, "rb") as f:
@@ -91,10 +96,11 @@ def request_get_file(file, tcp_or_udp, index):
             if tcp_or_udp:
                 txt = get_url(request_url_prefix + file)
             else:
-                txt = get_file_udp(file, len(compare_txt))
+                txt = get_file_udp(file, len(compare_txt), udp_port)
 
             if txt != compare_txt:
-                print_log(str(index) + " file content is not same!!! " + file)
+                print_log(str(index) + " " + file + " content is not same!!! read from disk length: " + \
+                    str(len(compare_txt)) + " read from network length: " + (str(len(txt)) if type(txt) is bytes else str(txt)))
                 return False
                 
         return True       
@@ -102,7 +108,7 @@ def request_get_file(file, tcp_or_udp, index):
         traceback.print_exc()
         return False
 
-def request_post_file(file, tcp_or_udp, index):
+def request_post_file(file, tcp_or_udp, index, udp_port):
     try:
         #print_log(str(index) + (" [TCP]" if tcp_or_udp else " [UDP]") + " request POST file: " + file)
         with open(compare_folder + file, "rb") as f:
@@ -111,7 +117,7 @@ def request_post_file(file, tcp_or_udp, index):
             if tcp_or_udp : 
                 result = post_url(request_url_prefix + file, data)
             else:
-                result = post_file_udp(file, data)
+                result = post_file_udp(file, data, udp_port)
 
             if result != b"OK" :
                 print_log(str(index) + " file POST FAILED! " + file + " " + str(result))
@@ -126,12 +132,16 @@ def request_post_file(file, tcp_or_udp, index):
 def compare_process(files, executor, get_or_post, tcp_or_udp):
     tasks = []
     index = 0
+    global client_udp_bind_port_start
     for f in files:
         if get_or_post : 
-            tasks.append(executor.submit(request_get_file, f, tcp_or_udp, index))
+            tasks.append(executor.submit(request_get_file, f, tcp_or_udp, index, client_udp_bind_port_start))
         else:
-            tasks.append(executor.submit(request_post_file, f, tcp_or_udp, index))
+            tasks.append(executor.submit(request_post_file, f, tcp_or_udp, index, client_udp_bind_port_start))
         index = index + 1
+
+        if not tcp_or_udp:
+            client_udp_bind_port_start = client_udp_bind_port_start + 1        
 
     for result in as_completed(tasks):
         if not result.result():
@@ -194,7 +204,7 @@ def start_query(socks_port, port, folder, log = True):
                 return False
             print_log("finish!")
 
-            time.sleep(1)
+            time.sleep(1)           
 
             print_log("start query post udp...")
             if not compare_process(files, executor, False, False):
@@ -208,10 +218,10 @@ def start_query(socks_port, port, folder, log = True):
 
 if __name__ == '__main__':
     # client run_type:
-    start_query(10620, 8080, "html")
+    start_query(10620, 18080, "html")
 
     # forward run_type:
     #start_query(0, 10620, "html")
 
     # for pure fulltest script run
-    #start_query(0, 8080, "html")
+    #start_query(0, 18080, "html")

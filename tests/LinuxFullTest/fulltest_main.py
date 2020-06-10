@@ -124,7 +124,7 @@ def main_stage(server_config, client_config, server_balance_config = None, is_fo
         print("server process RSS after testing: " + "{:,}KB".format(get_process_rss_in_KB(server_process)))
         print("client process RSS after testing: " + "{:,}KB".format(get_process_rss_in_KB(client_process)))
 
-        print("waiting "+str(TEST_WATING_FOR_RSS_COOLDOWN_TIME_IN_SEC)+" sec for RSS cooldown...")
+        print("waiting "+str(TEST_WATING_FOR_RSS_COOLDOWN_TIME_IN_SEC)+" sec (config's udp_timeout+1) for RSS cooldown...")
 
         time.sleep(TEST_WATING_FOR_RSS_COOLDOWN_TIME_IN_SEC)
 
