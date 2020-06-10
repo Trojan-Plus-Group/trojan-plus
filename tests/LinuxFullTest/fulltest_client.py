@@ -1,10 +1,10 @@
-import urllib.request, socket, socks, traceback, os
+import urllib.request, socket, socks, traceback, os, time
 import threading
 from concurrent.futures import ThreadPoolExecutor , as_completed
 import fulltest_udp_proto
 
 HOST_URL="127.0.0.1"
-PARALLEL_REQUEST_COUNT = 2
+PARALLEL_REQUEST_COUNT = 5
 OPEN_URL_TIMOUT = 1
 SEND_PACKET_LENGTH = fulltest_udp_proto.SEND_PACKET_LENGTH
 UDP_BUFF_SIZE = fulltest_udp_proto.UDP_BUFF_SIZE
@@ -38,10 +38,18 @@ def post_file_udp(file, data):
 
             param = urllib.parse.urlencode({'file':file, 'len':len(data), 'm':'POST'}).encode()
             udp_socket.sendto(param + b'\r\n', addr)
+            time.sleep(0.01)
+
+            wait_index = 0
             i = 0
             while i < len(data):
                 sent = udp_socket.sendto(data[i:i + SEND_PACKET_LENGTH], addr)
                 i = i + sent
+
+                # wait for a while, otherwise client will flood server in pipeline mode
+                wait_index = wait_index + 1
+                if wait_index % 5 == 0:
+                    time.sleep(0.01)
 
             return udp_socket.recv(SEND_PACKET_LENGTH)
     except :
@@ -67,7 +75,8 @@ def get_file_udp(file, length):
                 return data
             except:
                 print_log("exception occur, data recv length:" + str(len(data)))
-                traceback.print_exc() 
+                traceback.print_exc()
+                return False
     except :
         traceback.print_exc()
         return False
@@ -85,7 +94,7 @@ def request_get_file(file, tcp_or_udp, index):
                 txt = get_file_udp(file, len(compare_txt))
 
             if txt != compare_txt:
-                print_log("file content is not same!!! " + file)
+                print_log(str(index) + " file content is not same!!! " + file)
                 return False
                 
         return True       
@@ -105,7 +114,7 @@ def request_post_file(file, tcp_or_udp, index):
                 result = post_file_udp(file, data)
 
             if result != b"OK" :
-                print_log("file POST FAILED! " + file + " " + str(result))
+                print_log(str(index) + " file POST FAILED! " + file + " " + str(result))
                 return False
         
         return True
@@ -166,25 +175,31 @@ def start_query(socks_port, port, folder, log = True):
 
         print_log("start query....")
         with ThreadPoolExecutor(max_workers = PARALLEL_REQUEST_COUNT) as executor:
+            print_log("start query get http...")
             if not compare_process(files, executor, True, True):
                 return False
+            print_log("finished!")
 
-            print_log("finish query get http...")
+            time.sleep(1)
 
+            print_log("start query post http...")
             if not compare_process(files, executor, False, True):
                 return False        
+            print_log("finish!")
 
-            print_log("finish query post http...")
+            time.sleep(1)
 
+            print_log("start query get udp...")
             if not compare_process(files, executor, True, False):
                 return False
+            print_log("finish!")
 
-            print_log("finish query get udp...")
+            time.sleep(1)
 
+            print_log("start query post udp...")
             if not compare_process(files, executor, False, False):
                 return False
-
-            print_log("finish query post udp...")
+            print_log("finish!!")
 
         print_log("SUCC")
         return True
@@ -193,10 +208,10 @@ def start_query(socks_port, port, folder, log = True):
 
 if __name__ == '__main__':
     # client run_type:
-    start_query(10620, 8080, "html")
+    #start_query(10620, 8080, "html")
 
     # forward run_type:
-    #start_query(0, 10620, "html")
+    start_query(0, 10620, "html")
 
     # for pure fulltest script run
     #start_query(0, 8080, "html")

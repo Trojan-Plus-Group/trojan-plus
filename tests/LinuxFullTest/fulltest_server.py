@@ -7,13 +7,13 @@ serv_dir = ""
 
 def run_udp(port):    
     udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, fulltest_udp_proto.UDP_BUFF_SIZE * 10)
+    udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, fulltest_udp_proto.UDP_BUFF_SIZE * 50)
     udp_socket.bind(('127.0.0.1', port))
     
     udp_processor = fulltest_udp_proto.UDPProcessor(serv_dir, udp_socket)
     while True:
         data, addr = udp_socket.recvfrom(fulltest_udp_proto.SEND_PACKET_LENGTH)
-        print(('Received UDP from %s:%s' % addr) + " length:" + str(len(data)))
+        #print(('Received UDP from %s:%s' % addr) + " length:" + str(len(data)))
         udp_processor.recv(data, addr)
                 
 

@@ -1,20 +1,26 @@
-import urllib, os, threading, traceback, socket, select
+import urllib, os, threading, traceback, socket, select, time
 from concurrent.futures import ThreadPoolExecutor , as_completed
 
 SEND_PACKET_LENGTH = 8192
 UDP_BUFF_SIZE = 1024 * 1024
 
-def send_get_func(udp_socket, serv_dir, addr, udp_data):
+def send_get_func(serv_dir, addr, udp_data):
     try:
         with open(os.path.realpath(serv_dir + udp_data.file()),'rb') as f:
             content = f.read()
 
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as us :
                 us.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, UDP_BUFF_SIZE)                
+                wait_index = 0
                 i = 0
                 while i < len(content):
                     sent = us.sendto(content[i:i + SEND_PACKET_LENGTH], addr)
-                    i = i + sent                         
+                    i = i + sent           
+
+                    # wait for a while, otherwise server will flood client in pipeline mode
+                    wait_index = wait_index + 1
+                    if wait_index % 5 == 0:
+                        time.sleep(0.01)              
                   
     except:
         traceback.print_exc()
@@ -42,7 +48,7 @@ class UDPProcessor:
 
     def __init__(self, serv_dir, udp_socket):
         self.serv_dir = serv_dir
-        self.executor = ThreadPoolExecutor(max_workers = 5)
+        self.executor = ThreadPoolExecutor(max_workers = 10)
         self.udp_socket = udp_socket
         self.recv_map={}
 
@@ -58,14 +64,15 @@ class UDPProcessor:
             self.recv_map[addr] = udp_data
         
         if udp_data.method() == 'GET' : 
-            send_get_func(self.udp_socket, self.serv_dir, addr, udp_data)
+            self.executor.submit(send_get_func, self.serv_dir, addr, udp_data)
         else:
-            self.process(addr, self.recv_map[addr])        
-
-    def process(self, addr, udp_data):
-        #print('len(udp_data.data) == ' + str(len(udp_data.data)) + ' udp_data.file_length() == '+ str(udp_data.file_length()))
-        if len(udp_data.data) == udp_data.file_length():
-            with open(os.path.realpath(self.serv_dir + udp_data.file()),'rb') as f:
-                cmp_content = f.read()
-                self.udp_socket.sendto(b'OK' if cmp_content == udp_data.data else b'FAILED', addr)
+            #print('len(udp_data.data) == ' + str(len(udp_data.data)) + ' udp_data.file_length() == '+ str(udp_data.file_length()))
+            if len(udp_data.data) == udp_data.file_length():
+                self.executor.submit(self.post_data, addr, self.recv_map[addr])
                 self.recv_map.pop(addr)
+
+    def post_data(self, addr, udp_data):
+        with open(os.path.realpath(self.serv_dir + udp_data.file()),'rb') as f:
+            cmp_content = f.read()
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as us :
+                us.sendto(b'OK' if cmp_content == udp_data.data else b'FAILED', addr)
