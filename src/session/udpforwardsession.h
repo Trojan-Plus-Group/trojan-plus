@@ -39,11 +39,8 @@ private:
         DESTROY
     } status;
     UDPWrite in_write;
-    boost::asio::ssl::stream<boost::asio::ip::tcp::socket>out_socket;
-    
-    std::pair<std::string, uint16_t> udp_target;
-    boost::asio::ip::udp::socket udp_target_socket;
-    boost::asio::ip::udp::endpoint udp_target_endpoint;
+    boost::asio::ssl::stream<boost::asio::ip::tcp::socket> out_socket;  
+    boost::asio::ip::udp::socket udp_target_socket;    
 
     ReadDataCache pipeline_data_cache;
 

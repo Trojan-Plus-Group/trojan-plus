@@ -38,11 +38,10 @@ UDPForwardSession::UDPForwardSession(Service* _service, const Config& config, co
     status(CONNECT),
     in_write(move(in_write)),
     out_socket(_service->get_io_context(), ssl_context),
-    udp_target(targetdst),
     udp_target_socket(_service->get_io_context()){
 
     udp_recv_endpoint = endpoint;
-    udp_target_endpoint = udp::endpoint(boost::asio::ip::make_address(udp_target.first), udp_target.second);    
+    out_udp_endpoint = udp::endpoint(boost::asio::ip::make_address(targetdst.first), targetdst.second);    
     in_endpoint = tcp::endpoint(endpoint.address(), endpoint.port());
     is_udp_forward_session = true;
     pipeline_com.allocate_session_id();
@@ -66,10 +65,10 @@ void UDPForwardSession::start_udp(const std::string_view& data) {
     auto self = shared_from_this();
     auto cb = [this, self](){
         if(config.run_type == Config::NAT){
-            udp_target_socket.open(udp_target_endpoint.protocol());
-            bool is_ipv4 = udp_target_endpoint.protocol().family() == boost::asio::ip::tcp::v6().family();
-            if (prepare_nat_udp_target_bind((int)udp_target_socket.native_handle(), is_ipv4, udp_target_endpoint, config.udp_socket_buf)) {
-                udp_target_socket.bind(udp_target_endpoint);
+            udp_target_socket.open(out_udp_endpoint.protocol());
+            bool is_ipv4 = out_udp_endpoint.protocol().family() == boost::asio::ip::tcp::v6().family();
+            if (prepare_nat_udp_target_bind((int)udp_target_socket.native_handle(), is_ipv4, out_udp_endpoint, config.udp_socket_buf)) {
+                udp_target_socket.bind(out_udp_endpoint);
             } else {
                 destroy();
                 return;
@@ -84,10 +83,10 @@ void UDPForwardSession::start_udp(const std::string_view& data) {
     };
 
     out_write_buf.consume(out_write_buf.size());
-    streambuf_append(out_write_buf, TrojanRequest::generate(config.password.cbegin()->first, udp_target.first, udp_target.second, false));
+    streambuf_append(out_write_buf, TrojanRequest::generate(config.password.cbegin()->first, out_udp_endpoint.address().to_string(), out_udp_endpoint.port(), false));
     process(udp_recv_endpoint, data);
 
-    _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(get_session_id()) + " forwarding UDP packets to " + udp_target.first + ':' + to_string(udp_target.second) + " via " + config.remote_addr + ':' + to_string(config.remote_port), Log::INFO);
+    _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(get_session_id()) + " forwarding UDP packets to " + out_udp_endpoint.address().to_string() + ':' + to_string(out_udp_endpoint.port()) + " via " + config.remote_addr + ':' + to_string(config.remote_port), Log::INFO);
 
     if(pipeline_com.is_using_pipeline()){
         cb();
@@ -160,9 +159,9 @@ void UDPForwardSession::in_recv(const string_view &data) {
     sent_len += length;
 
     _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(get_session_id()) + " sent a UDP packet of length " + to_string(length) + 
-        " bytes to " + udp_target.first + ':' + to_string(udp_target.second) + " sent_len: " + to_string(sent_len));
+        " bytes to " + out_udp_endpoint.address().to_string() + ':' + to_string(out_udp_endpoint.port()) + " sent_len: " + to_string(sent_len));
 
-    UDPPacket::generate(out_write_buf, udp_target.first, udp_target.second, data);
+    UDPPacket::generate(out_write_buf, out_udp_endpoint.address().to_string(), out_udp_endpoint.port(), data);
     if (status == FORWARD) {
         status = FORWARDING;   
         out_async_write(streambuf_to_string_view(out_write_buf));

@@ -88,10 +88,10 @@ extern char __debug_str_buf[1024];
     do{if(Log::level != Log::OFF) { Log::log(__VA_ARGS__); }}while(false)
 
 #define output_debug_info_ec(ec) \
-    do{if(Log::level <= Log::ALL) { Log::log_with_date_time(std::string((sprintf(__debug_str_buf, "%s:%d-<%s> ec:%s",__FILE__, __LINE__, __FUNCTION__,(ec.message().c_str())), __debug_str_buf))); }}while(false)
+    do{if(Log::level <= Log::INFO) { Log::log_with_date_time(std::string((sprintf(__debug_str_buf, "%s:%d-<%s> ec:%s",__FILE__, __LINE__, __FUNCTION__,(ec.message().c_str())), __debug_str_buf)), Log::INFO); }}while(false)
 
 #define output_debug_info() \
-    do{if(Log::level <= Log::ALL) { Log::log_with_date_time(std::string((sprintf(__debug_str_buf, "%s:%d-<%s>",__FILE__, __LINE__, __FUNCTION__), __debug_str_buf))); }}while(false)
+    do{if(Log::level <= Log::INFO) { Log::log_with_date_time(std::string((sprintf(__debug_str_buf, "%s:%d-<%s>",__FILE__, __LINE__, __FUNCTION__), __debug_str_buf)), Log::INFO); }}while(false)
 
 #define _guard_read_buf_begin(guard_buf) \
     do{ \

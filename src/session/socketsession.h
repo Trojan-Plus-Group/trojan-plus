@@ -35,6 +35,7 @@ protected:
     
     boost::asio::ip::udp::socket udp_socket;
     boost::asio::ip::udp::endpoint udp_recv_endpoint;
+    boost::asio::ip::udp::endpoint out_udp_endpoint;
     
     void udp_timer_async_wait();
 public:

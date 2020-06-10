@@ -51,6 +51,7 @@ private:
     std::list<std::weak_ptr<UDPForwardSession> > udp_sessions;
     boost::asio::streambuf udp_read_buf;
     boost::asio::ip::udp::endpoint udp_recv_endpoint;
+    
     void async_accept();
     void udp_async_read();
 

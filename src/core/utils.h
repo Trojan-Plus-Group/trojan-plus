@@ -321,7 +321,7 @@ void shutdown_ssl_socket(ThisPtr this_ptr, boost::asio::ssl::stream<boost::asio:
 }
 
 std::pair<std::string, uint16_t> recv_target_endpoint(int _native_fd);
-std::pair<std::string, uint16_t> recv_tproxy_udp_msg(int fd, boost::asio::ip::udp::endpoint& recv_endpoint, char* buf, int& buf_len, int& ttl);
+std::pair<std::string, uint16_t> recv_tproxy_udp_msg(int fd, boost::asio::ip::udp::endpoint& target_endpoint, char* buf, int& buf_len, int& ttl);
 bool set_udp_send_recv_buf(int fd, int buf_size);
 bool prepare_nat_udp_bind(int fd, bool is_ipv4, bool recv_ttl);
 bool prepare_nat_udp_target_bind(int fd, bool is_ipv4, const boost::asio::ip::udp::endpoint& udp_target_endpoint, int buf_size);

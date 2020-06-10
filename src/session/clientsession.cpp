@@ -260,21 +260,35 @@ void ClientSession::in_recv(const string_view &data) {
                 return;
             }
 
+            if(req.address.address_type != SOCKS5Address::DOMAINNAME){
+                boost::system::error_code ec;
+                auto endpoint = udp::endpoint(make_address(req.address.address, ec), req.address.port);
+                if(ec){
+                    _log_with_endpoint(endpoint, "session_id: " + to_string(get_session_id()) + 
+                        " cannot make address " + req.address.address + ':' + to_string(req.address.port) + ec.message(), Log::ERROR);
+                    in_async_write(string("\x05\x07\x00\x01\x00\x00\x00\x00\x00\x00", 10));
+                    status = INVALID;
+                    return;
+                }
+            }
+            
             is_udp_forward_session = req.command == TrojanRequest::UDP_ASSOCIATE;
             if (is_udp_forward_session) {
                 udp_timer_async_wait();
-                in_udp_endpoint = udp::endpoint(in_socket.local_endpoint().address(), 0);
+                udp_recv_endpoint = udp::endpoint(in_socket.local_endpoint().address(), 0);
                 boost::system::error_code ec;
-                udp_socket.open(in_udp_endpoint.protocol(), ec);
+                udp_socket.open(udp_recv_endpoint.protocol(), ec);
                 if (ec) {
                     output_debug_info();
                     destroy();
                     return;
                 }
                 set_udp_send_recv_buf((int)udp_socket.native_handle(), config.udp_socket_buf);
-                udp_socket.bind(in_udp_endpoint);                
-                
-                _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + " requested UDP associate to " + req.address.address + ':' + to_string(req.address.port) + ", open UDP socket " + udp_socket.local_endpoint().address().to_string() + ':' + to_string(udp_socket.local_endpoint().port()) + " for relay", Log::INFO);
+                udp_socket.bind(udp_recv_endpoint);
+
+                _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + 
+                    " requested UDP associate to " + req.address.address + ':' + to_string(req.address.port) + 
+                    ", open UDP socket " + udp_socket.local_endpoint().address().to_string() + ':' + to_string(udp_socket.local_endpoint().port()) + " for relay", Log::INFO);
                 
                 udp_send_buf.consume(udp_send_buf.size());
                 streambuf_append(udp_send_buf, (const uint8_t*)"\x05\x00\x00", 3);
@@ -385,7 +399,7 @@ void ClientSession::udp_recv(const string_view &data, const udp::endpoint&) {
         return;
     }
     if (data.length() < 3 || data[0] || data[1] || data[2]) {
-        _log_with_endpoint(in_udp_endpoint, "session_id: " + to_string(get_session_id()) + " bad UDP packet", Log::ERROR);
+        _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(get_session_id()) + " bad UDP packet", Log::ERROR);
         destroy();
         return;
     }
@@ -393,7 +407,7 @@ void ClientSession::udp_recv(const string_view &data, const udp::endpoint&) {
     size_t address_len;
     bool is_addr_valid = address.parse(data.substr(3), address_len);
     if (!is_addr_valid) {
-        _log_with_endpoint(in_udp_endpoint, "session_id: " + to_string(get_session_id()) + " bad UDP packet", Log::ERROR);
+        _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(get_session_id()) + " bad UDP packet", Log::ERROR);
         destroy();
         return;
     }
@@ -402,7 +416,7 @@ void ClientSession::udp_recv(const string_view &data, const udp::endpoint&) {
     size_t length = data.length() - 3 - address_len;
     sent_len += length;
 
-    _log_with_endpoint(in_udp_endpoint, "session_id: " + to_string(get_session_id()) + " sent a UDP packet of length " + to_string(length) + 
+    _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(get_session_id()) + " sent a UDP packet of length " + to_string(length) + 
         " bytes to " + address.address + ':' + to_string(address.port) + " sent_len: " + to_string(sent_len));
 
     if (status == CONNECT) {
@@ -438,19 +452,22 @@ void ClientSession::udp_sent() {
         bool is_packet_valid = packet.parse(parse_data, packet_len);
         if (!is_packet_valid) {
             if (udp_data_buf.size() > MAX_BUF_LENGTH) {
-                _log_with_endpoint(in_udp_endpoint, "session_id: " + to_string(get_session_id()) + " UDP packet too long", Log::ERROR);
+                _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(get_session_id()) + " UDP packet too long", Log::ERROR);
                 destroy();
                 return;
             }
             out_async_read();
             return;
         }
-        _log_with_endpoint(in_udp_endpoint, "session_id: " + to_string(get_session_id()) + " received a UDP packet of length " + to_string(packet.length) + " bytes from " + packet.address.address + ':' + to_string(packet.address.port));
+
+        _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(get_session_id()) + " received a UDP packet of length " 
+            + to_string(packet.length) + " bytes from " + packet.address.address + ':' + to_string(packet.address.port));
+
         SOCKS5Address address;
         size_t address_len;
         bool is_addr_valid = address.parse(parse_data, address_len);
         if (!is_addr_valid) {
-            _log_with_endpoint(in_udp_endpoint, "session_id: " + to_string(get_session_id()) + " udp_sent: invalid UDP packet address", Log::ERROR);
+            _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(get_session_id()) + " udp_sent: invalid UDP packet address", Log::ERROR);
             destroy();
             return;
         }

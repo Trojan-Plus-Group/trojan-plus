@@ -34,7 +34,6 @@ SocketSession::SocketSession(Service* _service, const Config& config) :
 }
 
 void SocketSession::udp_timer_async_wait(){
-
     if(!is_udp_forward()){
         return;
     }

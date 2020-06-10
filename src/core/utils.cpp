@@ -339,7 +339,7 @@ std::pair<std::string, uint16_t> recv_target_endpoint(int _fd){
 
 // copied from shadowsocks-libev udpreplay.c
 // it works if in NAT mode
-pair<string, uint16_t> recv_tproxy_udp_msg(int fd, boost::asio::ip::udp::endpoint &recv_endpoint, char *buf, int &buf_len, int &ttl) {
+pair<string, uint16_t> recv_tproxy_udp_msg(int fd, boost::asio::ip::udp::endpoint& target_endpoint, char *buf, int &buf_len, int &ttl) {
     struct sockaddr_storage src_addr;
     memset(&src_addr, 0, sizeof(struct sockaddr_storage));
 
@@ -378,8 +378,8 @@ pair<string, uint16_t> recv_tproxy_udp_msg(int fd, boost::asio::ip::udp::endpoin
         } else {
             auto target_dst = get_addr(dst_addr);
             auto src_dst = get_addr(src_addr);
-            recv_endpoint.address(boost::asio::ip::make_address(src_dst.first));
-            recv_endpoint.port(src_dst.second);
+            target_endpoint.address(boost::asio::ip::make_address(src_dst.first));
+            target_endpoint.port(src_dst.second);
             return target_dst;
         }
     }
@@ -451,7 +451,7 @@ std::pair<std::string, uint16_t> recv_target_endpoint(int _native_fd){
     throw runtime_error("NAT is not supported in Windows");
 }
 
-std::pair<std::string, uint16_t> recv_tproxy_udp_msg(int fd, boost::asio::ip::udp::endpoint& recv_endpoint, char* buf, int& buf_len, int& ttl){
+std::pair<std::string, uint16_t> recv_tproxy_udp_msg(int fd, boost::asio::ip::udp::endpoint& target_endpoint, char* buf, int& buf_len, int& ttl){
     throw runtime_error("NAT is not supported in Windows");
 }
 
