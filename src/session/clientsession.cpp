@@ -275,16 +275,16 @@ void ClientSession::in_recv(const string_view &data) {
             is_udp_forward_session = req.command == TrojanRequest::UDP_ASSOCIATE;
             if (is_udp_forward_session) {
                 udp_timer_async_wait();
-                udp_recv_endpoint = udp::endpoint(in_socket.local_endpoint().address(), 0);
+                auto endpoint = udp::endpoint(in_socket.local_endpoint().address(), 0);
                 boost::system::error_code ec;
-                udp_socket.open(udp_recv_endpoint.protocol(), ec);
+                udp_socket.open(endpoint.protocol(), ec);
                 if (ec) {
                     output_debug_info();
                     destroy();
                     return;
                 }
                 set_udp_send_recv_buf((int)udp_socket.native_handle(), config.udp_socket_buf);
-                udp_socket.bind(udp_recv_endpoint);
+                udp_socket.bind(endpoint);
 
                 _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + 
                     " requested UDP associate to " + req.address.address + ':' + to_string(req.address.port) + 

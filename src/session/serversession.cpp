@@ -262,18 +262,17 @@ void ServerSession::in_recv(const string_view &data) {
                 is_udp_forward_session = true;
                 udp_timer_async_wait();
 
-                if(req.address.address_type != SOCKS5Address::DOMAINNAME){
-                    boost::system::error_code ec;
-                    out_udp_endpoint = udp::endpoint(make_address(req.address.address, ec), req.address.port);
-                    if(ec){
-                        _log_with_endpoint(out_udp_endpoint, "session_id: " + to_string(get_session_id()) + 
-                            " cannot make address for UDP associate to " + req.address.address + ':' + to_string(req.address.port), Log::ERROR);
-                        destroy();
-                        return;
-                    }
-                }
+                boost::system::error_code ec;
+                udp_associate_endpoint = udp::endpoint(make_address(req.address.address, ec), req.address.port);
+                if(ec){
+                    _log_with_endpoint(udp_associate_endpoint, "session_id: " + to_string(get_session_id()) + 
+                        " cannot make address for UDP associate to " + req.address.address + ':' + to_string(req.address.port), Log::ERROR);
+                    destroy();
+                    return;
+                }               
 
-                _log_with_endpoint(out_udp_endpoint, "session_id: " + to_string(get_session_id()) + " requested UDP associate to " + req.address.address + ':' + to_string(req.address.port), Log::INFO);
+                _log_with_endpoint(udp_associate_endpoint, "session_id: " + to_string(get_session_id()) + " requested UDP associate to " 
+                    + req.address.address + ':' + to_string(req.address.port), Log::INFO);
 
                 status = UDP_FORWARD;
                 udp_data_buf.consume(udp_data_buf.size());
@@ -338,7 +337,7 @@ void ServerSession::out_udp_recv(const string_view &data, const udp::endpoint &e
     if (status == UDP_FORWARD) {
         udp_timer_async_wait();
         size_t length = data.length();
-        _log_with_endpoint(out_udp_endpoint, "session_id: " + to_string(get_session_id()) + " received a UDP packet of length " + to_string(length) + " bytes from " + endpoint.address().to_string() + ':' + to_string(endpoint.port()));
+        _log_with_endpoint(udp_associate_endpoint, "session_id: " + to_string(get_session_id()) + " received a UDP packet of length " + to_string(length) + " bytes from " + endpoint.address().to_string() + ':' + to_string(endpoint.port()));
         recv_len += length;
         out_write_buf.consume(out_write_buf.size());
         in_async_write(streambuf_to_string_view(UDPPacket::generate(out_write_buf, endpoint, data)));
@@ -353,7 +352,7 @@ void ServerSession::out_udp_sent() {
         bool is_packet_valid = packet.parse(streambuf_to_string_view(udp_data_buf), packet_len);
         if (!is_packet_valid) {
             if (udp_data_buf.size() > MAX_BUF_LENGTH) {
-                _log_with_endpoint(out_udp_endpoint, "session_id: " + to_string(get_session_id()) + " UDP packet too long", Log::ERROR);
+                _log_with_endpoint(udp_associate_endpoint, "session_id: " + to_string(get_session_id()) + " UDP packet too long", Log::ERROR);
                 destroy();
                 return;
             }
@@ -361,9 +360,9 @@ void ServerSession::out_udp_sent() {
             return;
         }
         
-        auto cb = [this](const UDPPacket& packet, size_t packet_len){
+        auto cb = [this](const UDPPacket& packet, size_t packet_len, const udp::endpoint& dst_endpoint){
             if (!udp_socket.is_open()) {
-                auto protocol = out_udp_endpoint.protocol();
+                auto protocol = dst_endpoint.protocol();
                 boost::system::error_code ec;
                 udp_socket.open(protocol, ec);
                 if (ec) {
@@ -373,28 +372,39 @@ void ServerSession::out_udp_sent() {
                 }
                 set_udp_send_recv_buf((int)udp_socket.native_handle(), config.udp_socket_buf);
                 udp_socket.bind(udp::endpoint(protocol, 0));
+
+                _log_with_endpoint(udp_associate_endpoint, "session_id: " + to_string(get_session_id()) + 
+                    " open UDP socket " + udp_socket.local_endpoint().address().to_string() + ':' + to_string(udp_socket.local_endpoint().port()) + " for relay", Log::INFO);
+
                 out_udp_async_read();
             }
 
             sent_len += packet.length;
-            _log_with_endpoint(out_udp_endpoint, "session_id: " + to_string(get_session_id()) + " sent a UDP packet of length " + to_string(packet.length) + 
+            _log_with_endpoint(udp_associate_endpoint, "session_id: " + to_string(get_session_id()) + " sent a UDP packet of length " + to_string(packet.length) + 
                 " bytes to " + packet.address.address + ':' + to_string(packet.address.port));
             
-            out_udp_async_write(packet.payload, out_udp_endpoint);
+            out_udp_async_write(packet.payload, dst_endpoint);
 
             // we must consume here after packet.payload has been writen
             udp_data_buf.consume(packet_len);
         };
 
-        if(packet.address.address_type == SOCKS5Address::DOMAINNAME && out_udp_endpoint.port() == 0){
-            
+        if(packet.address.address_type == SOCKS5Address::DOMAINNAME){
+
+            boost::system::error_code ec;
+            auto dst_endpoint = udp::endpoint(make_address(packet.address.address, ec), packet.address.port);
+            if(!ec){
+                cb(packet, packet_len, dst_endpoint);
+                return;
+            }
+
             auto payload_tmp_buf = make_shared<string>(packet.payload);
             packet.payload = *payload_tmp_buf;
 
             auto self = shared_from_this();
             udp_resolver.async_resolve(packet.address.address, to_string(packet.address.port), [this, self, cb, payload_tmp_buf, packet, packet_len](const boost::system::error_code error, udp::resolver::results_type results) {
                 if (error || results.empty()) {
-                    _log_with_endpoint(out_udp_endpoint, "session_id: " + to_string(get_session_id()) + " cannot resolve remote server hostname " + packet.address.address + ": " + error.message(), Log::ERROR);
+                    _log_with_endpoint(udp_associate_endpoint, "session_id: " + to_string(get_session_id()) + " cannot resolve remote server hostname " + packet.address.address + ": " + error.message(), Log::ERROR);
                     destroy();
                     return;
                 }
@@ -410,20 +420,25 @@ void ServerSession::out_udp_sent() {
                     }
                 }
 
-                out_udp_endpoint = udp::endpoint(make_address(iterator->endpoint().address().to_string()), packet.address.port);
+                auto dst_endpoint = udp::endpoint(make_address(iterator->endpoint().address().to_string()), packet.address.port);
 
-                _log_with_endpoint(out_udp_endpoint, "session_id: " + to_string(get_session_id()) + " " + packet.address.address + 
-                    " is resolved to " + out_udp_endpoint.address().to_string(), Log::ALL);
+                _log_with_endpoint(udp_associate_endpoint, "session_id: " + to_string(get_session_id()) + " " + packet.address.address + 
+                    " is resolved to " + dst_endpoint.address().to_string(), Log::ALL);
 
-                cb(packet, packet_len);
+                cb(packet, packet_len, dst_endpoint);
             });
         }else{
-            if(out_udp_endpoint.port() == 0){
-                out_udp_endpoint.address(make_address(packet.address.address));
-                out_udp_endpoint.port(packet.address.port);
+
+            boost::system::error_code ec;
+            auto dst_endpoint = udp::endpoint(make_address(packet.address.address, ec), packet.address.port);
+            if(ec){
+                _log_with_endpoint(udp_associate_endpoint, "session_id: " + to_string(get_session_id()) + 
+                        " cannot make address for UDP destination to " + packet.address.address + ':' + to_string(packet.address.port), Log::ERROR);
+                destroy();
+                return;
             }
-            
-            cb(packet, packet_len);
+                        
+            cb(packet, packet_len, dst_endpoint);
         }
     }
 }
