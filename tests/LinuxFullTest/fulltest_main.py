@@ -1,4 +1,4 @@
-import sys, time, threading, signal, os, psutil
+import sys, time, threading, signal, os, psutil, traceback
 from subprocess import Popen, PIPE
 import fulltest_gen_content, fulltest_server, fulltest_client
 
@@ -148,6 +148,7 @@ def main_stage(server_config, client_config, server_balance_config = None, is_fo
         return 0
     except:
         output_log = True
+        traceback.print_exc()
     finally:
         close_process(client_process, output_log)
         close_process(server_process, output_log)

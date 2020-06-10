@@ -208,10 +208,10 @@ def start_query(socks_port, port, folder, log = True):
 
 if __name__ == '__main__':
     # client run_type:
-    #start_query(10620, 8080, "html")
+    start_query(10620, 8080, "html")
 
     # forward run_type:
-    start_query(0, 10620, "html")
+    #start_query(0, 10620, "html")
 
     # for pure fulltest script run
     #start_query(0, 8080, "html")

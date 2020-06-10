@@ -5,7 +5,7 @@
     "remote_addr": "127.0.0.1",
     "remote_port": 4651,
     "target_addr": "127.0.0.1",
-    "target_port": 8080,
+    "target_port": 18080,
     "password": [
         "88888888"
     ],
