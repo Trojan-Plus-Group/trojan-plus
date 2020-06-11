@@ -37,6 +37,8 @@ def close_process(process, output_log):
     if process:
         process.send_signal(signal.SIGTERM)
         time.sleep(1)
+        process.output_log_file.flush()
+
         if process.returncode:
             print(str(process.args) + " closed.")
         else:
@@ -44,12 +46,12 @@ def close_process(process, output_log):
             process.kill()
 
         if output_log :
-            process.output_log_file.flush()
             process.output_log_file.seek(0,0)
             print(process.output_log_file.read(), end = '')
             print()
             
         process.output_log_file.close()
+        
 
 def run_test_server():
     output_log_file = open("config/test_server.output", "w+")
