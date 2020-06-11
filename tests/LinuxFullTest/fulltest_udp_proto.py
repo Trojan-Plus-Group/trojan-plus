@@ -15,15 +15,16 @@ def bind_port(udp_socket, port):
     port_increase = 0
     for _ in range(0, try_max_count):
         try:
-            udp_socket.bind(("", port + port_increase))
-            return
+            try_port = port + port_increase
+            udp_socket.bind(("", try_port))
+            return try_port
         except:
             port_increase = offset
             offset = offset + 1
 
     raise Exception("[ERROR] Cannot bind a new port for udp socket!")
 
-def send_udp_file_data(udp_socket, port, addr, content):
+def send_udp_file_data(udp_socket, addr, content):
     content_setment_len = SEND_PACKET_LENGTH - UDP_INDEX_HEADER_SIZE
     index = 0
     i = 0
@@ -32,8 +33,6 @@ def send_udp_file_data(udp_socket, port, addr, content):
         send_content = index.to_bytes(1, 'big') + content[i:i + content_setment_len]
         sent = udp_socket.sendto(send_content, addr)
 
-        #print(" send_udp_file_data index: " + str(index) + " sent: " + str(sent))
-
         if sent > 0:
             i = i + sent - UDP_INDEX_HEADER_SIZE
             index = index + 1
@@ -41,8 +40,8 @@ def send_udp_file_data(udp_socket, port, addr, content):
             raise Exception("udp sendto failed!")
 
         # wait for a while, otherwise server will flood client in pipeline mode, avoid dropping udp packet
-        # in forward mode, client only has one socket to recv
-        if index % 5 == 0:
+        # in forward/nat mode, client only has one socket to recv
+        if index % 2 == 0:
             time.sleep(0.01)         
 
 def compose_udp_file_data(data_arr):
@@ -57,9 +56,10 @@ def send_get_func(serv_dir, addr, udp_data, port):
         with open(os.path.realpath(serv_dir + udp_data.file()),'rb') as f:
             content = f.read()
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as us :
-                bind_port(us, port)
+                port = bind_port(us, port)
                 us.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, UDP_BUFF_SIZE)
-                send_udp_file_data(us, port, addr, content)
+                print("bind port " + str(port) + " to send udp file to " + str(addr))
+                send_udp_file_data(us, addr, content)
     except:
         traceback.print_exc()
 
@@ -107,7 +107,10 @@ class UDPProcessor:
             args_idx = data.index(b'\r\n')
             args = dict(urllib.parse.parse_qsl(data[:args_idx].decode('ascii')))
             udp_data = UDPData(args, data[args_idx + 2:])
-            self.recv_map[addr] = udp_data
+
+            if udp_data.method() == 'POST' :
+                self.recv_map[addr] = udp_data
+                       
         
         global server_udp_send_port_start
         if udp_data.method() == 'GET' :

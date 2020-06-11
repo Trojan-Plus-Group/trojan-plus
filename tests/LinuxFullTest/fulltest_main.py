@@ -17,6 +17,15 @@ TEST_WATING_FOR_RSS_COOLDOWN_TIME_IN_SEC = 11
 # initial var for windows
 binary_path = "..\\..\\win32-build\\Release\\trojan.exe"
 
+def is_linux_system():
+    return sys.platform == "linux" or sys.platform == "linux2"
+
+def is_macos_system():
+    return sys.platform == "darwin"
+
+def is_windows_system():
+    return sys.platform == "win32"
+
 def start_trojan_plus_runing(config):
     print("start " + config + "...")
     output_log_file = open(config + ".output", "w+")
@@ -140,18 +149,25 @@ def main_stage(server_config, client_config, server_balance_config = None, is_fo
 
         print("testing max RSS after cooldown: " + "{:,}KB".format(TEST_TESTING_MAX_RSS_IN_KB))
 
+        
         if server_process_rss > TEST_TESTING_MAX_RSS_IN_KB \
         or client_process_rss > TEST_TESTING_MAX_RSS_IN_KB \
         or server_balance_process_init_rss > TEST_TESTING_MAX_RSS_IN_KB:
-            print("cooldown RSS error!")
+            print("[ERROR] cooldown RSS error!")
             output_log = True
             return 1
+           
 
         return 0
     except:
         output_log = True
         traceback.print_exc()
-    finally:
+    finally: 
+
+        if output_log:
+            print("Has got error, wait for udp timeout log to flush...")
+            time.sleep(TEST_WATING_FOR_RSS_COOLDOWN_TIME_IN_SEC)
+
         close_process(client_process, output_log)
         close_process(server_process, output_log)
         close_process(server_balance_process, output_log)
