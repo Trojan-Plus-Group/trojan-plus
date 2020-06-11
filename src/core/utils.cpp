@@ -30,6 +30,7 @@
 #include "core/service.h"
 
 using namespace std;
+using namespace boost::asio::ip;
 
 size_t streambuf_append(boost::asio::streambuf& target, const boost::asio::streambuf& append_buf){
     if(append_buf.size() == 0){
@@ -252,6 +253,15 @@ bool set_udp_send_recv_buf(int fd, int buf_size){
     }
 
     return true;
+}
+
+udp::endpoint make_udp_endpoint_safe(const std::string& address, uint16_t port, boost::system::error_code& ec){
+    auto endpoint = udp::endpoint(make_address((address == "0" || address.length() == 0) ? "127.0.0.1" : address.c_str(), ec), port);
+    if(ec){
+        return udp::endpoint();
+    }else{
+        return endpoint;
+    }
 }
 
 

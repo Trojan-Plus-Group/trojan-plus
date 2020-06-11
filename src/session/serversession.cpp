@@ -263,7 +263,7 @@ void ServerSession::in_recv(const string_view &data) {
                 udp_timer_async_wait();
 
                 boost::system::error_code ec;
-                udp_associate_endpoint = udp::endpoint(make_address(req.address.address, ec), req.address.port);
+                udp_associate_endpoint = make_udp_endpoint_safe(req.address.address, req.address.port, ec);
                 if(ec){
                     _log_with_endpoint(udp_associate_endpoint, "session_id: " + to_string(get_session_id()) + 
                         " cannot make address for UDP associate to " + req.address.address + ':' + to_string(req.address.port), Log::ERROR);
@@ -392,7 +392,7 @@ void ServerSession::out_udp_sent() {
         if(packet.address.address_type == SOCKS5Address::DOMAINNAME){
 
             boost::system::error_code ec;
-            auto dst_endpoint = udp::endpoint(make_address(packet.address.address, ec), packet.address.port);
+            auto dst_endpoint = make_udp_endpoint_safe(packet.address.address, packet.address.port, ec);
             if(!ec){
                 cb(packet, packet_len, dst_endpoint);
                 return;
@@ -430,7 +430,7 @@ void ServerSession::out_udp_sent() {
         }else{
 
             boost::system::error_code ec;
-            auto dst_endpoint = udp::endpoint(make_address(packet.address.address, ec), packet.address.port);
+            auto dst_endpoint = make_udp_endpoint_safe(packet.address.address, packet.address.port, ec);
             if(ec){
                 _log_with_endpoint(udp_associate_endpoint, "session_id: " + to_string(get_session_id()) + 
                         " cannot make address for UDP destination to " + packet.address.address + ':' + to_string(packet.address.port), Log::ERROR);

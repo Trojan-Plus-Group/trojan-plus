@@ -262,7 +262,7 @@ void ClientSession::in_recv(const string_view &data) {
 
             if(req.address.address_type != SOCKS5Address::DOMAINNAME){
                 boost::system::error_code ec;
-                auto endpoint = udp::endpoint(make_address(req.address.address, ec), req.address.port);
+                auto endpoint = make_udp_endpoint_safe(req.address.address, req.address.port, ec);
                 if(ec){
                     _log_with_endpoint(endpoint, "session_id: " + to_string(get_session_id()) + 
                         " cannot make address " + req.address.address + ':' + to_string(req.address.port) + ec.message(), Log::ERROR);
