@@ -9,6 +9,8 @@ set<PipelineComponent::SessionIdType> PipelineComponent::s_session_used_ids;
 PipelineComponent::PipelineComponent(const Config& _config): 
     m_session_id(0),
     m_is_use_pipeline(false),
+    m_is_async_writing(false),
+    m_write_close_future(false),
     pipeline_ack_counter(0),
     pipeline_wait_for_ack(false),
     pipeline_first_call_ack(true){

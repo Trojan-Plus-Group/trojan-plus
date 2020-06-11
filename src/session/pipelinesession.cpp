@@ -197,8 +197,12 @@ void PipelineSession::process_streaming_data(){
             }
         }else if(req.command == PipelineRequest::CLOSE){
             auto found = find_and_process_session(req.session_id, [this](SessionsList::iterator& it){ 
-                it->get()->destroy(true);   
-                sessions.erase(it);                        
+                if(it->get()->get_pipeline_component().is_aysnc_writing_data()){
+                    it->get()->get_pipeline_component().set_write_close_future(true);
+                }else{
+                    it->get()->destroy(true);   
+                    sessions.erase(it);
+                }
             });
 
             if(!found){

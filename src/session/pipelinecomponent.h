@@ -22,6 +22,8 @@ private:
 
     SessionIdType m_session_id;    
     bool m_is_use_pipeline;
+    bool m_is_async_writing;
+    bool m_write_close_future;
 public:
     PipelineComponent(const Config& _config);
     
@@ -55,6 +57,12 @@ public:
         pipeline_first_call_ack = false;
         return true;
     }
+
+    inline bool is_aysnc_writing_data() { return m_is_async_writing; }
+    inline void set_async_writing_data(bool is_writing) { m_is_async_writing = is_writing; }
+
+    inline bool is_write_close_future(){ return m_write_close_future; }
+    inline void set_write_close_future(bool future_close){ m_write_close_future = future_close; }
 };
 
 #endif //_PIPELINE_COMPONENT_H

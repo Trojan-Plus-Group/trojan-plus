@@ -46,7 +46,7 @@ void ServerSession::start() {
     
     start_time = time(nullptr);
 
-    if(!pipeline_com.is_using_pipeline()){
+    if(!get_pipeline_component().is_using_pipeline()){
         boost::system::error_code ec;
         in_endpoint = in_socket.next_layer().remote_endpoint(ec);
         if (ec) {
@@ -78,8 +78,8 @@ void ServerSession::start() {
 }
 
 void ServerSession::in_async_read() {
-    if(pipeline_com.is_using_pipeline()){
-        pipeline_com.pipeline_data_cache.async_read([this](const string_view &data) {
+    if(get_pipeline_component().is_using_pipeline()){
+        get_pipeline_component().pipeline_data_cache.async_read([this](const string_view &data) {
             in_recv(data);
         });
     }else{
@@ -103,7 +103,7 @@ void ServerSession::in_async_write(const string_view& data) {
     _log_with_date_time_DEBUG("ServerSession::in_async_write session_id: " + to_string(get_session_id()) + " length: " + to_string(data.length()) + " checksum: " + to_string(get_checksum(data)));
     _write_data_to_file_DEBUG(get_session_id(), "ServerSession_in_async_write", data);
     auto self = shared_from_this();
-    if(pipeline_com.is_using_pipeline()){
+    if(get_pipeline_component().is_using_pipeline()){
         if(!pipeline_session.expired()){
             (static_cast<PipelineSession*>(pipeline_session.lock().get()))->session_write_data(*this, data, [this, self](const boost::system::error_code ec){
                 if(ec){
@@ -132,13 +132,13 @@ void ServerSession::in_async_write(const string_view& data) {
 }
 
 void ServerSession::out_async_read() {
-    if(pipeline_com.is_using_pipeline()){
-        if(!pipeline_com.pre_call_ack_func()){
+    if(get_pipeline_component().is_using_pipeline()){
+        if(!get_pipeline_component().pre_call_ack_func()){
             _log_with_endpoint_DEBUG(in_endpoint, "session_id: " + to_string(get_session_id()) + " cannot ServerSession::out_async_read ! Is waiting for ack");
             return;
         }
         _log_with_endpoint_DEBUG(in_endpoint, "session_id: " + to_string(get_session_id()) + 
-            " permit to ServerSession::out_async_read aysnc! ack:" + to_string(pipeline_com.pipeline_ack_counter));
+            " permit to ServerSession::out_async_read aysnc! ack:" + to_string(get_pipeline_component().pipeline_ack_counter));
     }
 
     _guard_read_buf_begin(out_read_buf);
@@ -159,6 +159,11 @@ void ServerSession::out_async_read() {
 void ServerSession::out_async_write(const string_view &data) {
     _log_with_date_time_DEBUG("ServerSession::out_async_write session_id: " + to_string(get_session_id()) + " length: " + to_string(data.length()) + " checksum: " + to_string(get_checksum(data)));
     _write_data_to_file_DEBUG(get_session_id(), "ServerSession_out_async_write", data);
+
+    if(get_pipeline_component().is_using_pipeline() && !pipeline_session.expired()){
+        get_pipeline_component().set_async_writing_data(true);
+    }
+
     auto self = shared_from_this();
     auto data_copy = get_service()->get_sending_data_allocator().allocate(data);
     boost::asio::async_write(out_socket, data_copy->data(), [this, self, data_copy](const boost::system::error_code error, size_t) {
@@ -169,7 +174,15 @@ void ServerSession::out_async_write(const string_view &data) {
             return;
         }
         
-        if(pipeline_com.is_using_pipeline() && !pipeline_session.expired()){
+        if(get_pipeline_component().is_using_pipeline() && !pipeline_session.expired()){
+            if(get_pipeline_component().is_write_close_future()){
+                output_debug_info_ec(error);
+                destroy();
+                return;
+            }
+            
+            get_pipeline_component().set_async_writing_data(false);
+
             (static_cast<PipelineSession*>(pipeline_session.lock().get()))->session_write_ack(*this, [this, self](const boost::system::error_code ec){
                 if(ec){
                     output_debug_info_ec(ec);
@@ -471,7 +484,7 @@ void ServerSession::destroy(bool pipeline_call /*= false*/) {
 
     shutdown_ssl_socket(this, in_socket);    
 
-    if(!pipeline_call && pipeline_com.is_using_pipeline() && !pipeline_session.expired()){
+    if(!pipeline_call && get_pipeline_component().is_using_pipeline() && !pipeline_session.expired()){
         (static_cast<PipelineSession*>(pipeline_session.lock().get()))->remove_session_after_destroy(*this);
     }
 }

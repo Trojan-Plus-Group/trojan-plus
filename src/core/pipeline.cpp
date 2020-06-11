@@ -162,8 +162,12 @@ void Pipeline::out_async_recv(){
                         auto session = it->get();
                         if (session->get_session_id() == req.session_id) {
                             if (req.command == PipelineRequest::CLOSE) {
-                                session->destroy(true);
-                                it = sessions.erase(it);
+                                if(session->get_pipeline_component().is_aysnc_writing_data()){
+                                    session->get_pipeline_component().set_write_close_future(true);
+                                }else{
+                                    session->destroy(true);
+                                    it = sessions.erase(it);
+                                }                                
                             } else if (req.command == PipelineRequest::ACK) {
                                 session->recv_ack_cmd();
                             } else {
