@@ -58,10 +58,12 @@ public:
         return true;
     }
 
-    inline bool is_async_writing_data() { return m_is_async_writing; }
     inline void set_async_writing_data(bool is_writing) { m_is_async_writing = is_writing; }
+    inline bool canbe_closed_by_pipeline() const {
+        return !m_is_async_writing && !pipeline_data_cache.has_queued_data();
+    }
 
-    inline bool is_write_close_future(){ return m_write_close_future; }
+    inline bool is_write_close_future() const { return m_write_close_future; }
     inline void set_write_close_future(bool future_close){ m_write_close_future = future_close; }
 };
 

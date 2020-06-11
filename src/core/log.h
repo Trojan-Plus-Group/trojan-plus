@@ -60,14 +60,17 @@ extern char __debug_str_buf[1024];
 #if 0
     #define _write_data_to_file_DEBUG(...) \
         do{ if(Log::level <= Log::ALL) write_data_to_file(__VA_ARGS__); }while(false)
+#else
+    #define _write_data_to_file_DEBUG(...) {}
+#endif
 
+#if 0
     #define _log_with_date_time_DEBUG(...) \
         do{if(Log::level <= Log::ALL) { Log::log_with_date_time(__VA_ARGS__, Log::ALL); }}while(false)
 
     #define _log_with_endpoint_DEBUG(...) \
         do{if(Log::level <= Log::ALL) { Log::log_with_endpoint(__VA_ARGS__); }}while(false)
 #else
-    #define _write_data_to_file_DEBUG(...) {}
     #define _log_with_date_time_DEBUG(...) {}
     #define _log_with_endpoint_DEBUG(...) {}
 #endif

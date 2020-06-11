@@ -168,6 +168,10 @@ public :
             data_queue.consume(data_queue.size());
         }
     }
+
+    inline bool has_queued_data()const{
+        return data_queue.size() > 0;
+    }
 };
 
 

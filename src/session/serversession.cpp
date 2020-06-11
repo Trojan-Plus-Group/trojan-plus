@@ -175,7 +175,9 @@ void ServerSession::out_async_write(const string_view &data) {
         }
         
         if(get_pipeline_component().is_using_pipeline() && !pipeline_session.expired()){
-            if(get_pipeline_component().is_write_close_future()){
+
+            if(get_pipeline_component().is_write_close_future() 
+            && !get_pipeline_component().pipeline_data_cache.has_queued_data()){
                 output_debug_info_ec(error);
                 destroy();
                 return;
