@@ -58,7 +58,7 @@ public:
         return true;
     }
 
-    inline bool is_aysnc_writing_data() { return m_is_async_writing; }
+    inline bool is_async_writing_data() { return m_is_async_writing; }
     inline void set_async_writing_data(bool is_writing) { m_is_async_writing = is_writing; }
 
     inline bool is_write_close_future(){ return m_write_close_future; }
