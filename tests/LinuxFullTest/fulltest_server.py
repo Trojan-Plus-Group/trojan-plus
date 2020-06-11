@@ -1,4 +1,4 @@
-import os, socket, threading, select, sys
+import os, socket, threading, select, sys, traceback
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse
 import fulltest_udp_proto
@@ -56,22 +56,26 @@ class ServerHandler(BaseHTTPRequestHandler):
                     self.end_headers()
                     self.wfile.write(content)
             except :
+                traceback.print_exc()
                 self.send_error(404,'File Not Found: %s' % self.path)
 
     def do_POST(self) :
-        filepath = urlparse(self.path).path
-        content_len = int(self.headers.get('Content-Length'))
-        post_body = self.rfile.read(content_len)
-
-        with open(os.path.realpath(serv_dir + filepath),'rb') as f:
-            content = f.read()
-            self.send_response(200)
-            self.send_header('Content-type','text/plain')
-            self.end_headers()
-            if content == post_body[2:]:
-                self.wfile.write(b"OK")
-            else:
-                self.wfile.write(b"FAILED")
+        try:
+            filepath = urlparse(self.path).path
+            content_len = int(self.headers.get('Content-Length'))
+            post_body = self.rfile.read(content_len)
+            
+            with open(os.path.realpath(serv_dir + filepath),'rb') as f:
+                content = f.read()
+                self.send_response(200)
+                self.send_header('Content-type','text/plain')
+                self.end_headers()
+                if content == post_body[2:]:
+                    self.wfile.write(b"OK")
+                else:
+                    self.wfile.write(b"FAILED")
+        except:
+            traceback.print_exc()
 
 def run(dir, port):
     if not os.path.exists(dir):
