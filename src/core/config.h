@@ -46,6 +46,7 @@ public:
     std::map<std::string, std::string> password;
     int udp_timeout;
     int udp_socket_buf;
+    int udp_forward_socket_buf;
     int udp_recv_buf;
     Log::Level log_level;
     class SSLConfig {
