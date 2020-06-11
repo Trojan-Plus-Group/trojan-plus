@@ -63,6 +63,7 @@ stages:
     - script: |
         set -euo pipefail
         BINARY="$PIPELINE_WORKSPACE/LinuxBinary/trojan"
+        chmod +x "$BINARY"
         cd tests/LinuxFullTest/
         python3.8 fulltest_main.py $BINARY -g
       env:
