@@ -15,7 +15,7 @@ stages:
         set -euo pipefail
         echo 'target_link_libraries(trojan dl)' >> CMakeLists.txt
         cmake -DMYSQL_INCLUDE_DIR=/usr/local/include/mariadb -DMYSQL_LIBRARY=/usr/local/lib/mariadb/libmysqlclient.a -DDEFAULT_CONFIG=config.json -DFORCE_TCP_FASTOPEN=ON -DBoost_USE_STATIC_LIBS=ON .
-        make -j4
+        make -j$(nproc)
         strip -s trojan
     - publish: $(System.DefaultWorkingDirectory)/trojan
       artifact: LinuxBinary
@@ -30,7 +30,7 @@ stages:
         set -euo pipefail
         brew install boost openssl@1.1
         cmake -DBoost_USE_STATIC_LIBS=ON -DOPENSSL_INCLUDE_DIR=/usr/local/opt/openssl@1.1/include -DOPENSSL_CRYPTO_LIBRARY=/usr/local/opt/openssl@1.1/lib/libcrypto.a -DOPENSSL_SSL_LIBRARY=/usr/local/opt/openssl@1.1/lib/libssl.a -DDEFAULT_CONFIG=config.json -DENABLE_MYSQL=OFF -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 .
-        make -j4
+        make -j$(nproc)
         strip -SXTx trojan
     - publish: $(System.DefaultWorkingDirectory)/trojan
       artifact: macOSBinary
@@ -55,20 +55,18 @@ stages:
   - job: Linux
     pool:
       vmImage: ubuntu-latest
+    container:
+      image: trojanplusgroup/centos-build:latest
     steps:
     - download: current
       artifact: LinuxBinary
     - script: |
-        set -uo pipefail
+        set -euo pipefail
         BINARY="$PIPELINE_WORKSPACE/LinuxBinary/trojan"
-        chmod +x "$BINARY"
-        mkdir results
-        cp -r "$(tests/LinuxSmokeTest/basic.sh "$BINARY")" results/basic
-        cp -r "$(tests/LinuxSmokeTest/fake-client.sh "$BINARY")" results/fake-client
+        cd tests/LinuxFullTest/
+        python3.8 fulltest_main.py $BINARY -g
       env:
         PIPELINE_WORKSPACE: $(Pipeline.Workspace)
-    - publish: $(System.DefaultWorkingDirectory)/results
-      artifact: LinuxTest
 
   - job: Windows
     pool:
@@ -80,13 +78,10 @@ stages:
         set -euo pipefail
         BINARY="$PIPELINE_WORKSPACE/WindowsBinary/trojan.exe"
         py -3 -m pip install PySocks psutil
-        mkdir results
         cd tests/LinuxFullTest/
         py -3 fulltest_main.py $BINARY -g
       env:
         PIPELINE_WORKSPACE: $(Pipeline.Workspace)
-    - publish: $(System.DefaultWorkingDirectory)/results
-      artifact: WindowsFullTest
 
 - stage: Package
   jobs:
