@@ -91,7 +91,8 @@ Service::Service(Config &config, bool test) :
                         return;
                     }
                 }
-                set_udp_send_recv_buf((int)udp_socket.native_handle(), config.udp_socket_buf);
+                set_udp_send_recv_buf((int)udp_socket.native_handle(), config.udp_forward_socket_buf); 
+                
                 udp_socket.bind(udp_bind_endpoint);
             }
 

@@ -109,7 +109,7 @@ void ClientSession::in_async_write(const string_view &data) {
 
     auto self = shared_from_this();
     auto data_copy = get_service()->get_sending_data_allocator().allocate(data);
-    boost::asio::async_write(in_socket, data_copy->data(), [this, self, data_copy](const boost::system::error_code error, size_t length) {
+    boost::asio::async_write(in_socket, data_copy->data(), [this, self, data_copy](const boost::system::error_code error, size_t) {
         get_service()->get_sending_data_allocator().free(data_copy);
         if (error) {
             output_debug_info_ec(error);
@@ -117,8 +117,6 @@ void ClientSession::in_async_write(const string_view &data) {
             return;
         }
         
-        _log_with_date_time_ALL("boost::asio::async_write session_id: " + to_string(get_session_id()) + " length: " + to_string(length));
-
         if(get_pipeline_component().is_using_pipeline() && status == FORWARD){
             
             if(get_pipeline_component().is_write_close_future() 

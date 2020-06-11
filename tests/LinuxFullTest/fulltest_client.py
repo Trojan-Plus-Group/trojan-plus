@@ -73,7 +73,7 @@ def post_file_udp(file, data, port):
             udp_socket.sendto(param + b'\r\n', addr)
             time.sleep(0.01)
 
-            fulltest_udp_proto.send_udp_file_data(udp_socket, port, addr, data)
+            fulltest_udp_proto.send_udp_file_data(udp_socket, addr, data)
 
             return udp_socket.recv(SEND_PACKET_LENGTH)
     except :
@@ -185,6 +185,7 @@ def start_query(socks_port, port, folder, log = True):
 
         print_log("start query....")
         with ThreadPoolExecutor(max_workers = PARALLEL_REQUEST_COUNT) as executor:
+
             print_log("start query get http...")
             if not compare_process(files, executor, True, True):
                 return False
@@ -197,7 +198,7 @@ def start_query(socks_port, port, folder, log = True):
                 return False        
             print_log("finish!")
 
-            time.sleep(1)           
+            time.sleep(1)
 
             print_log("start query get udp...")
             if not compare_process(files, executor, True, False):
