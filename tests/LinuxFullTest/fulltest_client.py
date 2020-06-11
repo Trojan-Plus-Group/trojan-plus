@@ -1,7 +1,7 @@
 import urllib.request, socket, socks, traceback, os, time
 import threading
 from concurrent.futures import ThreadPoolExecutor , as_completed
-import fulltest_udp_proto
+import fulltest_udp_proto, fulltest_main
 
 HOST_URL="127.0.0.1"
 PARALLEL_REQUEST_COUNT = 5
@@ -14,7 +14,7 @@ compare_folder = "html"
 enable_log = True
 serv_port = 0
 
-client_udp_bind_port_start = 30000
+client_udp_bind_port_start = fulltest_udp_proto.client_udp_bind_port_start
 
 def print_log(log):
     if enable_log:
@@ -30,26 +30,30 @@ def post_url(url, data):
     f = urllib.request.urlopen(req, timeout = OPEN_URL_TIMOUT)
     return f.read()
 
+
 def get_file_udp(file, length, port):
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp_socket :
             udp_socket.settimeout(1)
             udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, UDP_BUFF_SIZE)
-            udp_socket.bind(("", port))
+            fulltest_udp_proto.bind_port(udp_socket, port)
 
             addr = (HOST_URL, serv_port)
 
             param = urllib.parse.urlencode({'file':file, 'len':length, 'm':'GET'}).encode()
             udp_socket.sendto(param + b'\r\n', addr)
-
-            data = b''
+            
+            data_arr = []
+            recv_length = 0
             try:
-                while len(data) < length:
-                    data = data + udp_socket.recv(SEND_PACKET_LENGTH)
+                while recv_length < length:
+                    data = udp_socket.recv(SEND_PACKET_LENGTH)
+                    recv_length = recv_length + len(data) - fulltest_udp_proto.UDP_INDEX_HEADER_SIZE
+                    data_arr.append(data)
 
-                return data
+                return fulltest_udp_proto.compose_udp_file_data(data_arr)
             except:
-                print_log("exception occur, data recv length: " + str(len(data)) + " port: " + str(port))
+                print_log("exception occur, data recv length: " + str(recv_length) + " port: " + str(port))
                 traceback.print_exc()
                 return False
     except :
@@ -61,7 +65,7 @@ def post_file_udp(file, data, port):
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp_socket :
             udp_socket.settimeout(1)
             udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, UDP_BUFF_SIZE)
-            udp_socket.bind(("", port))
+            fulltest_udp_proto.bind_port(udp_socket, port)
             
             addr = (HOST_URL, serv_port)
 
@@ -69,16 +73,7 @@ def post_file_udp(file, data, port):
             udp_socket.sendto(param + b'\r\n', addr)
             time.sleep(0.01)
 
-            wait_index = 0
-            i = 0
-            while i < len(data):
-                sent = udp_socket.sendto(data[i:i + SEND_PACKET_LENGTH], addr)
-                i = i + sent
-
-                # wait for a while, otherwise client will flood server in pipeline mode
-                wait_index = wait_index + 1
-                if wait_index % 5 == 0:
-                    time.sleep(0.01)
+            fulltest_udp_proto.send_udp_file_data(udp_socket, port, addr, data)
 
             return udp_socket.recv(SEND_PACKET_LENGTH)
     except :
@@ -101,6 +96,10 @@ def request_get_file(file, tcp_or_udp, index, udp_port):
             if txt != compare_txt:
                 print_log(str(index) + " " + file + " content is not same!!! read from disk length: " + \
                     str(len(compare_txt)) + " read from network length: " + (str(len(txt)) if type(txt) is bytes else str(txt)))
+                
+                if type(txt) is bytes and len(txt) == len(compare_txt):
+                    print(txt)
+
                 return False
                 
         return True       
@@ -162,6 +161,7 @@ def start_query(socks_port, port, folder, log = True):
     if socks_port != 0 :
         socks.set_default_proxy(socks.SOCKS5, HOST_URL, socks_port)
         socket.socket = socks.socksocket
+        print("pysocks version: " + str(socks.__version__))
 
     try:
         request_url_prefix = 'http://' + HOST_URL + ':' + str(port) + '/'
@@ -197,14 +197,14 @@ def start_query(socks_port, port, folder, log = True):
                 return False        
             print_log("finish!")
 
-            time.sleep(1)
+            time.sleep(1)           
 
             print_log("start query get udp...")
             if not compare_process(files, executor, True, False):
                 return False
             print_log("finish!")
 
-            time.sleep(1)           
+            time.sleep(1)
 
             print_log("start query post udp...")
             if not compare_process(files, executor, False, False):
@@ -218,10 +218,10 @@ def start_query(socks_port, port, folder, log = True):
 
 if __name__ == '__main__':
     # client run_type:
-    start_query(10620, 18080, "html")
+    #start_query(10620, 18080, "html")
 
     # forward run_type:
     #start_query(0, 10620, "html")
 
     # for pure fulltest script run
-    #start_query(0, 18080, "html")
+    start_query(0, 18080, "html")
