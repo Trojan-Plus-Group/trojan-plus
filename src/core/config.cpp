@@ -171,6 +171,8 @@ void Config::populate(const ptree &tree) {
     tun.net_mask = tree.get("tun.net_mask", "");
     tun.mtu = tree.get("tun.mtu", uint16_t(1500));
     tun.tun_fd = tree.get("tun.tun_fd", int(-1));
+
+    Log::level = log_level;
 }
 
 bool Config::sip003() {
@@ -202,7 +204,6 @@ bool Config::sip003() {
 
 void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, string& plain_http_response){
 
-    Log::level = log_level;
     auto native_context = ssl_context.native_handle();
     ssl_context.set_options(context::default_workarounds | context::no_sslv2 | context::no_sslv3 | context::single_dh_use);
     if (ssl.curves != "") {
