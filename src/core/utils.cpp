@@ -152,15 +152,28 @@ void write_data_to_file(int id, const std::string& tag, const std::string_view& 
 
 SendDataCache::SendDataCache() : is_async_sending(false), destroyed(false) {
     is_connected = []() { return true; };
+
+    current_recv_handler = &handler_queue;
+    current_recv_queue = &data_queue;
+}
+
+void SendDataCache::swap_recv(){
+    if(current_recv_handler == &handler_queue){
+        current_recv_handler = &handler_queue_other;
+        current_recv_queue = &data_queue_other;
+    }else{
+        current_recv_handler = &handler_queue;
+        current_recv_queue = &data_queue;
+    }
 }
 
 SendDataCache::~SendDataCache() {
     destroyed = true;
 
-    for (size_t i = 0; i < sending_data_handler.size(); i++) {
-        sending_data_handler[i](boost::asio::error::broken_pipe);
+    for (size_t i = 0; i < handler_queue_other.size(); i++) {
+        handler_queue_other[i](boost::asio::error::broken_pipe);
     }
-    sending_data_handler.clear();
+    handler_queue_other.clear();
 
     for (size_t i = 0; i < handler_queue.size(); i++) {
         handler_queue[i](boost::asio::error::broken_pipe);
@@ -179,45 +192,45 @@ void SendDataCache::set_is_connected_func(ConnectionFunc&& func) {
 void SendDataCache::insert_data(const std::string_view& data) {
 
     boost::asio::streambuf copy_data_queue;
-    streambuf_append(copy_data_queue, data_queue);
-    data_queue.consume(data_queue.size());
+    streambuf_append(copy_data_queue, *current_recv_queue);
+    current_recv_queue->consume(current_recv_queue->size());
 
-    streambuf_append(data_queue, data);
-    streambuf_append(data_queue, copy_data_queue);
+    streambuf_append(*current_recv_queue, data);
+    streambuf_append(*current_recv_queue, copy_data_queue);
 
     async_send();
 }
 
 void SendDataCache::push_data(PushDataHandler&& push, SentHandler&& handler) {
-    push(data_queue);
+    push(*current_recv_queue);
 
-    handler_queue.emplace_back(std::move(handler));
+    current_recv_handler->emplace_back(std::move(handler));
     async_send();
 }
 
 void SendDataCache::async_send() {
-    if (data_queue.size() == 0 || !is_connected() || is_async_sending || destroyed) {
+    if (current_recv_queue->size() == 0 || !is_connected() || is_async_sending || destroyed) {
         return;
     }
 
     is_async_sending = true;
 
-    sending_data_buff.consume(sending_data_buff.size());
-    streambuf_append(sending_data_buff, data_queue);
-    data_queue.consume(data_queue.size());
+    auto sending_handler = current_recv_handler;
+    auto sending_data = current_recv_queue;
 
-    std::move(handler_queue.begin(), handler_queue.end(), std::back_inserter(sending_data_handler));
-    handler_queue.clear();
+    swap_recv();
 
-    async_writer(sending_data_buff, [this](const boost::system::error_code ec) {
-        for (size_t i = 0; i < sending_data_handler.size(); i++) {
-            sending_data_handler[i](ec);
+    async_writer(*sending_data, [this, sending_handler, sending_data](const boost::system::error_code ec) {
+        for (size_t i = 0; i < sending_handler->size(); i++) {
+            (*sending_handler)[i](ec);
         }
-        sending_data_handler.clear();
+        sending_handler->clear();
+        sending_data->consume(sending_data->size());
 
-        // above "sending_data_handler[i](ec);" might call this async_send function, 
+        // above "sending_handler[i](ec);" might call this async_send function back loop, 
         // so we must set is_async_sending as false after it
         is_async_sending = false;
+        
         if (!ec) {
             async_send();
         }

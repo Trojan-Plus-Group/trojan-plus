@@ -124,14 +124,19 @@ class SendDataCache{
     std::vector<SentHandler> handler_queue;
     boost::asio::streambuf data_queue;
     
-    boost::asio::streambuf sending_data_buff;
-    std::vector<SentHandler> sending_data_handler;
+    std::vector<SentHandler> handler_queue_other;
+    boost::asio::streambuf data_queue_other;
+    
+    std::vector<SentHandler>* current_recv_handler;
+    boost::asio::streambuf* current_recv_queue;
 
     bool is_async_sending;
     AsyncWriter async_writer;
     ConnectionFunc is_connected;
 
     bool destroyed;
+
+    void swap_recv();
 
 public: 
     SendDataCache();
