@@ -7,6 +7,10 @@ fi
 
 clean_build=0
 
+if [ -n "$2" ] && [ "$2" == "-r" ] ; then
+    clean_build=1
+fi
+
 ANDROID_NDK_HOME=`realpath $1`
 
 trojan_path=`realpath .`
@@ -38,7 +42,7 @@ do
     cmake -DENABLE_ANDROID_LOG=ON -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=${ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake \
         -DANDROID_NDK=${ANDROID_NDK_HOME} -DCMAKE_BUILD_TYPE=Release -DANDROID_PLATFORM=${ANDROID_API} -DANDROID_ABI="${arch}" ..
 
-    make -j4
+    make -j$(nproc)
 
     \cp -f libtrojan.so ${output_path}/
 done
