@@ -1,13 +1,16 @@
 import os, socket, threading, select, sys, traceback
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse
-import fulltest_udp_proto
+import fulltest_udp_proto, fulltest_main
 
 serv_dir = ""
 
 def run_udp(port):    
     udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, fulltest_udp_proto.UDP_BUFF_SIZE * 50)
+    udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, \
+        fulltest_udp_proto.UDP_BUFF_SIZE * \
+        5 if fulltest_main.is_macos_system() else 50) # max 5MB for mac os
+
     udp_socket.bind(('127.0.0.1', port))
     
     udp_processor = fulltest_udp_proto.UDPProcessor(serv_dir, udp_socket)
