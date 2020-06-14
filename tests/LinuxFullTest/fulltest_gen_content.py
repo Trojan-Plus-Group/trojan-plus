@@ -39,8 +39,7 @@ def gen_files(parent_dir, files_count, file_size):
     os.mkdir(parent_dir)
 
     files_index=[]
-    for i in range(0, files_count) : 
-        
+    for _ in range(0, files_count) : 
         while True:
             name = (get_random_string(10) + '.txt')
             if not (name in files_index):
