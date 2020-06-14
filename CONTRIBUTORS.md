@@ -1,4 +1,4 @@
-# Contributors
+# Original Trojan Project Contributors
 
 - [a-wing](https://github.com/a-wing)
     - Add Debian build instructions in the documentation.

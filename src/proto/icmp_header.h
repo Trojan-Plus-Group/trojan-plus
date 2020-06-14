@@ -1,7 +1,9 @@
 /*
- * This file is part of the trojan project.
+ * This file is part of the Trojan Plus project.
  * Trojan is an unidentifiable mechanism that helps you bypass GFW.
- * Copyright (C) 2017-2020  The Trojan Authors.
+ * Trojan Plus is derived from original trojan project and writing 
+ * for more experimental features.
+ * Copyright (C) 2020 The Trojan Plus Group Authors.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
