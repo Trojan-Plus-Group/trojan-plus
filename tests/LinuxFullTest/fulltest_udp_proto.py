@@ -40,6 +40,9 @@ def bind_port(udp_socket, port):
             udp_socket.bind(("", try_port))
             return try_port
         except:
+            if port_increase == 0:
+                traceback.print_exc()
+
             port_increase = offset
             offset = offset + 1
 
