@@ -31,7 +31,6 @@ TEST_SERVER_PORT = 18080
 TEST_PROXY_PORT = 10620
 
 TEST_INIT_MAX_RSS_IN_KB = 10 * (1024)
-TEST_TESTING_MAX_RSS_IN_KB = 25 * (1024)
 
 TEST_WATING_FOR_RSS_COOLDOWN_TIME_IN_SEC = 11
 
@@ -46,6 +45,12 @@ def is_macos_system():
 
 def is_windows_system():
     return sys.platform == "win32"
+
+def get_cooldown_rss_limit():
+    if is_macos_system():
+        return 50 * (1024)
+    else:
+        return 25 * (1024)
 
 def start_trojan_plus_runing(config):
     print("start " + config + "...")
@@ -168,12 +173,12 @@ def main_stage(server_config, client_config, server_balance_config = None, is_fo
         print("server process RSS after cooldown: " + "{:,}KB".format(server_process_rss))
         print("client process RSS after cooldown: " + "{:,}KB".format(client_process_rss))
 
-        print("testing max RSS after cooldown: " + "{:,}KB".format(TEST_TESTING_MAX_RSS_IN_KB))
+        print("testing max RSS after cooldown: " + "{:,}KB".format(get_cooldown_rss_limit()))
 
         
-        if server_process_rss > TEST_TESTING_MAX_RSS_IN_KB \
-        or client_process_rss > TEST_TESTING_MAX_RSS_IN_KB \
-        or server_balance_process_init_rss > TEST_TESTING_MAX_RSS_IN_KB:
+        if server_process_rss > get_cooldown_rss_limit() \
+        or client_process_rss > get_cooldown_rss_limit() \
+        or server_balance_process_init_rss > get_cooldown_rss_limit():
             print("[ERROR] cooldown RSS error!")
             output_log = True
             return 1
