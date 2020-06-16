@@ -36,13 +36,12 @@
 
 class Service;
 class Pipeline : public std::enable_shared_from_this<Pipeline> {
-private:
-
+public:
     enum {
-        MAX_BUF_LENGTH = 8192,
-        STAT_SENT_DATA_SPEED_INTERVAL = 5
+        RECV_BUF_LENGTH = 8192 * 10
     };
 
+private:
     static uint32_t s_pipeline_id_counter;
 
     Service* service;

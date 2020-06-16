@@ -97,7 +97,7 @@ void PipelineSession::start(){
 void PipelineSession::in_async_read(){
     _guard_read_buf_begin(in_read_buf);
     auto self = shared_from_this();
-    live_socket.async_read_some(in_read_buf.prepare(MAX_BUF_LENGTH), [this, self](const boost::system::error_code error, size_t length) {
+    live_socket.async_read_some(in_read_buf.prepare(Pipeline::RECV_BUF_LENGTH), [this, self](const boost::system::error_code error, size_t length) {
         _guard_read_buf_end(in_read_buf);
         if (error) {
             output_debug_info_ec(error);

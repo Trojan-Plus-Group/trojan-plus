@@ -127,7 +127,7 @@ bool Pipeline::is_in_pipeline(Session& session){
 void Pipeline::out_async_recv(){
     _guard_read_buf_begin(out_read_buf);
     auto self = shared_from_this();
-    out_socket.async_read_some(out_read_buf.prepare(MAX_BUF_LENGTH), [this, self](const boost::system::error_code error, size_t length) {
+    out_socket.async_read_some(out_read_buf.prepare(RECV_BUF_LENGTH), [this, self](const boost::system::error_code error, size_t length) {
         _guard_read_buf_end(out_read_buf);
         if (error) {
             output_debug_info_ec(error);
