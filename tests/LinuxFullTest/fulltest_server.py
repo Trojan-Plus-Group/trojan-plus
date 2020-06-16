@@ -30,7 +30,7 @@ def run_udp(port):
     udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, \
         fulltest_udp_proto.UDP_BUFF_SIZE * \
-        5 if fulltest_main.is_macos_system() else 50) # max 5MB for mac os
+        (5 if fulltest_main.is_macos_system() else 50)) # max 5MB for mac os
 
     udp_socket.bind(('127.0.0.1', port))
     
