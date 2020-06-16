@@ -19,9 +19,10 @@
  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 '''
 
-import sys, time, threading, signal, os, psutil, traceback
+import sys, time, threading, signal, os, psutil, traceback, datetime, argparse
 from subprocess import Popen, PIPE
 import fulltest_gen_content, fulltest_server, fulltest_client
+from fulltest_utils import print_time_log, is_macos_system
 
 TEST_FILES_DIR = 'html'
 TEST_FILES_COUNT = 50
@@ -37,23 +38,14 @@ TEST_WATING_FOR_RSS_COOLDOWN_TIME_IN_SEC = 11
 # initial var for windows
 binary_path = "..\\..\\win32-build\\Release\\trojan.exe"
 
-def is_linux_system():
-    return sys.platform == "linux" or sys.platform == "linux2"
-
-def is_macos_system():
-    return sys.platform == "darwin"
-
-def is_windows_system():
-    return sys.platform == "win32"
-
 def get_cooldown_rss_limit():
     if is_macos_system():
         return 50 * (1024)
     else:
         return 25 * (1024)
 
-def start_trojan_plus_runing(config):
-    print("start " + config + "...")
+def start_trojan_plus_process(config):
+    print_time_log("start " + config + "...")
     output_log_file = open(config + ".output", "w+")
     process = Popen([binary_path, "-c", config], executable = binary_path, bufsize = 1024 * 1024, 
                     stdout = output_log_file, stderr = output_log_file,
@@ -62,7 +54,7 @@ def start_trojan_plus_runing(config):
     process.executable_name = sys.executable
     time.sleep(1)
     if process.returncode:
-        print("Cannot start trojan plus! ")
+        print_time_log("Cannot start trojan plus! ")
         output_log_file.close()
         return None
 
@@ -75,15 +67,15 @@ def close_process(process, output_log):
         process.output_log_file.flush()
 
         if process.returncode:
-            print(str(process.args) + " closed.")
+            print_time_log(str(process.args) + " closed.")
         else:
-            print(str(process.args) + " killed.")
+            print_time_log(str(process.args) + " killed.")
             process.kill()
 
         if output_log :
             process.output_log_file.seek(0,0)
-            print(process.output_log_file.read(), end = '')
-            print()
+            print_time_log(process.output_log_file.read(), end = '')
+            print_time_log()
             
         process.output_log_file.close()
         
@@ -96,7 +88,7 @@ def run_test_server():
     process.output_log_file = output_log_file
     time.sleep(1)
     if process.returncode:
-        print("Cannot test server!")
+        print_time_log("Cannot test server!")
         output_log_file.close()
         return None
 
@@ -113,13 +105,13 @@ def main_stage(server_config, client_config, server_balance_config = None, is_fo
 
     server_balance_process = None
     if server_balance_config:
-        server_balance_process = start_trojan_plus_runing("config/" + server_balance_config)
+        server_balance_process = start_trojan_plus_process("config/" + server_balance_config)
         if not server_balance_process:
             close_process(server_balance_process, True)
             return 0
 
-    server_process = start_trojan_plus_runing("config/" + server_config)
-    client_process = start_trojan_plus_runing("config/" + client_config)
+    server_process = start_trojan_plus_process("config/" + server_config)
+    client_process = start_trojan_plus_process("config/" + client_config)
 
     if not server_process or not client_process:
         close_process(server_process, True)
@@ -129,22 +121,22 @@ def main_stage(server_config, client_config, server_balance_config = None, is_fo
     
     output_log = False
     try:
-        print("done!")
+        print_time_log("done!")
 
         server_balance_process_init_rss = get_process_rss_in_KB(server_balance_process)
         server_process_init_rss = get_process_rss_in_KB(server_process)
         client_process_init_rss = get_process_rss_in_KB(client_process)        
 
-        print("server balance process init RSS: " + "{:,}KB".format(server_balance_process_init_rss))
-        print("server process init RSS: " + "{:,}KB".format(server_process_init_rss))
-        print("client process init RSS: " + "{:,}KB".format(client_process_init_rss))
+        print_time_log("server balance process init RSS: " + "{:,}KB".format(server_balance_process_init_rss))
+        print_time_log("server process init RSS: " + "{:,}KB".format(server_process_init_rss))
+        print_time_log("client process init RSS: " + "{:,}KB".format(client_process_init_rss))
 
-        print("testing max init RSS: " + "{:,}KB".format(TEST_INIT_MAX_RSS_IN_KB))
+        print_time_log("testing max init RSS: " + "{:,}KB".format(TEST_INIT_MAX_RSS_IN_KB))
 
         if server_process_init_rss > TEST_INIT_MAX_RSS_IN_KB \
         or client_process_init_rss > TEST_INIT_MAX_RSS_IN_KB \
         or server_balance_process_init_rss > TEST_INIT_MAX_RSS_IN_KB:
-            print("init RSS error!!")
+            print_time_log("init RSS error!!")
             output_log = True
             return 1
 
@@ -157,11 +149,11 @@ def main_stage(server_config, client_config, server_balance_config = None, is_fo
                 output_log = True
                 return 1
 
-        print("server balance process RSS after testing: " + "{:,}KB".format(get_process_rss_in_KB(server_balance_process)))
-        print("server process RSS after testing: " + "{:,}KB".format(get_process_rss_in_KB(server_process)))
-        print("client process RSS after testing: " + "{:,}KB".format(get_process_rss_in_KB(client_process)))
+        print_time_log("server balance process RSS after testing: " + "{:,}KB".format(get_process_rss_in_KB(server_balance_process)))
+        print_time_log("server process RSS after testing: " + "{:,}KB".format(get_process_rss_in_KB(server_process)))
+        print_time_log("client process RSS after testing: " + "{:,}KB".format(get_process_rss_in_KB(client_process)))
 
-        print("waiting "+str(TEST_WATING_FOR_RSS_COOLDOWN_TIME_IN_SEC)+" sec (config's udp_timeout+1) for RSS cooldown...")
+        print_time_log("waiting "+str(TEST_WATING_FOR_RSS_COOLDOWN_TIME_IN_SEC)+" sec (config's udp_timeout+1) for RSS cooldown...")
 
         time.sleep(TEST_WATING_FOR_RSS_COOLDOWN_TIME_IN_SEC)
 
@@ -169,17 +161,17 @@ def main_stage(server_config, client_config, server_balance_config = None, is_fo
         server_process_rss = get_process_rss_in_KB(server_process)
         client_process_rss = get_process_rss_in_KB(client_process)
 
-        print("server balance process RSS after cooldown: " + "{:,}KB".format(server_balance_process_rss))
-        print("server process RSS after cooldown: " + "{:,}KB".format(server_process_rss))
-        print("client process RSS after cooldown: " + "{:,}KB".format(client_process_rss))
+        print_time_log("server balance process RSS after cooldown: " + "{:,}KB".format(server_balance_process_rss))
+        print_time_log("server process RSS after cooldown: " + "{:,}KB".format(server_process_rss))
+        print_time_log("client process RSS after cooldown: " + "{:,}KB".format(client_process_rss))
 
-        print("testing max RSS after cooldown: " + "{:,}KB".format(get_cooldown_rss_limit()))
+        print_time_log("testing max RSS after cooldown: " + "{:,}KB".format(get_cooldown_rss_limit()))
 
         
         if server_process_rss > get_cooldown_rss_limit() \
         or client_process_rss > get_cooldown_rss_limit() \
         or server_balance_process_init_rss > get_cooldown_rss_limit():
-            print("[ERROR] cooldown RSS error!")
+            print_time_log("[ERROR] cooldown RSS error!")
             output_log = True
             return 1
            
@@ -191,7 +183,7 @@ def main_stage(server_config, client_config, server_balance_config = None, is_fo
     finally: 
 
         if output_log:
-            print("Has got error, wait for udp timeout log to flush...")
+            print_time_log("Has got error, wait for udp timeout log to flush...")
             time.sleep(TEST_WATING_FOR_RSS_COOLDOWN_TIME_IN_SEC)
 
         close_process(client_process, output_log)
@@ -209,51 +201,55 @@ def prepare_forward_config(client_config):
             new_f.write(content)
             return filename
 
-def main():
-    if sys.argv.count('-g') != 0:
-        print("generating testing files....")
-        fulltest_gen_content.gen_files(TEST_FILES_DIR, TEST_FILES_COUNT, TEST_FILES_SIZE)
+def main(args):
+    if args.genfile:
+        size = args.genfileSize if args.genfileSize else TEST_FILES_SIZE
+        print_time_log('generating '+ str(args.genfile) +' test files each '+ str(size) + ' bytes...')
+        fulltest_gen_content.gen_files(TEST_FILES_DIR, args.genfile, size)
 
     global binary_path
-    binary_path = os.path.realpath(sys.argv[1])
-    print("binary_path == " + binary_path)
+    binary_path = os.path.realpath(args.binary)
+    print_time_log("binary_path == " + binary_path)
 
-    print("start testing server...")
+    print_time_log("start testing server...")
     test_server_process = run_test_server()
     if not test_server_process:
         return 1
     output_log = False
-    print("done!")
+    print_time_log("done!")
     try:
-        print("start trojan plus in client run_type without pipeline...")
+        print_time_log("start trojan plus in client run_type without pipeline...")
         if main_stage("server_config.json", "client_config.json") != 0:
             output_log = True
             return 1
 
-        print("start trojan plus in client run_type in pipeline...")
+        print_time_log("start trojan plus in client run_type in pipeline...")
         if main_stage("server_config_pipeline.json", "client_config_pipeline.json", "server_config_pipeline_balance.json") != 0:
             output_log = True
             return 1
 
-        print("start trojan plus in forward run_type without pipeline...")
+        print_time_log("start trojan plus in forward run_type without pipeline...")
         if main_stage("server_config.json", prepare_forward_config("client_config.json"), is_foward = True) != 0:
             output_log = True
             return 1
 
-        print("start trojan plus in forward run_type in pipeline...")
+        print_time_log("start trojan plus in forward run_type in pipeline...")
         if main_stage("server_config_pipeline.json", prepare_forward_config("client_config_pipeline.json"), "server_config_pipeline_balance.json", is_foward = True) != 0:
             output_log = True
             return 1     
     finally:
         close_process(test_server_process, output_log)
 
-    print("!!!!! ALL SUCC, GREAT JOB !!!!")
+    print_time_log("!!!!! ALL SUCC, GREAT JOB !!!!")
     return 0
     
 if __name__ == "__main__":
-    print(__file__ + " args : " + str(sys.argv))
-    if len(sys.argv) < 2:
-        print("please set trojan plus binary path!")
-        exit(1)
-    else:
-        exit(main())
+    print_time_log(__file__ + " args : " + str(sys.argv))
+    parser = argparse.ArgumentParser()
+    parser.add_argument("binary", help='path of trojan binary')
+    parser.add_argument("-g", "--genfile", help='whether generate testing files', \
+        type=int, nargs='?', const=TEST_FILES_COUNT)
+    parser.add_argument("-gs", "--genfileSize", help='generating files\' size', \
+        type=int, nargs='?', const=TEST_FILES_SIZE)
+    exit(main(parser.parse_args()))
+        

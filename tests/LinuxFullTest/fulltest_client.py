@@ -23,6 +23,7 @@ import urllib.request, socket, socks, traceback, os, time
 import threading
 from concurrent.futures import ThreadPoolExecutor , as_completed
 import fulltest_udp_proto, fulltest_main
+from fulltest_utils import print_time_log
 
 HOST_URL="127.0.0.1"
 PARALLEL_REQUEST_COUNT = 5
@@ -39,7 +40,7 @@ client_udp_bind_port_start = fulltest_udp_proto.client_udp_bind_port_start
 
 def print_log(log):
     if enable_log:
-        print(log)
+        print_time_log(log)
 
 def get_url(url):
     f = urllib.request.urlopen(url, timeout = OPEN_URL_TIMOUT)
@@ -119,7 +120,7 @@ def request_get_file(file, tcp_or_udp, index, udp_port):
                     str(len(compare_txt)) + " read from network length: " + (str(len(txt)) if type(txt) is bytes else str(txt)))
                 
                 if type(txt) is bytes and len(txt) == len(compare_txt):
-                    print(txt)
+                    print_time_log(txt)
 
                 return False
                 
@@ -182,7 +183,7 @@ def start_query(socks_port, port, folder, log = True):
     if socks_port != 0 :
         socks.set_default_proxy(socks.SOCKS5, HOST_URL, socks_port)
         socket.socket = socks.socksocket
-        print("pysocks version: " + str(socks.__version__))
+        print_time_log("pysocks version: " + str(socks.__version__))
 
     try:
         request_url_prefix = 'http://' + HOST_URL + ':' + str(port) + '/'

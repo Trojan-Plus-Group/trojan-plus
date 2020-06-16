@@ -21,6 +21,7 @@
 
 import urllib, os, threading, traceback, socket, select, time
 from concurrent.futures import ThreadPoolExecutor , as_completed
+from fulltest_utils import print_time_log
 
 SEND_PACKET_LENGTH = 8192
 UDP_BUFF_SIZE = 1024 * 1024
@@ -82,7 +83,7 @@ def send_get_func(serv_dir, addr, udp_data, port):
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as us :
                 port = bind_port(us, port)
                 us.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, UDP_BUFF_SIZE)
-                print("bind port " + str(port) + " to send udp file to " + str(addr))
+                print_time_log("bind port " + str(port) + " to send udp file to " + str(addr))
                 send_udp_file_data(us, addr, content)
     except:
         traceback.print_exc()
@@ -141,7 +142,7 @@ class UDPProcessor:
             self.executor.submit(send_get_func, self.serv_dir, addr, udp_data, server_udp_send_port_start)
             server_udp_send_port_start = server_udp_send_port_start + 1
         else:
-            #print('udp_data.recv_length  == ' + str(udp_data.recv_length) + ' udp_data.file_length() == '+ str(udp_data.file_length()))
+            #print_time_log('udp_data.recv_length  == ' + str(udp_data.recv_length) + ' udp_data.file_length() == '+ str(udp_data.file_length()))
             if udp_data.recv_length == udp_data.file_length():
                 self.executor.submit(self.post_data, addr, self.recv_map[addr], server_udp_send_port_start)
                 self.recv_map.pop(addr)
