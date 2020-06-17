@@ -84,6 +84,25 @@ stages:
       env:
         PIPELINE_WORKSPACE: $(Pipeline.Workspace)
 
+  - job: macOS
+    pool:
+      vmImage: macOS-latest
+    steps:
+    - download: current
+      artifact: macOSBinary
+    - script: |
+        set -euo pipefail
+        BINARY="$PIPELINE_WORKSPACE/macOSBinary/trojan"
+        chmod +x "$BINARY"
+        cd tests/LinuxFullTest/
+        which python
+        which python3
+        brew install python@3.8
+        /usr/local/opt/python@3.8/bin/python3.8 -m pip install PySocks psutil
+        /usr/local/opt/python@3.8/bin/python3.8 fulltest_main.py $BINARY -g
+      env:
+        PIPELINE_WORKSPACE: $(Pipeline.Workspace)
+
 - stage: Package
   jobs:
 
