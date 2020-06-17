@@ -114,7 +114,8 @@ def run(dir, port):
     t.daemon = True
     t.start()
 
-    httpd = HTTPServer(('', port), ServerHandler)
+    httpd = HTTPServer(('127.0.0.1', port), ServerHandler)
+    print_time_log("start fulltest server port: " + str(port))
     httpd.serve_forever()
 
 if __name__ == '__main__':

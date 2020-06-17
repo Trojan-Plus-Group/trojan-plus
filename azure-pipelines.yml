@@ -95,11 +95,12 @@ stages:
         BINARY="$PIPELINE_WORKSPACE/macOSBinary/trojan"
         chmod +x "$BINARY"
         cd tests/LinuxFullTest/
-        which python
-        which python3
-        brew install python@3.8
-        /usr/local/opt/python@3.8/bin/python3.8 -m pip install PySocks psutil
-        /usr/local/opt/python@3.8/bin/python3.8 fulltest_main.py $BINARY -g
+        PYTHON=/usr/local/opt/python@3.8/bin/python3.8
+        if [ ! -f $PYTHON ]; then
+          brew install python@3.8
+        fi
+        $PYTHON -m pip install PySocks psutil
+        $PYTHON fulltest_main.py $BINARY -g
       env:
         PIPELINE_WORKSPACE: $(Pipeline.Workspace)
 

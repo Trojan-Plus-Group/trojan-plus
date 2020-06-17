@@ -183,7 +183,7 @@ def start_query(socks_port, port, folder, log = True):
     if socks_port != 0 :
         socks.set_default_proxy(socks.SOCKS5, HOST_URL, socks_port)
         socket.socket = socks.socksocket
-        print_time_log("pysocks version: " + str(socks.__version__))
+        print_time_log("using pysocks version: " + str(socks.__version__))
 
     try:
         request_url_prefix = 'http://' + HOST_URL + ':' + str(port) + '/'
