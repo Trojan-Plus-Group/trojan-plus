@@ -2,7 +2,7 @@
 
 ## Introduction
 
-It's compatible with [original trojan](https://github.com/trojan-gfw/trojan) with following experimental features:
+It's compatible with [original trojan](https://github.com/trojan-gfw/trojan) with following **experimental features**:
 
 * [NAT for udp]()
 * [Pipeline Mode to decrease latency](https://github.com/yuchting/trojan/wiki/Why-we-need-Pipeline-mode)
@@ -11,7 +11,9 @@ It's compatible with [original trojan](https://github.com/trojan-gfw/trojan) wit
 
 Trojan plus can be used as client or server to connect original trojan server or client, so if you just upgrade trojan plus binary with old config file or single-end, it can work all the same, we has optimized original trojan project a lot, especially in NAT mode.
 
-Trojan plus has a different believes with original trojan, r**unning effective with more features first** instead of project simplification (origin trojan don't want to add unnecessary features, they want to [keep the project simple](https://github.com/trojan-gfw/trojan/blob/master/CONTRIBUTING.md#pull-requests)). Under this trojan plus believes, for Android lib, we even write a low level TUN tunnel interface to get better effective a little bit, rather than integrate/use other 3rd system directly such as tun2socks or clash (such as [shadowsocks-android](https://github.com/shadowsocks/shadowsocks-android) and [Igniter](https://github.com/trojan-gfw/igniter)).
+Trojan plus' experimental features need to be used/enabled **both server-end and client-end**, so if you want to use them, please update both ends into trojan plus. In the other words, if you don't use/enable experimental features, you can use trojan plus in single end to adapt the original trojan.
+
+Trojan plus has a different believes with original trojan, **running effective with more features first** instead of project simplification (origin trojan don't want to add unnecessary features, they want to [keep the project simple](https://github.com/trojan-gfw/trojan/blob/master/CONTRIBUTING.md#pull-requests)). Under this trojan plus believes, for Android lib, we even write a low level TUN tunnel interface to get better effective a little bit, rather than integrate/use other 3rd system directly such as tun2socks or clash (such as [shadowsocks-android](https://github.com/shadowsocks/shadowsocks-android) and [Igniter](https://github.com/trojan-gfw/igniter)).
 
 Trojan plus project's best running environment is Linux system in NAT mode (might be known as transparent proxy), it would be better if you has a software-router instead of OpenWrt in a weak hardware. That's to say trojan plus is prepared for company's gateway for handreds of devices proxying.  
 
