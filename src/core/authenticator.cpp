@@ -29,15 +29,15 @@ using namespace std;
 
 Authenticator::Authenticator(const Config &config) {
     mysql_init(&con);
-    Log::log_with_date_time("connecting to MySQL server " + config.mysql.server_addr + ':' + to_string(config.mysql.server_port), Log::INFO);
-    if (!config.mysql.cafile.empty()) {
-        mysql_ssl_set(&con, nullptr, nullptr, config.mysql.cafile.c_str(), nullptr, nullptr);
+    Log::log_with_date_time("connecting to MySQL server " + config.get_mysql().server_addr + ':' + to_string(config.get_mysql().server_port), Log::INFO);
+    if (!config.get_mysql().cafile.empty()) {
+        mysql_ssl_set(&con, nullptr, nullptr, config.get_mysql().cafile.c_str(), nullptr, nullptr);
     }
-    if (mysql_real_connect(&con, config.mysql.server_addr.c_str(),
-                                 config.mysql.username.c_str(),
-                                 config.mysql.password.c_str(),
-                                 config.mysql.database.c_str(),
-                                 config.mysql.server_port, nullptr, 0) == nullptr) {
+    if (mysql_real_connect(&con, config.get_mysql().server_addr.c_str(),
+                                 config.get_mysql().username.c_str(),
+                                 config.get_mysql().password.c_str(),
+                                 config.get_mysql().database.c_str(),
+                                 config.get_mysql().server_port, nullptr, 0) == nullptr) {
         throw runtime_error(mysql_error(&con));
     }
     bool reconnect = true;
