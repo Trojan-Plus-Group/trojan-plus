@@ -98,9 +98,6 @@ add_definitions(-DBADVPN_LITTLE_ENDIAN=1 -DBADVPN_THREAD_SAFE=1)
 include_directories(
     src
     src/tun/lwip_custom
-
-    badvpn/lwip/src/include/ipv4
-    badvpn/lwip/src/include/ipv6
     badvpn/lwip/src/include
     badvpn
 )
@@ -177,6 +174,13 @@ endif()
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 target_link_libraries(trojan ${CMAKE_THREAD_LIBS_INIT})
+
+# https://github.com/microsoft/GSL supported
+include_directories(${PROJECT_SOURCE_DIR}/GSL/include)
+
+# for cland-tidy compiling database by default the file is small, generation is cheap
+# as developer, I am always add this option...
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 if (ANDROID)
     set(ANDROID_MY_LIBS ${PROJECT_SOURCE_DIR}/trojan-plus-android-libs) 
