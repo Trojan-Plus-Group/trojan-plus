@@ -59,11 +59,11 @@ Pipeline::Pipeline(Service* _service, const Config& config, boost::asio::ssl::co
 
 void Pipeline::start(){
     auto self = shared_from_this();
-    connect_remote_server_ssl(this, config.remote_addr, to_string(config.remote_port), resolver, out_socket, tcp::endpoint(), [this, self](){
+    connect_remote_server_ssl(this, config.get_remote_addr(), to_string(config.get_remote_port()), resolver, out_socket, tcp::endpoint(), [this, self](){
         connected = true;
         out_socket_endpoint = out_socket.next_layer().remote_endpoint();
         
-        string data(config.password.cbegin()->first);
+        string data(config.get_password().cbegin()->first);
         data += "\r\n";
         sending_data_cache.insert_data(move(data));
         

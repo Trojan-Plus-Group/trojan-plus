@@ -30,6 +30,7 @@
 #include "log.h"
 
 class Config {
+   
 public:
     enum RunType {
         SERVER,
@@ -39,21 +40,9 @@ public:
 
         CLIENT_TUN,
         SERVERT_TUN
-    } run_type;
-    std::string local_addr;
-    uint16_t local_port;
-    std::string remote_addr;
-    uint16_t remote_port;
-    std::string target_addr;
-    uint16_t target_port;
-    std::map<std::string, std::string> password;
-    int udp_timeout;
-    int udp_socket_buf;
-    int udp_forward_socket_buf;
-    int udp_recv_buf;
-    Log::Level log_level;
-    class SSLConfig {
-    public:
+    };
+
+    using SSLConfig = struct {
         bool verify;
         bool verify_hostname;
         std::string cert;
@@ -71,9 +60,8 @@ public:
         std::string plain_http_response;
         std::string curves;
         std::string dhparam;
-    } ssl;
-    class TCPConfig {
-    public:
+    };
+    using TCPConfig = struct {
         bool prefer_ipv4;
         bool no_delay;
         bool keep_alive;
@@ -81,9 +69,9 @@ public:
         bool fast_open;
         int fast_open_qlen;
         int connect_time_out;
-    } tcp;
-    class MySQLConfig {
-    public:
+    };
+
+    using MySQLConfig = struct  {
         bool enabled;
         std::string server_addr;
         uint16_t server_port;
@@ -91,38 +79,79 @@ public:
         std::string username;
         std::string password;
         std::string cafile;
-    } mysql;
+    };
 
-    struct Experimental{
+    using Experimental = struct{
         uint32_t pipeline_num;
         uint32_t pipeline_ack_window;
         std::vector<std::string> pipeline_loadbalance_configs;
         std::vector<std::shared_ptr<Config>> _pipeline_loadbalance_configs;
         std::vector<std::shared_ptr<boost::asio::ssl::context>> _pipeline_loadbalance_context;
         bool pipeline_proxy_icmp;
-    } experimental;
+    };
 
-    struct TUN{
+    using TUN = struct{
         std::string tun_name;
         std::string net_ip;
         std::string net_mask;
         uint16_t mtu;
         int tun_fd;
-    } tun;
+    };
 
-    void load(const std::string &filename);
+private:
+
+    enum RunType run_type;
+    std::string local_addr;
+    uint16_t local_port;
+    std::string remote_addr;
+    uint16_t remote_port;
+    std::string target_addr;
+    uint16_t target_port;
+    std::map<std::string, std::string> password;
+    int udp_timeout;
+    int udp_socket_buf;
+    int udp_forward_socket_buf;
+    int udp_recv_buf;
+    Log::Level log_level;
+    SSLConfig ssl;
+    TCPConfig tcp;
+    MySQLConfig mysql;
+    Experimental experimental;
+    TUN tun;
+
+    int compare_hash = 0;
+
+    void populate(const boost::property_tree::ptree &tree);
     void populate(const std::string &JSON);
-    bool sip003();
-    void prepare_ssl_context(boost::asio::ssl::context& ssl_context, std::string& plain_http_response);
+    
     static std::string SHA224(const std::string &message);
 
+public:
+    [[nodiscard]] bool sip003();
+    void load(const std::string &filename);
+    void prepare_ssl_context(boost::asio::ssl::context& ssl_context, std::string& plain_http_response);
     void prepare_ssl_reuse(boost::asio::ssl::stream<boost::asio::ip::tcp::socket>& socket) const;
+    [[nodiscard]] bool operator==(const Config& other) const{ return compare_hash == other.compare_hash; }
+    [[nodiscard]] bool try_prepare_pipeline_proxy_icmp(bool is_ipv4);
 
-    bool operator==(const Config& other) const{ return compare_hash == other.compare_hash; }
-    
-private:
-    void populate(const boost::property_tree::ptree &tree);
-    int compare_hash = 0;
+    [[nodiscard]] enum RunType get_run_type() const { return run_type; }
+    [[nodiscard]] const std::string& get_local_addr() const {return local_addr; }
+    [[nodiscard]] uint16_t get_local_port()const {return local_port;}
+    [[nodiscard]] const std::string& get_remote_addr()const {return remote_addr; }
+    [[nodiscard]] uint16_t get_remote_port() const {return remote_port; }
+    [[nodiscard]] const std::string& get_target_addr() const {return target_addr; }
+    [[nodiscard]] uint16_t get_target_port() const {return target_port;}
+    [[nodiscard]] const std::map<std::string, std::string>& get_password() const { return password; }
+    [[nodiscard]] int get_udp_timeout() const {return udp_timeout;}
+    [[nodiscard]] int get_udp_socket_buf() const {return udp_socket_buf;}
+    [[nodiscard]] int get_udp_forward_socket_buf() const {return udp_forward_socket_buf; }
+    [[nodiscard]] int get_udp_recv_buf() const {return udp_recv_buf;}
+    [[nodiscard]] Log::Level get_log_level() const {return log_level;}
+    [[nodiscard]] const SSLConfig& get_ssl() const {return ssl;}
+    [[nodiscard]] const TCPConfig& get_tcp() const {return tcp;}
+    [[nodiscard]] const MySQLConfig& get_mysql() const{return mysql;}
+    [[nodiscard]] const Experimental& get_experimental() const { return experimental; }
+    [[nodiscard]] const TUN& get_tun()const { return tun; }
 };
 
 #endif // _CONFIG_H_

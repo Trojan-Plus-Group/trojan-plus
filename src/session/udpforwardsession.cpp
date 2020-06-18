@@ -67,10 +67,10 @@ void UDPForwardSession::start_udp(const std::string_view& data) {
 
     auto self = shared_from_this();
     auto cb = [this, self](){
-        if(config.run_type == Config::NAT){
+        if(config.get_run_type() == Config::NAT){
             udp_target_socket.open(out_udp_endpoint.protocol());
             bool is_ipv4 = out_udp_endpoint.protocol().family() == boost::asio::ip::tcp::v6().family();
-            if (prepare_nat_udp_target_bind((int)udp_target_socket.native_handle(), is_ipv4, out_udp_endpoint, config.udp_socket_buf)) {
+            if (prepare_nat_udp_target_bind((int)udp_target_socket.native_handle(), is_ipv4, out_udp_endpoint, config.get_udp_socket_buf())) {
                 udp_target_socket.bind(out_udp_endpoint);
             } else {
                 destroy();
@@ -86,16 +86,19 @@ void UDPForwardSession::start_udp(const std::string_view& data) {
     };
 
     out_write_buf.consume(out_write_buf.size());
-    streambuf_append(out_write_buf, TrojanRequest::generate(config.password.cbegin()->first, out_udp_endpoint.address().to_string(), out_udp_endpoint.port(), false));
+    streambuf_append(out_write_buf, TrojanRequest::generate(config.get_password().cbegin()->first, 
+        out_udp_endpoint.address().to_string(), out_udp_endpoint.port(), false));
     process(udp_recv_endpoint, data);
 
-    _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(get_session_id()) + " forwarding UDP packets to " + out_udp_endpoint.address().to_string() + ':' + to_string(out_udp_endpoint.port()) + " via " + config.remote_addr + ':' + to_string(config.remote_port), Log::INFO);
+    _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(get_session_id()) + 
+        " forwarding UDP packets to " + out_udp_endpoint.address().to_string() + ':' + to_string(out_udp_endpoint.port()) + 
+        " via " + config.get_remote_addr() + ':' + to_string(config.get_remote_port()), Log::INFO);
 
     if(pipeline_com.is_using_pipeline()){
         cb();
     }else{
         config.prepare_ssl_reuse(out_socket);
-        connect_remote_server_ssl(this, config.remote_addr, to_string(config.remote_port), resolver, out_socket, udp_recv_endpoint, cb);
+        connect_remote_server_ssl(this, config.get_remote_addr(), to_string(config.get_remote_port()), resolver, out_socket, udp_recv_endpoint, cb);
     }    
 }
 
@@ -190,7 +193,7 @@ void UDPForwardSession::out_recv(const string_view &data) {
             }
             _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(get_session_id()) + " received a UDP packet of length " + to_string(packet.length) + " bytes from " + packet.address.address + ':' + to_string(packet.address.port));
             
-            if(config.run_type == Config::NAT){
+            if(config.get_run_type() == Config::NAT){
                 boost::system::error_code ec;
                 udp_target_socket.send_to(boost::asio::buffer(packet.payload.data(), packet.payload.length()), udp_recv_endpoint, 0 , ec);
                 if (ec == boost::asio::error::no_permission) {

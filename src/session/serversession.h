@@ -46,7 +46,7 @@ private:
     boost::asio::ip::udp::resolver udp_resolver;
     boost::asio::ip::udp::endpoint udp_associate_endpoint;
     
-    Authenticator *auth;
+    std::shared_ptr<Authenticator> auth;
     std::string auth_password;
     const std::string &plain_http_response;
     ReadDataCache pipeline_data_cache;
@@ -67,7 +67,9 @@ private:
     std::weak_ptr<Session> pipeline_session;
     bool has_queried_out;
 public:
-    ServerSession(Service* _service, const Config& config, boost::asio::ssl::context &ssl_context, Authenticator *auth, const std::string &plain_http_response);
+    ServerSession(Service* _service, const Config& config, boost::asio::ssl::context &ssl_context, 
+        std::shared_ptr<Authenticator> auth, const std::string &plain_http_response);
+
     boost::asio::ip::tcp::socket &accept_socket() override;
     void start() override;
     void destroy(bool pipeline_call = false) override;

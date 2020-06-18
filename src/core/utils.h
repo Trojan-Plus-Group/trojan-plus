@@ -240,25 +240,25 @@ void connect_out_socket(ThisT this_ptr, std::string addr, std::string port, boos
             return;
         }
         android_protect_socket((int)out_socket.native_handle());
-        if (this_ptr->config.tcp.no_delay) {
+        if (this_ptr->config.get_tcp().no_delay) {
             out_socket.set_option(boost::asio::ip::tcp::no_delay(true));
         }
-        if (this_ptr->config.tcp.keep_alive) {
+        if (this_ptr->config.get_tcp().keep_alive) {
             out_socket.set_option(boost::asio::socket_base::keep_alive(true));
         }
 #ifdef TCP_FASTOPEN_CONNECT
-        if (this_ptr->config.tcp.fast_open) {
+        if (this_ptr->config.get_tcp().fast_open) {
             using fastopen_connect = boost::asio::detail::socket_option::boolean<IPPROTO_TCP, TCP_FASTOPEN_CONNECT>;
             boost::system::error_code ec;
             out_socket.set_option(fastopen_connect(true), ec);
         }
 #endif  // TCP_FASTOPEN_CONNECT
         auto timeout_timer = std::shared_ptr<boost::asio::steady_timer>(nullptr);
-        if (this_ptr->config.tcp.connect_time_out > 0) {
+        if (this_ptr->config.get_tcp().connect_time_out > 0) {
             // out_socket.async_connect will be stuck forever when the host is not reachable
             // we must set a timeout timer
             timeout_timer = std::make_shared<boost::asio::steady_timer>(this_ptr->get_service()->get_io_context());
-            timeout_timer->expires_after(std::chrono::seconds(this_ptr->config.tcp.connect_time_out));
+            timeout_timer->expires_after(std::chrono::seconds(this_ptr->config.get_tcp().connect_time_out));
             timeout_timer->async_wait([=](const boost::system::error_code error) {
                 if (!error) {
                     _log_with_endpoint(in_endpoint, "cannot establish connection to remote server " + addr + ':' + port + " reason: timeout", Log::ERROR);
@@ -295,8 +295,8 @@ void connect_remote_server_ssl(ThisT this_ptr, std::string addr, std::string por
                 return;
             }
             _log_with_endpoint(in_endpoint, "tunnel established");
-            if (this_ptr->config.ssl.reuse_session) {
-                auto ssl = out_socket.native_handle();
+            if (this_ptr->config.get_ssl().reuse_session) {
+                auto* ssl = out_socket.native_handle();
                 if (!SSL_session_reused(ssl)) {
                     _log_with_endpoint(in_endpoint, "SSL session not reused");
                 } else {

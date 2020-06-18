@@ -46,7 +46,7 @@ class PipelineSession : public SocketSession {
     } status;
 
 
-    Authenticator *auth;
+    std::shared_ptr<Authenticator> auth;
     std::string auth_password;
     const std::string &plain_http_response;
     
@@ -66,7 +66,8 @@ class PipelineSession : public SocketSession {
     void in_send(PipelineRequest::Command cmd, ServerSession& session, const std::string_view& session_data, SentHandler&& sent_handler);
     bool find_and_process_session(PipelineComponent::SessionIdType session_id, std::function<void(SessionsList::iterator&)> processor);
 public:
-    PipelineSession(Service* _service, const Config& config, boost::asio::ssl::context &ssl_context, Authenticator *auth, const std::string &plain_http_response);
+    PipelineSession(Service* _service, const Config& config, boost::asio::ssl::context &ssl_context, 
+        std::shared_ptr<Authenticator> auth, const std::string &plain_http_response);
     void destroy(bool pipeline_call = false);
 
     boost::asio::ip::tcp::socket& accept_socket();

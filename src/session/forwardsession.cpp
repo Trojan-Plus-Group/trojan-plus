@@ -28,5 +28,5 @@ ForwardSession::ForwardSession(Service* _service, const Config& config, context 
     NATSession(_service, config, ssl_context){}
 
 pair<string, uint16_t> ForwardSession::get_target_endpoint() {
-    return make_pair(config.target_addr, config.target_port);
+    return make_pair(config.get_target_addr(), config.get_target_port());
 }

@@ -39,10 +39,31 @@
 #include "ssl/sslsession.h"
 #include "core/utils.h"
 #include "session/session.h"
+#include "core/icmpd.h"
 
 using namespace std;
 using namespace boost::property_tree;
 using namespace boost::asio::ssl;
+
+const static int default_udp_timeout = 60;
+const static int default_udp_forward_socket_buf = 65536 * 20;
+const static int default_udp_socket_buf = -1; // -1 means don't setsocketopt
+const static int default_udp_recv_buf = 8192;
+
+const static int default_log_level = int(Log::INFO);
+
+const static long default_ssl_session_timeout = 600;
+
+const static int default_tcp_fast_open_qlen = 20;
+const static int default_tcp_connect_time_out = 10;
+
+const static uint16_t default_mysql_server_port = 3306;
+
+const static uint32_t default_experimental_pipeline_num = 0;
+const static uint32_t default_experimental_pipeline_ack_window = 200;
+
+const static uint16_t default_tun_mtu = 1500;
+const static int default_tun_fd = -1;
 
 void Config::load(const string &filename) {
     ptree tree;
@@ -83,16 +104,16 @@ void Config::populate(const ptree &tree) {
     target_port = tree.get("target_port", uint16_t());
     map<string, string>().swap(password);
     if (tree.get_child_optional("password")) {
-        for (auto& item: tree.get_child("password")) {
-            string p = item.second.get_value<string>();
+        for (const auto& item: tree.get_child("password")) {
+            const auto& p = item.second.get_value<string>();
             password[SHA224(p)] = p;
         }
     }
-    udp_timeout = tree.get("udp_timeout", 60);
-    udp_socket_buf = tree.get("udp_socket_buf", -1);
-    udp_forward_socket_buf = tree.get("udp_forward_socket_buf", 65536 * 20);
-    udp_recv_buf = tree.get("udp_socket_buf", int(Session::MAX_BUF_LENGTH));
-    log_level = static_cast<Log::Level>(tree.get("log_level", int(1)));
+    udp_timeout = tree.get("udp_timeout", default_udp_timeout);
+    udp_socket_buf = tree.get("udp_socket_buf", default_udp_socket_buf);
+    udp_forward_socket_buf = tree.get("udp_forward_socket_buf", default_udp_forward_socket_buf);
+    udp_recv_buf = tree.get("udp_recv_buf", default_udp_recv_buf);
+    log_level = static_cast<Log::Level>(tree.get("log_level", default_log_level));
     ssl.verify = tree.get("ssl.verify", true);
     ssl.verify_hostname = tree.get("ssl.verify_hostname", true);
     ssl.cert = tree.get("ssl.cert", string());
@@ -104,21 +125,21 @@ void Config::populate(const ptree &tree) {
     ssl.sni = tree.get("ssl.sni", string());
     ssl.alpn = "";
     if (tree.get_child_optional("ssl.alpn")) {
-        for (auto& item: tree.get_child("ssl.alpn")) {
-            string proto = item.second.get_value<string>();
+        for (const auto& item: tree.get_child("ssl.alpn")) {
+            const auto& proto = item.second.get_value<string>();
             ssl.alpn += (char)((unsigned char)(proto.length()));
             ssl.alpn += proto;
         }
     }
     map<string, uint16_t>().swap(ssl.alpn_port_override);
     if (tree.get_child_optional("ssl.alpn_port_override")) {
-        for (auto& item: tree.get_child("ssl.alpn_port_override")) {
+        for (const auto& item: tree.get_child("ssl.alpn_port_override")) {
             ssl.alpn_port_override[item.first] = item.second.get_value<uint16_t>();
         }
     }
     ssl.reuse_session = tree.get("ssl.reuse_session", true);
     ssl.session_ticket = tree.get("ssl.session_ticket", false);
-    ssl.session_timeout = tree.get("ssl.session_timeout", long(600));
+    ssl.session_timeout = tree.get("ssl.session_timeout", default_ssl_session_timeout);
     ssl.plain_http_response = tree.get("ssl.plain_http_response", string());
     ssl.curves = tree.get("ssl.curves", string());
     ssl.dhparam = tree.get("ssl.dhparam", string());
@@ -127,17 +148,17 @@ void Config::populate(const ptree &tree) {
     tcp.keep_alive = tree.get("tcp.keep_alive", true);
     tcp.reuse_port = tree.get("tcp.reuse_port", false);
     tcp.fast_open = tree.get("tcp.fast_open", false);
-    tcp.fast_open_qlen = tree.get("tcp.fast_open_qlen", 20);
-    tcp.connect_time_out = tree.get("tcp.connect_time_out", 10);
+    tcp.fast_open_qlen = tree.get("tcp.fast_open_qlen", default_tcp_fast_open_qlen);
+    tcp.connect_time_out = tree.get("tcp.connect_time_out", default_tcp_connect_time_out);
     mysql.enabled = tree.get("mysql.enabled", false);
     mysql.server_addr = tree.get("mysql.server_addr", string("127.0.0.1"));
-    mysql.server_port = tree.get("mysql.server_port", uint16_t(3306));
+    mysql.server_port = tree.get("mysql.server_port", default_mysql_server_port);
     mysql.database = tree.get("mysql.database", string("trojan"));
     mysql.username = tree.get("mysql.username", string("trojan"));
     mysql.password = tree.get("mysql.password", string());
     mysql.cafile = tree.get("mysql.cafile", string());
-    experimental.pipeline_num = tree.get("experimental.pipeline_num", uint32_t(0));
-    experimental.pipeline_ack_window = tree.get("experimental.pipeline_ack_window", uint32_t(200));
+    experimental.pipeline_num = tree.get("experimental.pipeline_num", default_experimental_pipeline_num);
+    experimental.pipeline_ack_window = tree.get("experimental.pipeline_ack_window", default_experimental_pipeline_ack_window);
     experimental.pipeline_loadbalance_configs.clear();
     experimental._pipeline_loadbalance_configs.clear();
     experimental._pipeline_loadbalance_context.clear();
@@ -145,25 +166,24 @@ void Config::populate(const ptree &tree) {
         if(experimental.pipeline_num == 0){
             _log_with_date_time("Pipeline load balance need to enable pipeline (set pipeline_num as non zero)", Log::ERROR);
         }else{
-            for (auto &item : tree.get_child("experimental.pipeline_loadbalance_configs")){
-                auto config = item.second.get_value<string>();
+            for (const auto &item : tree.get_child("experimental.pipeline_loadbalance_configs")){
+                const auto& config = item.second.get_value<string>();
                 experimental.pipeline_loadbalance_configs.emplace_back(config);
             }
 
             std::string tmp;
             _log_with_date_time("Pipeline will use load balance config:", Log::WARN);
-            for (auto it = experimental.pipeline_loadbalance_configs.begin();
-                it != experimental.pipeline_loadbalance_configs.end(); it++) {
+            for (const auto& item : experimental.pipeline_loadbalance_configs) {
                 
                 auto other = make_shared<Config>();
-                other->load(*it);
+                other->load(item);
 
                 auto ssl = make_shared<boost::asio::ssl::context>(context::sslv23);
                 other->prepare_ssl_context(*ssl, tmp);
 
                 experimental._pipeline_loadbalance_configs.emplace_back(other);
                 experimental._pipeline_loadbalance_context.emplace_back(ssl);
-                _log_with_date_time("Loaded " + (*it) + " config.", Log::WARN);
+                _log_with_date_time("Loaded " + item + " config.", Log::WARN);
             }
         }        
     }
@@ -172,10 +192,44 @@ void Config::populate(const ptree &tree) {
     tun.tun_name = tree.get("tun.tun_name", "");
     tun.net_ip = tree.get("tun.net_ip", "");
     tun.net_mask = tree.get("tun.net_mask", "");
-    tun.mtu = tree.get("tun.mtu", uint16_t(1500));
-    tun.tun_fd = tree.get("tun.tun_fd", int(-1));
+    tun.mtu = tree.get("tun.mtu", default_tun_mtu);
+    tun.tun_fd = tree.get("tun.tun_fd", default_tun_fd);
 
     Log::level = log_level;
+}
+
+bool Config::try_prepare_pipeline_proxy_icmp(bool is_ipv4){
+    if (experimental.pipeline_proxy_icmp){
+        // set this icmp false first
+        experimental.pipeline_proxy_icmp = false;
+
+        if (!is_ipv4) {
+            _log_with_date_time("Pipeline proxy icmp can only run in ipv4", Log::ERROR);
+            return false;
+        }
+
+        if (get_experimental().pipeline_num == 0) {
+            _log_with_date_time("Pipeline proxy ICMP message need to enable pipeline (set pipeline_num as non zero)", Log::ERROR);
+            return false;
+        }
+
+        if (get_run_type() != Config::SERVER) {
+            if (get_run_type() != Config::NAT) {
+                _log_with_date_time("Pipeline proxy icmp can only run in NAT & SERVER type", Log::ERROR);
+                return false;
+            }
+
+            if (!icmpd::get_icmpd_lock()) {
+                _log_with_date_time("Pipeline proxy icmp disabled in this process, cannot get lock, it can only run in one process of host", Log::WARN);
+                return false;
+            }
+        }
+        
+        experimental.pipeline_proxy_icmp = true;
+        return true;
+    }
+    
+    return false;
 }
 
 bool Config::sip003() {
@@ -205,11 +259,11 @@ bool Config::sip003() {
     return true;
 }
 
-void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, string& plain_http_response){
+void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, string& plain_http_response) {
 
-    auto native_context = ssl_context.native_handle();
+    auto* native_context = ssl_context.native_handle();
     ssl_context.set_options(context::default_workarounds | context::no_sslv2 | context::no_sslv3 | context::single_dh_use);
-    if (ssl.curves != "") {
+    if (!ssl.curves.empty()) {
         SSL_CTX_set1_curves_list(native_context, ssl.curves.c_str());
     }
     if (run_type == Config::SERVER) {
@@ -221,7 +275,7 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, string&
         if (ssl.prefer_server_cipher) {
             SSL_CTX_set_options(native_context, SSL_OP_CIPHER_SERVER_PREFERENCE);
         }
-        if (ssl.alpn != "") {
+        if (!ssl.alpn.empty()) {
             SSL_CTX_set_alpn_select_cb(native_context, [](SSL*, const unsigned char **out, unsigned char *outlen, const unsigned char *in, unsigned int inlen, void *config) -> int {
                 if (SSL_select_next_proto((unsigned char**)out, outlen, (unsigned char*)(((Config*)config)->ssl.alpn.c_str()), (unsigned int)((Config*)config)->ssl.alpn.length(), in, inlen) != OPENSSL_NPN_NEGOTIATED) {
                     return SSL_TLSEXT_ERR_NOACK;
@@ -239,35 +293,35 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, string&
             SSL_CTX_set_options(native_context, SSL_OP_NO_TICKET);
         }
 
-        if (ssl.plain_http_response != "") {
+        if (!ssl.plain_http_response.empty()) {
             ifstream ifs(ssl.plain_http_response, ios::binary);
             if (!ifs.is_open()) {
                 throw runtime_error(ssl.plain_http_response + ": " + strerror(errno));
             }
             plain_http_response = string(istreambuf_iterator<char>(ifs), istreambuf_iterator<char>());
         }
-        if (ssl.dhparam == "") {
+        if (ssl.dhparam.empty()) {
             ssl_context.use_tmp_dh(boost::asio::const_buffer(SSLDefaults::g_dh2048_sz, SSLDefaults::g_dh2048_sz_size));
         } else {
             ssl_context.use_tmp_dh_file(ssl.dhparam);
         }
 
     } else {
-        if (ssl.sni == "") {
+        if (ssl.sni.empty()) {
             ssl.sni = remote_addr;
         }
         if (ssl.verify) {
             ssl_context.set_verify_mode(verify_peer);
-            if (ssl.cert == "") {
+            if (ssl.cert.empty()) {
                 ssl_context.set_default_verify_paths();
 #ifdef _WIN32
                 HCERTSTORE h_store = CertOpenSystemStore(0, _T("ROOT"));
                 if (h_store) {
                     X509_STORE *store = SSL_CTX_get_cert_store(native_context);
-                    PCCERT_CONTEXT p_context = NULL;
+                    PCCERT_CONTEXT p_context = nullptr;
                     while ((p_context = CertEnumCertificatesInStore(h_store, p_context))) {
                         const unsigned char *encoded_cert = p_context->pbCertEncoded;
-                        X509 *x509 = d2i_X509(NULL, &encoded_cert, p_context->cbCertEncoded);
+                        X509 *x509 = d2i_X509(nullptr, &encoded_cert, p_context->cbCertEncoded);
                         if (x509) {
                             X509_STORE_add_cert(store, x509);
                             X509_free(x509);
@@ -277,50 +331,53 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, string&
                 }
 #endif // _WIN32
 #ifdef __APPLE__
-                SecKeychainSearchRef pSecKeychainSearch = NULL;
-                SecKeychainRef pSecKeychain;
+                SecKeychainSearchRef pSecKeychainSearch = nullptr;
+                SecKeychainRef pSecKeychain = nullptr;
                 OSStatus status = noErr;
-                X509 *cert = NULL;
+                X509 *cert = nullptr;
 
                 // Leopard and above store location
                 status = SecKeychainOpen ("/System/Library/Keychains/SystemRootCertificates.keychain", &pSecKeychain);
                 if (status == noErr) {
                     X509_STORE *store = SSL_CTX_get_cert_store(native_context);
-                    status = SecKeychainSearchCreateFromAttributes (pSecKeychain, kSecCertificateItemClass, NULL, &pSecKeychainSearch);
-                     for (;;) {
-                        SecKeychainItemRef pSecKeychainItem = nil;
+                    status = SecKeychainSearchCreateFromAttributes (pSecKeychain, kSecCertificateItemClass, nullptr, &pSecKeychainSearch);
+                    if (status == noErr){
+                        for (;;) {
+                            SecKeychainItemRef pSecKeychainItem = nil;
 
-                        status = SecKeychainSearchCopyNext (pSecKeychainSearch, &pSecKeychainItem);
-                        if (status == errSecItemNotFound) {
-                            break;
-                        }
+                            status = SecKeychainSearchCopyNext (pSecKeychainSearch, &pSecKeychainItem);
+                            if (status == errSecItemNotFound) {
+                                break;
+                            }
 
-                        if (status == noErr) {
-                            void *_pCertData;
-                            UInt32 _pCertLength;
-                            status = SecKeychainItemCopyAttributesAndData (pSecKeychainItem, NULL, NULL, NULL, &_pCertLength, &_pCertData);
+                            if (status == noErr) {
+                                void *_pCertData = nullptr;
+                                UInt32 _pCertLength = 0;
+                                status = SecKeychainItemCopyAttributesAndData (pSecKeychainItem, nullptr, nullptr, nullptr, &_pCertLength, &_pCertData);
 
-                            if (status == noErr && _pCertData != NULL) {
-                                unsigned char *ptr;
+                                if (status == noErr && _pCertData != nullptr) {
+                                    unsigned char *ptr = nullptr;
 
-                                ptr = (unsigned char *)_pCertData;       /*required because d2i_X509 is modifying pointer */
-                                cert = d2i_X509 (NULL, (const unsigned char **) &ptr, _pCertLength);
-                                if (cert == NULL) {
-                                    continue;
-                                }
+                                    ptr = static_cast<unsigned char *>(_pCertData);       /*required because d2i_X509 is modifying pointer */
+                                    cert = d2i_X509 (nullptr, (const unsigned char **) &ptr, _pCertLength);
+                                    if (cert == nullptr) {
+                                        continue;
+                                    }
 
-                                if (!X509_STORE_add_cert (store, cert)) {
+                                    if (X509_STORE_add_cert (store, cert) == 0) {
+                                        X509_free (cert);
+                                        continue;
+                                    }
                                     X509_free (cert);
-                                    continue;
-                                }
-                                X509_free (cert);
 
-                                status = SecKeychainItemFreeAttributesAndData (NULL, _pCertData);
+                                    status = SecKeychainItemFreeAttributesAndData (nullptr, _pCertData);
+                                }
+                            }
+                            if (pSecKeychainItem != nullptr) {
+                                CFRelease (pSecKeychainItem);
                             }
                         }
-                        if (pSecKeychainItem != NULL) {
-                            CFRelease (pSecKeychainItem);
-                        }
+                        
                     }
                     CFRelease (pSecKeychainSearch);
                     CFRelease (pSecKeychain);
@@ -343,7 +400,7 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, string&
         } else {
             ssl_context.set_verify_mode(verify_none);
         }
-        if (ssl.alpn != "") {
+        if (!ssl.alpn.empty()) {
             SSL_CTX_set_alpn_protos(native_context, (unsigned char*)(ssl.alpn.c_str()), (unsigned int)ssl.alpn.length());
         }
         if (ssl.reuse_session) {
@@ -357,11 +414,11 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, string&
         }
     }
 
-    if (ssl.cipher != "") {
+    if (!ssl.cipher.empty()) {
         SSL_CTX_set_cipher_list(native_context, ssl.cipher.c_str());
     }
 
-    if (ssl.cipher_tls13 != "") {
+    if (!ssl.cipher_tls13.empty()) {
 #ifdef ENABLE_TLS13_CIPHERSUITES
         SSL_CTX_set_ciphersuites(native_context, ssl.cipher_tls13.c_str());
 #else  // ENABLE_TLS13_CIPHERSUITES
@@ -369,7 +426,7 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, string&
 #endif // ENABLE_TLS13_CIPHERSUITES
     }
     
-    if (Log::keylog) {
+    if (Log::keylog != nullptr) {
 #ifdef ENABLE_SSL_KEYLOG
         SSL_CTX_set_keylog_callback(native_context, [](const SSL*, const char *line) {
             fprintf(Log::keylog, "%s\n", line);
@@ -382,13 +439,13 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, string&
 }
 
 void Config::prepare_ssl_reuse(boost::asio::ssl::stream<boost::asio::ip::tcp::socket>& socket) const {
-    auto ssl_handle = socket.native_handle();
+    auto* ssl_handle = socket.native_handle();
     if (!ssl.sni.empty()) {
         SSL_set_tlsext_host_name(ssl_handle, ssl.sni.c_str());
     }
     if (ssl.reuse_session) {
-        SSL_SESSION *session = SSLSession::get_session();
-        if (session) {
+        auto *session = SSLSession::get_session();
+        if (session != nullptr) {
             SSL_set_session(ssl_handle, session);
         }
     }
@@ -397,20 +454,20 @@ void Config::prepare_ssl_reuse(boost::asio::ssl::stream<boost::asio::ip::tcp::so
 string Config::SHA224(const string &message) {
     uint8_t digest[EVP_MAX_MD_SIZE];
     char mdString[(EVP_MAX_MD_SIZE << 1) + 1];
-    unsigned int digest_len;
-    EVP_MD_CTX *ctx;
+    unsigned int digest_len = 0;
+    EVP_MD_CTX *ctx = nullptr;
     if ((ctx = EVP_MD_CTX_new()) == nullptr) {
         throw runtime_error("could not create hash context");
     }
-    if (!EVP_DigestInit_ex(ctx, EVP_sha224(), nullptr)) {
+    if (EVP_DigestInit_ex(ctx, EVP_sha224(), nullptr) == 0) {
         EVP_MD_CTX_free(ctx);
         throw runtime_error("could not initialize hash context");
     }
-    if (!EVP_DigestUpdate(ctx, message.c_str(), message.length())) {
+    if (EVP_DigestUpdate(ctx, message.c_str(), message.length()) == 0) {
         EVP_MD_CTX_free(ctx);
         throw runtime_error("could not update hash");
     }
-    if (!EVP_DigestFinal_ex(ctx, digest, &digest_len)) {
+    if (EVP_DigestFinal_ex(ctx, digest, &digest_len) == 0) {
         EVP_MD_CTX_free(ctx);
         throw runtime_error("could not output hash");
     }

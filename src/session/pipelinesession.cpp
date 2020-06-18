@@ -34,7 +34,8 @@ using namespace std;
 using namespace boost::asio::ip;
 using namespace boost::asio::ssl;
 
-PipelineSession::PipelineSession(Service* _service, const Config& config, boost::asio::ssl::context &ssl_context, Authenticator *auth, const std::string &plain_http_response):
+PipelineSession::PipelineSession(Service* _service, const Config& config, boost::asio::ssl::context &ssl_context, 
+  shared_ptr<Authenticator> auth, const std::string &plain_http_response):
     SocketSession(_service, config),
     status(HANDSHAKE),
     auth(auth),
@@ -118,7 +119,7 @@ void PipelineSession::in_recv(const string_view &) {
             return;
         }
 
-        if(data.substr(0, npos) != config.password.cbegin()->first){
+        if(data.substr(0, npos) != config.get_password().cbegin()->first){
             _log_with_endpoint(in_endpoint, "PipelineSession error password", Log::ERROR);
             destroy();
             return;

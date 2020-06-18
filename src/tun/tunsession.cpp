@@ -33,7 +33,7 @@
 using namespace std;
 
 TUNSession::TUNSession(Service* _service, bool _is_udp) : 
-    Session(_service, _service->config),
+    Session(_service, _service->get_config()),
     m_service(_service), 
     m_recv_buf_guard(false),
     m_recv_buf_ack_length(0),
@@ -67,10 +67,10 @@ void TUNSession::start(){
 
         auto insert_pwd = [this](){
             if(is_udp_forward()){
-                streambuf_append(m_send_buf, TrojanRequest::generate(config.password.cbegin()->first, 
+                streambuf_append(m_send_buf, TrojanRequest::generate(config.get_password().cbegin()->first, 
                     m_remote_addr_udp.address().to_string(), m_remote_addr_udp.port(), false));
             }else{
-                streambuf_append(m_send_buf, TrojanRequest::generate(config.password.cbegin()->first, 
+                streambuf_append(m_send_buf, TrojanRequest::generate(config.get_password().cbegin()->first, 
                     m_remote_addr.address().to_string(), m_remote_addr.port(), true));
             }
         };
@@ -99,12 +99,12 @@ void TUNSession::start(){
     if(m_service->is_use_pipeline()){
         cb();
     }else{
-        m_service->config.prepare_ssl_reuse(m_out_socket);
+        m_service->get_config().prepare_ssl_reuse(m_out_socket);
         if(is_udp_forward()){
-            connect_remote_server_ssl(this, m_service->config.remote_addr, to_string(m_service->config.remote_port), 
+            connect_remote_server_ssl(this, m_service->get_config().get_remote_addr(), to_string(m_service->get_config().get_remote_port()), 
                 m_out_resolver, m_out_socket, m_local_addr_udp ,  cb);
         }else{
-            connect_remote_server_ssl(this, m_service->config.remote_addr, to_string(m_service->config.remote_port), 
+            connect_remote_server_ssl(this, m_service->get_config().get_remote_addr(), to_string(m_service->get_config().get_remote_port()), 
                 m_out_resolver, m_out_socket, m_local_addr,  cb);
         }
         
@@ -115,7 +115,7 @@ void TUNSession::reset_udp_timeout(){
     if(is_udp_forward()){
         m_udp_timout_timer.cancel();
 
-        m_udp_timout_timer.expires_after(chrono::seconds(m_service->config.udp_timeout));
+        m_udp_timout_timer.expires_after(chrono::seconds(m_service->get_config().get_udp_timeout()));
         auto self = shared_from_this();
         m_udp_timout_timer.async_wait([this, self](const boost::system::error_code error) {
             if (!error) {

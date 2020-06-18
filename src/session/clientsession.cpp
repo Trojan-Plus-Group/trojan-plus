@@ -200,7 +200,7 @@ void ClientSession::udp_async_read() {
     _guard_read_buf_begin(udp_read_buf);
     udp_read_buf.consume(udp_read_buf.size());
     auto self = shared_from_this();
-    udp_socket.async_receive_from(udp_read_buf.prepare(config.udp_recv_buf), udp_recv_endpoint, [this, self](const boost::system::error_code error, size_t length) {
+    udp_socket.async_receive_from(udp_read_buf.prepare(config.get_udp_recv_buf()), udp_recv_endpoint, [this, self](const boost::system::error_code error, size_t length) {
         _guard_read_buf_end(udp_read_buf);
         if (error == boost::asio::error::operation_aborted) {
             return;
@@ -263,7 +263,7 @@ void ClientSession::in_recv(const string_view &data) {
             }
             out_write_buf.consume(out_write_buf.size());
 
-            streambuf_append(out_write_buf, config.password.cbegin()->first);
+            streambuf_append(out_write_buf, config.get_password().cbegin()->first);
             streambuf_append(out_write_buf, "\r\n");
             streambuf_append(out_write_buf, data[1]);
             streambuf_append(out_write_buf, data.substr(3));
@@ -300,7 +300,7 @@ void ClientSession::in_recv(const string_view &data) {
                     destroy();
                     return;
                 }
-                set_udp_send_recv_buf((int)udp_socket.native_handle(), config.udp_socket_buf);
+                set_udp_send_recv_buf((int)udp_socket.native_handle(), config.get_udp_socket_buf());
                 udp_socket.bind(endpoint);
 
                 _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + 
@@ -387,7 +387,8 @@ void ClientSession::request_remote(){
     if(get_pipeline_component().is_using_pipeline()){
         cb();
     }else{  
-        connect_remote_server_ssl(this, config.remote_addr, to_string(config.remote_port), resolver, out_socket, in_endpoint,cb);
+        connect_remote_server_ssl(this, config.get_remote_addr(), to_string(config.get_remote_port()), 
+            resolver, out_socket, in_endpoint,cb);
     }    
 }
 

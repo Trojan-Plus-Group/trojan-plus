@@ -48,7 +48,7 @@ private:
     boost::asio::io_context io_context;
     boost::asio::ip::tcp::acceptor socket_acceptor;
     boost::asio::ssl::context ssl_context;
-    Authenticator *auth;
+    std::shared_ptr<Authenticator> auth;
     std::string plain_http_response;
     boost::asio::ip::udp::socket udp_socket;
     std::list<std::weak_ptr<UDPForwardSession> > udp_sessions;
@@ -66,13 +66,15 @@ private:
     void prepare_icmpd(Config& config, bool is_ipv4);
 
     std::shared_ptr<TUNDev> m_tundev;
-
     SendingDataAllocator m_sending_data_allocator;
+
+    const Config &config;
+
 public:
     explicit Service(Config &config, bool test = false);
     ~Service();
 
-    const Config &config;
+    [[nodiscard]] const Config& get_config()const{ return config; }
     
     void run();
     void stop();
@@ -82,13 +84,13 @@ public:
     
     void reload_cert();  
 
-    void start_session(std::shared_ptr<Session> session, SentHandler&& started_handler);
+    void start_session(const std::shared_ptr<Session>& session, SentHandler&& started_handler);
 
     void session_async_send_to_pipeline(Session& session, PipelineRequest::Command cmd, const std::string_view& data, SentHandler&& sent_handler);
     void session_async_send_to_pipeline_icmp(const std::string_view& data, SentHandler&& sent_handler);
     void session_destroy_in_pipeline(Session& session);    
 
-    bool is_use_pipeline() const { return config.experimental.pipeline_num > 0; }
+    [[nodiscard]] bool is_use_pipeline() const { return config.get_experimental().pipeline_num > 0; }
     Pipeline* search_default_pipeline();
 
     SendingDataAllocator& get_sending_data_allocator(){ return m_sending_data_allocator;}

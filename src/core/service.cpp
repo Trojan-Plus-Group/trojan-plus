@@ -52,24 +52,24 @@ Service::Service(Config &config, bool test) :
     config(config) {
 
 #ifndef ENABLE_NAT
-    if (config.run_type == Config::NAT) {
+    if (config.get_run_type() == Config::NAT) {
         throw runtime_error("NAT is not supported");
     }
 #endif // ENABLE_NAT
 
     if (!test) {
-        if(config.run_type == Config::CLIENT_TUN || config.run_type == Config::SERVERT_TUN){
-            m_tundev = make_shared<TUNDev>(this, config.tun.tun_name, config.tun.net_ip, 
-                config.tun.net_mask, config.tun.mtu, config.tun.tun_fd);
+        if(config.get_run_type() == Config::CLIENT_TUN || config.get_run_type() == Config::SERVERT_TUN){
+            m_tundev = make_shared<TUNDev>(this, config.get_tun().tun_name, config.get_tun().net_ip, 
+                config.get_tun().net_mask, config.get_tun().mtu, config.get_tun().tun_fd);
         }
         
-        if(config.run_type != Config::CLIENT_TUN){
+        if(config.get_run_type() != Config::CLIENT_TUN){
             tcp::resolver resolver(io_context);
-            tcp::endpoint listen_endpoint = *resolver.resolve(config.local_addr, to_string(config.local_port)).begin();
+            tcp::endpoint listen_endpoint = *resolver.resolve(config.get_local_addr(), to_string(config.get_local_port())).begin();
             socket_acceptor.open(listen_endpoint.protocol());
             socket_acceptor.set_option(tcp::acceptor::reuse_address(true));
 
-            if (config.tcp.reuse_port) {
+            if (config.get_tcp().reuse_port) {
     #ifdef ENABLE_REUSE_PORT
                 socket_acceptor.set_option(reuse_port(true));
     #else  // ENABLE_REUSE_PORT
@@ -81,35 +81,35 @@ Service::Service(Config &config, bool test) :
             socket_acceptor.listen();
             prepare_icmpd(config, listen_endpoint.address().is_v4());
 
-            if (config.run_type == Config::FORWARD || config.run_type == Config::NAT) {
+            if (config.get_run_type() == Config::FORWARD || config.get_run_type() == Config::NAT) {
                 auto udp_bind_endpoint = udp::endpoint(listen_endpoint.address(), listen_endpoint.port());
                 auto udp_protocol = udp_bind_endpoint.protocol();
                 udp_socket.open(udp_protocol);
                 
-                if(config.run_type == Config::NAT){
+                if(config.get_run_type() == Config::NAT){
                     bool is_ipv4 = udp_protocol.family() == boost::asio::ip::tcp::v4().family();
-                    bool recv_ttl = config.run_type == Config::NAT && config.experimental.pipeline_proxy_icmp;
+                    bool recv_ttl = config.get_run_type() == Config::NAT && config.get_experimental().pipeline_proxy_icmp;
                     if (!prepare_nat_udp_bind((int)udp_socket.native_handle(), is_ipv4, recv_ttl)) {
                         stop();
                         return;
                     }
                 }
-                set_udp_send_recv_buf((int)udp_socket.native_handle(), config.udp_forward_socket_buf); 
+                set_udp_send_recv_buf((int)udp_socket.native_handle(), config.get_udp_forward_socket_buf()); 
                 
                 udp_socket.bind(udp_bind_endpoint);
             }
 
-            if (config.tcp.no_delay) {
+            if (config.get_tcp().no_delay) {
                 socket_acceptor.set_option(tcp::no_delay(true));
             }
-            if (config.tcp.keep_alive) {
+            if (config.get_tcp().keep_alive) {
                 socket_acceptor.set_option(boost::asio::socket_base::keep_alive(true));
             }
-            if (config.tcp.fast_open) {
+            if (config.get_tcp().fast_open) {
     #ifdef TCP_FASTOPEN
                 using fastopen = boost::asio::detail::socket_option::integer<IPPROTO_TCP, TCP_FASTOPEN>;
                 boost::system::error_code ec;
-                socket_acceptor.set_option(fastopen(config.tcp.fast_open_qlen), ec);
+                socket_acceptor.set_option(fastopen(config.get_tcp().fast_open_qlen), ec);
     #else // TCP_FASTOPEN
                 _log_with_date_time("TCP_FASTOPEN is not supported", Log::WARN);
     #endif // TCP_FASTOPEN
@@ -122,10 +122,10 @@ Service::Service(Config &config, bool test) :
 
     config.prepare_ssl_context(ssl_context, plain_http_response);
 
-    if(config.run_type == Config::SERVER){
-        if (config.mysql.enabled) {
+    if(config.get_run_type() == Config::SERVER){
+        if (config.get_mysql().enabled) {
 #ifdef ENABLE_MYSQL
-            auth = new Authenticator(config);
+            auth = make_shared<Authenticator>(config);
 #else // ENABLE_MYSQL
             _log_with_date_time("MySQL is not supported", Log::WARN);
 #endif // ENABLE_MYSQL
@@ -134,39 +134,10 @@ Service::Service(Config &config, bool test) :
 }
 
 void Service::prepare_icmpd(Config& config, bool is_ipv4){
-
-    if (config.experimental.pipeline_proxy_icmp) {
-
-        // set this icmp false first
-        config.experimental.pipeline_proxy_icmp = false;
-
-        if (!is_ipv4) {
-            _log_with_date_time("Pipeline proxy icmp can only run in ipv4", Log::ERROR);
-            return;
-        }
-
-        if (config.experimental.pipeline_num == 0) {
-            _log_with_date_time("Pipeline proxy ICMP message need to enable pipeline (set pipeline_num as non zero)", Log::ERROR);
-            return;
-        }
-
-        if (config.run_type != Config::SERVER) {
-            if (config.run_type != Config::NAT) {
-                _log_with_date_time("Pipeline proxy icmp can only run in NAT & SERVER type", Log::ERROR);
-                return;
-            }
-
-            if (!icmpd::get_icmpd_lock()) {
-                _log_with_date_time("Pipeline proxy icmp disabled in this process, cannot get lock, it can only run in one process of host", Log::WARN);
-                return;
-            }
-        }
-        
-        config.experimental.pipeline_proxy_icmp = true;
-
+    if(config.try_prepare_pipeline_proxy_icmp(is_ipv4)){            
         _log_with_date_time("Pipeline will proxy ICMP message", Log::WARN);
         icmp_processor = make_shared<icmpd>(io_context);
-        icmp_processor->set_service(this, config.run_type == Config::NAT);
+        icmp_processor->set_service(this, config.get_run_type() == Config::NAT);
         icmp_processor->start_recv();
     }
 }
@@ -174,36 +145,36 @@ void Service::prepare_icmpd(Config& config, bool is_ipv4){
 void Service::run() {
     
     string rt;
-    if (config.run_type == Config::SERVER) {
+    if (config.get_run_type() == Config::SERVER) {
         rt = "server";
-    } else if (config.run_type == Config::FORWARD) {
+    } else if (config.get_run_type() == Config::FORWARD) {
         rt = "forward";
-    } else if (config.run_type == Config::NAT) {
+    } else if (config.get_run_type() == Config::NAT) {
         rt = "nat";
-    } else if (config.run_type == Config::CLIENT){
+    } else if (config.get_run_type() == Config::CLIENT){
         rt = "client";
-    } else if( config.run_type == Config::CLIENT_TUN){
+    } else if( config.get_run_type() == Config::CLIENT_TUN){
         rt = "client tun";
-    } else if( config.run_type == Config::SERVERT_TUN){
+    } else if( config.get_run_type() == Config::SERVERT_TUN){
         rt = "server tun";
     } else{
         throw logic_error("unknow run type error");
     }
 
-    if(config.experimental.pipeline_num > 0){
+    if(config.get_experimental().pipeline_num > 0){
         rt += " in pipeline mode";
     }
     
-    if(config.run_type != Config::CLIENT_TUN){
+    if(config.get_run_type() != Config::CLIENT_TUN){
         async_accept();
-        if (config.run_type == Config::FORWARD || config.run_type == Config::NAT) {
+        if (config.get_run_type() == Config::FORWARD || config.get_run_type() == Config::NAT) {
             udp_async_read();
         }
         tcp::endpoint local_endpoint = socket_acceptor.local_endpoint();
         
         _log_with_date_time(string("trojan plus service (") + rt + ") started at " + local_endpoint.address().to_string() + ':' + to_string(local_endpoint.port()), Log::FATAL);
     }else{
-        _log_with_date_time(string("trojan plus service (") + rt + ") started at [" + config.tun.tun_name + "] " + config.tun.net_ip + "/" + config.tun.net_mask, Log::FATAL);
+        _log_with_date_time(string("trojan plus service (") + rt + ") started at [" + config.get_tun().tun_name + "] " + config.get_tun().net_ip + "/" + config.get_tun().net_mask, Log::FATAL);
     }
     io_context.run();
     _log_with_date_time("trojan service stopped", Log::WARN);
@@ -221,7 +192,7 @@ void Service::stop() {
 }
 
 void Service::prepare_pipelines(){
-    if(config.run_type != Config::SERVER && config.experimental.pipeline_num > 0){
+    if(config.get_run_type() != Config::SERVER && config.get_experimental().pipeline_num > 0){
 
         bool changed = false;
 
@@ -236,15 +207,15 @@ void Service::prepare_pipelines(){
         }
        
         size_t curr_num = 0;
-        for (auto it = pipelines.begin(); it != pipelines.end(); it++) {
-            if (it->lock().get()->config == config) {
+        for (const auto& p : pipelines) {
+            if (p.lock()->config == config) {
                 curr_num++;
             }
         }
 
         _log_with_date_time("[pipeline] current exist pipelines: " + to_string(curr_num), Log::INFO);
 
-        for (; curr_num < config.experimental.pipeline_num; curr_num++ ) {
+        for (; curr_num < config.get_experimental().pipeline_num; curr_num++ ) {
             auto pipeline = make_shared<Pipeline>(this, config, ssl_context);
             pipeline->start();
             pipelines.emplace_back(pipeline);
@@ -254,31 +225,31 @@ void Service::prepare_pipelines(){
                 pipeline->set_icmpd(icmp_processor);
             }
             _log_with_date_time("[pipeline] start new pipeline, current: " + to_string(pipelines.size()) 
-                + " max:" + to_string(config.experimental.pipeline_num), Log::INFO);
+                + " max:" + to_string(config.get_experimental().pipeline_num), Log::INFO);
         }        
 
-        if (!config.experimental.pipeline_loadbalance_configs.empty()) {
-            for (size_t i = 0; i < config.experimental._pipeline_loadbalance_configs.size(); i++) {
+        if (!config.get_experimental().pipeline_loadbalance_configs.empty()) {
+            for (size_t i = 0; i < config.get_experimental()._pipeline_loadbalance_configs.size(); i++) {
 
-                auto config_file = config.experimental.pipeline_loadbalance_configs[i];
-                auto balance_config = config.experimental._pipeline_loadbalance_configs[i];
-                auto balance_ssl = config.experimental._pipeline_loadbalance_context[i];
+                auto config_file = config.get_experimental().pipeline_loadbalance_configs[i];
+                auto balance_config = config.get_experimental()._pipeline_loadbalance_configs[i];
+                auto balance_ssl = config.get_experimental()._pipeline_loadbalance_context[i];
 
                 size_t curr_num = 0;
-                for (auto it = pipelines.begin(); it != pipelines.end();it++){
-                    if (&(it->lock().get()->config) == balance_config.get()) {
+                for (const auto& it : pipelines){
+                    if (&(it.lock()->config) == balance_config.get()) {
                         curr_num++;
                     }
                 }
 
-                for (; curr_num < config.experimental.pipeline_num; curr_num++ ) {
+                for (; curr_num < config.get_experimental().pipeline_num; curr_num++ ) {
                     auto pipeline = make_shared<Pipeline>(this, *balance_config, *balance_ssl);
                     pipeline->start();
                     pipelines.emplace_back(pipeline);
                     changed = true;
 
                     _log_with_date_time("[pipeline] start a balance pipeline: " + config_file + " current:" + to_string(pipelines.size()) 
-                        + " max:" + to_string(config.experimental.pipeline_num), Log::INFO);
+                        + " max:" + to_string(config.get_experimental().pipeline_num), Log::INFO);
                 }
             }
 
@@ -286,7 +257,7 @@ void Service::prepare_pipelines(){
                 // for default polling balance algorithm,
                 // need to arrage the pipeine from 00000011111122222333333... to 012301230123...
                 size_t config_idx = 0;
-                size_t all_configs = config.experimental._pipeline_loadbalance_configs.size() + 1;
+                size_t all_configs = config.get_experimental()._pipeline_loadbalance_configs.size() + 1;
 
                 auto curr = pipelines.begin();
                 while (curr != pipelines.end()) {
@@ -295,11 +266,11 @@ void Service::prepare_pipelines(){
 
                     while (next != pipelines.end()) {
                         bool found = false;
-                        auto config_ptr = &(next->lock()->config);
+                        const auto* const config_ptr = &(next->lock()->config);
                         if (config_idx == 0) {
                             found = config_ptr == &config;
                         } else {
-                            found = config_ptr == config.experimental._pipeline_loadbalance_configs[config_idx - 1].get();
+                            found = config_ptr == config.get_experimental()._pipeline_loadbalance_configs[config_idx - 1].get();
                         }
 
                         if (found) {
@@ -327,8 +298,8 @@ void Service::prepare_pipelines(){
     }
 }
 
-void Service::start_session(std::shared_ptr<Session> session, SentHandler&& started_handler) {
-    if(config.experimental.pipeline_num > 0 && config.run_type != Config::SERVER){
+void Service::start_session(const shared_ptr<Session>& session, SentHandler&& started_handler) {
+    if(config.get_experimental().pipeline_num > 0 && config.get_run_type() != Config::SERVER){
         
         prepare_pipelines();
 
@@ -353,9 +324,8 @@ void Service::start_session(std::shared_ptr<Session> session, SentHandler&& star
                     if (sel_pp->is_connected()) {
                         pipeline = sel_pp;
                         break;
-                    } else {
-                        pipeline_select_idx++;
                     }
+                    pipeline_select_idx++;
                 }
                 ++it;
                 ++idx;          
@@ -368,7 +338,7 @@ void Service::start_session(std::shared_ptr<Session> session, SentHandler&& star
         }
 
         _log_with_date_time("pipeline " + to_string(pipeline->get_pipeline_id()) + " start session_id:" + to_string(session->get_session_id()), Log::INFO);
-        session.get()->get_pipeline_component().set_use_pipeline();
+        session->get_pipeline_component().set_use_pipeline();
         pipeline->session_start(*(session.get()), move(started_handler));
     }else{
         started_handler(boost::system::error_code());
@@ -376,7 +346,7 @@ void Service::start_session(std::shared_ptr<Session> session, SentHandler&& star
 }
 
 void Service::session_async_send_to_pipeline(Session &session, PipelineRequest::Command cmd, const std::string_view &data, SentHandler&& sent_handler) {
-    if(config.experimental.pipeline_num > 0 && config.run_type != Config::SERVER){
+    if(config.get_experimental().pipeline_num > 0 && config.get_run_type() != Config::SERVER){
         
         Pipeline* pipeline = nullptr;
         auto it = pipelines.begin();
@@ -384,16 +354,16 @@ void Service::session_async_send_to_pipeline(Session &session, PipelineRequest::
             if(it->expired()){
                 it = pipelines.erase(it);
             }else{
-                auto p = it->lock().get();
+                auto p = it->lock();
                 if(p->is_in_pipeline(session)){
-                    pipeline = p;
+                    pipeline = p.get();
                     break;
                 }
                 ++it;
             }
         }
 
-        if(!pipeline){
+        if(pipeline == nullptr){
             _log_with_date_time("pipeline is broken, destory session", Log::WARN);
             sent_handler(boost::asio::error::broken_pipe);
         }else{
@@ -405,9 +375,9 @@ void Service::session_async_send_to_pipeline(Session &session, PipelineRequest::
 }
 
 void Service::session_async_send_to_pipeline_icmp(const std::string_view& data, std::function<void(boost::system::error_code ec)>&& sent_handler){
-    if (config.experimental.pipeline_num > 0 && config.run_type != Config::SERVER) {
+    if (config.get_experimental().pipeline_num > 0 && config.get_run_type() != Config::SERVER) {
         Pipeline *pipeline = search_default_pipeline();
-        if (!pipeline) {
+        if (pipeline == nullptr) {
             _log_with_date_time("pipeline is broken, destory session", Log::WARN);
             sent_handler(boost::asio::error::broken_pipe);
         } else {
@@ -424,7 +394,7 @@ void Service::session_destroy_in_pipeline(Session& session){
         if(it->expired()){
             it = pipelines.erase(it);
         }else{
-            auto p = it->lock().get();
+            auto p = it->lock();
             if(p->is_in_pipeline(session)){
                 _log_with_date_time("pipeline " + to_string(p->get_pipeline_id()) + " destroy session_id:" + to_string(session.get_session_id()));
                 p->session_destroyed(session);
@@ -448,10 +418,9 @@ Pipeline* Service::search_default_pipeline() {
         if (it->expired()) {
             it = pipelines.erase(it);
         } else {
-            auto p = it->lock().get();
+            auto p = it->lock();
             if (&(p->config) == (&config)) {  // find the default pipeline, cannot use load-balance server
-                _log_with_date_time("->>>>>>> search default pipeline: " + p->config.remote_addr + "  p1 " + to_string(uint64_t(&config)) + " p2:" + to_string(uint64_t(&p->config)));
-                pipeline = p;
+                pipeline = p.get();
                 break;
             }
             ++it;
@@ -464,8 +433,8 @@ void Service::async_accept() {
 
     shared_ptr<SocketSession>session(nullptr);
 
-    if (config.run_type == Config::SERVER) {
-        if(config.experimental.pipeline_num > 0){
+    if (config.get_run_type() == Config::SERVER) {
+        if(config.get_experimental().pipeline_num > 0){
             // start a pipeline mode in server run_type
             auto pipeline = make_shared<PipelineSession>(this, config, ssl_context, auth, plain_http_response);
             pipeline->set_icmpd(icmp_processor);
@@ -475,9 +444,9 @@ void Service::async_accept() {
             session = make_shared<ServerSession>(this, config, ssl_context, auth, plain_http_response);
         }        
     } else {
-        if (config.run_type == Config::FORWARD) {
+        if (config.get_run_type() == Config::FORWARD) {
             session = make_shared<ForwardSession>(this, config, ssl_context);
-        } else if (config.run_type == Config::NAT) {
+        } else if (config.get_run_type() == Config::NAT) {
             session = make_shared<NATSession>(this, config, ssl_context);
         } else {
             session = make_shared<ClientSession>(this, config, ssl_context);
@@ -522,12 +491,12 @@ void Service::udp_async_read() {
         
         pair<string,uint16_t> targetdst;
         
-        if(config.run_type == Config::NAT){
+        if(config.get_run_type() == Config::NAT){
             int read_length = (int)length;
             int ttl = -1;
             
             targetdst = recv_tproxy_udp_msg((int)udp_socket.native_handle(), udp_recv_endpoint, 
-                (char*)udp_read_buf.prepare(config.udp_recv_buf).data(), read_length, ttl);
+                boost::asio::buffer_cast<char*>(udp_read_buf.prepare(config.get_udp_recv_buf())), read_length, ttl);
 
             length = read_length < 0 ? 0 : read_length;
             udp_read_buf.commit(length);
@@ -538,7 +507,7 @@ void Service::udp_async_read() {
             _log_with_date_time("[udp] get ttl:" + to_string(ttl));
         }else{
             udp_read_buf.commit(length);
-            targetdst = make_pair(config.target_addr, config.target_port);
+            targetdst = make_pair(config.get_target_addr(), config.get_target_port());
         }
 
         if(targetdst.second != 0){
@@ -557,17 +526,17 @@ void Service::udp_async_read() {
             _log_with_endpoint(udp_recv_endpoint, "new UDP session");
             auto session = make_shared<UDPForwardSession>(this, config, ssl_context, udp_recv_endpoint, targetdst, 
              [this](const udp::endpoint &endpoint, const string_view &data) {
-                if(config.run_type == Config::NAT){
+                if(config.get_run_type() == Config::NAT){
                     throw logic_error("[udp] logic fatal error, cannot call in_write function for NAT type!");
-                }else{
-                    boost::system::error_code ec;
-                    udp_socket.send_to(boost::asio::buffer(data.data(), data.length()), endpoint, 0, ec);
-                        
-                    if (ec == boost::asio::error::no_permission) {
-                        _log_with_endpoint(udp_recv_endpoint, "[udp] dropped a packet due to firewall policy or rate limit");
-                    } else if (ec) {
-                        throw runtime_error(ec.message());
-                    }             
+                }
+
+                boost::system::error_code ec;
+                udp_socket.send_to(boost::asio::buffer(data.data(), data.length()), endpoint, 0, ec);
+                    
+                if (ec == boost::asio::error::no_permission) {
+                    _log_with_endpoint(udp_recv_endpoint, "[udp] dropped a packet due to firewall policy or rate limit");
+                } else if (ec) {
+                    throw runtime_error(ec.message());
                 }
             });
 
@@ -588,18 +557,18 @@ void Service::udp_async_read() {
     };
 
     udp_read_buf.consume(udp_read_buf.size());
-    if(config.run_type == Config::NAT){
+    if(config.get_run_type() == Config::NAT){
         udp_socket.async_receive_from(boost::asio::null_buffers(), udp_recv_endpoint, cb);
     }else{
-        udp_socket.async_receive_from(udp_read_buf.prepare(config.udp_recv_buf), udp_recv_endpoint, cb);
+        udp_socket.async_receive_from(udp_read_buf.prepare(config.get_udp_recv_buf()), udp_recv_endpoint, cb);
     }    
 }
 
 void Service::reload_cert() {
-    if (config.run_type == Config::SERVER) {
+    if (config.get_run_type() == Config::SERVER) {
         _log_with_date_time("reloading certificate and private key. . . ", Log::WARN);
-        ssl_context.use_certificate_chain_file(config.ssl.cert);
-        ssl_context.use_private_key_file(config.ssl.key, context::pem);
+        ssl_context.use_certificate_chain_file(config.get_ssl().cert);
+        ssl_context.use_private_key_file(config.get_ssl().key, context::pem);
         boost::system::error_code ec;
         socket_acceptor.cancel(ec);
         async_accept();
@@ -609,9 +578,4 @@ void Service::reload_cert() {
     }
 }
 
-Service::~Service() {
-    if (auth) {
-        delete auth;
-        auth = nullptr;
-    }
-}
+Service::~Service() = default;

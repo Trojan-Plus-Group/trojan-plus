@@ -35,7 +35,7 @@ PipelineComponent::PipelineComponent(const Config& _config):
     pipeline_ack_counter(0),
     pipeline_wait_for_ack(false),
     pipeline_first_call_ack(true){
-    pipeline_ack_counter = static_cast<int>(_config.experimental.pipeline_ack_window);
+    pipeline_ack_counter = static_cast<int>(_config.get_experimental().pipeline_ack_window);
 }
 
 void PipelineComponent::allocate_session_id(){
