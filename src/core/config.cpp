@@ -331,56 +331,62 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, string&
                 }
 #endif // _WIN32
 #ifdef __APPLE__
-                SecKeychainSearchRef pSecKeychainSearch = nullptr;
-                SecKeychainRef pSecKeychain = nullptr;
-                OSStatus status = noErr;
-                X509 *cert = nullptr;
 
-                // Leopard and above store location
-                status = SecKeychainOpen ("/System/Library/Keychains/SystemRootCertificates.keychain", &pSecKeychain);
-                if (status == noErr) {
-                    X509_STORE *store = SSL_CTX_get_cert_store(native_context);
-                    status = SecKeychainSearchCreateFromAttributes (pSecKeychain, kSecCertificateItemClass, nullptr, &pSecKeychainSearch);
-                    if (status == noErr){
-                        for (;;) {
-                            SecKeychainItemRef pSecKeychainItem = nil;
+                SecKeychainRef systemRoots = nullptr;
+                auto status = SecKeychainOpen("/System/Library/Keychains/SystemRootCertificates.keychain", &systemRoots);
+                if(status == noErr){
+                    CFArrayRef currentSearchList = nullptr;
+                    status = SecKeychainCopySearchList(&currentSearchList);
+                    if(status == noErr){
+                        
+                        const CFIndex Capacity = 5;
+                        CFMutableArrayRef newSearchList = CFArrayCreateMutableCopy(nullptr, Capacity, currentSearchList);
+                        CFRelease(currentSearchList);
+                        
+                        CFArrayAppendValue(newSearchList, systemRoots);
 
-                            status = SecKeychainSearchCopyNext (pSecKeychainSearch, &pSecKeychainItem);
-                            if (status == errSecItemNotFound) {
-                                break;
-                            }
+                        CFMutableDictionaryRef dictRef = CFDictionaryCreateMutable(nullptr, Capacity, 
+                            &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
 
-                            if (status == noErr) {
-                                void *_pCertData = nullptr;
-                                UInt32 _pCertLength = 0;
-                                status = SecKeychainItemCopyAttributesAndData (pSecKeychainItem, nullptr, nullptr, nullptr, &_pCertLength, &_pCertData);
+                        CFDictionaryAddValue(dictRef, kSecClass,           kSecClassCertificate);
+                        CFDictionaryAddValue(dictRef, kSecMatchLimit,      kSecMatchLimitAll);
+                        CFDictionaryAddValue(dictRef, kSecReturnRef,       kCFBooleanTrue);
+                        CFDictionaryAddValue(dictRef, kSecMatchSearchList, newSearchList);
 
-                                if (status == noErr && _pCertData != nullptr) {
-                                    unsigned char *ptr = nullptr;
+                        CFArrayRef result = nullptr;
+                        status = SecItemCopyMatching(dictRef, (CFTypeRef*)&result);
+                        if(status == noErr){
+                            auto *store = SSL_CTX_get_cert_store(native_context);
+                            const CFIndex count = CFArrayGetCount(result);
+                            for(int i = 0;i < count; i++){
+                                auto* item = (SecKeychainItemRef)CFArrayGetValueAtIndex(result, i);
 
-                                    ptr = static_cast<unsigned char *>(_pCertData);       /*required because d2i_X509 is modifying pointer */
-                                    cert = d2i_X509 (nullptr, (const unsigned char **) &ptr, _pCertLength);
+                                void * certData = nullptr;
+                                UInt32 certLength = 0;
+                                status = SecKeychainItemCopyAttributesAndData (item, nullptr, nullptr, nullptr, &certLength, &certData);
+
+                                if (status == noErr && certData != nullptr) {
+                                    /*required because d2i_X509 is modifying pointer */
+                                    auto* ptr  = static_cast<unsigned char *>(certData);       
+                                    auto* cert = d2i_X509 (nullptr, (const unsigned char **) &ptr, certLength);
                                     if (cert == nullptr) {
+                                        SecKeychainItemFreeAttributesAndData(nullptr, certData);
                                         continue;
                                     }
-
-                                    if (X509_STORE_add_cert (store, cert) == 0) {
-                                        X509_free (cert);
-                                        continue;
+                                    if(X509_STORE_add_cert (store, cert) == 0) {
+                                       _log_with_date_time(" X509_STORE_add_cert add cert failed, cert length: " + to_string(certLength), Log::WARN); 
                                     }
                                     X509_free (cert);
-
-                                    status = SecKeychainItemFreeAttributesAndData (nullptr, _pCertData);
+                                    SecKeychainItemFreeAttributesAndData(nullptr, certData);
                                 }
                             }
-                            if (pSecKeychainItem != nullptr) {
-                                CFRelease (pSecKeychainItem);
-                            }
+                            CFRelease(result);
                         }
-                        
+
+                        CFRelease(dictRef);
+                        CFRelease(newSearchList);
                     }
-                    CFRelease (pSecKeychainSearch);
-                    CFRelease (pSecKeychain);
+                    CFRelease(systemRoots);
                 }
 #endif // __APPLE__
             } else {
