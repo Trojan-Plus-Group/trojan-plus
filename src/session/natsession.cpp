@@ -48,10 +48,10 @@ void NATSession::start() {
             return;
         }
         _log_with_endpoint(in_endpoint, "forwarding to " + target_addr + ':' + to_string(target_port) + " via " + 
-            config.get_remote_addr() + ':' + to_string(config.get_remote_port()), Log::INFO);
+            get_config().get_remote_addr() + ':' + to_string(get_config().get_remote_port()), Log::INFO);
 
         out_write_buf.consume(out_write_buf.size());
-        streambuf_append(out_write_buf, TrojanRequest::generate(config.get_password().cbegin()->first, target_addr, target_port, true));        
+        streambuf_append(out_write_buf, TrojanRequest::generate(get_config().get_password().cbegin()->first, target_addr, target_port, true));        
         request_remote();
     }
 }

@@ -40,7 +40,7 @@ Pipeline::Pipeline(Service* _service, const Config& config, boost::asio::ssl::co
     pipeline_id = s_pipeline_id_counter++;
 
     sending_data_cache.set_is_connected_func([this](){ return is_connected();});
-    sending_data_cache.set_async_writer([this](const boost::asio::streambuf& data, SentHandler handler) {
+    sending_data_cache.set_async_writer([this](const boost::asio::streambuf& data, SentHandler&& handler) {
             if (destroyed) {
                 return;
             }
@@ -116,9 +116,8 @@ bool Pipeline::is_in_pipeline(Session& session){
     while(it != sessions.end()){
         if(it->get() == &session){
             return true;
-        }else{
-            ++it;
-        }        
+        }
+        ++it;            
     }
 
     return false;
@@ -159,7 +158,7 @@ void Pipeline::out_async_recv(){
                     bool found = false;
                     
                     for (auto it = sessions.begin(); it != sessions.end(); it++) {
-                        auto session = it->get();
+                        auto* session = it->get();
                         if (session->get_session_id() == req.session_id) {
                             if (req.command == PipelineRequest::CLOSE) {
                                 if(session->get_pipeline_component().canbe_closed_by_pipeline()){
@@ -200,8 +199,7 @@ void Pipeline::destroy(){
     _log_with_date_time("pipeline " + to_string(get_pipeline_id()) + " destroyed. close all " + to_string(sessions.size()) + " sessions in this pipeline.", Log::INFO);
 
     // close all sessions
-    for(auto it = sessions.begin(); it != sessions.end(); ++it){
-        auto session = it->get();
+    for(auto& session : sessions){
         session->destroy(true);
     }
     sessions.clear();

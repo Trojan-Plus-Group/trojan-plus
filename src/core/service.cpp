@@ -208,7 +208,7 @@ void Service::prepare_pipelines(){
        
         size_t curr_num = 0;
         for (const auto& p : pipelines) {
-            if (p.lock()->config == config) {
+            if (p.lock()->get_config() == config) {
                 curr_num++;
             }
         }
@@ -237,7 +237,7 @@ void Service::prepare_pipelines(){
 
                 size_t curr_num = 0;
                 for (const auto& it : pipelines){
-                    if (&(it.lock()->config) == balance_config.get()) {
+                    if (&(it.lock()->get_config()) == balance_config.get()) {
                         curr_num++;
                     }
                 }
@@ -266,7 +266,7 @@ void Service::prepare_pipelines(){
 
                     while (next != pipelines.end()) {
                         bool found = false;
-                        const auto* const config_ptr = &(next->lock()->config);
+                        const auto* const config_ptr = &(next->lock()->get_config());
                         if (config_idx == 0) {
                             found = config_ptr == &config;
                         } else {
@@ -419,7 +419,7 @@ Pipeline* Service::search_default_pipeline() {
             it = pipelines.erase(it);
         } else {
             auto p = it->lock();
-            if (&(p->config) == (&config)) {  // find the default pipeline, cannot use load-balance server
+            if (&(p->get_config()) == (&config)) {  // find the default pipeline, cannot use load-balance server
                 pipeline = p.get();
                 break;
             }

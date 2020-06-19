@@ -22,6 +22,7 @@
 #include "utils.h"
 
 #include <fstream>
+#include <gsl/gsl>
 
 #ifdef __ANDROID__
 #include <signal.h>
@@ -53,15 +54,15 @@ size_t streambuf_append(boost::asio::streambuf& target, const boost::asio::strea
         return 0;
     }
 
-    auto dest = boost::asio::buffer_cast<uint8_t*>(target.prepare(n));
-    auto src = boost::asio::buffer_cast<const uint8_t*>(append_buf.data()) + start;
+    auto* dest = boost::asio::buffer_cast<uint8_t*>(target.prepare(n));
+    const auto* src = boost::asio::buffer_cast<const uint8_t*>(append_buf.data()) + start;
     memcpy(dest, src, n);
     target.commit(n);
     return n;
 }
 
 size_t streambuf_append(boost::asio::streambuf& target, const char* append_str){
-    if(!append_str){
+    if(append_str == nullptr){
         return 0;
     }
 
@@ -76,7 +77,7 @@ size_t streambuf_append(boost::asio::streambuf& target, const char* append_str){
 }
 
 size_t streambuf_append(boost::asio::streambuf& target, const uint8_t* append_data, size_t append_length){
-    if(!append_data || append_length == 0){
+    if(append_data == nullptr || append_length == 0){
         return 0;
     }
 
@@ -86,14 +87,15 @@ size_t streambuf_append(boost::asio::streambuf& target, const uint8_t* append_da
 }
 
 size_t streambuf_append(boost::asio::streambuf& target, char append_char){
-    auto cp = boost::asio::buffer_cast<char*>(target.prepare(1));
+    const size_t char_length = sizeof(char);
+    auto cp = gsl::span<char>(boost::asio::buffer_cast<char*>(target.prepare(char_length)), char_length);
     cp[0] = append_char;
-    target.commit(1);
-    return 1;
+    target.commit(char_length);
+    return char_length;
 }
 
 size_t streambuf_append(boost::asio::streambuf& target, const std::string_view& append_data){
-    if(append_data.length() == 0){
+    if(append_data.empty()){
         return 0;
     }
 
@@ -103,7 +105,7 @@ size_t streambuf_append(boost::asio::streambuf& target, const std::string_view& 
 }
 
 size_t streambuf_append(boost::asio::streambuf& target, const std::string& append_data){
-    if(append_data.length() == 0){
+    if(append_data.empty()){
         return 0;
     }
 
@@ -120,11 +122,12 @@ std::string_view streambuf_to_string_view(const boost::asio::streambuf& target){
 unsigned short get_checksum(const std::string_view& str){
     unsigned int sum = 0;
 
-    auto body_iter = str.cbegin();
+    const auto* body_iter = str.cbegin();
     while (body_iter != str.cend()) {
-        sum += (static_cast<uint8_t>(*body_iter++) << 8);
-        if (body_iter != str.end())
+        sum += (static_cast<uint8_t>(*body_iter++) << one_byte_shift_8_bits);
+        if (body_iter != str.end()){
             sum += static_cast<uint8_t>(*body_iter++);
+        }
     }
 
     return static_cast<unsigned short>(sum);
@@ -139,9 +142,10 @@ unsigned short get_checksum(const boost::asio::streambuf& buf){
 }
 
 int get_hashCode(const std::string& str) {
+    const int hash_code_magic_number = 31;
     int h = 0;
-    for (size_t i = 0; i < str.length(); i++) {
-        h = 31 * h + str[i];
+    for (auto c : str) {
+        h = hash_code_magic_number * h + c;
     }
     return h;
 }
@@ -172,13 +176,13 @@ void SendDataCache::swap_recv(){
 SendDataCache::~SendDataCache() {
     destroyed = true;
 
-    for (size_t i = 0; i < handler_queue_other.size(); i++) {
-        handler_queue_other[i](boost::asio::error::broken_pipe);
+    for (auto& handler : handler_queue_other) {
+        handler(boost::asio::error::broken_pipe);
     }
     handler_queue_other.clear();
 
-    for (size_t i = 0; i < handler_queue.size(); i++) {
-        handler_queue[i](boost::asio::error::broken_pipe);
+    for (auto& handler : handler_queue) {
+        handler(boost::asio::error::broken_pipe);
     }
     handler_queue.clear();
 }
@@ -217,14 +221,14 @@ void SendDataCache::async_send() {
 
     is_async_sending = true;
 
-    auto sending_handler = current_recv_handler;
-    auto sending_data = current_recv_queue;
+    auto* sending_handler = current_recv_handler;
+    auto* sending_data = current_recv_queue;
 
     swap_recv();
 
     async_writer(*sending_data, [this, sending_handler, sending_data](const boost::system::error_code ec) {
-        for (size_t i = 0; i < sending_handler->size(); i++) {
-            (*sending_handler)[i](ec);
+        for (auto& handler : *sending_handler) {
+            handler(ec);
         }
         sending_handler->clear();
         sending_data->consume(sending_data->size());
@@ -249,7 +253,7 @@ bool set_udp_send_recv_buf(int fd, int buf_size){
         #else
             (const char*)&size,
         #endif
-            sizeof(size))) {
+            sizeof(size)) != 0) {
             _log_with_date_time("[udp] setsockopt SO_RCVBUF failed!", Log::ERROR);
             return false;
         }
@@ -261,7 +265,7 @@ bool set_udp_send_recv_buf(int fd, int buf_size){
         #else
             (const char*)&size,
         #endif
-            sizeof(size))) {
+            sizeof(size)) != 0) {
             _log_with_date_time("[udp] setsockopt SO_SNDBUF failed!", Log::ERROR);
             return false;
         }
@@ -274,23 +278,23 @@ udp::endpoint make_udp_endpoint_safe(const std::string& address, uint16_t port, 
     auto endpoint = udp::endpoint(make_address((address == "0" || address.length() == 0) ? "127.0.0.1" : address.c_str(), ec), port);
     if(ec){
         return udp::endpoint();
-    }else{
-        return endpoint;
     }
+    return endpoint;
 }
 
 
 #ifndef _WIN32  // nat mode does not support in windows platform
 // copied from shadowsocks-libev udpreplay.c
 static int get_dstaddr(struct msghdr *msg, struct sockaddr_storage *dstaddr) {
-    struct cmsghdr *cmsg;
-
+    struct cmsghdr *cmsg = nullptr;
     for (cmsg = CMSG_FIRSTHDR(msg); cmsg; cmsg = CMSG_NXTHDR(msg, cmsg)) {
         if (cmsg->cmsg_level == SOL_IP && cmsg->cmsg_type == IP_RECVORIGDSTADDR) {
             memcpy(dstaddr, CMSG_DATA(cmsg), sizeof(struct sockaddr_in));
             dstaddr->ss_family = AF_INET;
             return 0;
-        } else if (cmsg->cmsg_level == SOL_IPV6 && cmsg->cmsg_type == IPV6_RECVORIGDSTADDR) {
+        }
+        
+        if (cmsg->cmsg_level == SOL_IPV6 && cmsg->cmsg_type == IPV6_RECVORIGDSTADDR) {
             memcpy(dstaddr, CMSG_DATA(cmsg), sizeof(struct sockaddr_in6));
             dstaddr->ss_family = AF_INET6;
             return 0;
@@ -301,11 +305,13 @@ static int get_dstaddr(struct msghdr *msg, struct sockaddr_storage *dstaddr) {
 }
 
 static int get_ttl(struct msghdr *msg) {
-    struct cmsghdr *cmsg;
+    struct cmsghdr *cmsg = nullptr;
     for (cmsg = CMSG_FIRSTHDR(msg); cmsg; cmsg = CMSG_NXTHDR(msg, cmsg)) {
         if (cmsg->cmsg_level == SOL_IP && cmsg->cmsg_type == IP_TTL) {
             return *(int *)CMSG_DATA(cmsg);
-        } else if (cmsg->cmsg_level == SOL_IPV6 && cmsg->cmsg_type == IPV6_HOPLIMIT) {
+        }
+        
+        if (cmsg->cmsg_level == SOL_IPV6 && cmsg->cmsg_type == IPV6_HOPLIMIT) {
             return *(int *)CMSG_DATA(cmsg);
         }
     }
@@ -315,16 +321,16 @@ static int get_ttl(struct msghdr *msg) {
 
 static pair<string, uint16_t> get_addr(struct sockaddr_storage addr) {
     const int buf_size = 256;
-    char buf[256];
+    char buf[buf_size]{};
 
     if (addr.ss_family == AF_INET) {
-        sockaddr_in *sa = (sockaddr_in *)&addr;
-        if (inet_ntop(AF_INET, &(sa->sin_addr), buf, buf_size)) {
+        auto *sa = (sockaddr_in *)&addr;
+        if (inet_ntop(AF_INET, &(sa->sin_addr), (char*)buf, buf_size) != nullptr) {
             return make_pair(buf, ntohs(sa->sin_port));
         }
     } else {
-        sockaddr_in6 *sa = (sockaddr_in6 *)&addr;
-        if (inet_ntop(AF_INET6, &(sa->sin6_addr), buf, buf_size)) {
+        auto *sa = (sockaddr_in6 *)&addr;
+        if (inet_ntop(AF_INET6, &(sa->sin6_addr), (char*)buf, buf_size) != nullptr) {
             return make_pair(buf, ntohs(sa->sin6_port));
         }
     }
@@ -365,28 +371,26 @@ std::pair<std::string, uint16_t> recv_target_endpoint(int _fd){
 // copied from shadowsocks-libev udpreplay.c
 // it works if in NAT mode
 pair<string, uint16_t> recv_tproxy_udp_msg(int fd, boost::asio::ip::udp::endpoint& target_endpoint, char *buf, int &buf_len, int &ttl) {
-    struct sockaddr_storage src_addr;
-    memset(&src_addr, 0, sizeof(struct sockaddr_storage));
+    const size_t max_control_buffer_size = 64;
+    struct sockaddr_storage src_addr{};
 
-    char control_buffer[64] = {0};
-    struct msghdr msg;
-    memset(&msg, 0, sizeof(struct msghdr));
-    struct iovec iov[1];
-    struct sockaddr_storage dst_addr;
-    memset(&dst_addr, 0, sizeof(struct sockaddr_storage));
+    char control_buffer[max_control_buffer_size]{};
+    struct msghdr msg{};
+    struct iovec iov[1]{};
+    struct sockaddr_storage dst_addr{};
 
     msg.msg_name = &src_addr;
     msg.msg_namelen = sizeof(struct sockaddr_storage);
-    ;
-    msg.msg_control = control_buffer;
-    msg.msg_controllen = sizeof(control_buffer);
+    
+    msg.msg_control = (void*)control_buffer;
+    msg.msg_controllen = max_control_buffer_size;
 
     const int packet_size = DEFAULT_PACKET_SIZE;
     const int buf_size = DEFAULT_PACKET_SIZE * 2;
 
     iov[0].iov_base = buf;
     iov[0].iov_len = buf_size;
-    msg.msg_iov = iov;
+    msg.msg_iov = (struct iovec*)iov;
     msg.msg_iovlen = 1;
 
     buf_len = recvmsg(fd, &msg, 0);
@@ -398,7 +402,7 @@ pair<string, uint16_t> recv_tproxy_udp_msg(int fd, boost::asio::ip::udp::endpoin
         }
 
         ttl = get_ttl(&msg);
-        if (get_dstaddr(&msg, &dst_addr)) {
+        if (get_dstaddr(&msg, &dst_addr) != 0) {
             _log_with_date_time("[udp] unable to get dest addr!", Log::FATAL);
         } else {
             auto target_dst = get_addr(dst_addr);
@@ -415,34 +419,26 @@ pair<string, uint16_t> recv_tproxy_udp_msg(int fd, boost::asio::ip::udp::endpoin
 bool prepare_nat_udp_bind(int fd, bool is_ipv4, bool recv_ttl) {
     
     int opt = 1;
-    int sol;
-    int ip_recv;
+    int sol = is_ipv4 ? SOL_IP : SOL_IPV6;
+    int ip_recv = is_ipv4 ? IP_RECVORIGDSTADDR : IPV6_RECVORIGDSTADDR;
 
-    if (is_ipv4) {
-        sol = SOL_IP;
-        ip_recv = IP_RECVORIGDSTADDR;
-    } else{
-        sol = SOL_IPV6;
-        ip_recv = IPV6_RECVORIGDSTADDR;
-    } 
-
-    if (setsockopt(fd, sol, IP_TRANSPARENT, &opt, sizeof(opt))) {
+    if (setsockopt(fd, sol, IP_TRANSPARENT, &opt, sizeof(opt)) != 0) {
         _log_with_date_time("[udp] setsockopt IP_TRANSPARENT failed!", Log::FATAL);
         return false;
     }
 
-    if (setsockopt(fd, sol, ip_recv, &opt, sizeof(opt))) {
+    if (setsockopt(fd, sol, ip_recv, &opt, sizeof(opt)) != 0 ) {
         _log_with_date_time("[udp] setsockopt IP_RECVORIGDSTADDR failed!", Log::FATAL);
         return false;
     }
 
-    if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt))) {
+    if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) != 0) {
         _log_with_date_time("[udp] setsockopt SO_REUSEADDR failed!", Log::FATAL);
         return false;
     }
 
     if (recv_ttl) {
-        if (setsockopt(fd, sol, is_ipv4 ? IP_RECVTTL : IPV6_RECVHOPLIMIT, &opt, sizeof(opt))) {
+        if (setsockopt(fd, sol, is_ipv4 ? IP_RECVTTL : IPV6_RECVHOPLIMIT, &opt, sizeof(opt)) != 0) {
             _log_with_date_time("[udp] setsockopt IP_RECVOPTS/IPV6_RECVHOPLIMIT failed!", Log::ERROR);
         }
     }
@@ -453,12 +449,12 @@ bool prepare_nat_udp_bind(int fd, bool is_ipv4, bool recv_ttl) {
 bool prepare_nat_udp_target_bind(int fd, bool is_ipv4, const boost::asio::ip::udp::endpoint &udp_target_endpoint, int buf_size) {
     int opt = 1;
     int sol = is_ipv4 ? SOL_IPV6 : SOL_IP;
-    if (setsockopt(fd, sol, IP_TRANSPARENT, &opt, sizeof(opt))) {
+    if (setsockopt(fd, sol, IP_TRANSPARENT, &opt, sizeof(opt)) != 0) {
         _log_with_endpoint(udp_target_endpoint, "[udp] setsockopt IP_TRANSPARENT failed!", Log::FATAL);
         return false;
     }
 
-    if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt))) {
+    if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) != 0) {
         _log_with_endpoint(udp_target_endpoint, "[udp] setsockopt SO_REUSEADDR failed!", Log::FATAL);
         return false;
     }

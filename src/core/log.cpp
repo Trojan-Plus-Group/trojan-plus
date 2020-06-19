@@ -27,6 +27,7 @@
 #include <sstream>
 #include <boost/date_time/posix_time/posix_time.hpp>
 #include <boost/date_time/posix_time/posix_time_io.hpp>
+#include <gsl/gsl>
 #ifdef ENABLE_ANDROID_LOG
 #include <android/log.h>
 #endif // ENABLE_ANDROID_LOG
@@ -34,7 +35,7 @@ using namespace std;
 using namespace boost::posix_time;
 using namespace boost::asio::ip;
 
-char __debug_str_buf[1024];
+unique_ptr<char> __debug_str_buf(new char[__max_debug_str_buf_size]);
 
 Log::Level Log::level(INFO);
 FILE *Log::keylog(nullptr);
@@ -69,7 +70,7 @@ void Log::log_with_date_time(const string &message, Level level) {
     static const char *level_strings[]= { "ALL", "INFO", "WARN", "ERROR", "FATAL", "OFF" };
 
     static ostringstream time_stream;
-    static const locale loc(time_stream.getloc(), new time_facet("[%Y-%m-%d %H:%M:%S] ")); // fu*k nacked new
+    static const locale loc(time_stream.getloc(), new time_facet("[%Y-%m-%d %H:%M:%S] ")); // have to use fu*k nacked new
     static bool set_time_stream = false;
     if(!set_time_stream){
         set_time_stream = true;
@@ -79,7 +80,7 @@ void Log::log_with_date_time(const string &message, Level level) {
     time_stream.str(string());
     time_stream << second_clock::local_time();
 
-    log(time_stream.str() + '[' + string(level_strings[level]) + "] " + message, level);
+    log(time_stream.str() + '[' + string(gsl::at(level_strings,level)) + "] " + message, level);
 }
 
 void Log::log_with_endpoint(const tcp::endpoint &endpoint, const string &message, Level level) {

@@ -207,7 +207,7 @@ void ServerSession::out_udp_async_read() {
     _guard_read_buf_begin(udp_read_buf);
     udp_read_buf.consume(udp_read_buf.size());
     auto self = shared_from_this();
-    udp_socket.async_receive_from(udp_read_buf.prepare(config.get_udp_recv_buf()), out_udp_endpoint, [this, self](const boost::system::error_code error, size_t length) {
+    udp_socket.async_receive_from(udp_read_buf.prepare(get_config().get_udp_recv_buf()), out_udp_endpoint, [this, self](const boost::system::error_code error, size_t length) {
         _guard_read_buf_end(udp_read_buf);
         if (error) {
             output_debug_info_ec(error);
@@ -248,8 +248,8 @@ void ServerSession::in_recv(const string_view &data) {
         TrojanRequest req;
         bool use_alpn = req.parse(data) == -1;
         if(!use_alpn){
-            auto password_iterator = config.get_password().find(req.password);
-            if (password_iterator == config.get_password().end()) {
+            auto password_iterator = get_config().get_password().find(req.password);
+            if (password_iterator == get_config().get_password().end()) {
                 if (auth && auth->auth(req.password)){
                     auth_password = req.password;
                     _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + 
@@ -262,7 +262,7 @@ void ServerSession::in_recv(const string_view &data) {
             }
         }      
                 
-        string query_addr = use_alpn ? config.get_remote_addr() : req.address.address;
+        string query_addr = use_alpn ? get_config().get_remote_addr() : req.address.address;
         string query_port = to_string([&]() {
             if (!use_alpn) {
                 return req.address.port;
@@ -271,15 +271,15 @@ void ServerSession::in_recv(const string_view &data) {
             unsigned int alpn_len;
             SSL_get0_alpn_selected(in_socket.native_handle(), &alpn_out, &alpn_len);
             if (alpn_out == nullptr) {
-                return config.get_remote_port();
+                return get_config().get_remote_port();
             }
-            auto it = config.get_ssl().alpn_port_override.find(string(alpn_out, alpn_out + alpn_len));
-            return it == config.get_ssl().alpn_port_override.end() ? config.get_remote_port() : it->second;
+            auto it = get_config().get_ssl().alpn_port_override.find(string(alpn_out, alpn_out + alpn_len));
+            return it == get_config().get_ssl().alpn_port_override.end() ? get_config().get_remote_port() : it->second;
         }());
         
         if (!use_alpn) {
             if (req.command == TrojanRequest::UDP_ASSOCIATE) {
-                is_udp_forward_session = true;
+                set_udp_forward_session(true);
                 udp_timer_async_wait();
 
                 boost::system::error_code ec;
@@ -395,7 +395,7 @@ void ServerSession::out_udp_sent() {
                     destroy();
                     return;
                 }
-                set_udp_send_recv_buf((int)udp_socket.native_handle(), config.get_udp_socket_buf());
+                set_udp_send_recv_buf((int)udp_socket.native_handle(), get_config().get_udp_socket_buf());
                 udp_socket.bind(udp::endpoint(protocol, 0));
 
                 _log_with_endpoint(udp_associate_endpoint, "session_id: " + to_string(get_session_id()) + 
@@ -435,7 +435,7 @@ void ServerSession::out_udp_sent() {
                 }
                 
                 auto iterator = results.begin();
-                if (config.get_tcp().prefer_ipv4) {
+                if (get_config().get_tcp().prefer_ipv4) {
                     for (auto it = results.begin(); it != results.end(); ++it) {
                         const auto &addr = it->endpoint().address();
                         if (addr.is_v4()) {
@@ -474,7 +474,7 @@ void ServerSession::destroy(bool pipeline_call /*= false*/) {
     }
     status = DESTROY;    
     
-    _log_with_endpoint(in_endpoint, (is_udp_forward() ? "[udp] session_id: " : "session_id: ") + to_string(get_session_id()) + 
+    _log_with_endpoint(in_endpoint, (is_udp_forward_session() ? "[udp] session_id: " : "session_id: ") + to_string(get_session_id()) + 
         " disconnected, " + to_string(recv_len) + " bytes received, " + to_string(sent_len) + 
         " bytes sent, lasted for " + to_string(time(nullptr) - start_time) + " seconds", Log::INFO);
 

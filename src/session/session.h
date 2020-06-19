@@ -41,16 +41,17 @@ public:
         MAX_BUF_LENGTH = 8192,
     };
 
-protected:
+private:
 
     Service* service; 
     PipelineComponent pipeline_com;
-    bool is_udp_forward_session;
+    bool is_udp_forward;
+
+    const Config& config;
+
 public:
     Session(Service* _service, const Config& _config);
     
-    const Config& config;
-
     virtual void start() = 0;
     virtual ~Session();
     virtual void destroy(bool pipeline_call = false) = 0;
@@ -58,9 +59,11 @@ public:
         pipeline_com.recv_ack_cmd();
     }
 
+    const Config& get_config()const { return config; }
     Service* get_service() { return service; }
 
-    inline bool is_udp_forward()const { return is_udp_forward_session; }
+    inline void set_udp_forward_session(bool udp) { is_udp_forward = udp; }
+    inline bool is_udp_forward_session()const { return is_udp_forward ; }
 
     PipelineComponent::SessionIdType get_session_id(){ return pipeline_com.get_session_id(); }
     PipelineComponent& get_pipeline_component(){ return pipeline_com; }

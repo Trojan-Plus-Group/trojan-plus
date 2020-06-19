@@ -23,7 +23,7 @@
 #include <memory>
 #include <list>
 #include <functional>
-#include <time.h>
+#include <ctime>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ssl.hpp>
 #include <boost/asio/ip/tcp.hpp>
@@ -56,15 +56,15 @@ private:
     uint32_t pipeline_id;
     std::shared_ptr<icmpd> icmp_processor;
     boost::asio::ip::tcp::endpoint out_socket_endpoint;
-
+    const Config& config;
     void out_async_recv();
 public:
 
     Pipeline(Service* _service, const Config& config, boost::asio::ssl::context& ssl_context);
     void start();
     void destroy();
-    const Config& config;
 
+    const Config& get_config()const {return config;}
     Service* get_service() { return service; }
 
     void session_start(Session& session,  SentHandler&& started_handler);
@@ -77,7 +77,7 @@ public:
     
     uint32_t get_pipeline_id()const{ return pipeline_id; }
 
-    void set_icmpd(std::shared_ptr<icmpd> icmp){ icmp_processor = icmp; }
+    void set_icmpd(std::shared_ptr<icmpd> icmp){ icmp_processor = std::move(icmp); }
     boost::asio::ip::tcp::endpoint get_out_socket_endpoint() const { return out_socket_endpoint;}
 };
 

@@ -372,7 +372,7 @@ void TUNDev::parse_packet(){
 
 
 int TUNDev::handle_write_upd_data(TUNSession* _session, string_view& data_str){
-    assert (_session->is_udp_forward());
+    assert (_session->is_udp_forward_session());
     
     auto data_len = data_str.length();
     if(data_len == 0){

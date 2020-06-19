@@ -36,7 +36,7 @@ SocketSession::SocketSession(Service* _service, const Config& config) :
 }
 
 void SocketSession::udp_timer_async_wait(){
-    if(!is_udp_forward()){
+    if(!is_udp_forward_session()){
         return;
     }
     
@@ -46,7 +46,7 @@ void SocketSession::udp_timer_async_wait(){
         return;
     }
 
-    udp_gc_timer.expires_after(chrono::seconds(config.get_udp_timeout()));
+    udp_gc_timer.expires_after(chrono::seconds(get_config().get_udp_timeout()));
     auto self = shared_from_this();
     udp_gc_timer.async_wait([this, self](const boost::system::error_code error) {
         if (!error) {

@@ -58,7 +58,8 @@ private:
     static LogCallback log_callback;
 };
 
-extern char __debug_str_buf[1024];
+const static size_t __max_debug_str_buf_size = 1024;
+extern std::unique_ptr<char> __debug_str_buf;
 
 #if 0
     #define _write_data_to_file_DEBUG(...) \
@@ -94,15 +95,15 @@ extern char __debug_str_buf[1024];
     do{if(Log::level != Log::OFF) { Log::log(__VA_ARGS__); }}while(false)
 
 #define output_debug_info_ec(ec) \
-    do{if(Log::level <= Log::INFO) { Log::log_with_date_time(std::string((sprintf(__debug_str_buf, "%s:%d-<%s> ec:%s",__FILE__, __LINE__, __FUNCTION__,(ec.message().c_str())), __debug_str_buf)), Log::INFO); }}while(false)
+    do{if(Log::level <= Log::INFO) { Log::log_with_date_time(std::string(__debug_str_buf.get(), snprintf(__debug_str_buf.get(), __max_debug_str_buf_size, "%s:%d-<%s> ec:%s",(const char*)__FILE__, __LINE__, (const char*)__FUNCTION__,(ec.message().c_str()))), Log::INFO); }}while(false)
 
 #define output_debug_info() \
-    do{if(Log::level <= Log::INFO) { Log::log_with_date_time(std::string((sprintf(__debug_str_buf, "%s:%d-<%s>",__FILE__, __LINE__, __FUNCTION__), __debug_str_buf)), Log::INFO); }}while(false)
+    do{if(Log::level <= Log::INFO) { Log::log_with_date_time(std::string(__debug_str_buf.get(), snprintf(__debug_str_buf.get(), __max_debug_str_buf_size, "%s:%d-<%s>",(const char*)__FILE__, __LINE__, (const char*)__FUNCTION__)), Log::INFO); }}while(false)
 
 #define _guard_read_buf_begin(guard_buf) \
     do{ \
         if((guard_buf##_guard)){ \
-            auto info = std::string((sprintf(__debug_str_buf, "%s:%d-<%s>",__FILE__, __LINE__, __FUNCTION__), __debug_str_buf)); \
+            auto info = std::string(__debug_str_buf.get(), snprintf(__debug_str_buf.get(), __max_debug_str_buf_size, "%s:%d-<%s>",(const char*)__FILE__, __LINE__, (const char*)__FUNCTION__)); \
             throw std::logic_error("!! guard_read_buf failed! Cannot enter this function before _guard_read_buf_end  !! " + info); \
         } \
         (guard_buf##_guard) = true; \

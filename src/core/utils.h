@@ -99,6 +99,12 @@ typedef boost::asio::detail::socket_option::boolean<SOL_SOCKET, SO_REUSEPORT> re
 #define PACKET_HEADER_SIZE (1 + 28 + 2 + 64)
 #define DEFAULT_PACKET_SIZE 1397  // 1492 - PACKET_HEADER_SIZE = 1397, the default MTU for UDP relay
 
+const static int one_byte_shift_8_bits = 8;
+const static int two_bytes_shift_16_bits = 16;
+const static int three_bytes_shift_24_bits = 24;
+
+const static int one_byte_mask_0xFF = 0xFF;
+
 size_t streambuf_append(boost::asio::streambuf& target, const boost::asio::streambuf& append_buf);
 size_t streambuf_append(boost::asio::streambuf& target, const boost::asio::streambuf& append_buf, size_t start, size_t n);
 size_t streambuf_append(boost::asio::streambuf& target, const char* append_str);
@@ -117,7 +123,8 @@ int get_hashCode(const std::string& str);
 void write_data_to_file(int id, const std::string& tag, const std::string_view& data);
 
 typedef std::function<void(const boost::system::error_code ec)> SentHandler;
-typedef std::function<void(const boost::asio::streambuf& data, SentHandler handler)> AsyncWriter;
+typedef std::function<void(const boost::asio::streambuf& data, SentHandler&& handler)> 
+AsyncWriter;
 typedef std::function<bool()> ConnectionFunc;
 typedef std::function<void(const std::string_view& data)> ReadHandler;
 typedef std::function<void(boost::asio::streambuf& buf)> PushDataHandler;
@@ -176,7 +183,7 @@ public :
         }
     }
 
-    inline bool has_queued_data()const{
+    [[nodiscard]] inline bool has_queued_data()const{
         return data_queue.size() > 0;
     }
 };
@@ -240,25 +247,25 @@ void connect_out_socket(ThisT this_ptr, std::string addr, std::string port, boos
             return;
         }
         android_protect_socket((int)out_socket.native_handle());
-        if (this_ptr->config.get_tcp().no_delay) {
+        if (this_ptr->get_config().get_tcp().no_delay) {
             out_socket.set_option(boost::asio::ip::tcp::no_delay(true));
         }
-        if (this_ptr->config.get_tcp().keep_alive) {
+        if (this_ptr->get_config().get_tcp().keep_alive) {
             out_socket.set_option(boost::asio::socket_base::keep_alive(true));
         }
 #ifdef TCP_FASTOPEN_CONNECT
-        if (this_ptr->config.get_tcp().fast_open) {
+        if (this_ptr->get_config().get_tcp().fast_open) {
             using fastopen_connect = boost::asio::detail::socket_option::boolean<IPPROTO_TCP, TCP_FASTOPEN_CONNECT>;
             boost::system::error_code ec;
             out_socket.set_option(fastopen_connect(true), ec);
         }
 #endif  // TCP_FASTOPEN_CONNECT
         auto timeout_timer = std::shared_ptr<boost::asio::steady_timer>(nullptr);
-        if (this_ptr->config.get_tcp().connect_time_out > 0) {
+        if (this_ptr->get_config().get_tcp().connect_time_out > 0) {
             // out_socket.async_connect will be stuck forever when the host is not reachable
             // we must set a timeout timer
             timeout_timer = std::make_shared<boost::asio::steady_timer>(this_ptr->get_service()->get_io_context());
-            timeout_timer->expires_after(std::chrono::seconds(this_ptr->config.get_tcp().connect_time_out));
+            timeout_timer->expires_after(std::chrono::seconds(this_ptr->get_config().get_tcp().connect_time_out));
             timeout_timer->async_wait([=](const boost::system::error_code error) {
                 if (!error) {
                     _log_with_endpoint(in_endpoint, "cannot establish connection to remote server " + addr + ':' + port + " reason: timeout", Log::ERROR);
@@ -295,7 +302,7 @@ void connect_remote_server_ssl(ThisT this_ptr, std::string addr, std::string por
                 return;
             }
             _log_with_endpoint(in_endpoint, "tunnel established");
-            if (this_ptr->config.get_ssl().reuse_session) {
+            if (this_ptr->get_config().get_ssl().reuse_session) {
                 auto* ssl = out_socket.native_handle();
                 if (!SSL_session_reused(ssl)) {
                     _log_with_endpoint(in_endpoint, "SSL session not reused");

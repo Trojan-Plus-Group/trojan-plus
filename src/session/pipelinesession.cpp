@@ -119,14 +119,14 @@ void PipelineSession::in_recv(const string_view &) {
             return;
         }
 
-        if(data.substr(0, npos) != config.get_password().cbegin()->first){
+        if(data.substr(0, npos) != get_config().get_password().cbegin()->first){
             _log_with_endpoint(in_endpoint, "PipelineSession error password", Log::ERROR);
             destroy();
             return;
-        }else{
-            _log_with_endpoint(in_endpoint, "PipelineSession handshake done!", Log::INFO);
         }
-
+    
+        _log_with_endpoint(in_endpoint, "PipelineSession handshake done!", Log::INFO);
+        
         gc_timer.cancel();
         status = STREAMING;
         in_read_buf.consume(npos + 2);
@@ -183,7 +183,7 @@ void PipelineSession::process_streaming_data(){
                 sessions.erase(it);
             });
 
-            auto session = make_shared<ServerSession>(service, config, ssl_context, auth, plain_http_response);
+            auto session = make_shared<ServerSession>(get_service(), get_config(), ssl_context, auth, plain_http_response);
             session->set_pipeline_session(shared_from_this());
             session->get_pipeline_component().set_session_id(req.session_id);
             session->get_pipeline_component().set_use_pipeline();            
@@ -214,10 +214,10 @@ void PipelineSession::process_streaming_data(){
             }
         }else if(req.command == PipelineRequest::ACK){
             auto found = find_and_process_session(req.session_id, [](SessionsList::iterator& it){ 
-                auto session = it->get();
+                auto* session = it->get();
                 session->recv_ack_cmd();
                 if(session->get_pipeline_component().is_wait_for_pipeline_ack()){
-                    it->get()->out_async_read();
+                    session->out_async_read();
                 }
             });
 
@@ -284,8 +284,8 @@ void PipelineSession::destroy(bool /*pipeline_call = false*/){
     _log_with_endpoint(in_endpoint, "PipelineSession remove all sessions: " + to_string(sessions.size()), Log::INFO);
 
     // clear all sessions which attached this PipelineSession
-    for(auto it = sessions.begin(); it != sessions.end();it++){
-        it->get()->destroy(true);
+    for(auto& it : sessions){
+        it->destroy(true);
     }
     sessions.clear();    
     shutdown_ssl_socket(this, live_socket);
