@@ -40,9 +40,9 @@ binary_path = "..\\..\\win32-build\\Release\\trojan.exe"
 
 def get_cooldown_rss_limit():
     if is_macos_system():
-        return 50 * (1024)
+        return 20 * (1024)
     else:
-        return 25 * (1024)
+        return 30 * (1024)
 
 def start_trojan_plus_process(config):
     print_time_log("start " + config + "...")
