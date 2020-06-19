@@ -37,7 +37,7 @@ using namespace boost::asio::ip;
 
 unique_ptr<char> __debug_str_buf(new char[__max_debug_str_buf_size]);
 
-Log::Level Log::level(INFO);
+Log::Level Log::level(INVALID);
 FILE *Log::keylog(nullptr);
 FILE *Log::output_stream(stderr);
 Log::LogCallback Log::log_callback{};

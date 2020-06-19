@@ -72,7 +72,6 @@ void Config::load(const string &filename) {
 }
 
 void Config::populate(const string &JSON) {
-    compare_hash = get_hashCode(JSON);
     istringstream s(JSON);
     ptree tree;
     read_json(s, tree);
@@ -109,11 +108,18 @@ void Config::populate(const ptree &tree) {
             password[SHA224(p)] = p;
         }
     }
+    
+    log_level = static_cast<Log::Level>(tree.get("log_level", default_log_level));
+    if (Log::level == Log::INVALID){
+        // don't let load-balance config override the log level
+        Log::level = log_level;
+    }
+
     udp_timeout = tree.get("udp_timeout", default_udp_timeout);
     udp_socket_buf = tree.get("udp_socket_buf", default_udp_socket_buf);
     udp_forward_socket_buf = tree.get("udp_forward_socket_buf", default_udp_forward_socket_buf);
     udp_recv_buf = tree.get("udp_recv_buf", default_udp_recv_buf);
-    log_level = static_cast<Log::Level>(tree.get("log_level", default_log_level));
+    
     ssl.verify = tree.get("ssl.verify", true);
     ssl.verify_hostname = tree.get("ssl.verify_hostname", true);
     ssl.cert = tree.get("ssl.cert", string());
@@ -143,6 +149,7 @@ void Config::populate(const ptree &tree) {
     ssl.plain_http_response = tree.get("ssl.plain_http_response", string());
     ssl.curves = tree.get("ssl.curves", string());
     ssl.dhparam = tree.get("ssl.dhparam", string());
+    
     tcp.prefer_ipv4 = tree.get("tcp.prefer_ipv4", false);
     tcp.no_delay = tree.get("tcp.no_delay", true);
     tcp.keep_alive = tree.get("tcp.keep_alive", true);
@@ -150,6 +157,7 @@ void Config::populate(const ptree &tree) {
     tcp.fast_open = tree.get("tcp.fast_open", false);
     tcp.fast_open_qlen = tree.get("tcp.fast_open_qlen", default_tcp_fast_open_qlen);
     tcp.connect_time_out = tree.get("tcp.connect_time_out", default_tcp_connect_time_out);
+    
     mysql.enabled = tree.get("mysql.enabled", false);
     mysql.server_addr = tree.get("mysql.server_addr", string("127.0.0.1"));
     mysql.server_port = tree.get("mysql.server_port", default_mysql_server_port);
@@ -157,6 +165,7 @@ void Config::populate(const ptree &tree) {
     mysql.username = tree.get("mysql.username", string("trojan"));
     mysql.password = tree.get("mysql.password", string());
     mysql.cafile = tree.get("mysql.cafile", string());
+    
     experimental.pipeline_num = tree.get("experimental.pipeline_num", default_experimental_pipeline_num);
     experimental.pipeline_ack_window = tree.get("experimental.pipeline_ack_window", default_experimental_pipeline_ack_window);
     experimental.pipeline_loadbalance_configs.clear();
@@ -195,7 +204,9 @@ void Config::populate(const ptree &tree) {
     tun.mtu = tree.get("tun.mtu", default_tun_mtu);
     tun.tun_fd = tree.get("tun.tun_fd", default_tun_fd);
 
-    Log::level = log_level;
+    const auto hash_str = get_remote_addr() + ":" + to_string(get_remote_port());
+    compare_hash = get_hashCode(hash_str);
+    _log_with_date_time_ALL("[config] has loaded [" + hash_str + "] in hashCode: " + to_string(compare_hash));
 }
 
 bool Config::try_prepare_pipeline_proxy_icmp(bool is_ipv4){

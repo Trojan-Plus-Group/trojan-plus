@@ -40,7 +40,8 @@ public:
         WARN = 2,
         ERROR = 3,
         FATAL = 4,
-        OFF = 5
+        OFF = 5,
+        INVALID = -1,
     };
     typedef std::function<void(const std::string &, Level)> LogCallback;
     static Level level;
