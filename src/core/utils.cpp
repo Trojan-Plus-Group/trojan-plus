@@ -121,8 +121,10 @@ std::string_view streambuf_to_string_view(const boost::asio::streambuf& target){
 
 unsigned short get_checksum(const std::string_view& str){
     unsigned int sum = 0;
-
-    const auto* body_iter = str.cbegin();
+    // clang-tidy advice failed:
+    // compiling error in MSVC if change it into type "const auto*", error message: 
+    //  cannot deduce type for 'const auto *' from 'std::_String_view_iterator<_Traits>'
+    auto body_iter = str.cbegin(); 
     while (body_iter != str.cend()) {
         sum += (static_cast<uint8_t>(*body_iter++) << one_byte_shift_8_bits);
         if (body_iter != str.end()){
