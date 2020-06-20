@@ -57,6 +57,7 @@ public:
         bool reuse_session;
         bool session_ticket;
         long session_timeout;
+        int ssl_shutdown_wait_time;
         std::string plain_http_response;
         std::string curves;
         std::string dhparam;

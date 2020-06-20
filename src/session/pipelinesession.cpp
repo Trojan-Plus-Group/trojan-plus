@@ -38,13 +38,13 @@ PipelineSession::PipelineSession(Service* _service, const Config& config, boost:
   shared_ptr<Authenticator> auth, const std::string &plain_http_response):
     SocketSession(_service, config),
     status(HANDSHAKE),
-    auth(auth),
+    auth(move(auth)),
     plain_http_response(plain_http_response),
     live_socket(_service->get_io_context(), ssl_context),
     gc_timer(_service->get_io_context()),
     ssl_context(ssl_context){
 
-    sending_data_cache.set_async_writer([this](const boost::asio::streambuf& data, SentHandler handler) {
+    sending_data_cache.set_async_writer([this](const boost::asio::streambuf& data, SentHandler&& handler) {
         if(status == DESTROY){
             return;
         }
@@ -149,7 +149,7 @@ void PipelineSession::in_send(PipelineRequest::Command cmd, ServerSession& sessi
     }
 }
 
-bool PipelineSession::find_and_process_session(PipelineComponent::SessionIdType session_id, std::function<void(SessionsList::iterator&)> processor){
+bool PipelineSession::find_and_process_session(PipelineComponent::SessionIdType session_id, std::function<void(SessionsList::iterator&)>&& processor){
     for(auto it = sessions.begin(); it != sessions.end();it++){
         if(it->get()->get_session_id() == session_id){
             processor(it);

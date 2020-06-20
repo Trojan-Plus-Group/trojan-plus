@@ -53,6 +53,7 @@ const static int default_udp_recv_buf = 8192;
 const static int default_log_level = int(Log::INFO);
 
 const static long default_ssl_session_timeout = 600;
+const static int default_ssl_shutdown_wait_time = 30;
 
 const static int default_tcp_fast_open_qlen = 20;
 const static int default_tcp_connect_time_out = 10;
@@ -146,6 +147,7 @@ void Config::populate(const ptree &tree) {
     ssl.reuse_session = tree.get("ssl.reuse_session", true);
     ssl.session_ticket = tree.get("ssl.session_ticket", false);
     ssl.session_timeout = tree.get("ssl.session_timeout", default_ssl_session_timeout);
+    ssl.ssl_shutdown_wait_time = tree.get("ssl.ssl_shutdown_wait_time", default_ssl_shutdown_wait_time);
     ssl.plain_http_response = tree.get("ssl.plain_http_response", string());
     ssl.curves = tree.get("ssl.curves", string());
     ssl.dhparam = tree.get("ssl.dhparam", string());

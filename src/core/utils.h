@@ -122,12 +122,11 @@ int get_hashCode(const std::string& str);
 
 void write_data_to_file(int id, const std::string& tag, const std::string_view& data);
 
-typedef std::function<void(const boost::system::error_code ec)> SentHandler;
-typedef std::function<void(const boost::asio::streambuf& data, SentHandler&& handler)> 
-AsyncWriter;
-typedef std::function<bool()> ConnectionFunc;
-typedef std::function<void(const std::string_view& data)> ReadHandler;
-typedef std::function<void(boost::asio::streambuf& buf)> PushDataHandler;
+using SentHandler = std::function<void(const boost::system::error_code ec)>;
+using AsyncWriter = std::function<void(const boost::asio::streambuf& data, SentHandler&& handler)>;
+using ConnectionFunc = std::function<bool()> ;
+using ReadHandler = std::function<void(const std::string_view& data)> ;
+using PushDataHandler = std::function<void(boost::asio::streambuf& buf)> ;
 
 class SendDataCache{
     std::vector<SentHandler> handler_queue;
@@ -161,9 +160,8 @@ public:
 class ReadDataCache{
     boost::asio::streambuf data_queue;
     ReadHandler read_handler;
-    bool is_waiting;
+    bool is_waiting = { false};
 public :
-    ReadDataCache(): is_waiting(false){}
     inline void push_data(const std::string_view& data) {
         if (is_waiting) {
             is_waiting = false;
@@ -208,10 +206,10 @@ public:
         return buf;
     }
 
-    void free(std::shared_ptr<boost::asio::streambuf> buf){ 
+    void free(const std::shared_ptr<boost::asio::streambuf>& buf){ 
         bool found = false;
-        for(auto it = allocated.begin(); it != allocated.end(); it++){
-            if(it->get() == buf.get()){
+        for(const auto& it : allocated){
+            if(it.get() == buf.get()){
                 found = true;
                 break;
             }
@@ -230,8 +228,8 @@ void android_protect_socket(int fd);
 
 template <typename ThisT, typename EndPoint>
 void connect_out_socket(ThisT this_ptr, std::string addr, std::string port, boost::asio::ip::tcp::resolver& resolver,
-                        boost::asio::ip::tcp::socket& out_socket, EndPoint in_endpoint, std::function<void()> connected_handler) {
-    resolver.async_resolve(addr, port, [=, &out_socket](const boost::system::error_code error, boost::asio::ip::tcp::resolver::results_type results) {
+                        boost::asio::ip::tcp::socket& out_socket, EndPoint in_endpoint, std::function<void()>&& connected_handler) {
+    resolver.async_resolve(addr, port, [=, &out_socket](const boost::system::error_code error, const boost::asio::ip::tcp::resolver::results_type& results) {
         if (error || results.empty()) {
             _log_with_endpoint(in_endpoint, "cannot resolve remote server hostname " + addr + ":" + port + " reason: " + error.message(), Log::ERROR);
             this_ptr->destroy();
@@ -292,7 +290,7 @@ void connect_out_socket(ThisT this_ptr, std::string addr, std::string port, boos
 
 template <typename ThisT, typename EndPoint>
 void connect_remote_server_ssl(ThisT this_ptr, std::string addr, std::string port, boost::asio::ip::tcp::resolver& resolver,
-                               boost::asio::ssl::stream<boost::asio::ip::tcp::socket>& out_socket, EndPoint in_endpoint, std::function<void()> connected_handler) {
+                               boost::asio::ssl::stream<boost::asio::ip::tcp::socket>& out_socket, EndPoint in_endpoint, std::function<void()>&& connected_handler) {
 
     connect_out_socket(this_ptr, addr, port, resolver, out_socket.next_layer(), in_endpoint, [=, &out_socket]() {
         out_socket.async_handshake(boost::asio::ssl::stream_base::client, [=, &out_socket](const boost::system::error_code error) {
@@ -333,7 +331,7 @@ void shutdown_ssl_socket(ThisPtr this_ptr, boost::asio::ssl::stream<boost::asio:
         boost::system::error_code ec;
         socket.next_layer().cancel(ec);
         socket.async_shutdown(ssl_shutdown_cb);
-        ssl_shutdown_timer.get()->expires_after(std::chrono::seconds(30));
+        ssl_shutdown_timer.get()->expires_after(std::chrono::seconds(this_ptr->get_config().get_ssl().ssl_shutdown_wait_time));
         ssl_shutdown_timer.get()->async_wait(ssl_shutdown_cb);
     }
 }

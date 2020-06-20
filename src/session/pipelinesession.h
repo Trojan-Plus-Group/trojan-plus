@@ -64,21 +64,21 @@ class PipelineSession : public SocketSession {
     void in_async_read();
     void in_recv(const std::string_view& data);
     void in_send(PipelineRequest::Command cmd, ServerSession& session, const std::string_view& session_data, SentHandler&& sent_handler);
-    bool find_and_process_session(PipelineComponent::SessionIdType session_id, std::function<void(SessionsList::iterator&)> processor);
+    bool find_and_process_session(PipelineComponent::SessionIdType session_id, std::function<void(SessionsList::iterator&)>&& processor);
 public:
     PipelineSession(Service* _service, const Config& config, boost::asio::ssl::context &ssl_context, 
         std::shared_ptr<Authenticator> auth, const std::string &plain_http_response);
-    void destroy(bool pipeline_call = false);
+    void destroy(bool pipeline_call = false) final;
 
-    boost::asio::ip::tcp::socket& accept_socket();
-    void start();
+    boost::asio::ip::tcp::socket& accept_socket() final;
+    void start() final;
 
     void session_write_ack(ServerSession& session, SentHandler&& sent_handler);
     void session_write_data(ServerSession& session, const std::string_view& session_data, SentHandler&& sent_handler);
     void session_write_icmp(const std::string_view& data, SentHandler&& sent_handler);
     void remove_session_after_destroy(ServerSession& session);
 
-    void set_icmpd(std::shared_ptr<icmpd> icmp) { icmp_processor = icmp; }
+    void set_icmpd(std::shared_ptr<icmpd> icmp) { icmp_processor = std::move(icmp); }
 };
 
 #endif // _PIPELINEESSION_H_
