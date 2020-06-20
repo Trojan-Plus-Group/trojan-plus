@@ -71,7 +71,15 @@ class TUNSession;
 // this class canot support ipv6
 class TUNDev {
 
-private:
+    enum IPVersion{
+        IPV4 = 4,
+        IPV6 = 6
+    };
+
+    enum DefaultVar{
+        Default_UDP_TTL = 60
+    };
+
     static TUNDev* sm_tundev;
     static err_t static_netif_init_func(struct netif *netif){
         return sm_tundev->netif_init_func(netif);
@@ -89,16 +97,14 @@ private:
         return ((TUNDev*)arg)->listener_accept_func(newpcb, err);
     }
 
-private:
-
     // lwip TUN netif device handler
-    struct netif m_netif;
+    struct netif m_netif{};
     bool m_netif_configured;
 
     // lwip TCP listener
     struct tcp_pcb *m_tcp_listener;
 
-    err_t netif_init_func(struct netif *netif);
+    err_t netif_init_func(struct netif *netif)const;
     err_t netif_input_func(struct pbuf *p, struct netif *inp);
     err_t netif_output_func(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipaddr);
 
@@ -135,6 +141,7 @@ public :
         const std::string& _ipaddr, const std::string& _netmask, uint16_t _mtu, int _outside_tun_fd = -1);
     ~TUNDev();
     
-    int get_tun_fd(){ return m_tun_fd;}
+    [[nodiscard]] 
+    int get_tun_fd()const { return m_tun_fd;}
 };
 #endif //_TROJAN_TUNDEV_HPP

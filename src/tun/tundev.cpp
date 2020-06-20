@@ -23,7 +23,7 @@
 #include "tundev.h"
 
 #include <functional>
-#include <assert.h>
+#include <cassert>
 #include <boost/asio/ip/address_v4.hpp>
 #include <boost/asio/buffer.hpp>
 
@@ -42,16 +42,12 @@
 using namespace std;
 using namespace boost::asio::ip;
 
-extern struct tcp_pcb *tcp_bound_pcbs;
-extern struct tcp_pcb *tcp_active_pcbs;
-extern struct tcp_pcb *tcp_tw_pcbs;
-
 static void tcp_remove(struct tcp_pcb* pcb_list)
 {
     struct tcp_pcb *pcb = pcb_list;
-    struct tcp_pcb *pcb2;
+    struct tcp_pcb *pcb2 = nullptr;
 
-    while(pcb != NULL)
+    while(pcb != nullptr)
     {
         pcb2 = pcb;
         pcb = pcb->next;
@@ -115,7 +111,8 @@ TUNDev::TUNDev(Service* _service, const std::string& _tun_name,
     ip4_addr_set_any(&gw);
 
     // init netif
-    if (!netif_add(&m_netif, &addr, &netmask, &gw, NULL, static_netif_init_func, static_netif_input_func)){
+    if (netif_add(&m_netif, &addr, &netmask, &gw, nullptr, 
+      (netif_init_fn)static_netif_init_func, (netif_input_fn)static_netif_input_func) == nullptr){
         throw runtime_error("[tun] netif_add failed");
     }
 
@@ -135,7 +132,7 @@ TUNDev::TUNDev(Service* _service, const std::string& _tun_name,
 
     // init listener
     struct tcp_pcb *l = tcp_new_ip_type(IPADDR_TYPE_V4);
-    if (!l){
+    if (l == nullptr){
         throw runtime_error("[tun] tcp_new_ip_type failed");
     }
 
@@ -148,7 +145,8 @@ TUNDev::TUNDev(Service* _service, const std::string& _tun_name,
     tcp_bind_netif(l, &m_netif);
     
     // listen listener
-    if (!(m_tcp_listener = tcp_listen(l))){
+    m_tcp_listener = tcp_listen(l);
+    if (m_tcp_listener == nullptr){
         tcp_close(l);
         throw runtime_error("[tun] tcp_listen failed");
     }
@@ -169,19 +167,19 @@ TUNDev::~TUNDev(){
     m_quitting = true;
 
     _log_with_date_time("[tun] destoryed, clear all tcp_clients: " + to_string(m_tcp_clients.size()) + " udp_clients: " + to_string(m_udp_clients.size()));
-    for(auto it = m_tcp_clients.begin();it != m_tcp_clients.end();it++){
-        it->get()->close_client(true, true);
+    for(auto& it : m_tcp_clients){
+        it->close_client(true, true);
     }
     m_tcp_clients.clear();
 
-    for(auto it = m_udp_clients.begin();it != m_udp_clients.end();it++){
-        it->get()->set_close_from_tundev_flag();
-        it->get()->destroy();
+    for(auto& it : m_udp_clients){
+        it->set_close_from_tundev_flag();
+        it->destroy();
     }
     m_udp_clients.clear();
 
     // free listener
-    if (m_tcp_listener) {
+    if (m_tcp_listener != nullptr) {
         tcp_close(m_tcp_listener);
     }
 
@@ -204,7 +202,7 @@ TUNDev::~TUNDev(){
     sm_tundev = nullptr;
 }
 
-err_t TUNDev::netif_init_func(struct netif *netif){
+err_t TUNDev::netif_init_func(struct netif *netif)const{
     netif->name[0] = 'h';
     netif->name[1] = 'o';
     netif->mtu = m_mtu;
@@ -215,15 +213,15 @@ err_t TUNDev::netif_init_func(struct netif *netif){
 err_t TUNDev::netif_input_func(struct pbuf *p, struct netif *inp){
     uint8_t ip_version = 0;
     if (p->len > 0) {
-        ip_version = (((uint8_t *)p->payload)[0] >> 4);
+        ip_version = (((uint8_t *)p->payload)[0] >> half_byte_shift_4_bits);
     }
     
     switch (ip_version) {
-        case 4: {
+        case IPV4: {
             return ip_input(p, inp);
         } 
         break;
-        case 6: {
+        case IPV6: {
             //throw runtime_error("haven't supported ipv6");
         }
         break;
@@ -238,8 +236,8 @@ err_t TUNDev::netif_output_func(struct netif *, struct pbuf *p, const ip4_addr_t
         return ERR_OK;
     }
 
-    if(p != NULL){            
-        if(p->next == NULL && p->len <= m_mtu){
+    if(p != nullptr){
+        if(p->next == nullptr && p->len <= m_mtu){
             boost::system::error_code ec;
             m_boost_sd.write_some(boost::asio::buffer(p->payload, p->len), ec);
             if(ec){
@@ -248,11 +246,11 @@ err_t TUNDev::netif_output_func(struct netif *, struct pbuf *p, const ip4_addr_t
         }else{
             do {
                 if(p->len > 0){
-                    auto write_buff = boost::asio::buffer_cast<uint8_t*>(m_write_fill_buf.prepare(p->len));
+                    auto* write_buff = boost::asio::buffer_cast<uint8_t*>(m_write_fill_buf.prepare(p->len));
                     memcpy(write_buff, (uint8_t *)p->payload, p->len);
                     m_write_fill_buf.commit(p->len);
                 }            
-            } while ((p = p->next) != NULL);
+            } while ((p = p->next) != nullptr);
 
             write_to_tun();
         }
@@ -294,7 +292,7 @@ err_t TUNDev::listener_accept_func(struct tcp_pcb *newpcb, err_t err){
 
 void TUNDev::input_netif_packet(const uint8_t* data, uint16_t packet_len){
     struct pbuf *p = pbuf_alloc(PBUF_RAW, packet_len, PBUF_POOL);
-    if (!p) {
+    if (p == nullptr) {
         _log_with_date_time("[tun] device read: pbuf_alloc failed", Log::ERROR);
         return;
     }
@@ -315,20 +313,20 @@ void TUNDev::input_netif_packet(const uint8_t* data, uint16_t packet_len){
 }
 
 void TUNDev::parse_packet(){
-    if(m_packet_parse_buff.size() == 0){
+    if(m_packet_parse_buff.empty()){
         // need more byte for version
         return;
     }
 
-    auto data = (uint8_t*)m_packet_parse_buff.c_str();
+    auto* data = (uint8_t*)m_packet_parse_buff.c_str();
     auto data_len = m_packet_parse_buff.length();
-    auto ip_version = (data[0] >> 4) & 0xF;
+    auto ip_version = (data[0] >> half_byte_shift_4_bits) & half_byte_mask_0xF;
 
-    if(ip_version == 4 || ip_version == 6){
+    if(ip_version == IPV4 || ip_version == IPV6){
 
         uint16_t total_length = 0;
 
-        if(ip_version == 4){
+        if(ip_version == IPV4){
             if(data_len < sizeof(struct ipv4_header)){
                 return;
             }
@@ -378,7 +376,7 @@ int TUNDev::handle_write_upd_data(TUNSession* _session, string_view& data_str){
     if(data_len == 0){
         return 0;
     }
-    auto data = (uint8_t*)data_str.data();    
+    auto* data = (uint8_t*)data_str.data();    
     auto header_length = (uint16_t)(sizeof(struct ipv4_header) + sizeof(struct udp_header));
     auto max_len = min(numeric_limits<uint16_t>::max(), m_mtu);
     max_len = max_len - header_length;
@@ -389,8 +387,8 @@ int TUNDev::handle_write_upd_data(TUNSession* _session, string_view& data_str){
     auto local_endpoint = _session->get_udp_local_endpoint();
     auto remote_endpoint = _session->get_udp_remote_endpoint();
 
-    auto local_addr = (struct sockaddr_in*) local_endpoint.data();
-    auto remote_addr = (struct sockaddr_in*) remote_endpoint.data();
+    auto* local_addr = (struct sockaddr_in*) local_endpoint.data();
+    auto* remote_addr = (struct sockaddr_in*) remote_endpoint.data();
 
     // build IP header
     struct ipv4_header ipv4_hdr;
@@ -399,12 +397,12 @@ int TUNDev::handle_write_upd_data(TUNSession* _session, string_view& data_str){
     ipv4_hdr.total_length = hton16(uint16_t(sizeof(ipv4_hdr) + sizeof(struct udp_header) + data_len));
     ipv4_hdr.identification = hton16(0);
     ipv4_hdr.flags3_fragmentoffset13 = hton16(0);
-    ipv4_hdr.ttl = hton8(64);
+    ipv4_hdr.ttl = hton8(Default_UDP_TTL);
     ipv4_hdr.protocol = hton8(IPV4_PROTOCOL_UDP);
     ipv4_hdr.checksum = hton16(0);
     ipv4_hdr.source_address = (remote_addr->sin_addr.s_addr);
     ipv4_hdr.destination_address = (local_addr->sin_addr.s_addr);
-    ipv4_hdr.checksum = ipv4_checksum(&ipv4_hdr, NULL, 0);
+    ipv4_hdr.checksum = ipv4_checksum(&ipv4_hdr, nullptr, 0);
 
     // build UDP header
     struct udp_header udp_hdr;
@@ -416,7 +414,7 @@ int TUNDev::handle_write_upd_data(TUNSession* _session, string_view& data_str){
 
     // compose packet
     auto packat_length = header_length + data_len;
-    auto write_buf = boost::asio::buffer_cast<uint8_t*>(m_write_fill_buf.prepare(packat_length));
+    auto* write_buf = boost::asio::buffer_cast<uint8_t*>(m_write_fill_buf.prepare(packat_length));
     
     memcpy(write_buf, &ipv4_hdr, sizeof(ipv4_hdr));
     memcpy(write_buf + sizeof(ipv4_hdr), &udp_hdr, sizeof(udp_hdr));
@@ -424,7 +422,8 @@ int TUNDev::handle_write_upd_data(TUNSession* _session, string_view& data_str){
 
     m_write_fill_buf.commit(packat_length);
 
-    _log_with_endpoint_ALL(local_endpoint, "<- " + remote_endpoint.address().to_string() + ":" + to_string(remote_endpoint.port()) + " length:" + to_string(data_len));
+    _log_with_endpoint_ALL(local_endpoint, "<- " + remote_endpoint.address().to_string() + ":" + 
+        to_string(remote_endpoint.port()) + " length:" + to_string(data_len));
 
     write_to_tun();
 
@@ -439,24 +438,25 @@ int TUNDev::handle_write_upd_data(TUNSession* _session, string_view& data_str){
 int TUNDev::try_to_process_udp_packet(uint8_t* data, int data_len){
     uint8_t ip_version = 0;
     if (data_len > 0) {
-        ip_version = (data[0] >> 4) & 0xF;
+        ip_version = (data[0] >> half_byte_shift_4_bits) & half_byte_mask_0xF;
     }
 
-    if(ip_version == 4){
+    if(ip_version == IPV4){
         // ignore non-UDP packets
-        if (data_len < (int)sizeof(struct ipv4_header) || data[offsetof(struct ipv4_header, protocol)] != IPV4_PROTOCOL_UDP) {
+        if (data_len < (int)sizeof(struct ipv4_header) 
+          || data[offsetof(struct ipv4_header, protocol)] != IPV4_PROTOCOL_UDP) {
             return 0;
         }
 
         // parse IPv4 header
         struct ipv4_header ipv4_hdr;
-        if (!ipv4_check(data, data_len, &ipv4_hdr, &data, &data_len)) {
+        if (ipv4_check(data, data_len, &ipv4_hdr, &data, &data_len) == 0) {
             return 1;
         }
 
         // parse UDP
         struct udp_header udp_hdr;
-        if (!udp_check(data, data_len, &udp_hdr, &data, &data_len)) {
+        if (udp_check(data, data_len, &udp_hdr, &data, &data_len) == 0) {
             return 1;
         }
 
@@ -473,8 +473,8 @@ int TUNDev::try_to_process_udp_packet(uint8_t* data, int data_len){
 
         _log_with_endpoint_ALL(local_endpoint, "-> " + remote_endpoint.address().to_string() + ":" + to_string(remote_endpoint.port()) + " length:" + to_string(data_len));
 
-        for(auto it = m_udp_clients.begin();it != m_udp_clients.end();it++){
-            if(it->get()->try_to_process_udp(local_endpoint, remote_endpoint, data, data_len)){
+        for(auto& it : m_udp_clients){
+            if(it->try_to_process_udp(local_endpoint, remote_endpoint, data, data_len)){
                 return 1;
             }
         }
@@ -487,7 +487,7 @@ int TUNDev::try_to_process_udp_packet(uint8_t* data, int data_len){
         });
 
         session->set_close_callback([this](TUNSession* _session){
-            for(auto it = m_udp_clients.begin(); it != m_udp_clients.end(); it++){
+            for(auto it = m_udp_clients.begin();it != m_udp_clients.end();it++){
                 if(it->get() == _session){
                     m_udp_clients.erase(it);
                     break;
@@ -509,9 +509,10 @@ int TUNDev::try_to_process_udp_packet(uint8_t* data, int data_len){
             }
         });
 
-        return 1;     
-
-    }else if(ip_version == 6){
+        return 1;
+    }
+    
+    if(ip_version == IPV6){
         // TODO
     }
 
@@ -525,7 +526,7 @@ void TUNDev::write_to_tun(){
 
     while(m_write_fill_buf.size() > 0){
         boost::system::error_code ec;
-        size_t wrote;
+        size_t wrote = 0;
         if(m_write_fill_buf.size() > m_mtu){
             auto copied = boost::asio::buffer_copy(m_writing_buf.prepare(m_mtu), m_write_fill_buf.data(), m_mtu);
             m_writing_buf.commit(copied);
@@ -554,7 +555,7 @@ void TUNDev::async_read(){
         if(!ec){
             m_sd_read_buffer.commit(data_len);
 
-            auto data = boost::asio::buffer_cast<const char*>(m_sd_read_buffer.data());
+            const auto* data = boost::asio::buffer_cast<const char*>(m_sd_read_buffer.data());
             m_packet_parse_buff.append(data, data_len);
 
             parse_packet();

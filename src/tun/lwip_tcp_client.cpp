@@ -22,7 +22,7 @@
 
 #include "lwip_tcp_client.h"
 
-#include <stdarg.h>
+#include <cstdarg>
 #include <algorithm>
 #include <boost/asio/ip/address.hpp>
 
@@ -36,7 +36,7 @@ lwip_tcp_client::lwip_tcp_client(struct tcp_pcb *_pcb, shared_ptr<TUNSession> _s
     m_pcb(_pcb),
     m_closed(false),
     m_aborted(false),
-    m_tun_session(_session),
+    m_tun_session(move(_session)),
     m_close_cb(move(_close_cb)){
 
     // special for reverse local to remote
@@ -64,15 +64,16 @@ lwip_tcp_client::lwip_tcp_client(struct tcp_pcb *_pcb, shared_ptr<TUNSession> _s
 
 void lwip_tcp_client::client_log(const char *fmt, ...){
     if(Log::level == Log::ALL){
-        char buf[256];
-        int n = snprintf(buf, sizeof(buf), "[lwip] [%s:%d->%s:%d] [pcb:0x%llx session_id:%d] ", 
+        const int buf_size = 256;
+        char buf[buf_size];
+        int n = snprintf((char*)buf, buf_size, "[lwip] [%s:%d->%s:%d] [pcb:0x%llx session_id:%d] ", 
             m_local_addr.address().to_string().c_str(), m_local_addr.port(),
             m_remote_addr.address().to_string().c_str(), m_remote_addr.port(), 
             (unsigned long long)m_pcb, (int)m_tun_session->get_session_id());
 
         va_list vl;
         va_start(vl, fmt);
-        vsnprintf(buf + n, sizeof(buf) - n, fmt, vl);
+        vsnprintf(buf + n, buf_size - n, fmt, vl);
         va_end(vl);
 
         _log_with_date_time(buf);
@@ -93,7 +94,7 @@ err_t lwip_tcp_client::client_recv_func(struct tcp_pcb *, struct pbuf *p, err_t 
         return ERR_ABRT;
     }
 
-    if (!p || err != ERR_OK) {
+    if (p == nullptr || err != ERR_OK) {
         client_log("client_recv_func closed (%d)", (int)err);
         close_client(false);
     } else {
@@ -111,10 +112,10 @@ err_t lwip_tcp_client::client_recv_func(struct tcp_pcb *, struct pbuf *p, err_t 
         }
 
         // copy data to buffer
-        auto length = pbuf_copy_partial(p, send_buf, p->tot_len, 0);
+        auto length = pbuf_copy_partial(p, (void*)send_buf, p->tot_len, 0);
         assert(length == p->tot_len);
         pbuf_free(p);
-        m_tun_session->out_async_send(send_buf, length, [this, length](boost::system::error_code ec){
+        m_tun_session->out_async_send((const uint8_t*)send_buf, length, [this, length](boost::system::error_code ec){
             if(ec){
                 output_debug_info_ec(ec);
                 close_client(true);
@@ -139,9 +140,9 @@ err_t lwip_tcp_client::client_sent_func(struct tcp_pcb *, u16_t len){
         if(m_tun_session->recv_buf_ack_length() > 0){
             if(client_socks_recv_send_out() < 0){
                 return ERR_ABRT;
-            }else{
-                return ERR_OK;
             }
+
+            return ERR_OK;
         }
         output_debug_info();
         close_client(true);
@@ -167,7 +168,7 @@ int lwip_tcp_client::client_socks_recv_send_out(){
     }
 
     auto recv_size = m_tun_session->recv_buf_size();
-    auto recv_data = m_tun_session->recv_buf();
+    const auto* recv_data = m_tun_session->recv_buf();
 
     if(recv_size == 0){
         return 0;
@@ -223,9 +224,9 @@ void lwip_tcp_client::close_session(bool _call_by_tun_dev){
     } 
 
     // remove callbacks
-    tcp_err(m_pcb, NULL);
-    tcp_recv(m_pcb, NULL);
-    tcp_sent(m_pcb, NULL);
+    tcp_err(m_pcb, nullptr);
+    tcp_recv(m_pcb, nullptr);
+    tcp_sent(m_pcb, nullptr);
 }
 
 void lwip_tcp_client::close_client(bool _abort, bool _call_by_tun_dev /*= false*/){

@@ -56,13 +56,11 @@ private:
     bool m_closed;
     bool m_aborted;
     
-    uint8_t send_buf[TCP_WND];
-
+    uint8_t send_buf[TCP_WND]{};
     std::shared_ptr<TUNSession> m_tun_session;
-
     CloseCallback m_close_cb;
+
     void close_session(bool _call_by_tun_dev);
-private:
     void client_log(const char *fmt, ...);
     int client_socks_recv_send_out();
 

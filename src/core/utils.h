@@ -109,10 +109,12 @@ typedef boost::asio::detail::socket_option::boolean<SOL_SOCKET, SO_REUSEPORT> re
 #define _define_getter_const(type, name) \
     [[nodiscard]] type get_##name() const {return name;}
 
+const static int half_byte_shift_4_bits = 4;
 const static int one_byte_shift_8_bits = 8;
 const static int two_bytes_shift_16_bits = 16;
 const static int three_bytes_shift_24_bits = 24;
 
+const static int half_byte_mask_0xF = 0xF;
 const static int one_byte_mask_0xFF = 0xFF;
 
 size_t streambuf_append(boost::asio::streambuf& target, const boost::asio::streambuf& append_buf);
