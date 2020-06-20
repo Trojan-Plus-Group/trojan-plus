@@ -33,7 +33,7 @@
 class Service;
 class UDPForwardSession : public SocketSession {
 public:
-    typedef std::function<void(const boost::asio::ip::udp::endpoint&, const std::string_view&)> UDPWrite;
+    using UDPWrite = std::function<void(const boost::asio::ip::udp::endpoint&, const std::string_view&)>;
 private:
     enum Status {
         CONNECT,
@@ -41,11 +41,17 @@ private:
         FORWARDING,
         DESTROY
     } status;
+    
     UDPWrite in_write;
-    boost::asio::ssl::stream<boost::asio::ip::tcp::socket> out_socket;  
-    boost::asio::ip::udp::socket udp_target_socket;    
 
-    ReadDataCache pipeline_data_cache;
+    ReadBufWithGuard out_read_buf;
+    boost::asio::streambuf out_write_buf;
+    boost::asio::streambuf udp_data_buf;
+
+    boost::asio::ssl::stream<boost::asio::ip::tcp::socket> out_socket;  
+    boost::asio::ip::udp::socket udp_target_socket;
+    boost::asio::ip::udp::endpoint udp_recv_endpoint;
+    boost::asio::ip::udp::endpoint out_udp_endpoint;
 
     void out_recv(const std::string_view &data);
     void in_recv(const std::string_view &data);

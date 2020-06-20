@@ -23,8 +23,8 @@
 #ifndef _NATSESSION_H_
 #define _NATSESSION_H_
 
-#include "clientsession.h"
 #include <boost/asio/ssl.hpp>
+#include "clientsession.h"
 
 class NATSession : public ClientSession {
 protected:

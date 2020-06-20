@@ -58,6 +58,8 @@ class PipelineSession : public SocketSession {
 
     std::shared_ptr<icmpd> icmp_processor;
 
+    ReadBufWithGuard in_read_buf;
+
     void timer_async_wait();
     void process_streaming_data();
 

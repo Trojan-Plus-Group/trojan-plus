@@ -28,6 +28,7 @@
 #include <boost/property_tree/ptree.hpp>
 #include <boost/asio/ssl.hpp>
 #include "log.h"
+#include "utils.h"
 
 class Config {
    
@@ -101,7 +102,7 @@ public:
 
 private:
 
-    enum RunType run_type;
+    RunType run_type;
     std::string local_addr;
     uint16_t local_port;
     std::string remote_addr;
@@ -135,24 +136,24 @@ public:
     [[nodiscard]] bool operator==(const Config& other) const{ return compare_hash == other.compare_hash; }
     [[nodiscard]] bool try_prepare_pipeline_proxy_icmp(bool is_ipv4);
 
-    [[nodiscard]] enum RunType get_run_type() const { return run_type; }
-    [[nodiscard]] const std::string& get_local_addr() const {return local_addr; }
-    [[nodiscard]] uint16_t get_local_port()const {return local_port;}
-    [[nodiscard]] const std::string& get_remote_addr()const {return remote_addr; }
-    [[nodiscard]] uint16_t get_remote_port() const {return remote_port; }
-    [[nodiscard]] const std::string& get_target_addr() const {return target_addr; }
-    [[nodiscard]] uint16_t get_target_port() const {return target_port;}
-    [[nodiscard]] const std::map<std::string, std::string>& get_password() const { return password; }
-    [[nodiscard]] int get_udp_timeout() const {return udp_timeout;}
-    [[nodiscard]] int get_udp_socket_buf() const {return udp_socket_buf;}
-    [[nodiscard]] int get_udp_forward_socket_buf() const {return udp_forward_socket_buf; }
-    [[nodiscard]] int get_udp_recv_buf() const {return udp_recv_buf;}
-    [[nodiscard]] Log::Level get_log_level() const {return log_level;}
-    [[nodiscard]] const SSLConfig& get_ssl() const {return ssl;}
-    [[nodiscard]] const TCPConfig& get_tcp() const {return tcp;}
-    [[nodiscard]] const MySQLConfig& get_mysql() const{return mysql;}
-    [[nodiscard]] const Experimental& get_experimental() const { return experimental; }
-    [[nodiscard]] const TUN& get_tun()const { return tun; }
+    _define_getter_const(RunType, run_type)
+    _define_getter_const(const std::string&, local_addr)
+    _define_getter_const(uint16_t, local_port)
+    _define_getter_const(const std::string&, remote_addr)
+    _define_getter_const(uint16_t, remote_port)
+    _define_getter_const(const std::string&, target_addr)
+    _define_getter_const(uint16_t, target_port)
+    [[nodiscard]] const std::map<std::string, std::string>& get_password() const {return password;}
+    _define_getter_const(int, udp_timeout)
+    _define_getter_const(int, udp_socket_buf)
+    _define_getter_const(int, udp_forward_socket_buf)
+    _define_getter_const(int, udp_recv_buf)
+    _define_getter_const(Log::Level, log_level)
+    _define_getter_const(const SSLConfig&, ssl)
+    _define_getter_const(const TCPConfig&, tcp)
+    _define_getter_const(const MySQLConfig&, mysql)
+    _define_getter_const(const Experimental&, experimental)
+    _define_getter_const(const TUN&, tun)
 };
 
 #endif // _CONFIG_H_

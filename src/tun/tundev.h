@@ -46,7 +46,7 @@
 #include <boost/asio/posix/stream_descriptor.hpp>
 
 #ifndef _WIN32 
-    typedef boost::asio::posix::stream_descriptor BoostStreamDescriptor;
+    using BoostStreamDescriptor = boost::asio::posix::stream_descriptor ;
 #else
     class BoostStreamDescriptor{
     public:

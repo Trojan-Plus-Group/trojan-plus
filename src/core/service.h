@@ -52,7 +52,7 @@ private:
     std::string plain_http_response;
     boost::asio::ip::udp::socket udp_socket;
     std::list<std::weak_ptr<UDPForwardSession> > udp_sessions;
-    boost::asio::streambuf udp_read_buf;
+    ReadBufWithGuard udp_read_buf;
     boost::asio::ip::udp::endpoint udp_recv_endpoint;
     
     void async_accept();

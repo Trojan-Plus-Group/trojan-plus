@@ -28,6 +28,7 @@
 
 #include "socketsession.h"
 #include "core/pipeline.h"
+#include "core/utils.h"
 
 class Service;
 class ClientSession : public SocketSession {
@@ -40,12 +41,28 @@ protected:
         UDP_FORWARD,
         INVALID,
         DESTROY
-    } status;
+    };
+
+private:
+
+    Status status;
     bool first_packet_recv;
     boost::asio::ip::tcp::socket in_socket;
     boost::asio::ssl::stream<boost::asio::ip::tcp::socket> out_socket;
+    boost::asio::ip::udp::socket udp_socket;
+    boost::asio::ip::udp::endpoint udp_recv_endpoint;
+    
     boost::asio::streambuf udp_recv_buf;
     boost::asio::streambuf udp_send_buf;
+
+    ReadBufWithGuard in_read_buf;
+    ReadBufWithGuard out_read_buf;
+    ReadBufWithGuard udp_read_buf;
+
+    boost::asio::streambuf out_write_buf;
+    boost::asio::streambuf udp_data_buf;
+
+protected:
 
     void in_async_read();
     void in_async_write(const std::string_view &data);
@@ -63,6 +80,12 @@ protected:
 
     bool prepare_session();
     void request_remote();
+
+    _define_simple_getter_setter(Status, status)
+    _define_simple_getter_setter(bool, first_packet_recv)
+    _define_getter(boost::asio::ip::tcp::socket&, in_socket)
+    _define_getter(boost::asio::streambuf&, out_write_buf)
+
 public:
     ClientSession(Service* _service, const Config& config, boost::asio::ssl::context &ssl_context);
     ~ClientSession();

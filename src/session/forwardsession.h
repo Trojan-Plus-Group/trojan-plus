@@ -23,9 +23,9 @@
 #ifndef _FORWARDSESSION_H_
 #define _FORWARDSESSION_H_
 
+#include <boost/asio/ssl.hpp>
 #include "session.h"
 #include "natsession.h"
-#include <boost/asio/ssl.hpp>
 
 class Service;
 class ForwardSession : public NATSession {

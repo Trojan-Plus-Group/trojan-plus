@@ -41,15 +41,25 @@ private:
         UDP_FORWARD,
         DESTROY
     } status;
+
+    ReadBufWithGuard in_read_buf;
+    ReadBufWithGuard out_read_buf;
+    ReadBufWithGuard udp_read_buf;
+
     boost::asio::ssl::stream<boost::asio::ip::tcp::socket>in_socket;
     boost::asio::ip::tcp::socket out_socket;
+    boost::asio::ip::udp::socket udp_socket;
+    boost::asio::ip::udp::endpoint out_udp_endpoint;
+    
+    boost::asio::streambuf out_write_buf;
+    boost::asio::streambuf udp_data_buf;
+
     boost::asio::ip::udp::resolver udp_resolver;
     boost::asio::ip::udp::endpoint udp_associate_endpoint;
     
     std::shared_ptr<Authenticator> auth;
     std::string auth_password;
     const std::string &plain_http_response;
-    ReadDataCache pipeline_data_cache;
 
     using PipelineSessionRef = std::weak_ptr<Session>;
     PipelineSessionRef pipeline_session;

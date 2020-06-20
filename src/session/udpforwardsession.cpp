@@ -45,7 +45,7 @@ UDPForwardSession::UDPForwardSession(Service* _service, const Config& config, co
 
     udp_recv_endpoint = endpoint;
     out_udp_endpoint = udp::endpoint(boost::asio::ip::make_address(targetdst.first), targetdst.second);    
-    in_endpoint = tcp::endpoint(endpoint.address(), endpoint.port());
+    set_in_endpoint(tcp::endpoint(endpoint.address(), endpoint.port()));
     set_udp_forward_session(true);
     get_pipeline_component().allocate_session_id();
 }
@@ -63,7 +63,7 @@ void UDPForwardSession::start(){
 
 void UDPForwardSession::start_udp(const std::string_view& data) {
     udp_timer_async_wait();
-    start_time = time(nullptr);
+    set_start_time(time(nullptr));
 
     auto self = shared_from_this();
     auto cb = [this, self](){
@@ -98,7 +98,8 @@ void UDPForwardSession::start_udp(const std::string_view& data) {
         cb();
     }else{
         get_config().prepare_ssl_reuse(out_socket);
-        connect_remote_server_ssl(this, get_config().get_remote_addr(), to_string(get_config().get_remote_port()), resolver, out_socket, udp_recv_endpoint, cb);
+        connect_remote_server_ssl(this, get_config().get_remote_addr(), to_string(get_config().get_remote_port()), 
+            get_resolver(), out_socket, udp_recv_endpoint, cb);
     }    
 }
 
@@ -112,21 +113,21 @@ bool UDPForwardSession::process(const udp::endpoint &endpoint, const string_view
 
 void UDPForwardSession::out_async_read() {
     if (get_pipeline_component().is_using_pipeline()) {
-        get_pipeline_component().pipeline_data_cache.async_read([this](const string_view &data) {
+        get_pipeline_component().get_pipeline_data_cache().async_read([this](const string_view &data) {
             out_recv(data);
         });
     } else {
-        _guard_read_buf_begin(out_read_buf);
-        out_read_buf.consume(out_read_buf.size());
+        out_read_buf.begin_read(__FILE__, __LINE__);
+        out_read_buf.consume_all();
         auto self = shared_from_this();
         out_socket.async_read_some(out_read_buf.prepare(MAX_BUF_LENGTH), [this, self](const boost::system::error_code error, size_t length) {
-            _guard_read_buf_end(out_read_buf);
+            out_read_buf.end_read();
             if (error) {
                 destroy();
                 return;
             }
             out_read_buf.commit(length);
-            out_recv(streambuf_to_string_view(out_read_buf));
+            out_recv(out_read_buf);
         });
     }
 }
@@ -162,10 +163,12 @@ void UDPForwardSession::in_recv(const string_view &data) {
     udp_timer_async_wait();
     
     size_t length = data.length();
-    sent_len += length;
+    inc_sent_len(length);
 
-    _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(get_session_id()) + " sent a UDP packet of length " + to_string(length) + 
-        " bytes to " + out_udp_endpoint.address().to_string() + ':' + to_string(out_udp_endpoint.port()) + " sent_len: " + to_string(sent_len));
+    _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(get_session_id()) + 
+        " sent a UDP packet of length " + to_string(length) + " bytes to " + 
+        out_udp_endpoint.address().to_string() + ':' + to_string(out_udp_endpoint.port()) + 
+        " sent_len: " + to_string(get_sent_len()));
 
     UDPPacket::generate(out_write_buf, out_udp_endpoint.address().to_string(), out_udp_endpoint.port(), data);
     if (status == FORWARD) {
@@ -181,7 +184,7 @@ void UDPForwardSession::out_recv(const string_view &data) {
         streambuf_append(udp_data_buf, data);
         for (;;) {
             UDPPacket packet;
-            size_t packet_len;
+            size_t packet_len = 0;
             bool is_packet_valid = packet.parse(streambuf_to_string_view(udp_data_buf), packet_len);
             if (!is_packet_valid) {
                 if (udp_data_buf.size() > MAX_BUF_LENGTH) {
@@ -208,7 +211,7 @@ void UDPForwardSession::out_recv(const string_view &data) {
             }
 
             udp_data_buf.consume(packet_len);
-            recv_len += packet.length;          
+            inc_recv_len(packet.length);          
         }
         out_async_read();
     }
@@ -230,12 +233,16 @@ void UDPForwardSession::destroy(bool pipeline_call /*= false*/) {
         return;
     }
     status = DESTROY;
-    _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(get_session_id()) + " disconnected, " + to_string(recv_len) + " bytes received, " + to_string(sent_len) + " bytes sent, lasted for " + to_string(time(nullptr) - start_time) + " seconds", Log::INFO);
-    resolver.cancel();
+
+    _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(get_session_id()) + " disconnected, " + 
+        to_string(get_recv_len()) + " bytes received, " + to_string(get_sent_len()) + " bytes sent, lasted for " + 
+        to_string(time(nullptr) - get_start_time()) + " seconds", Log::INFO);
+
+    get_resolver().cancel();
     
+    udp_timer_cancel();
     if(udp_target_socket.is_open()){
         boost::system::error_code ec;
-        udp_gc_timer.cancel(ec);
         udp_target_socket.cancel(ec);
         udp_target_socket.close();
     }

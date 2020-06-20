@@ -99,6 +99,16 @@ typedef boost::asio::detail::socket_option::boolean<SOL_SOCKET, SO_REUSEPORT> re
 #define PACKET_HEADER_SIZE (1 + 28 + 2 + 64)
 #define DEFAULT_PACKET_SIZE 1397  // 1492 - PACKET_HEADER_SIZE = 1397, the default MTU for UDP relay
 
+#define _define_simple_getter_setter(type, name) \
+    [[nodiscard]] type get_##name() const { return name; } \
+    void set_##name(type val) { name = val; }
+
+#define _define_getter(type, name) \
+    [[nodiscard]] type get_##name() {return name;}
+
+#define _define_getter_const(type, name) \
+    [[nodiscard]] type get_##name() const {return name;}
+
 const static int one_byte_shift_8_bits = 8;
 const static int two_bytes_shift_16_bits = 16;
 const static int three_bytes_shift_24_bits = 24;
@@ -221,6 +231,58 @@ public:
 
         buf->consume(buf->size());
         free_bufs.push_back(buf);
+    }
+};
+
+class ReadBufWithGuard{
+    boost::asio::streambuf read_buf;
+    bool read_buf_guard = false;
+public:
+    inline void consume_all(){
+        read_buf.consume(read_buf.size());
+    }
+
+    inline void consume(size_t length){
+        read_buf.consume(length);
+    }
+
+    [[nodiscard]]
+    inline size_t size()const noexcept{
+        return read_buf.size();
+    }
+
+    inline void commit(size_t length){
+        read_buf.commit(length);
+    }
+
+    [[nodiscard]]
+    inline boost::asio::streambuf::const_buffers_type data()const{
+        return read_buf.data();
+    }
+
+    [[nodiscard]]
+    inline boost::asio::streambuf::mutable_buffers_type prepare(size_t length){
+        return read_buf.prepare(length);
+    }
+    
+    inline operator std::string_view() const{ 
+        return streambuf_to_string_view(read_buf);
+    }
+
+    inline operator boost::asio::streambuf&(){ 
+        return read_buf;
+    }
+
+    inline void begin_read(const char* __file__, int __line__){
+        if(read_buf_guard){
+            throw std::logic_error("!! guard_read_buf failed! Cannot enter this function before _guard_read_buf_end  !! " + 
+                std::string(__file__) + std::to_string(__line__));
+        } 
+        read_buf_guard = true;
+    }
+
+    inline void end_read(){
+        read_buf_guard = false;
     }
 };
 

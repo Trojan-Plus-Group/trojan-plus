@@ -63,6 +63,7 @@ public:
     Service* get_service() { return service; }
 
     inline void set_udp_forward_session(bool udp) { is_udp_forward = udp; }
+    [[nodiscard]]
     inline bool is_udp_forward_session()const { return is_udp_forward ; }
 
     PipelineComponent::SessionIdType get_session_id(){ return pipeline_com.get_session_id(); }

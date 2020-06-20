@@ -516,7 +516,7 @@ void Service::udp_async_read() {
                 --it;
                 if (it->expired()) {
                     udp_sessions.erase(it);
-                } else if (it->lock()->process(udp_recv_endpoint, streambuf_to_string_view(udp_read_buf))) {
+                } else if (it->lock()->process(udp_recv_endpoint, udp_read_buf)) {
                     udp_async_read();
                     return;
                 }
@@ -540,7 +540,7 @@ void Service::udp_async_read() {
                 }
             });
 
-            auto data = get_sending_data_allocator().allocate(streambuf_to_string_view(udp_read_buf));
+            auto data = get_sending_data_allocator().allocate(udp_read_buf);
             start_session(session, [this, session, data](boost::system::error_code ec){
                 if(!ec){
                     udp_sessions.emplace_back(session);
@@ -556,7 +556,7 @@ void Service::udp_async_read() {
         udp_async_read();        
     };
 
-    udp_read_buf.consume(udp_read_buf.size());
+    udp_read_buf.consume_all();
     if(config.get_run_type() == Config::NAT){
         udp_socket.async_receive_from(boost::asio::null_buffers(), udp_recv_endpoint, cb);
     }else{

@@ -37,7 +37,8 @@ ClientSession::ClientSession(Service* _service, const Config& config, context &s
     status(HANDSHAKE),
     first_packet_recv(false),
     in_socket(_service->get_io_context()),
-    out_socket(_service->get_io_context(), ssl_context){
+    out_socket(_service->get_io_context(), ssl_context),
+    udp_socket(_service->get_io_context()){
     get_pipeline_component().allocate_session_id();
 }
 
@@ -51,10 +52,10 @@ tcp::socket& ClientSession::accept_socket() {
 
 bool ClientSession::prepare_session(){
     boost::system::error_code ec;
-    start_time = time(nullptr);
-    in_endpoint = in_socket.remote_endpoint(ec);
+    set_start_time(time(nullptr));
+    set_in_endpoint(in_socket.remote_endpoint(ec));
     if (ec) {
-        _log_with_date_time("cannot get in_endpoint in prepare_session", Log::FATAL);
+        _log_with_date_time("cannot get get_in_endpoint() in prepare_session", Log::FATAL);
         destroy();
         return false;
     }
@@ -77,17 +78,17 @@ void ClientSession::recv_ack_cmd(){
 void ClientSession::in_async_read() {
     if(get_pipeline_component().is_using_pipeline() && status == FORWARD){
         if(!get_pipeline_component().pre_call_ack_func()){
-            _log_with_endpoint_DEBUG(in_endpoint, "session_id: " + to_string(get_session_id()) + " Cannot ClientSession::in_async_read ! Is waiting for ack");
+            _log_with_endpoint_DEBUG(get_in_endpoint(), "session_id: " + to_string(get_session_id()) + " Cannot ClientSession::in_async_read ! Is waiting for ack");
             return;
         }
-        _log_with_endpoint_DEBUG(in_endpoint, "session_id: " + to_string(get_session_id()) + " Permit to ClientSession::in_async_read! ack:" + to_string(get_pipeline_component().pipeline_ack_counter));
+        _log_with_endpoint_DEBUG(get_in_endpoint(), "session_id: " + to_string(get_session_id()) + " Permit to ClientSession::in_async_read! ack:" + to_string(get_pipeline_component().pipeline_ack_counter));
     }
 
-    _guard_read_buf_begin(in_read_buf);    
-    in_read_buf.consume(in_read_buf.size());
+    in_read_buf.begin_read(__FILE__, __LINE__);
+    in_read_buf.consume_all();
     auto self = shared_from_this();
     in_socket.async_read_some(in_read_buf.prepare(MAX_BUF_LENGTH), [this, self](const boost::system::error_code error, size_t length) {
-        _guard_read_buf_end(in_read_buf);
+        in_read_buf.end_read();
         if (error == boost::asio::error::operation_aborted) {
             return;
         }
@@ -97,7 +98,7 @@ void ClientSession::in_async_read() {
             return;
         }
         in_read_buf.commit(length);
-        in_recv(streambuf_to_string_view(in_read_buf));
+        in_recv(in_read_buf);
     });
 }
 
@@ -123,7 +124,7 @@ void ClientSession::in_async_write(const string_view &data) {
         if(get_pipeline_component().is_using_pipeline() && status == FORWARD){
             
             if(get_pipeline_component().is_write_close_future() 
-            && !get_pipeline_component().pipeline_data_cache.has_queued_data()){
+            && !get_pipeline_component().get_pipeline_data_cache().has_queued_data()){
                 output_debug_info_ec(error);
                 destroy();
                 return;
@@ -148,22 +149,22 @@ void ClientSession::in_async_write(const string_view &data) {
 
 void ClientSession::out_async_read() {
     if(get_pipeline_component().is_using_pipeline()){
-        get_pipeline_component().pipeline_data_cache.async_read([this](const string_view &data) {
+        get_pipeline_component().get_pipeline_data_cache().async_read([this](const string_view &data) {
             out_recv(data);
         });
     }else{
-        _guard_read_buf_begin(out_read_buf);
-        out_read_buf.consume(out_read_buf.size());
+        out_read_buf.begin_read(__FILE__, __LINE__);
+        out_read_buf.consume_all();
         auto self = shared_from_this();
         out_socket.async_read_some(out_read_buf.prepare(MAX_BUF_LENGTH), [this, self](const boost::system::error_code error, size_t length) {
-            _guard_read_buf_end(out_read_buf);
+            out_read_buf.end_read();
             if (error) {
                 output_debug_info_ec(error);
                 destroy();
                 return;
             }
             out_read_buf.commit(length);
-            out_recv(streambuf_to_string_view(out_read_buf));
+            out_recv(out_read_buf);
         });
     }
 }
@@ -197,11 +198,12 @@ void ClientSession::out_async_write(const string_view &data) {
 }
 
 void ClientSession::udp_async_read() {
-    _guard_read_buf_begin(udp_read_buf);
-    udp_read_buf.consume(udp_read_buf.size());
+    udp_read_buf.begin_read(__FILE__, __LINE__);
+    udp_read_buf.consume_all();
     auto self = shared_from_this();
-    udp_socket.async_receive_from(udp_read_buf.prepare(get_config().get_udp_recv_buf()), udp_recv_endpoint, [this, self](const boost::system::error_code error, size_t length) {
-        _guard_read_buf_end(udp_read_buf);
+    udp_socket.async_receive_from(udp_read_buf.prepare(get_config().get_udp_recv_buf()), udp_recv_endpoint, 
+      [this, self](const boost::system::error_code error, size_t length) {
+        udp_read_buf.end_read();
         if (error == boost::asio::error::operation_aborted) {
             return;
         }
@@ -211,7 +213,7 @@ void ClientSession::udp_async_read() {
             return;
         }
         udp_read_buf.commit(length);
-        udp_recv(streambuf_to_string_view(udp_read_buf), udp_recv_endpoint);
+        udp_recv(udp_read_buf, udp_recv_endpoint);
     });
 }
 
@@ -256,7 +258,7 @@ void ClientSession::in_recv(const string_view &data) {
     switch (status) {
         case HANDSHAKE: {
             if (socks5_is_invalid_handshake_data(data)) {
-                _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + " unknown protocol", Log::ERROR);
+                _log_with_endpoint(get_in_endpoint(), "session_id: " + to_string(get_session_id()) + " unknown protocol", Log::ERROR);
                 destroy();
                 return;
             }
@@ -268,7 +270,7 @@ void ClientSession::in_recv(const string_view &data) {
                 }
             }
             if (!has_method) {
-                _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + " unsupported auth method", Log::ERROR);
+                _log_with_endpoint(get_in_endpoint(), "session_id: " + to_string(get_session_id()) + " unsupported auth method", Log::ERROR);
                 in_async_write(socks5_handshake_reply_failed);
                 status = INVALID;
                 return;
@@ -278,7 +280,7 @@ void ClientSession::in_recv(const string_view &data) {
         }
         case REQUEST: {
             if (socks5_is_invalid_quest_data(data)) {
-                _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + " bad request", Log::ERROR);
+                _log_with_endpoint(get_in_endpoint(), "session_id: " + to_string(get_session_id()) + " bad request", Log::ERROR);
                 destroy();
                 return;
             }
@@ -292,7 +294,7 @@ void ClientSession::in_recv(const string_view &data) {
 
             TrojanRequest req;
             if (req.parse(streambuf_to_string_view(out_write_buf)) == -1) {
-                _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + " unsupported command", Log::ERROR);
+                _log_with_endpoint(get_in_endpoint(), "session_id: " + to_string(get_session_id()) + " unsupported command", Log::ERROR);
                 in_async_write(socks5_request_reply_failed);
                 status = INVALID;
                 return;
@@ -324,7 +326,7 @@ void ClientSession::in_recv(const string_view &data) {
                 set_udp_send_recv_buf((int)udp_socket.native_handle(), get_config().get_udp_socket_buf());
                 udp_socket.bind(endpoint);
 
-                _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + 
+                _log_with_endpoint(get_in_endpoint(), "session_id: " + to_string(get_session_id()) + 
                     " requested UDP associate to " + req.address.address + ':' + to_string(req.address.port) + 
                     ", open UDP socket " + udp_socket.local_endpoint().address().to_string() + ':' + to_string(udp_socket.local_endpoint().port()) + " for relay", Log::INFO);
                 
@@ -334,25 +336,25 @@ void ClientSession::in_recv(const string_view &data) {
 
                 in_async_write(streambuf_to_string_view(udp_send_buf));
             } else {
-                _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + " requested connection to " + req.address.address + ':' + to_string(req.address.port), Log::INFO);
+                _log_with_endpoint(get_in_endpoint(), "session_id: " + to_string(get_session_id()) + " requested connection to " + req.address.address + ':' + to_string(req.address.port), Log::INFO);
                 in_async_write(socks5_request_reply_succ_tcp);
             }
 
             break;
         }
         case CONNECT: {
-            sent_len += data.length();
+            inc_sent_len(data.length());
             first_packet_recv = true;
             streambuf_append(out_write_buf, data);
             break;
         }
         case FORWARD: {
-            sent_len += data.length();
+            inc_sent_len(data.length());
             out_async_write(data);
             break;
         }
         case UDP_FORWARD: {
-            _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + " unexpected data from TCP port", Log::ERROR);
+            _log_with_endpoint(get_in_endpoint(), "session_id: " + to_string(get_session_id()) + " unexpected data from TCP port", Log::ERROR);
             destroy();
             break;
         }
@@ -409,7 +411,7 @@ void ClientSession::request_remote(){
         cb();
     }else{  
         connect_remote_server_ssl(this, get_config().get_remote_addr(), to_string(get_config().get_remote_port()), 
-            resolver, out_socket, in_endpoint,cb);
+            get_resolver(), out_socket, get_in_endpoint(),cb);
     }    
 }
 
@@ -417,7 +419,7 @@ void ClientSession::out_recv(const string_view &data) {
     _write_data_to_file_DEBUG("ClientSession::out_recv session_id: " + to_string(get_session_id()) + " length: " + to_string(data.length()) + " checksum: " + to_string(get_checksum(data)));
     _write_data_to_file_DEBUG(get_session_id(), "ClientSession_out_recv", data);
     if (status == FORWARD) {
-        recv_len += data.length();
+        inc_recv_len(data.length());
         in_async_write(data);
     } else if (status == UDP_FORWARD) {
         streambuf_append(udp_data_buf, data);
@@ -453,10 +455,10 @@ void ClientSession::udp_recv(const string_view &data, const udp::endpoint&) {
     udp_timer_async_wait();
 
     size_t length = data.length() - 3 - address_len;
-    sent_len += length;
+    inc_sent_len(length);
 
     _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(get_session_id()) + " sent a UDP packet of length " + to_string(length) + 
-        " bytes to " + address.address + ':' + to_string(address.port) + " sent_len: " + to_string(sent_len));
+        " bytes to " + address.address + ':' + to_string(address.port) + " get_sent_len(): " + to_string(get_sent_len()));
 
     if (status == CONNECT) {
         first_packet_recv = true;
@@ -516,7 +518,7 @@ void ClientSession::udp_sent() {
         streambuf_append(udp_send_buf, udp_data_buf, 0, address_len);
         streambuf_append(udp_send_buf, packet.payload);
         
-        recv_len += packet.length;
+        inc_recv_len(packet.length);
         udp_async_write(streambuf_to_string_view(udp_send_buf), udp_recv_endpoint);
 
         udp_data_buf.consume(packet_len);
@@ -528,17 +530,22 @@ void ClientSession::destroy(bool pipeline_call /*= false*/) {
         return;
     }
     status = DESTROY;
-    _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + " disconnected, " + to_string(recv_len) + " bytes received, " + to_string(sent_len) + " bytes sent, lasted for " + to_string(time(nullptr) - start_time) + " seconds", Log::INFO);
+
+    _log_with_endpoint(get_in_endpoint(), "session_id: " + to_string(get_session_id()) + " disconnected, " + 
+        to_string(get_recv_len()) + " bytes received, " + to_string(get_sent_len()) + " bytes sent, lasted for " + 
+        to_string(time(nullptr) - get_start_time()) + " seconds", Log::INFO);
+
     boost::system::error_code ec;
-    resolver.cancel();
+    get_resolver().cancel();
     
     if (in_socket.is_open()) {
         in_socket.cancel(ec);
         in_socket.shutdown(tcp::socket::shutdown_both, ec);
         in_socket.close(ec);
     }
+
+    udp_timer_cancel();
     if (udp_socket.is_open()) {
-        udp_gc_timer.cancel(ec);
         udp_socket.cancel(ec);
         udp_socket.close(ec);
     }

@@ -35,13 +35,13 @@ class Service;
 class TUNSession : public Session{
 
 public:
-    typedef std::function<void(TUNSession*)> CloseCallback;
-    typedef std::function<int(TUNSession*, std::string_view*)> WriteToLwipCallback;
+    using CloseCallback = std::function<void(TUNSession*)>;
+    using WriteToLwipCallback = std::function<int(TUNSession*, std::string_view*)>;
+
 private:
 
     Service* m_service;
-    boost::asio::streambuf m_recv_buf;
-    bool m_recv_buf_guard;
+    ReadBufWithGuard m_recv_buf;
     size_t m_recv_buf_ack_length;
 
     boost::asio::ssl::stream<boost::asio::ip::tcp::socket> m_out_socket;
@@ -66,28 +66,34 @@ private:
     void out_async_read();
     void try_out_async_read();
     void reset_udp_timeout();
+
+    [[nodiscard]]
     size_t parse_udp_packet_data(const std::string_view& data);
 
     void out_async_send_impl(const std::string_view& data_to_send, SentHandler&& _handler);
 public:
     TUNSession(Service* _service, bool _is_udp);
-    ~TUNSession();
+    ~TUNSession() final;
 
-    void set_tcp_connect(boost::asio::ip::tcp::endpoint _local, boost::asio::ip::tcp::endpoint _remote){
+    void set_tcp_connect(const boost::asio::ip::tcp::endpoint& _local, 
+      const boost::asio::ip::tcp::endpoint& _remote){
         m_local_addr = _local;
         m_remote_addr = _remote;
     }
 
-    void set_udp_connect(boost::asio::ip::udp::endpoint _local, boost::asio::ip::udp::endpoint _remote){
+    void set_udp_connect(const boost::asio::ip::udp::endpoint& _local, 
+      const boost::asio::ip::udp::endpoint& _remote){
         m_local_addr_udp = _local;
         m_remote_addr_udp = _remote;
     }
     
-    boost::asio::ip::udp::endpoint get_udp_local_endpoint()const { 
+    [[nodiscard]]
+    const boost::asio::ip::udp::endpoint& get_udp_local_endpoint()const { 
         return m_local_addr_udp;
     }
 
-    boost::asio::ip::udp::endpoint get_udp_remote_endpoint()const { 
+    [[nodiscard]]
+    const boost::asio::ip::udp::endpoint& get_udp_remote_endpoint()const { 
         return m_remote_addr_udp;
     }
 
@@ -103,21 +109,20 @@ public:
 
     void recv_buf_sent(uint16_t _length);
 
-    size_t recv_buf_ack_length() const { 
-        return m_recv_buf_ack_length;
-    }
+    [[nodiscard]]
+    size_t recv_buf_ack_length() const { return m_recv_buf_ack_length; }
 
     void recv_buf_consume(uint16_t _length);
 
-    size_t recv_buf_size() const {
-        return m_recv_buf.size();
-    }
+    [[nodiscard]]
+    size_t recv_buf_size() const { return m_recv_buf.size(); }
 
+    [[nodiscard]]
     const uint8_t* recv_buf() const {
         return boost::asio::buffer_cast<const uint8_t*>(m_recv_buf.data());
     }
 
-
+    [[nodiscard]]
     bool is_destroyed()const { return m_destroyed; }
 
     bool try_to_process_udp(const boost::asio::ip::udp::endpoint& _local, 

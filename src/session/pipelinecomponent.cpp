@@ -52,6 +52,7 @@ void PipelineComponent::allocate_session_id(){
 
 void PipelineComponent::free_session_id(){
     s_session_used_ids.erase(m_session_id);
+    m_session_id = 0;
 }
 
 void PipelineComponent::pipeline_in_recv(const string_view &data) {

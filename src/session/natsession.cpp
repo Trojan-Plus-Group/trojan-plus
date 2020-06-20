@@ -31,11 +31,11 @@ using namespace boost::asio::ssl;
 
 NATSession::NATSession(Service* _service, const Config& config, context &ssl_context) :
     ClientSession(_service, config, ssl_context){
-    status = CONNECT;
+    set_status(CONNECT);
 }
 
 pair<string, uint16_t> NATSession::get_target_endpoint() {
-    return recv_target_endpoint((int)in_socket.native_handle());
+    return recv_target_endpoint((int)get_in_socket().native_handle());
 }
 
 void NATSession::start() {
@@ -47,28 +47,29 @@ void NATSession::start() {
             destroy();
             return;
         }
-        _log_with_endpoint(in_endpoint, "forwarding to " + target_addr + ':' + to_string(target_port) + " via " + 
+        _log_with_endpoint(get_in_endpoint(), "forwarding to " + target_addr + ':' + to_string(target_port) + " via " + 
             get_config().get_remote_addr() + ':' + to_string(get_config().get_remote_port()), Log::INFO);
 
-        out_write_buf.consume(out_write_buf.size());
-        streambuf_append(out_write_buf, TrojanRequest::generate(get_config().get_password().cbegin()->first, target_addr, target_port, true));        
+        get_out_write_buf().consume(get_out_write_buf().size());
+        auto data = TrojanRequest::generate(get_config().get_password().cbegin()->first, target_addr, target_port, true);
+        streambuf_append(get_out_write_buf(), data);        
         request_remote();
     }
 }
 
 void NATSession::in_recv(const string_view &data) {
-    if (status == CONNECT) {
-        sent_len += data.length();
-        first_packet_recv = true;
-        streambuf_append(out_write_buf, data);
-    } else if (status == FORWARD) {
-        sent_len += data.length();
+    if (get_status() == CONNECT) {
+        inc_sent_len(data.length());
+        set_first_packet_recv(true);
+        streambuf_append(get_out_write_buf(), data);
+    } else if (get_status() == FORWARD) {
+        inc_sent_len(data.length());
         out_async_write(data);
     }
 }
 
 void NATSession::in_sent() {
-    if (status == FORWARD) {
+    if (get_status() == FORWARD) {
         out_async_read();
     }
 }

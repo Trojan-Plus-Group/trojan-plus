@@ -34,8 +34,7 @@ using namespace std;
 
 TUNSession::TUNSession(Service* _service, bool _is_udp) : 
     Session(_service, _service->get_config()),
-    m_service(_service), 
-    m_recv_buf_guard(false),
+    m_service(_service),
     m_recv_buf_ack_length(0),
     m_out_socket(_service->get_io_context(), _service->get_ssl_context()),
     m_out_resolver(_service->get_io_context()),
@@ -173,7 +172,7 @@ void TUNSession::out_async_send_impl(const std::string_view& data_to_send, SentH
             }else{
                 if(!is_udp_forward_session()){
                     if(!get_pipeline_component().pre_call_ack_func()){
-                        m_wait_ack_handler.emplace_back(move(_handler));
+                        m_wait_ack_handler.emplace_back(_handler);
                         _log_with_endpoint_DEBUG(m_local_addr, "session_id: " + to_string(get_session_id()) + " cannot TUNSession::out_async_send ! Is waiting for ack");
                         return;
                     }
@@ -255,21 +254,21 @@ size_t TUNSession::parse_udp_packet_data(const string_view& data){
     string_view parse_data(data);
     size_t parsed_size = 0;
     for(;;){
-        if(parse_data.size() == 0){
+        if(parse_data.empty()){
             break;
         }
 
         // parse trojan protocol
         UDPPacket packet;
-        size_t packet_len;
+        size_t packet_len = 0;
         if(!packet.parse(parse_data, packet_len)){
             if(parse_data.length() > numeric_limits<uint16_t>::max()){
                 _log_with_endpoint(get_udp_local_endpoint(), "[tun] error UDPPacket.parse! destroy it.", Log::ERROR);
                 destroy();
                 break;
-            }else{
-                _log_with_endpoint(get_udp_local_endpoint(), "[tun] error UDPPacket.parse! Might need to read more...", Log::WARN);
             }
+
+            _log_with_endpoint(get_udp_local_endpoint(), "[tun] UDPPacket.parse failed! Might need to read more...", Log::WARN);
             break;
         }
 
@@ -288,7 +287,7 @@ size_t TUNSession::parse_udp_packet_data(const string_view& data){
 
 void TUNSession::out_async_read() {
     if(m_service->is_use_pipeline()){    
-        get_pipeline_component().pipeline_data_cache.async_read([this](const string_view &data) {
+        get_pipeline_component().get_pipeline_data_cache().async_read([this](const string_view &data) {
             if(is_udp_forward_session()){
                 
                 reset_udp_timeout();
@@ -300,7 +299,7 @@ void TUNSession::out_async_read() {
                     }
                 }else{
                     streambuf_append(m_recv_buf, data);
-                    auto parsed = parse_udp_packet_data(streambuf_to_string_view(m_recv_buf));
+                    auto parsed = parse_udp_packet_data(m_recv_buf);
                     m_recv_buf.consume(parsed);
                 }                
 
@@ -317,10 +316,10 @@ void TUNSession::out_async_read() {
             
         });
     }else{
-        _guard_read_buf_begin(m_recv_buf);
+        m_recv_buf.begin_read(__FILE__, __LINE__);
         auto self = shared_from_this();
         m_out_socket.async_read_some(m_recv_buf.prepare(Session::MAX_BUF_LENGTH), [this, self](const boost::system::error_code error, size_t length) {
-            _guard_read_buf_end(m_recv_buf);
+            m_recv_buf.end_read();
             if (error) {
                 output_debug_info_ec(error);
                 destroy();
@@ -330,7 +329,7 @@ void TUNSession::out_async_read() {
 
             if(is_udp_forward_session()){
                 reset_udp_timeout();    
-                auto parsed = parse_udp_packet_data(streambuf_to_string_view(m_recv_buf));
+                auto parsed = parse_udp_packet_data(m_recv_buf);
                 m_recv_buf.consume(parsed);
 
                 try_out_async_read();

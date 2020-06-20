@@ -49,8 +49,7 @@ private:
     bool destroyed;
     boost::asio::ssl::stream<boost::asio::ip::tcp::socket>out_socket;
     bool connected;
-    boost::asio::streambuf out_read_buf;
-    bool out_read_buf_guard;
+    ReadBufWithGuard out_read_buf;
     boost::asio::ip::tcp::resolver resolver; 
     std::list<std::shared_ptr<Session>> sessions;
     uint32_t pipeline_id;

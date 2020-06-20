@@ -25,14 +25,10 @@
 using namespace std;
 SocketSession::SocketSession(Service* _service, const Config& config) : 
     Session(_service, config),
-    in_read_buf_guard(false),
-    out_read_buf_guard(false),
-    udp_read_buf_guard(false),
     udp_gc_timer(_service->get_io_context()),
     recv_len(0),
     sent_len(0),
-    resolver(_service->get_io_context()),
-    udp_socket(_service->get_io_context()){
+    resolver(_service->get_io_context()){
 }
 
 void SocketSession::udp_timer_async_wait(){
@@ -50,8 +46,13 @@ void SocketSession::udp_timer_async_wait(){
     auto self = shared_from_this();
     udp_gc_timer.async_wait([this, self](const boost::system::error_code error) {
         if (!error) {
-            _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(get_session_id()) + " UDP session timeout");
+            _log_with_date_time("session_id: " + to_string(get_session_id()) + " UDP session timeout");
             destroy();
         }
     });
+}
+
+void SocketSession::udp_timer_cancel(){
+    boost::system::error_code ec;
+    udp_gc_timer.cancel(ec);
 }

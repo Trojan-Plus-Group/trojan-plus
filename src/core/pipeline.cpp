@@ -30,13 +30,13 @@ using namespace boost::asio::ip;
 
 uint32_t Pipeline::s_pipeline_id_counter = 0;
 
-Pipeline::Pipeline(Service* _service, const Config& config, boost::asio::ssl::context& ssl_context) : service(_service),
-                                                             destroyed(false),
-                                                             out_socket(_service->get_io_context(), ssl_context),
-                                                             connected(false),
-                                                             out_read_buf_guard(false),
-                                                             resolver(_service->get_io_context()),
-                                                             config(config) {
+Pipeline::Pipeline(Service* _service, const Config& config, boost::asio::ssl::context& ssl_context) : 
+  service(_service),
+  destroyed(false),
+  out_socket(_service->get_io_context(), ssl_context),
+  connected(false),
+  resolver(_service->get_io_context()),
+  config(config) {
     pipeline_id = s_pipeline_id_counter++;
 
     sending_data_cache.set_is_connected_func([this](){ return is_connected();});
@@ -124,10 +124,10 @@ bool Pipeline::is_in_pipeline(Session& session){
 }
 
 void Pipeline::out_async_recv(){
-    _guard_read_buf_begin(out_read_buf);
+    out_read_buf.begin_read(__FILE__, __LINE__);
     auto self = shared_from_this();
     out_socket.async_read_some(out_read_buf.prepare(RECV_BUF_LENGTH), [this, self](const boost::system::error_code error, size_t length) {
-        _guard_read_buf_end(out_read_buf);
+        out_read_buf.end_read();
         if (error) {
             output_debug_info_ec(error);
             destroy();
@@ -135,7 +135,7 @@ void Pipeline::out_async_recv(){
             out_read_buf.commit(length);
             while(out_read_buf.size() != 0){
                 PipelineRequest req;
-                int ret = req.parse(streambuf_to_string_view(out_read_buf));
+                int ret = req.parse(out_read_buf);
                 if(ret == -1){
                     break;
                 }
