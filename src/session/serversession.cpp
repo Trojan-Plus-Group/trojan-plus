@@ -38,7 +38,7 @@ ServerSession::ServerSession(Service* _service, const Config& config, boost::asi
     in_socket(_service->get_io_context(), ssl_context),
     out_socket(_service->get_io_context()),
     udp_resolver(_service->get_io_context()),
-    auth(auth),
+    auth(move(auth)),
     plain_http_response(plain_http_response),
     has_queried_out(false) {}
 
@@ -109,7 +109,7 @@ void ServerSession::in_async_write(const string_view& data) {
     auto self = shared_from_this();
     if(get_pipeline_component().is_using_pipeline()){
         if(!pipeline_session.expired()){
-            (static_cast<PipelineSession*>(pipeline_session.lock().get()))->session_write_data(*this, data, [this, self](const boost::system::error_code ec){
+            (dynamic_cast<PipelineSession*>(pipeline_session.lock().get()))->session_write_data(*this, data, [this, self](const boost::system::error_code ec){
                 if(ec){
                     output_debug_info_ec(ec);
                     destroy();
@@ -189,7 +189,7 @@ void ServerSession::out_async_write(const string_view &data) {
             
             get_pipeline_component().set_async_writing_data(false);
 
-            (static_cast<PipelineSession*>(pipeline_session.lock().get()))->session_write_ack(*this, [this, self](const boost::system::error_code ec){
+            (dynamic_cast<PipelineSession*>(pipeline_session.lock().get()))->session_write_ack(*this, [this, self](const boost::system::error_code ec){
                 if(ec){
                     output_debug_info_ec(ec);
                     destroy();
@@ -267,13 +267,13 @@ void ServerSession::in_recv(const string_view &data) {
             if (!use_alpn) {
                 return req.address.port;
             }
-            const unsigned char *alpn_out;
-            unsigned int alpn_len;
+            const unsigned char *alpn_out = nullptr;
+            unsigned int alpn_len = 0;
             SSL_get0_alpn_selected(in_socket.native_handle(), &alpn_out, &alpn_len);
             if (alpn_out == nullptr) {
                 return get_config().get_remote_port();
             }
-            auto it = get_config().get_ssl().alpn_port_override.find(string(alpn_out, alpn_out + alpn_len));
+            auto it = get_config().get_ssl().alpn_port_override.find(string((const char*)alpn_out, (size_t)alpn_len));
             return it == get_config().get_ssl().alpn_port_override.end() ? get_config().get_remote_port() : it->second;
         }());
         
@@ -299,10 +299,13 @@ void ServerSession::in_recv(const string_view &data) {
                 streambuf_append(udp_data_buf, req.payload);
                 out_udp_sent();
                 return;
-            } else {
-                _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + " requested connection to " + req.address.address + ':' + to_string(req.address.port), Log::INFO);
-                streambuf_append(out_write_buf, req.payload);
             }
+
+            _log_with_endpoint(in_endpoint, "session_id: " + to_string(get_session_id()) + 
+                " requested connection to " + req.address.address + ':' + to_string(req.address.port), Log::INFO);
+
+            streambuf_append(out_write_buf, req.payload);
+        
         } else {            
             streambuf_append(out_write_buf, data);
         }
@@ -373,7 +376,7 @@ void ServerSession::out_udp_sent() {
         }
 
         UDPPacket packet;
-        size_t packet_len;
+        size_t packet_len = 0;
         bool is_packet_valid = packet.parse(streambuf_to_string_view(udp_data_buf), packet_len);
         if (!is_packet_valid) {
             if (udp_data_buf.size() > MAX_BUF_LENGTH) {
@@ -427,9 +430,11 @@ void ServerSession::out_udp_sent() {
             packet.payload = *payload_tmp_buf;
 
             auto self = shared_from_this();
-            udp_resolver.async_resolve(packet.address.address, to_string(packet.address.port), [this, self, cb, payload_tmp_buf, packet, packet_len](const boost::system::error_code error, udp::resolver::results_type results) {
+            udp_resolver.async_resolve(packet.address.address, to_string(packet.address.port), 
+              [this, self, cb, payload_tmp_buf, packet, packet_len](const boost::system::error_code error, const udp::resolver::results_type& results) {
                 if (error || results.empty()) {
-                    _log_with_endpoint(udp_associate_endpoint, "session_id: " + to_string(get_session_id()) + " cannot resolve remote server hostname " + packet.address.address + ": " + error.message(), Log::ERROR);
+                    _log_with_endpoint(udp_associate_endpoint, "session_id: " + to_string(get_session_id()) + 
+                        " cannot resolve remote server hostname " + packet.address.address + ": " + error.message(), Log::ERROR);
                     destroy();
                     return;
                 }
@@ -497,6 +502,6 @@ void ServerSession::destroy(bool pipeline_call /*= false*/) {
     shutdown_ssl_socket(this, in_socket);    
 
     if(!pipeline_call && get_pipeline_component().is_using_pipeline() && !pipeline_session.expired()){
-        (static_cast<PipelineSession*>(pipeline_session.lock().get()))->remove_session_after_destroy(*this);
+        (dynamic_cast<PipelineSession*>(pipeline_session.lock().get()))->remove_session_after_destroy(*this);
     }
 }

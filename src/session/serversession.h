@@ -50,6 +50,10 @@ private:
     std::string auth_password;
     const std::string &plain_http_response;
     ReadDataCache pipeline_data_cache;
+
+    using PipelineSessionRef = std::weak_ptr<Session>;
+    PipelineSessionRef pipeline_session;
+    bool has_queried_out;
     
     void in_async_read();
     void in_async_write(const std::string_view &data);
@@ -63,9 +67,6 @@ private:
     void out_udp_async_write(const std::string_view &data, const boost::asio::ip::udp::endpoint &endpoint);
     void out_udp_recv(const std::string_view &data, const boost::asio::ip::udp::endpoint &endpoint);
     void out_udp_sent();
-    
-    std::weak_ptr<Session> pipeline_session;
-    bool has_queried_out;
 public:
     ServerSession(Service* _service, const Config& config, boost::asio::ssl::context &ssl_context, 
         std::shared_ptr<Authenticator> auth, const std::string &plain_http_response);
@@ -75,7 +76,11 @@ public:
     void destroy(bool pipeline_call = false) override;
     void out_async_read();
 
-    void set_pipeline_session(std::shared_ptr<Session> _session){ pipeline_session = _session;}
+    void set_pipeline_session(const std::shared_ptr<Session>& _session){
+        static_assert(std::is_same<PipelineSessionRef, std::weak_ptr<Session>>::value, 
+            "Pipeline session ref type must be weak_ptr");
+        pipeline_session = _session;
+    }
     bool is_destoryed() const { return status == DESTROY; }
 };
 
