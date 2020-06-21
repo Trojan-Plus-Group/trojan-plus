@@ -30,7 +30,7 @@ def get_random_string(length):
     return "".join(arr)
 
 def gen_files(parent_dir, files_count, file_size):
-    if file_size / fulltest_udp_proto.SEND_PACKET_LENGTH >= 256:
+    if file_size / fulltest_udp_proto.UDP_SEND_PACKET_LENGTH >= 256:
         raise Exception(" gen files is too large! we need remain 1 byte for index of udp")
 
     if os.path.exists(parent_dir) :

@@ -37,7 +37,7 @@ def run_udp(port):
     
     udp_processor = fulltest_udp_proto.UDPProcessor(serv_dir, udp_socket)
     while True:
-        data, addr = udp_socket.recvfrom(fulltest_udp_proto.SEND_PACKET_LENGTH)
+        data, addr = udp_socket.recvfrom(fulltest_udp_proto.UDP_SEND_PACKET_LENGTH)
         #print_time_log(('Received UDP from %s:%s' % addr) + " length:" + str(len(data)))
         udp_processor.recv(data, addr)
                 

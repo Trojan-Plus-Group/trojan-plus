@@ -27,7 +27,7 @@ from fulltest_utils import print_time_log
 
 PARALLEL_REQUEST_COUNT = 5
 OPEN_URL_TIMOUT = 1
-SEND_PACKET_LENGTH = fulltest_udp_proto.SEND_PACKET_LENGTH
+UDP_SEND_PACKET_LENGTH = fulltest_udp_proto.UDP_SEND_PACKET_LENGTH
 UDP_BUFF_SIZE = fulltest_udp_proto.UDP_BUFF_SIZE
 
 request_url_prefix = "http://"
@@ -70,7 +70,7 @@ def get_file_udp(file, length, port):
             recv_length = 0
             try:
                 while recv_length < length:
-                    data = udp_socket.recv(SEND_PACKET_LENGTH)
+                    data = udp_socket.recv(UDP_SEND_PACKET_LENGTH)
                     recv_length = recv_length + len(data) - fulltest_udp_proto.UDP_INDEX_HEADER_SIZE
                     data_arr.append(data)
 
@@ -99,7 +99,7 @@ def post_file_udp(file, data, port):
 
             fulltest_udp_proto.send_udp_file_data(udp_socket, addr, data)
 
-            return udp_socket.recv(SEND_PACKET_LENGTH)
+            return udp_socket.recv(UDP_SEND_PACKET_LENGTH)
     except :
         traceback.print_exc()
         return 'please check traceback exceptions'

@@ -23,7 +23,7 @@ import urllib, os, threading, traceback, socket, select, time
 from concurrent.futures import ThreadPoolExecutor , as_completed
 from fulltest_utils import print_time_log
 
-SEND_PACKET_LENGTH = 8192
+UDP_SEND_PACKET_LENGTH = 1472 # MTU - (IP header) - (UDP header) 
 UDP_BUFF_SIZE = 1024 * 1024
 
 UDP_INDEX_HEADER_SIZE = 1
@@ -50,7 +50,7 @@ def bind_port(udp_socket, port):
     raise Exception("[ERROR] Cannot bind a new port for udp socket!")
 
 def send_udp_file_data(udp_socket, addr, content):
-    content_setment_len = SEND_PACKET_LENGTH - UDP_INDEX_HEADER_SIZE
+    content_setment_len = UDP_SEND_PACKET_LENGTH - UDP_INDEX_HEADER_SIZE
     index = 0
     i = 0
     while i < len(content):
