@@ -274,11 +274,12 @@ if __name__ == "__main__":
     print_time_log(__file__ + " args : " + str(sys.argv))
     parser = argparse.ArgumentParser()
     parser.add_argument("binary", help='path of trojan binary')
-    parser.add_argument("-g", "--genfile", help='whether generate testing files', \
+    parser.add_argument("-g", "--genfile", help='whether generate testing files and set quantity of files', \
         type=int, nargs='?', const=TEST_FILES_COUNT)
     parser.add_argument("-gs", "--genfileSize", help='generating files\' size', \
         type=int, nargs='?', const=TEST_FILES_SIZE)
-    parser.add_argument("-t", "--tun", help=" whether test tun device (mostly for Android)")
+    parser.add_argument("-t", "--tun", help=" whether test tun device (mostly for Android)", \
+        action='store_true', default=False)
 
     exit(main(parser.parse_args()))
         
