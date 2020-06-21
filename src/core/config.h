@@ -98,6 +98,7 @@ public:
         std::string net_mask;
         uint16_t mtu;
         int tun_fd;
+        bool redirect_local; // redirect all ip to localhost for test
     };
 
 private:

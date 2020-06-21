@@ -31,6 +31,9 @@
 #include "proto/udppacket.h"
 
 using namespace std;
+using namespace boost::asio::ip;
+
+static const char* const localhost_ip_addr = "127.0.0.1";
 
 TUNSession::TUNSession(Service* _service, bool _is_udp) : 
     Session(_service, _service->get_config()),
@@ -51,6 +54,16 @@ TUNSession::~TUNSession(){
     get_pipeline_component().free_session_id();
 }
 
+udp::endpoint TUNSession::get_redirect_local_remote_addr(bool output_log /*= false*/) const {
+    auto remote_addr = m_remote_addr_udp;
+    remote_addr.address(make_address_v4(localhost_ip_addr));
+    if(output_log){
+        _log_with_date_time(m_remote_addr_udp.address().to_string() + " redirect to local for test");
+    }
+
+    return remote_addr;
+}
+
 void TUNSession::start(){
     reset_udp_timeout();
 
@@ -67,10 +80,16 @@ void TUNSession::start(){
         auto insert_pwd = [this](){
             if(is_udp_forward_session()){
                 streambuf_append(m_send_buf, TrojanRequest::generate(get_config().get_password().cbegin()->first, 
-                    m_remote_addr_udp.address().to_string(), m_remote_addr_udp.port(), false));
+                    get_config().get_tun().redirect_local ? localhost_ip_addr : m_remote_addr_udp.address().to_string().c_str(),
+                    m_remote_addr_udp.port(), false));
             }else{
+                auto remote_addr = m_remote_addr.address().to_string();
+                if(get_config().get_tun().redirect_local){
+                    _log_with_date_time(remote_addr + " redirect to local for test");
+                    remote_addr = localhost_ip_addr;
+                }
                 streambuf_append(m_send_buf, TrojanRequest::generate(get_config().get_password().cbegin()->first, 
-                    m_remote_addr.address().to_string(), m_remote_addr.port(), true));
+                    remote_addr, m_remote_addr.port(), true));
             }
         };
 
@@ -199,7 +218,8 @@ void TUNSession::out_async_send(const uint8_t* _data, size_t _length, SentHandle
     if(!m_connected){
         if(m_send_buf.size() < numeric_limits<uint16_t>::max()){
             if(is_udp_forward_session()){
-                UDPPacket::generate(m_send_buf, m_remote_addr_udp, string_view((const char*)_data, _length));
+                UDPPacket::generate(m_send_buf, get_config().get_tun().redirect_local ? get_redirect_local_remote_addr() : m_remote_addr_udp, 
+                    string_view((const char*)_data, _length));
             }else{
                 streambuf_append(m_send_buf, _data, _length);
             }
@@ -207,7 +227,8 @@ void TUNSession::out_async_send(const uint8_t* _data, size_t _length, SentHandle
     }else{     
         if(is_udp_forward_session()){
             m_send_buf.consume(m_send_buf.size());
-            UDPPacket::generate(m_send_buf, m_remote_addr_udp, string_view((const char*)_data, _length));
+            UDPPacket::generate(m_send_buf, get_config().get_tun().redirect_local ? get_redirect_local_remote_addr() : m_remote_addr_udp, 
+                string_view((const char*)_data, _length));
             out_async_send_impl(streambuf_to_string_view(m_send_buf), move(_handler));
         }else{
             out_async_send_impl(string_view((const char*)_data, _length), move(_handler));

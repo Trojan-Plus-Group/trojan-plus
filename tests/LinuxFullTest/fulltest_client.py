@@ -25,16 +25,16 @@ from concurrent.futures import ThreadPoolExecutor , as_completed
 import fulltest_udp_proto, fulltest_main
 from fulltest_utils import print_time_log
 
-HOST_URL="127.0.0.1"
 PARALLEL_REQUEST_COUNT = 5
 OPEN_URL_TIMOUT = 1
 SEND_PACKET_LENGTH = fulltest_udp_proto.SEND_PACKET_LENGTH
 UDP_BUFF_SIZE = fulltest_udp_proto.UDP_BUFF_SIZE
 
-request_url_prefix = "http://" + HOST_URL
+request_url_prefix = "http://"
 compare_folder = "html"
 enable_log = True
 serv_port = 0
+request_host_ip = fulltest_main.LOCALHOST_IP
 
 client_udp_bind_port_start = fulltest_udp_proto.client_udp_bind_port_start
 
@@ -60,7 +60,8 @@ def get_file_udp(file, length, port):
             udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, UDP_BUFF_SIZE)
             fulltest_udp_proto.bind_port(udp_socket, port)
 
-            addr = (HOST_URL, serv_port)
+            global request_host_ip
+            addr = (request_host_ip, serv_port)
 
             param = urllib.parse.urlencode({'file':file, 'len':length, 'm':'GET'}).encode()
             udp_socket.sendto(param + b'\r\n', addr)
@@ -89,7 +90,8 @@ def post_file_udp(file, data, port):
             udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, UDP_BUFF_SIZE)
             fulltest_udp_proto.bind_port(udp_socket, port)
             
-            addr = (HOST_URL, serv_port)
+            global request_host_ip
+            addr = (request_host_ip, serv_port)
 
             param = urllib.parse.urlencode({'file':file, 'len':len(data), 'm':'POST'}).encode()
             udp_socket.sendto(param + b'\r\n', addr)
@@ -171,22 +173,23 @@ def compare_process(files, executor, get_or_post, tcp_or_udp):
     return True
 
 
-def start_query(socks_port, port, folder, log = True):
-    global request_url_prefix
-    global compare_folder
-    global enable_log
-    global serv_port
-    
-    origin_socket = socket.socket
-
+def start_query(host_ip, socks_port, port, folder, log = True):
     # setup socket as socks5 proxy
+    origin_socket = socket.socket
     if socks_port != 0 :
-        socks.set_default_proxy(socks.SOCKS5, HOST_URL, socks_port)
+        socks.set_default_proxy(socks.SOCKS5, host_ip, socks_port)
         socket.socket = socks.socksocket
         print_time_log("using pysocks version: " + str(socks.__version__))
 
     try:
-        request_url_prefix = 'http://' + HOST_URL + ':' + str(port) + '/'
+        global request_url_prefix
+        global request_host_ip
+        global compare_folder
+        global enable_log
+        global serv_port
+               
+        request_host_ip = host_ip
+        request_url_prefix = 'http://' + host_ip + ':' + str(port) + '/'
         compare_folder = folder + '/'
         enable_log = log
         serv_port = port
@@ -241,10 +244,10 @@ def start_query(socks_port, port, folder, log = True):
 
 if __name__ == '__main__':
     # client run_type:
-    #start_query(10620, 18080, "html")
+    #start_query("127.0.0.1", 10620, 18080, "html")
 
     # forward run_type:
-    #start_query(0, 10620, "html")
+    #start_query("127.0.0.1", 0, 10620, "html")
 
     # for pure fulltest script run
-    start_query(0, 18080, "html")
+    start_query("127.0.0.1", 0, 18080, "html")

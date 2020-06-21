@@ -71,6 +71,9 @@ private:
     size_t parse_udp_packet_data(const std::string_view& data);
 
     void out_async_send_impl(const std::string_view& data_to_send, SentHandler&& _handler);
+
+    [[nodiscard]]
+    boost::asio::ip::udp::endpoint get_redirect_local_remote_addr(bool output_log = false) const;
 public:
     TUNSession(Service* _service, bool _is_udp);
     ~TUNSession() final;

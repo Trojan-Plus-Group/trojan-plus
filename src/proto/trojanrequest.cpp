@@ -21,6 +21,7 @@
  */
 
 #include "trojanrequest.h"
+#include "core/utils.h"
 using namespace std;
 
 int TrojanRequest::parse(const std::string_view &data){
@@ -53,8 +54,8 @@ string TrojanRequest::generate(const string &password, const string &domainname,
     ret += '\x03';
     ret += char(uint8_t(domainname.length()));
     ret += domainname;
-    ret += char(uint8_t(port >> 8));
-    ret += char(uint8_t(port & 0xFF));
+    ret += char(uint8_t(port >> one_byte_shift_8_bits));
+    ret += char(uint8_t(port & one_byte_mask_0xFF));
     ret += "\r\n";
     return ret;
 }

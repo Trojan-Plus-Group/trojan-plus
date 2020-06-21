@@ -24,6 +24,9 @@ from subprocess import Popen, PIPE
 import fulltest_gen_content, fulltest_server, fulltest_client
 from fulltest_utils import print_time_log, is_macos_system
 
+
+LOCALHOST_IP="127.0.0.1"
+
 TEST_FILES_DIR = 'html'
 TEST_FILES_COUNT = 50
 TEST_FILES_SIZE = 8192 * 10
@@ -101,7 +104,7 @@ def get_process_rss_in_KB(process):
     else:
         return 0
 
-def main_stage(server_config, client_config, server_balance_config = None, is_foward = False):
+def main_stage(server_config, client_config, server_balance_config = None, is_foward = False, tun_test = False):
 
     server_balance_process = None
     if server_balance_config:
@@ -141,11 +144,15 @@ def main_stage(server_config, client_config, server_balance_config = None, is_fo
             return 1
 
         if is_foward:
-            if not fulltest_client.start_query(0, TEST_PROXY_PORT, TEST_FILES_DIR):
+            if not fulltest_client.start_query(LOCALHOST_IP, 0, TEST_PROXY_PORT, TEST_FILES_DIR):
+                output_log = True
+                return 1
+        elif tun_test:
+            if not fulltest_client.start_query("188.188.188.188", 0, TEST_SERVER_PORT, TEST_FILES_DIR):
                 output_log = True
                 return 1
         else:
-            if not fulltest_client.start_query(TEST_PROXY_PORT, TEST_SERVER_PORT, TEST_FILES_DIR):
+            if not fulltest_client.start_query(LOCALHOST_IP, TEST_PROXY_PORT, TEST_SERVER_PORT, TEST_FILES_DIR):
                 output_log = True
                 return 1
 
@@ -201,6 +208,14 @@ def prepare_forward_config(client_config):
             new_f.write(content)
             return filename
 
+def prepare_client_tun_config(client_config):
+    with open("config/" + client_config, "r") as f:
+        content = f.read().replace('"client"', '"client_tun"')
+        filename = client_config + '.client_tun.tmpjson'
+        with open("config/" + filename, 'w') as new_f:
+            new_f.write(content)
+            return filename
+
 def main(args):
     if args.genfile:
         size = args.genfileSize if args.genfileSize else TEST_FILES_SIZE
@@ -237,6 +252,18 @@ def main(args):
         if main_stage("server_config_pipeline.json", prepare_forward_config("client_config_pipeline.json"), "server_config_pipeline_balance.json", is_foward = True) != 0:
             output_log = True
             return 1     
+        
+        if args.tun:
+            print_time_log("start trojan plus in client_tun run_type without pipeline...")
+            if main_stage("server_config.json", prepare_client_tun_config("client_config.json"), tun_test=True) != 0:
+                output_log = True
+                return 1
+
+            print_time_log("start trojan plus in client_tun run_type in pipeline...")
+            if main_stage("server_config_pipeline.json", prepare_client_tun_config("client_config_pipeline.json"), "server_config_pipeline_balance.json",tun_test=True) != 0:
+                output_log = True
+                return 1
+
     finally:
         close_process(test_server_process, output_log)
 
@@ -251,5 +278,7 @@ if __name__ == "__main__":
         type=int, nargs='?', const=TEST_FILES_COUNT)
     parser.add_argument("-gs", "--genfileSize", help='generating files\' size', \
         type=int, nargs='?', const=TEST_FILES_SIZE)
+    parser.add_argument("-t", "--tun", help=" whether test tun device (mostly for Android)")
+
     exit(main(parser.parse_args()))
         

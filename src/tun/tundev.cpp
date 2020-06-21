@@ -468,10 +468,14 @@ int TUNDev::try_to_process_udp_packet(uint8_t* data, int data_len){
             return 1;
         }
 
-        auto local_endpoint = udp::endpoint(make_address_v4((address_v4::uint_type)ntoh32(ipv4_hdr.source_address)), ntoh16(udp_hdr.source_port));
-        auto remote_endpoint = udp::endpoint(make_address_v4((address_v4::uint_type)ntoh32(ipv4_hdr.destination_address)), ntoh16(udp_hdr.dest_port));
+        auto local_endpoint = udp::endpoint(make_address_v4((address_v4::uint_type)
+            ntoh32(ipv4_hdr.source_address)), ntoh16(udp_hdr.source_port));
 
-        _log_with_endpoint_ALL(local_endpoint, "-> " + remote_endpoint.address().to_string() + ":" + to_string(remote_endpoint.port()) + " length:" + to_string(data_len));
+        auto remote_endpoint = udp::endpoint(make_address_v4((address_v4::uint_type)
+            ntoh32(ipv4_hdr.destination_address)), ntoh16(udp_hdr.dest_port));
+
+        _log_with_endpoint_ALL(local_endpoint, "-> " + remote_endpoint.address().to_string() + 
+            ":" + to_string(remote_endpoint.port()) + " length:" + to_string(data_len));
 
         for(auto& it : m_udp_clients){
             if(it->try_to_process_udp(local_endpoint, remote_endpoint, data, data_len)){

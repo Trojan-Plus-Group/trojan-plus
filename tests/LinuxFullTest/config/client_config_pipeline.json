@@ -43,5 +43,12 @@
         "pipeline_loadbalance_configs": [
             "config/client_config_pipeline_balance.json"
         ]
+    },
+    "tun":{
+        "tun_name":"tun0",
+        "net_ip":"10.0.0.2",
+        "net_mask":"255.255.255.0",
+        "mtu":1500,
+        "redirect_local":true
     }
 }

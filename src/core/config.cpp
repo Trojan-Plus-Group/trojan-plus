@@ -205,6 +205,7 @@ void Config::populate(const ptree &tree) {
     tun.net_mask = tree.get("tun.net_mask", "");
     tun.mtu = tree.get("tun.mtu", default_tun_mtu);
     tun.tun_fd = tree.get("tun.tun_fd", default_tun_fd);
+    tun.redirect_local = tree.get("tun.redirect_local", false);
 
     const auto hash_str = get_remote_addr() + ":" + to_string(get_remote_port());
     compare_hash = get_hashCode(hash_str);

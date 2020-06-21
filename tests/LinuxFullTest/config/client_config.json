@@ -40,5 +40,12 @@
     "experimental":{
         "pipeline_num" : 0,
         "pipeline_ack_window" : 3
+    },
+    "tun":{
+        "tun_name":"tun0",
+        "net_ip":"10.0.0.2",
+        "net_mask":"255.255.255.0",
+        "mtu":1500,
+        "redirect_local":true
     }
 }

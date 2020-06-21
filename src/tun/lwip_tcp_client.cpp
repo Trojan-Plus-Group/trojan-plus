@@ -168,12 +168,11 @@ int lwip_tcp_client::client_socks_recv_send_out(){
     }
 
     auto recv_size = m_tun_session->recv_buf_size();
-    const auto* recv_data = m_tun_session->recv_buf();
-
     if(recv_size == 0){
         return 0;
     }
 
+    const auto* recv_data = m_tun_session->recv_buf();
     size_t wrote_size = 0;
     do {
         
@@ -182,7 +181,7 @@ int lwip_tcp_client::client_socks_recv_send_out(){
             break;
         }
             
-        err_t err = tcp_write(m_pcb, (const void*)recv_data, (uint16_t)to_write, TCP_WRITE_FLAG_COPY);
+        err_t err = tcp_write(m_pcb, (const void*)(recv_data + wrote_size), (uint16_t)to_write, TCP_WRITE_FLAG_COPY);
         if (err != ERR_OK) {
             if (err == ERR_MEM) {
                 break;
@@ -194,8 +193,6 @@ int lwip_tcp_client::client_socks_recv_send_out(){
         }
         
         recv_size -= to_write;
-        recv_data += to_write;
-
         wrote_size += to_write;
     } while (recv_size > 0);
     
