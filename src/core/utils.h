@@ -100,14 +100,14 @@ typedef boost::asio::detail::socket_option::boolean<SOL_SOCKET, SO_REUSEPORT> re
 #define DEFAULT_PACKET_SIZE 1397  // 1492 - PACKET_HEADER_SIZE = 1397, the default MTU for UDP relay
 
 #define _define_simple_getter_setter(type, name) \
-    [[nodiscard]] type get_##name() const { return name; } \
-    void set_##name(type val) { name = val; }
+    [[nodiscard]] inline type get_##name() const { return name; } \
+    inline void set_##name(type val) { name = val; }
 
 #define _define_getter(type, name) \
-    [[nodiscard]] type get_##name() {return name;}
+    [[nodiscard]] inline type get_##name() {return name;}
 
 #define _define_getter_const(type, name) \
-    [[nodiscard]] type get_##name() const {return name;}
+    [[nodiscard]] inline type get_##name() const {return name;}
 
 const static int half_byte_shift_4_bits = 4;
 const static int one_byte_shift_8_bits = 8;

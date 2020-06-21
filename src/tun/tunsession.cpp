@@ -66,7 +66,7 @@ udp::endpoint TUNSession::get_redirect_local_remote_addr(bool output_log /*= fal
 
 void TUNSession::start(){
     reset_udp_timeout();
-
+    set_start_time(time(nullptr));
     auto self = shared_from_this();
     auto cb = [this, self](){
         m_connected  = true;
@@ -150,10 +150,14 @@ void TUNSession::destroy(bool pipeline_call){
     }
     m_destroyed = true;
 
+    auto note_str = "TUNSession session_id: " + to_string(get_session_id()) + " disconnected" + 
+        to_string(get_recv_len()) + " bytes received, " + to_string(get_sent_len()) + " bytes sent, lasted for " + 
+        to_string(time(nullptr) - get_start_time()) + " seconds";
+        
     if(is_udp_forward_session()){
-        _log_with_endpoint(m_local_addr_udp, "TUNSession session_id: " + to_string(get_session_id()) + " disconnected ", Log::INFO);
+        _log_with_endpoint(m_local_addr_udp, note_str, Log::INFO);
     }else{
-        _log_with_endpoint(m_local_addr, "TUNSession session_id: " + to_string(get_session_id()) + " disconnected ", Log::INFO);
+        _log_with_endpoint(m_local_addr, note_str, Log::INFO);
     }    
 
     m_wait_ack_handler.clear();
@@ -181,7 +185,6 @@ void TUNSession::recv_ack_cmd(){
 void TUNSession::out_async_send_impl(const std::string_view& data_to_send, SentHandler&& _handler){
     auto self = shared_from_this();
     if(m_service->is_use_pipeline()){
-
         m_service->session_async_send_to_pipeline(*this, PipelineRequest::DATA, data_to_send,
          [this, self, _handler](const boost::system::error_code error) {
             reset_udp_timeout();
@@ -215,6 +218,7 @@ void TUNSession::out_async_send_impl(const std::string_view& data_to_send, SentH
     }
 }
 void TUNSession::out_async_send(const uint8_t* _data, size_t _length, SentHandler&& _handler){
+    inc_sent_len(_length);
     if(!m_connected){
         if(m_send_buf.size() < numeric_limits<uint16_t>::max()){
             if(is_udp_forward_session()){
@@ -309,6 +313,8 @@ size_t TUNSession::parse_udp_packet_data(const string_view& data){
 void TUNSession::out_async_read() {
     if(m_service->is_use_pipeline()){    
         get_pipeline_component().get_pipeline_data_cache().async_read([this](const string_view &data) {
+            inc_recv_len(data.length());
+
             if(is_udp_forward_session()){
                 
                 reset_udp_timeout();
@@ -347,6 +353,7 @@ void TUNSession::out_async_read() {
                 return;
             }
             m_recv_buf.commit(length);
+            inc_recv_len(length);
 
             if(is_udp_forward_session()){
                 reset_udp_timeout();    

@@ -26,8 +26,6 @@ using namespace std;
 SocketSession::SocketSession(Service* _service, const Config& config) : 
     Session(_service, config),
     udp_gc_timer(_service->get_io_context()),
-    recv_len(0),
-    sent_len(0),
     resolver(_service->get_io_context()){
 }
 

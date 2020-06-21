@@ -46,8 +46,11 @@ private:
     Service* service; 
     PipelineComponent pipeline_com;
     bool is_udp_forward;
-
     const Config& config;
+
+    uint64_t recv_len{0};
+    uint64_t sent_len{0};
+    time_t start_time{};
 
 public:
     Session(Service* _service, const Config& _config);
@@ -58,6 +61,14 @@ public:
     virtual void recv_ack_cmd(){
         pipeline_com.recv_ack_cmd();
     }
+
+    uint64_t inc_recv_len(uint64_t inc){ recv_len += inc; return recv_len;}
+    uint64_t inc_sent_len(uint64_t inc){ sent_len += inc; return sent_len;}
+
+    _define_getter_const(uint64_t, recv_len)
+    _define_getter_const(uint64_t, sent_len)
+
+    _define_simple_getter_setter(time_t, start_time)
 
     const Config& get_config()const { return config; }
     Service* get_service() { return service; }

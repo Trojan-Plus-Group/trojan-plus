@@ -37,10 +37,6 @@
 class Service;
 class SocketSession : public Session {
     boost::asio::steady_timer udp_gc_timer;
-  
-    uint64_t recv_len;
-    uint64_t sent_len;
-    time_t start_time{};
     
     boost::asio::ip::tcp::resolver resolver;
     boost::asio::ip::tcp::endpoint in_endpoint;
@@ -49,13 +45,6 @@ protected:
     void udp_timer_async_wait();
     void udp_timer_cancel();
 
-    uint64_t inc_recv_len(uint64_t inc){ recv_len += inc; return recv_len;}
-    uint64_t inc_sent_len(uint64_t inc){ sent_len += inc; return sent_len;}
-
-    _define_getter_const(uint64_t, recv_len)
-    _define_getter_const(uint64_t, sent_len)
-
-    _define_simple_getter_setter(time_t, start_time)
     _define_getter(boost::asio::ip::tcp::resolver&, resolver)
     
 public:
