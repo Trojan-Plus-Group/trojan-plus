@@ -22,7 +22,7 @@
 import urllib.request, socket, socks, traceback, os, time
 import threading
 from concurrent.futures import ThreadPoolExecutor , as_completed
-import fulltest_udp_proto, fulltest_main
+import fulltest_udp_proto
 from fulltest_utils import print_time_log
 
 PARALLEL_REQUEST_COUNT = 5
@@ -34,7 +34,7 @@ request_url_prefix = "http://"
 compare_folder = "html"
 enable_log = True
 serv_port = 0
-request_host_ip = fulltest_main.LOCALHOST_IP
+request_host_ip = "127.0.0.1"
 
 client_udp_bind_port_start = fulltest_udp_proto.client_udp_bind_port_start
 

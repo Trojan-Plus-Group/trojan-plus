@@ -150,10 +150,10 @@ void TUNSession::destroy(bool pipeline_call){
     }
     m_destroyed = true;
 
-    auto note_str = "TUNSession session_id: " + to_string(get_session_id()) + " disconnected" + 
+    auto note_str = "TUNSession session_id: " + to_string(get_session_id()) + " disconnected, " + 
         to_string(get_recv_len()) + " bytes received, " + to_string(get_sent_len()) + " bytes sent, lasted for " + 
         to_string(time(nullptr) - get_start_time()) + " seconds";
-        
+
     if(is_udp_forward_session()){
         _log_with_endpoint(m_local_addr_udp, note_str, Log::INFO);
     }else{
