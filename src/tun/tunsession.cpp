@@ -109,6 +109,10 @@ void TUNSession::start(){
                 destroy();
                 return;
             }
+            for(auto& h : m_wait_connected_handler){
+                h(boost::system::error_code());
+            }
+            m_wait_connected_handler.clear();
             out_async_read();
         });
         m_send_buf.consume(m_send_buf.size());
@@ -227,6 +231,10 @@ void TUNSession::out_async_send(const uint8_t* _data, size_t _length, SentHandle
             }else{
                 streambuf_append(m_send_buf, _data, _length);
             }
+            m_wait_connected_handler.emplace_back(_handler);
+        }else{
+            output_debug_info();
+            destroy();
         }
     }else{     
         if(is_udp_forward_session()){
@@ -261,7 +269,7 @@ void TUNSession::try_out_async_read(){
     }
     
 }
-void TUNSession::recv_buf_sent(uint16_t _length){
+void TUNSession::recv_buf_ack_sent(uint16_t _length){
     assert(!is_udp_forward_session());
     m_recv_buf_ack_length -= _length;
 }

@@ -48,7 +48,7 @@ lwip_tcp_client::lwip_tcp_client(struct tcp_pcb *_pcb, shared_ptr<TUNSession> _s
     m_tun_session->set_close_callback([this](TUNSession* session){ 
         if(session->recv_buf_ack_length() == 0){ // need to wait send remain buff
             output_debug_info();
-            close_client(true); 
+            close_client(false); 
         }        
     });
 
@@ -136,6 +136,8 @@ err_t lwip_tcp_client::client_sent_func(struct tcp_pcb *, u16_t len){
         return ERR_ABRT;
     }
 
+    m_tun_session->recv_buf_ack_sent(len);
+
     if(m_tun_session->is_destroyed()){
         if(m_tun_session->recv_buf_ack_length() > 0){
             if(client_socks_recv_send_out() < 0){
@@ -145,15 +147,13 @@ err_t lwip_tcp_client::client_sent_func(struct tcp_pcb *, u16_t len){
             return ERR_OK;
         }
         output_debug_info();
-        close_client(true);
-        return ERR_ABRT;
+        close_client(false);
+        return ERR_OK;
     }
 
     if(client_socks_recv_send_out() < 0){
         return ERR_ABRT;
     }
-
-    m_tun_session->recv_buf_sent(len);
 
     return ERR_OK;
 }
@@ -196,6 +196,8 @@ int lwip_tcp_client::client_socks_recv_send_out(){
         wrote_size += to_write;
     } while (recv_size > 0);
     
+    client_log("tcp_output size: %u", wrote_size);
+
     // start sending now
     err_t err = tcp_output(m_pcb);
     if (err != ERR_OK) {

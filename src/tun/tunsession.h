@@ -63,6 +63,8 @@ private:
 
     boost::asio::steady_timer m_udp_timout_timer;
 
+    std::list<SentHandler> m_wait_connected_handler;
+
     void out_async_read();
     void try_out_async_read();
     void reset_udp_timeout();
@@ -110,7 +112,7 @@ public:
     void out_async_send(const uint8_t* _data, size_t _length, SentHandler&& _handler);
     void recv_ack_cmd() override;
 
-    void recv_buf_sent(uint16_t _length);
+    void recv_buf_ack_sent(uint16_t _length);
 
     [[nodiscard]]
     size_t recv_buf_ack_length() const { return m_recv_buf_ack_length; }
