@@ -186,7 +186,7 @@ def main_stage(server_config, client_config, server_balance_config = None, is_fo
         return 0
     except:
         output_log = True
-        traceback.print_exc()
+        traceback.print_exc(file=sys.stdout)
     finally: 
 
         if output_log:

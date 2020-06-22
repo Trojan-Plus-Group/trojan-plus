@@ -19,7 +19,7 @@
  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 '''
 
-import urllib, os, threading, traceback, socket, select, time
+import urllib, os, threading, traceback, socket, select, time, sys
 from concurrent.futures import ThreadPoolExecutor , as_completed
 from fulltest_utils import print_time_log
 
@@ -42,7 +42,7 @@ def bind_port(udp_socket, port):
             return try_port
         except:
             if port_increase == 0:
-                traceback.print_exc()
+                traceback.print_exc(file=sys.stdout)
 
             port_increase = offset
             offset = offset + 1
@@ -86,7 +86,7 @@ def send_get_func(serv_dir, addr, udp_data, port):
                 print_time_log("bind port " + str(port) + " to send udp file to " + str(addr))
                 send_udp_file_data(us, addr, content)
     except:
-        traceback.print_exc()
+        traceback.print_exc(file=sys.stdout)
 
 class UDPData:
 

@@ -81,7 +81,7 @@ class ServerHandler(BaseHTTPRequestHandler):
                     self.end_headers()
                     self.wfile.write(content)
             except :
-                traceback.print_exc()
+                traceback.print_exc(file=sys.stdout)
                 self.send_error(404,'File Not Found: %s' % self.path)
 
     def do_POST(self) :
@@ -100,7 +100,7 @@ class ServerHandler(BaseHTTPRequestHandler):
                 else:
                     self.wfile.write(b"FAILED")
         except:
-            traceback.print_exc()
+            traceback.print_exc(file=sys.stdout)
 
 def run(dir, port):
     if not os.path.exists(dir):

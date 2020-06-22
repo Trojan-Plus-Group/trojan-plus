@@ -19,14 +19,14 @@
  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 '''
 
-import urllib.request, socket, socks, traceback, os, time
+import urllib.request, socket, socks, traceback, os, time, sys
 import threading
 from concurrent.futures import ThreadPoolExecutor , as_completed
 import fulltest_udp_proto
 from fulltest_utils import print_time_log
 
 PARALLEL_REQUEST_COUNT = 5
-OPEN_URL_TIMOUT = 1
+RECV_DATA_TIMEOUT = 1
 UDP_SEND_PACKET_LENGTH = fulltest_udp_proto.UDP_SEND_PACKET_LENGTH
 UDP_BUFF_SIZE = fulltest_udp_proto.UDP_BUFF_SIZE
 
@@ -43,20 +43,20 @@ def print_log(log):
         print_time_log(log)
 
 def get_url(url):
-    f = urllib.request.urlopen(url, timeout = OPEN_URL_TIMOUT)
+    f = urllib.request.urlopen(url, timeout = RECV_DATA_TIMEOUT)
     return f.read()
 
 def post_url(url, data):
     data = urllib.parse.urlencode({'d':data}).encode()
     req =  urllib.request.Request(url, data=data)
-    f = urllib.request.urlopen(req, timeout = OPEN_URL_TIMOUT)
+    f = urllib.request.urlopen(req, timeout = RECV_DATA_TIMEOUT)
     return f.read()
 
 
 def get_file_udp(file, length, port):
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp_socket :
-            udp_socket.settimeout(1)
+            udp_socket.settimeout(RECV_DATA_TIMEOUT)
             udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, UDP_BUFF_SIZE)
             fulltest_udp_proto.bind_port(udp_socket, port)
 
@@ -77,17 +77,17 @@ def get_file_udp(file, length, port):
                 return fulltest_udp_proto.compose_udp_file_data(data_arr)
             except:
                 print_log("exception occur, data recv length: " + str(recv_length) + " port: " + str(port))
-                traceback.print_exc()
+                traceback.print_exc(file=sys.stdout)
                 return False
     except :
         print_log("get_file_udp [" + file + "] failed!")
-        traceback.print_exc()
+        traceback.print_exc(file=sys.stdout)
         return False
 
 def post_file_udp(file, data, port):
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp_socket :
-            udp_socket.settimeout(1)
+            udp_socket.settimeout(RECV_DATA_TIMEOUT)
             udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, UDP_BUFF_SIZE)
             fulltest_udp_proto.bind_port(udp_socket, port)
             
@@ -103,7 +103,7 @@ def post_file_udp(file, data, port):
             return udp_socket.recv(UDP_SEND_PACKET_LENGTH)
     except :
         print_log("post_file_udp [" + file + "] failed!")
-        traceback.print_exc()
+        traceback.print_exc(file=sys.stdout)
         return 'please check traceback exceptions'
 
 
@@ -131,7 +131,7 @@ def request_get_file(file, tcp_or_udp, index, udp_port):
         return True       
     except:
         print_log("request_get_file #" + str(index) + " [" + file + "] failed!")
-        traceback.print_exc()
+        traceback.print_exc(file=sys.stdout)
         return False
 
 def request_post_file(file, tcp_or_udp, index, udp_port):
@@ -153,7 +153,7 @@ def request_post_file(file, tcp_or_udp, index, udp_port):
         
     except:
         print_log("request_post_file #" + str(index) + " [" + file + "] failed!")
-        traceback.print_exc()
+        traceback.print_exc(file=sys.stdout)
         return False
 
 def compare_process(files, executor, get_or_post, tcp_or_udp):
@@ -246,7 +246,7 @@ def start_query(host_ip, socks_port, port, folder, log = True):
     finally:
         socket.socket = origin_socket    
 
-if __name__ == '__main__':
+if __name__ == '__main__':   
     # client run_type:
     #start_query("127.0.0.1", 10620, 18080, "html")
 
