@@ -39,7 +39,9 @@ class Service;
 class icmpd : public std::enable_shared_from_this<icmpd> {
 
     enum{
+        ICMP_RECV_BUF_SIZE = 65536,
         ICMP_WAIT_TRANSFER_TIME = 5,
+        ICMP_DEFAULT_TTL = 64,
     };
 
     boost::asio::streambuf m_buffer;
@@ -55,7 +57,7 @@ class icmpd : public std::enable_shared_from_this<icmpd> {
         boost::asio::ip::address_v4 destination;
         time_t sent_time;
         IcmpSentData(std::weak_ptr<Session> sess, boost::asio::ip::address_v4 src, boost::asio::ip::address_v4 dst) : 
-            pipeline_session(sess), source(src), destination(dst) {
+            pipeline_session(std::move(sess)), source(std::move(src)), destination(std::move(dst)) {
             sent_time = time(nullptr);
         }
     };
@@ -64,7 +66,7 @@ class icmpd : public std::enable_shared_from_this<icmpd> {
     public:
         std::string sending_data;
         boost::asio::ip::address_v4 destination;
-        IcmpSendingCache(const std::string& data, boost::asio::ip::address_v4 dst):sending_data(data),destination(dst){}
+        IcmpSendingCache(std::string data, boost::asio::ip::address_v4 dst):sending_data(std::move(data)),destination(std::move(dst)){}
     };
 
     std::unordered_map<std::string, std::shared_ptr<IcmpSentData>> m_transfer_table;
@@ -72,12 +74,14 @@ class icmpd : public std::enable_shared_from_this<icmpd> {
     std::list<std::shared_ptr<IcmpSendingCache>> m_sending_data_cache;
     bool m_is_sending_cache;
 
-    std::string generate_time_exceeded_icmp(trojan::ipv4_header& ipv4_hdr, trojan::icmp_header& icmp_hdr);
+    [[nodiscard]]
+    static std::string generate_time_exceeded_icmp(trojan::ipv4_header& ipv4_hdr, trojan::icmp_header& icmp_hdr);
     void send_back_time_exceeded(trojan::ipv4_header& ipv4_hdr, trojan::icmp_header& icmp_hdr);
 
     void check_transfer_table_timeout();
     void add_transfer_table(std::string&& hash, std::shared_ptr<IcmpSentData>&& data);
-    bool read_icmp(std::istream& is, size_t length, trojan::ipv4_header& ipv4_hdr, trojan::icmp_header& icmp_hdr, std::string& body);
+    [[nodiscard]]
+    static bool read_icmp(std::istream& is, size_t length, trojan::ipv4_header& ipv4_hdr, trojan::icmp_header& icmp_hdr, std::string& body);
     std::shared_ptr<icmpd::IcmpSentData> find_icmp_sent_data(const std::string& hash, bool erase);
 
     void send_data_to_socket(const std::string& data, boost::asio::ip::address_v4 addr);

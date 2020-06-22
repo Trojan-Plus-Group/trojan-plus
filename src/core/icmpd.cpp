@@ -41,7 +41,8 @@ int icmpd::s_icmpd_file_lock = 0;
 
 bool icmpd::get_icmpd_lock() {
 #ifndef _WIN32
-    if (!(s_icmpd_file_lock = open("./trojan_icmpd_lock", O_WRONLY | O_CREAT | O_APPEND))) {
+    s_icmpd_file_lock = open("./trojan_icmpd_lock", O_WRONLY | O_CREAT | O_APPEND, S_IRUSR | S_IWUSR);
+    if (s_icmpd_file_lock == 0) {
         return false;
     }
 
@@ -57,15 +58,17 @@ bool icmpd::get_icmpd_lock() {
 #endif
 }
 
-icmpd::icmpd(boost::asio::io_context& io_context)
-    : m_socket(io_context, icmp::v4()),
-      m_is_sending_cache(false) {
+icmpd::icmpd(boost::asio::io_context& io_context) : 
+  m_socket(io_context, icmp::v4()),
+  m_service(nullptr),
+  m_client_or_server(false),
+  m_is_sending_cache(false) {
 #ifdef _WIN32
     throw runtime_error("[icmp] cannot crate icmpd in windows!");
 #else
     int fd = m_socket.native_handle();
     int opt = 1;
-    if (setsockopt(fd, SOL_IP, IP_HDRINCL, &opt, sizeof(opt))) {
+    if (setsockopt(fd, SOL_IP, IP_HDRINCL, &opt, sizeof(opt)) != 0) {
         throw runtime_error("[icmp] setsockopt IP_HDRINCL failed!");
     }
 #endif //_WIN32
@@ -138,7 +141,7 @@ bool icmpd::read_icmp(std::istream& is, size_t length, ipv4_header& ipv4_hdr, ic
 void icmpd::start_recv() {
     auto self = shared_from_this();
     m_buffer.consume(m_buffer.size());    
-    m_socket.async_receive(m_buffer.prepare(65536), [this, self](boost::system::error_code ec, size_t length) {
+    m_socket.async_receive(m_buffer.prepare(ICMP_RECV_BUF_SIZE), [this, self](boost::system::error_code ec, size_t length) {
         if (!ec) {
             m_buffer.commit(length);
             std::istream is(&m_buffer);
@@ -208,7 +211,7 @@ void icmpd::start_recv() {
                         std::ostringstream os;
                         os << ipv4_hdr << icmp_hdr << body;
 
-                        static_cast<PipelineSession*>(icmp_sent_data->pipeline_session.lock().get())->session_write_icmp(os.str(), [self](const boost::system::error_code) {
+                        dynamic_cast<PipelineSession*>(icmp_sent_data->pipeline_session.lock().get())->session_write_icmp(os.str(), [self](const boost::system::error_code) {
                             // nothing to process...
                         });
                     }
@@ -233,7 +236,7 @@ string icmpd::generate_time_exceeded_icmp(ipv4_header& ipv4_hdr, icmp_header& ic
     auto src = ipv4_hdr.source_address();
 
     ipv4_hdr.destination_address(src);
-    ipv4_hdr.time_to_live(64);
+    ipv4_hdr.time_to_live(ICMP_DEFAULT_TTL);
     ipv4_hdr.source_address(address_v4());
 
     icmp_hdr.type(icmp_header::time_exceeded);
@@ -306,7 +309,7 @@ void icmpd::server_out_send(const std::string& data, std::weak_ptr<Session> pipe
         if(ipv4_hdr.time_to_live() == 1){
             auto exceed_data = generate_time_exceeded_icmp(ipv4_hdr, icmp_hdr);
             auto self = shared_from_this();
-            static_cast<PipelineSession*>(pipeline_session.lock().get())->session_write_icmp(exceed_data, [self](const boost::system::error_code) {
+            dynamic_cast<PipelineSession*>(pipeline_session.lock().get())->session_write_icmp(exceed_data, [self](const boost::system::error_code) {
                 // nothing to process...
             });
             return;
@@ -345,8 +348,8 @@ void icmpd::client_out_send(const std::string& data){
 
         if (ipv4_hdr.source_address().is_unspecified()) {
             // time exceeded from trojan server (from generate_time_exceeded_icmp)
-            auto pipeline = m_service->search_default_pipeline();
-            if(pipeline){
+            auto* pipeline = m_service->search_default_pipeline();
+            if(pipeline != nullptr){
                 auto addr = pipeline->get_out_socket_endpoint().address();
                 if(addr.is_v4()){
                     ipv4_hdr.source_address(addr.to_v4());
