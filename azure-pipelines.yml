@@ -55,16 +55,30 @@ stages:
     pool:
       vmImage: ubuntu-latest
     container:
-      image: trojanplusgroup/centos-build:latest
+      image: trojanplusgroup/trojan-test:latest
+      options: --privileged
     steps:
     - download: current
       artifact: LinuxBinary
     - script: |
         set -euo pipefail
+        set -v
+
+        ifconfig
+        route -n
+
+        sudo ip tuntap add dev tun0 mode tun user root
+        sudo ifconfig tun0 10.0.0.1 netmask 255.255.255.0
+        sudo ip link set dev tun0 up mtu 1500 txqueuelen 1000
+        sudo route add default gw 10.0.0.2 metric 0
+
+        ifconfig
+        route -n
+
         BINARY="$PIPELINE_WORKSPACE/LinuxBinary/trojan"
         chmod +x "$BINARY"
         cd tests/LinuxFullTest/
-        python3.8 fulltest_main.py $BINARY -g
+        sudo /usr/local/bin/python3.8 fulltest_main.py $BINARY -g -t
       env:
         PIPELINE_WORKSPACE: $(Pipeline.Workspace)
 
