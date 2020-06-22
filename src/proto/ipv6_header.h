@@ -25,6 +25,9 @@
 #include <iostream>
 #include <algorithm>
 #include <boost/asio/ip/address_v4.hpp>
+#include <gsl/gsl>
+
+#include "core/utils.h"
 
 // Packet header for IPv4.
 //
@@ -39,29 +42,28 @@ public:
         HEADER_FIXED_LENGTH = 40,
     };
 
-    ipv6_header() { clear(); }
-    void clear() { std::fill(rep_, rep_ + sizeof(rep_), 0); }
-    const unsigned char* raw(){ return rep_; }
+    void clear() { rep_.fill(0); }
+    gsl::span<uint8_t> raw() { return rep_; }
 
-    unsigned char version() const { return (rep_[0] >> 4) & 0xF; }
-    unsigned short payload_length() const { return decode(4, 5); }
+    [[nodiscard]] uint8_t version() const { return (rep_[0] >> half_byte_shift_4_bits) & half_byte_mask_0xF; }
+    [[nodiscard]] uint16_t payload_length() const { return decode(4, 5); }
 
     friend std::istream &operator>>(std::istream &is, ipv6_header &header) {
-        is.read(reinterpret_cast<char *>(header.rep_), HEADER_FIXED_LENGTH);
+        is.read((char *)(header.rep_.data()), HEADER_FIXED_LENGTH);
         return is;
     }
 
 private:
-    unsigned short decode(int a, int b) const {
-        return (rep_[a] << 8) + rep_[b];
+    [[nodiscard]] uint16_t decode(int a, int b) const {
+        return (rep_.at(a) << one_byte_shift_8_bits) + rep_.at(b);
     }
 
-    void encode(int a, int b, unsigned short n) {
-        rep_[a] = static_cast<unsigned char>(n >> 8);
-        rep_[b] = static_cast<unsigned char>(n & 0xFF);
+    void encode(int a, int b, uint16_t n) {
+        rep_.at(a) = static_cast<uint8_t>(n >> one_byte_shift_8_bits);
+        rep_.at(b) = static_cast<uint8_t>(n & one_byte_mask_0xFF);
     }
 
-    unsigned char rep_[HEADER_FIXED_LENGTH];
+    std::array<uint8_t, HEADER_FIXED_LENGTH>  rep_{};
 };
 
 }

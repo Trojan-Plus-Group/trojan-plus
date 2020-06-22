@@ -26,6 +26,8 @@
 #include <istream>
 #include <ostream>
 
+#include "core/utils.h"
+
 // ICMP header for both IPv4 and IPv6.
 //
 // The wire format of an ICMP header is:
@@ -63,12 +65,11 @@ public:
         HEADER_LENGTH = 8
     };
 
-    icmp_header() { std::fill(rep_, rep_ + sizeof(rep_), 0); }
-    const uint8_t *raw() { return rep_; }
+    [[nodiscard]] const uint8_t *raw() { return rep_; }
     
-    uint8_t type() const { return rep_[0]; }
-    uint8_t code() const { return rep_[1]; }
-    uint16_t checksum() const { return decode(2, 3); }
+    [[nodiscard]] uint8_t type() const { return rep_[0]; }
+    [[nodiscard]] uint8_t code() const { return rep_[1]; }
+    [[nodiscard]] uint16_t checksum() const { return decode(2, 3); }
 
     std::string to_string() const {
         std::ostringstream os;
@@ -79,8 +80,8 @@ public:
     }
 
     // following functions are used for ping type
-    uint16_t identifier() const { return decode(4, 5); }
-    uint16_t sequence_number() const { return decode(6, 7); }
+    [[nodiscard]] uint16_t identifier() const { return decode(4, 5); }
+    [[nodiscard]] uint16_t sequence_number() const { return decode(6, 7); }
 
     void type(uint8_t n) { rep_[0] = n; }
     void code(uint8_t n) { rep_[1] = n; }
@@ -89,46 +90,46 @@ public:
     void sequence_number(uint16_t n) { encode(6, 7, n); }
 
     friend std::istream &operator>>(std::istream &is, icmp_header &header) {
-        return is.read(reinterpret_cast<char *>(header.rep_), HEADER_LENGTH);
+        return is.read((char *)header.rep_, HEADER_LENGTH);
     }
 
     friend std::ostream &operator<<(std::ostream &os, const icmp_header &header) {
-        return os.write(reinterpret_cast<const char *>(header.rep_), HEADER_LENGTH);
+        return os.write((const char *)header.rep_, HEADER_LENGTH);
     }
 
     void assign_checksum(std::string body) {
-        unsigned int sum = (type() << 8) + code() + identifier() + sequence_number();
+        unsigned int sum = (type() << one_byte_shift_8_bits) + code() + identifier() + sequence_number();
 
         auto body_iter = body.begin();
         while (body_iter != body.end()) {
-            sum += (static_cast<uint8_t>(*body_iter++) << 8);
+            sum += (static_cast<uint8_t>(*body_iter++) << one_byte_shift_8_bits);
             if (body_iter != body.end())
                 sum += static_cast<uint8_t>(*body_iter++);
         }
 
-        sum = (sum >> 16) + (sum & 0xFFFF);
-        sum += (sum >> 16);
+        sum = (sum >> two_bytes_shift_16_bits) + (sum & two_bytes_mask_0xFFFF);
+        sum += (sum >> two_bytes_shift_16_bits);
         checksum(static_cast<uint16_t>(~sum));
     }
 
     void assign_checksum() {
-        unsigned int sum = (type() << 8) + code() + identifier() + sequence_number();
-        sum = (sum >> 16) + (sum & 0xFFFF);
-        sum += (sum >> 16);
+        unsigned int sum = (type() << one_byte_shift_8_bits) + code() + identifier() + sequence_number();
+        sum = (sum >> two_bytes_shift_16_bits) + (sum & two_bytes_mask_0xFFFF);
+        sum += (sum >> two_bytes_shift_16_bits);
         checksum(static_cast<uint16_t>(~sum));
     }
 
 private:
-    uint16_t decode(int a, int b) const {
-        return (rep_[a] << 8) + rep_[b];
+    [[nodiscard]] uint16_t decode(int a, int b) const {
+        return (rep_[a] << one_byte_shift_8_bits) + rep_[b];
     }
 
     void encode(int a, int b, uint16_t n) {
-        rep_[a] = static_cast<uint8_t>(n >> 8);
-        rep_[b] = static_cast<uint8_t>(n & 0xFF);
+        rep_[a] = static_cast<uint8_t>(n >> one_byte_shift_8_bits);
+        rep_[b] = static_cast<uint8_t>(n & one_byte_mask_0xFF);
     }
 
-    uint8_t rep_[HEADER_LENGTH];
+    uint8_t rep_[HEADER_LENGTH]{};
 };
 
 }

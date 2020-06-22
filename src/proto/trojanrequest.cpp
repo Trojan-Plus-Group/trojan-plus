@@ -35,7 +35,7 @@ int TrojanRequest::parse(const std::string_view &data){
         return -1;
     }
     command = static_cast<Command>(payload[0]);
-    size_t address_len;
+    size_t address_len = 0;
     bool is_addr_valid = address.parse(payload.substr(1), address_len);
     if (!is_addr_valid || payload.length() < address_len + 3 || payload.substr(address_len + 1, 2) != "\r\n") {
         return -1;

@@ -26,7 +26,7 @@
 #include <string>
 #include <string_view>
 #include <limits>
-#include <stdint.h>
+#include <cstdint>
 
 #include "session/session.h"
 #include "session/pipelinecomponent.h"
@@ -47,8 +47,13 @@ public:
         MAX_DATA_LENGTH = std::numeric_limits<uint32_t>::max(),
         MAX_SESSION_ID_LENGTH = std::numeric_limits<PipelineComponent::SessionIdType>::max()
     } command;
+
+    [[nodiscard]]
     int parse(const std::string_view &data);
+
+    [[nodiscard]]
     inline const char* get_cmd_string() const { return get_cmd_string(command); }
+
     static inline const char* get_cmd_string(enum Command cmd){
         switch(cmd){
             case CONNECT: return "CONNECT";

@@ -31,12 +31,12 @@ bool UDPPacket::parse(const string_view &data, size_t &udp_packet_len) {
     if (data.length() <= 0) {
         return false;
     }
-    size_t address_len;
+    size_t address_len = 0;
     bool is_addr_valid = address.parse(data, address_len);
     if (!is_addr_valid || data.length() < address_len + 2) {
         return false;
     }
-    length = (uint8_t(data[address_len]) << 8) | uint8_t(data[address_len + 1]);
+    length = (uint8_t(data[address_len]) << one_byte_shift_8_bits) | uint8_t(data[address_len + 1]);
     if (data.length() < address_len + 4 + length || data.substr(address_len + 2, 2) != "\r\n") {
         return false;
     }
@@ -47,8 +47,8 @@ bool UDPPacket::parse(const string_view &data, size_t &udp_packet_len) {
 
 boost::asio::streambuf& UDPPacket::generate(boost::asio::streambuf& buf, const udp::endpoint &endpoint, const string_view &payload) {
     SOCKS5Address::generate(buf, endpoint);
-    streambuf_append(buf, char(uint8_t(payload.length() >> 8)));
-    streambuf_append(buf, char(uint8_t(payload.length() & 0xFF)));
+    streambuf_append(buf, char(uint8_t(payload.length() >> one_byte_shift_8_bits)));
+    streambuf_append(buf, char(uint8_t(payload.length() & one_byte_mask_0xFF)));
     streambuf_append(buf, "\r\n");
     streambuf_append(buf, payload);
     return buf;
@@ -58,10 +58,10 @@ boost::asio::streambuf& UDPPacket::generate(boost::asio::streambuf& buf, const s
     streambuf_append(buf, '\x03');
     streambuf_append(buf, char(uint8_t(domainname.length())));
     streambuf_append(buf, domainname);
-    streambuf_append(buf, char(uint8_t(port >> 8)));
-    streambuf_append(buf, char(uint8_t(port & 0xFF)));
-    streambuf_append(buf, char(uint8_t(payload.length() >> 8)));
-    streambuf_append(buf, char(uint8_t(payload.length() & 0xFF)));
+    streambuf_append(buf, char(uint8_t(port >> one_byte_shift_8_bits)));
+    streambuf_append(buf, char(uint8_t(port & one_byte_mask_0xFF)));
+    streambuf_append(buf, char(uint8_t(payload.length() >> one_byte_shift_8_bits)));
+    streambuf_append(buf, char(uint8_t(payload.length() & one_byte_mask_0xFF)));
     streambuf_append(buf, "\r\n");
     streambuf_append(buf, payload);
     return buf;

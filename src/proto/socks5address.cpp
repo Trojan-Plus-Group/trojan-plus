@@ -41,7 +41,7 @@ bool SOCKS5Address::parse(const string_view &data, size_t &address_len) {
                           to_string(uint8_t(data[2])) + '.' +
                           to_string(uint8_t(data[3])) + '.' +
                           to_string(uint8_t(data[4]));
-                port = (uint8_t(data[5]) << 8) | uint8_t(data[6]);
+                port = (uint8_t(data[5]) << one_byte_shift_8_bits) | uint8_t(data[6]);
                 address_len = 1 + 4 + 2;
                 return true;
             }
@@ -55,7 +55,7 @@ bool SOCKS5Address::parse(const string_view &data, size_t &address_len) {
             }
             if (data.length() > (unsigned int)(1 + domain_len + 2)) {
                 address = data.substr(2, domain_len);
-                port = (uint8_t(data[domain_len + 2]) << 8) | uint8_t(data[domain_len + 3]);
+                port = (uint8_t(data[domain_len + 2]) << one_byte_shift_8_bits) | uint8_t(data[domain_len + 3]);
                 address_len =  1 + 1 + domain_len + 2;
                 return true;
             }
@@ -70,7 +70,7 @@ bool SOCKS5Address::parse(const string_view &data, size_t &address_len) {
                         uint8_t(data[9]), uint8_t(data[10]), uint8_t(data[11]), uint8_t(data[12]),
                         uint8_t(data[13]), uint8_t(data[14]), uint8_t(data[15]), uint8_t(data[16]));
                 address = t;
-                port = (uint8_t(data[17]) << 8) | uint8_t(data[18]);
+                port = (uint8_t(data[17]) << one_byte_shift_8_bits) | uint8_t(data[18]);
                 address_len = 1 + 16 + 2;
                 return true;
             }
@@ -80,26 +80,24 @@ bool SOCKS5Address::parse(const string_view &data, size_t &address_len) {
     return false;
 }
 
+static const std::string unspecified_address("\x01\x00\x00\x00\x00\x00\x00", 7);
+
 void SOCKS5Address::generate(boost::asio::streambuf& buf, const udp::endpoint &endpoint) {
     if (endpoint.address().is_unspecified()) {
-        streambuf_append(buf, (const uint8_t*)"\x01\x00\x00\x00\x00\x00\x00", 7);
+        streambuf_append(buf, unspecified_address);
         return;
     }
 
     if (endpoint.address().is_v4()) {
         streambuf_append(buf, '\x01');
         auto ip = endpoint.address().to_v4().to_bytes();
-        for (int i = 0; i < 4; ++i) {
-            streambuf_append(buf, char(ip[i]));
-        }
+        streambuf_append(buf, ip.data(), ip.size());
     }
     if (endpoint.address().is_v6()) {
         streambuf_append(buf, '\x04');
         auto ip = endpoint.address().to_v6().to_bytes();
-        for (int i = 0; i < 16; ++i) {
-            streambuf_append(buf, char(ip[i]));
-        }
+        streambuf_append(buf, ip.data(), ip.size());
     }
-    streambuf_append(buf, char(uint8_t(endpoint.port() >> 8)));
-    streambuf_append(buf, char(uint8_t(endpoint.port() & 0xFF)));
+    streambuf_append(buf, char(uint8_t(endpoint.port() >> one_byte_shift_8_bits)));
+    streambuf_append(buf, char(uint8_t(endpoint.port() & one_byte_mask_0xFF)));
 }

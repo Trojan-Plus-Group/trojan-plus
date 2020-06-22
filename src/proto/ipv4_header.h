@@ -27,6 +27,8 @@
 #include <algorithm>
 #include <boost/asio/ip/address_v4.hpp>
 
+#include "core/utils.h"
+
 // Packet header for IPv4.
 //
 // The wire format of an IPv4 header is:
@@ -69,21 +71,20 @@ class ipv4_header {
         HEADER_MAX_LENGTH = HEADER_FIXED_LENGTH + HEADER_OPTIONS_LENGTH
     };
 
-    ipv4_header() { clear(); }
     void clear() { std::fill(rep_, rep_ + sizeof(rep_), 0); }
     const unsigned char* raw(){ return rep_; }    
 
-    unsigned char version() const { return (rep_[0] >> 4) & 0xF; }
-    unsigned short header_length() const { return (rep_[0] & 0xF) * 4; }
-    unsigned char type_of_service() const { return rep_[1]; }
-    unsigned short total_length() const { return decode(2, 3); }
-    unsigned short identification() const { return decode(4, 5); }
-    bool dont_fragment() const { return (rep_[6] & 0x40) != 0; }
-    bool more_fragments() const { return (rep_[6] & 0x20) != 0; }
-    unsigned short fragment_offset() const { return decode(6, 7) & 0x1FFF; }
-    unsigned int time_to_live() const { return rep_[8]; }
-    unsigned char protocol() const { return rep_[9]; }
-    unsigned short header_checksum() const { return decode(10, 11); }
+    [[nodiscard]] unsigned char version() const { return (rep_[0] >> 4) & 0xF; }
+    [[nodiscard]] unsigned short header_length() const { return (rep_[0] & 0xF) * 4; }
+    [[nodiscard]] unsigned char type_of_service() const { return rep_[1]; }
+    [[nodiscard]] unsigned short total_length() const { return decode(2, 3); }
+    [[nodiscard]] unsigned short identification() const { return decode(4, 5); }
+    [[nodiscard]] bool dont_fragment() const { return (rep_[6] & 0x40) != 0; }
+    [[nodiscard]] bool more_fragments() const { return (rep_[6] & 0x20) != 0; }
+    [[nodiscard]] unsigned short fragment_offset() const { return decode(6, 7) & 0x1FFF; }
+    [[nodiscard]] unsigned int time_to_live() const { return rep_[8]; }
+    [[nodiscard]] unsigned char protocol() const { return rep_[9]; }
+    [[nodiscard]] unsigned short header_checksum() const { return decode(10, 11); }
 
     std::string to_string()const{
         std::ostringstream os;
@@ -132,27 +133,30 @@ class ipv4_header {
     }
 
     friend std::istream &operator>>(std::istream &is, ipv4_header &header) {
-        is.read(reinterpret_cast<char *>(header.rep_), HEADER_FIXED_LENGTH);
+        is.read((char *)(header.rep_), HEADER_FIXED_LENGTH);
         if(is){
-            if (header.version() != 4)
+            if (header.version() != 4){
                 is.setstate(std::ios::badbit);
+            }
+                
             std::streamsize options_length = header.header_length() - HEADER_FIXED_LENGTH;
-            if (options_length < 0 || options_length > HEADER_OPTIONS_LENGTH)
+            if (options_length < 0 || options_length > HEADER_OPTIONS_LENGTH){
                 is.setstate(std::ios::badbit);
-            else
-                is.read(reinterpret_cast<char *>(header.rep_) + HEADER_FIXED_LENGTH, options_length);
+            }else{
+                is.read((char *)(header.rep_) + HEADER_FIXED_LENGTH, options_length);
+            }
         }        
         return is;
     }
 
     friend std::ostream &operator<<(std::ostream &os, const ipv4_header &header) {
-        os.write(reinterpret_cast<const char *>(header.rep_), HEADER_FIXED_LENGTH);
+        os.write((const char *)(header.rep_), HEADER_FIXED_LENGTH);
         auto options_length = header.header_length() - HEADER_FIXED_LENGTH;
         if (options_length < 0) {
             os.setstate(std::ios::badbit);
         }else{
             if (options_length > 0) {
-                os.write(reinterpret_cast<const char *>(header.rep_) + HEADER_FIXED_LENGTH, options_length);
+                os.write((const char *)(header.rep_ + HEADER_FIXED_LENGTH), options_length);
             }
         } 
         return os;
@@ -163,26 +167,26 @@ class ipv4_header {
 
         unsigned int sum = 0;
         for (int i = 0; i < HEADER_FIXED_LENGTH; i += 2) {
-            sum += static_cast<uint8_t>(rep_[i]) << 8;
+            sum += static_cast<uint8_t>(rep_[i]) << one_byte_shift_8_bits;
             sum += static_cast<uint8_t>(rep_[i + 1]);
         }
 
-        sum = (sum >> 16) + (sum & 0xFFFF);
-        sum += (sum >> 16);
+        sum = (sum >> two_bytes_shift_16_bits) + (sum & two_bytes_mask_0xFFFF);
+        sum += (sum >> two_bytes_shift_16_bits);
         header_checksum(static_cast<uint16_t>(~sum));
     }
 
 private:
-    unsigned short decode(int a, int b) const {
+    [[nodiscard]] unsigned short decode(int a, int b) const {
         return (rep_[a] << 8) + rep_[b];
     }
 
     void encode(int a, int b, unsigned short n) {
-        rep_[a] = static_cast<unsigned char>(n >> 8);
-        rep_[b] = static_cast<unsigned char>(n & 0xFF);
+        rep_[a] = static_cast<unsigned char>(n >> one_byte_shift_8_bits);
+        rep_[b] = static_cast<unsigned char>(n & one_byte_mask_0xFF);
     }
 
-    unsigned char rep_[HEADER_MAX_LENGTH];
+    unsigned char rep_[HEADER_MAX_LENGTH]{};
 };
 }
 

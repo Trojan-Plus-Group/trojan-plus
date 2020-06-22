@@ -116,6 +116,7 @@ const static int three_bytes_shift_24_bits = 24;
 
 const static int half_byte_mask_0xF = 0xF;
 const static int one_byte_mask_0xFF = 0xFF;
+const static int two_bytes_mask_0xFFFF = 0xFFFF;
 
 size_t streambuf_append(boost::asio::streambuf& target, const boost::asio::streambuf& append_buf);
 size_t streambuf_append(boost::asio::streambuf& target, const boost::asio::streambuf& append_buf, size_t start, size_t n);

@@ -38,6 +38,8 @@ public:
     } address_type;
     std::string address;
     uint16_t port;
+
+    [[nodiscard]]
     bool parse(const std::string_view &data, size_t &address_len);
     static void generate(boost::asio::streambuf& buf, const boost::asio::ip::udp::endpoint &endpoint);
 };
