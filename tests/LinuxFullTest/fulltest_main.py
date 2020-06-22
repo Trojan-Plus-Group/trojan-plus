@@ -254,6 +254,13 @@ def main(args):
             return 1     
         
         if args.tun:
+            print_time_log("restart test http server to test client_tun run_type...")
+            close_process(test_server_process, False)
+            test_server_process = run_test_server()
+            if not test_server_process:
+                return 1
+            print_time_log("done!")
+
             print_time_log("start trojan plus in client_tun run_type without pipeline...")
             if main_stage("server_config.json", prepare_client_tun_config("client_config.json"), tun_test=True) != 0:
                 output_log = True
