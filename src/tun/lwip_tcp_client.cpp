@@ -63,7 +63,7 @@ lwip_tcp_client::lwip_tcp_client(struct tcp_pcb *_pcb, shared_ptr<TUNSession> _s
 }
 
 void lwip_tcp_client::client_log(const char *fmt, ...){
-    if(Log::level == Log::ALL){
+    if(Log::level <= Log::INFO){
         const int buf_size = 256;
         char buf[buf_size];
         int n = snprintf((char*)buf, buf_size, "[lwip] [%s:%d->%s:%d] [pcb:0x%llx session_id:%d] ", 
@@ -217,7 +217,11 @@ void lwip_tcp_client::close_session(bool _call_by_tun_dev){
 
     m_closed = true;
 
-    m_tun_session->destroy();
+    if(!m_tun_session->is_destroyed()){
+        output_debug_info();
+        m_tun_session->destroy();
+    }
+    
     if(!_call_by_tun_dev){
         m_close_cb(this);
     } 
