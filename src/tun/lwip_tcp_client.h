@@ -55,6 +55,12 @@ private:
     struct tcp_pcb* m_pcb;
     bool m_closed;
     bool m_aborted;
+
+    uint32_t m_recved_len{};
+    uint32_t m_output_len{};
+    
+    uint32_t m_sending_len{};
+    uint32_t m_sent_len{};
     
     uint8_t send_buf[TCP_WND]{};
     std::shared_ptr<TUNSession> m_tun_session;

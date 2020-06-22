@@ -117,6 +117,7 @@ err_t lwip_tcp_client::client_recv_func(struct tcp_pcb *, struct pbuf *p, err_t 
         auto length = pbuf_copy_partial(p, (void*)send_buf, p->tot_len, 0);
         assert(length == p->tot_len);
         pbuf_free(p);
+        m_sending_len += length;
         m_tun_session->out_async_send((const uint8_t*)send_buf, length, [this, length](boost::system::error_code ec){
             if(ec){
                 output_debug_info_ec(ec);
@@ -124,6 +125,7 @@ err_t lwip_tcp_client::client_recv_func(struct tcp_pcb *, struct pbuf *p, err_t 
             }else{
                 if(!m_closed){
                     tcp_recved(m_pcb, length);
+                    m_sent_len += length;
                 }                
             }            
         });
@@ -137,7 +139,8 @@ err_t lwip_tcp_client::client_sent_func(struct tcp_pcb *, u16_t len){
     if(m_aborted){
         return ERR_ABRT;
     }
-
+    
+    m_recved_len += len;
     m_tun_session->recv_buf_ack_sent(len);
 
     if(m_tun_session->is_destroyed()){
@@ -206,6 +209,7 @@ int lwip_tcp_client::client_socks_recv_send_out(){
         return -1;
     }
 
+    m_output_len += wrote_size;
     m_tun_session->recv_buf_consume((uint16_t)wrote_size);
     return 0;
 }
@@ -230,6 +234,9 @@ void lwip_tcp_client::close_session(bool _call_by_tun_dev){
     tcp_err(m_pcb, nullptr);
     tcp_recv(m_pcb, nullptr);
     tcp_sent(m_pcb, nullptr);
+
+    client_log("close_session (output: %u, recved: %u), (sending: %u, sent: %u)", 
+        m_output_len, m_recved_len, m_sending_len, m_sent_len);
 }
 
 void lwip_tcp_client::close_client(bool _abort, bool _call_by_tun_dev /*= false*/){
