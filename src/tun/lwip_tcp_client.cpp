@@ -63,7 +63,9 @@ lwip_tcp_client::lwip_tcp_client(struct tcp_pcb *_pcb, shared_ptr<TUNSession> _s
 }
 
 void lwip_tcp_client::client_log(const char *fmt, ...){
-    if(Log::level <= Log::INFO){
+    const auto logout_level = Log::INFO;
+
+    if(Log::level <= logout_level){
         const int buf_size = 256;
         char buf[buf_size];
         int n = snprintf((char*)buf, buf_size, "[lwip] [%s:%d->%s:%d] [pcb:0x%llx session_id:%d] ", 
@@ -76,7 +78,7 @@ void lwip_tcp_client::client_log(const char *fmt, ...){
         vsnprintf(buf + n, buf_size - n, fmt, vl);
         va_end(vl);
 
-        _log_with_date_time(buf);
+        _log_with_date_time(buf, logout_level);
     }    
 }
 
@@ -195,8 +197,6 @@ int lwip_tcp_client::client_socks_recv_send_out(){
         recv_size -= to_write;
         wrote_size += to_write;
     } while (recv_size > 0);
-    
-    client_log("tcp_output size: %u", wrote_size);
 
     // start sending now
     err_t err = tcp_output(m_pcb);

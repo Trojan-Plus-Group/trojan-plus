@@ -130,7 +130,7 @@ def request_get_file(file, tcp_or_udp, index, udp_port):
                 
         return True       
     except:
-        print_log("request_get_file [" + file + "] failed!")
+        print_log("request_get_file #" + str(index) + " [" + file + "] failed!")
         traceback.print_exc()
         return False
 
@@ -152,7 +152,7 @@ def request_post_file(file, tcp_or_udp, index, udp_port):
         return True
         
     except:
-        print_log("request_post_file [" + file + "] failed!")
+        print_log("request_post_file #" + str(index) + " [" + file + "] failed!")
         traceback.print_exc()
         return False
 
