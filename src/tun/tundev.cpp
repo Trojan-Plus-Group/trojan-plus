@@ -166,7 +166,9 @@ TUNDev::~TUNDev(){
 
     m_quitting = true;
 
-    _log_with_date_time("[tun] destoryed, clear all tcp_clients: " + to_string(m_tcp_clients.size()) + " udp_clients: " + to_string(m_udp_clients.size()));
+    _log_with_date_time("[tun] destoryed, clear all tcp_clients: " + to_string(m_tcp_clients.size()) + 
+        " udp_clients: " + to_string(m_udp_clients.size()), Log::INFO);
+        
     for(auto& it : m_tcp_clients){
         it->close_client(true, true);
     }
