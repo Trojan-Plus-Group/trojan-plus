@@ -87,7 +87,8 @@ void lwip_tcp_client::client_err_func(err_t err){
 
     // do NOT call close_client with tcp_close/tcp_abort, otherwise it will assert to free double
     // this client_err_func will be called by lwip and then lwip system will be free pcb
-    close_session(false);
+    close_session();
+    release_client(false);
 }
 
 err_t lwip_tcp_client::client_recv_func(struct tcp_pcb *, struct pbuf *p, err_t err){
@@ -214,37 +215,34 @@ int lwip_tcp_client::client_socks_recv_send_out(){
     return 0;
 }
 
-void lwip_tcp_client::close_session(bool _call_by_tun_dev){
+void lwip_tcp_client::close_session(){
     if(m_closed || m_aborted){
         return;
     }
 
     m_closed = true;
 
-    if(!m_tun_session->is_destroyed()){
-        output_debug_info();
-        m_tun_session->destroy();
-    }
-    
-    if(!_call_by_tun_dev){
-        m_close_cb(this);
-    } 
-
     // remove callbacks
     tcp_err(m_pcb, nullptr);
     tcp_recv(m_pcb, nullptr);
     tcp_sent(m_pcb, nullptr);
 
+    if(!m_tun_session->is_destroyed()){
+        output_debug_info();
+        m_tun_session->destroy();
+    }
+
     client_log("close_session (output: %u, recved: %u), (sending: %u, sent: %u)", 
         m_output_len, m_recved_len, m_sending_len, m_sent_len);
 }
 
-void lwip_tcp_client::close_client(bool _abort, bool _call_by_tun_dev /*= false*/){
+void lwip_tcp_client::close_client(bool _abort, bool _called_by_tun_dev /*= false*/){
     if(m_closed || m_aborted){
         return;
     }
 
-    close_session(_call_by_tun_dev);
+    close_session();
+
     if(_abort){
         client_log("close_client abort");
         m_aborted = true;
@@ -260,7 +258,19 @@ void lwip_tcp_client::close_client(bool _abort, bool _call_by_tun_dev /*= false*
             tcp_abort(m_pcb);
         }
     }
-    
-    m_pcb = nullptr;       
+
+    release_client(_called_by_tun_dev);
+}
+
+void lwip_tcp_client::release_client(bool _called_by_tun_dev){
+    if(m_pcb != nullptr){
+        tcp_arg(m_pcb, nullptr);
+        m_pcb = nullptr;
+
+        if(!_called_by_tun_dev){
+            // this callback will trigger decontructor
+            m_close_cb(this); 
+        } 
+    }
 }
 

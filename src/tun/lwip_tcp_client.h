@@ -66,7 +66,8 @@ private:
     std::shared_ptr<TUNSession> m_tun_session;
     CloseCallback m_close_cb;
 
-    void close_session(bool _call_by_tun_dev);
+    void close_session();
+    void release_client(bool _called_by_tun_dev); 
     void client_log(const char *fmt, ...);
     int client_socks_recv_send_out();
 
@@ -76,6 +77,6 @@ private:
 
 public:
     lwip_tcp_client(struct tcp_pcb * _pcb, std::shared_ptr<TUNSession> _session, CloseCallback&& _close_cb);
-    void close_client(bool _abort, bool _call_by_tun_dev = false);
+    void close_client(bool _abort, bool _called_by_tun_dev = false);
 };
 #endif //_TROJAN_LWIP_TCP_CLIENT_HPP

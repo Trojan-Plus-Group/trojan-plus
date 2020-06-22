@@ -51,7 +51,6 @@ TUNSession::TUNSession(Service* _service, bool _is_udp) :
 }
 
 TUNSession::~TUNSession(){
-    _log_with_date_time("TUNSession::~TUNSession called session_id: " + to_string(get_session_id()), Log::INFO);
     get_pipeline_component().free_session_id();
 }
 
