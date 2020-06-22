@@ -80,6 +80,7 @@ def get_file_udp(file, length, port):
                 traceback.print_exc()
                 return False
     except :
+        print_log("get_file_udp [" + file + "] failed!")
         traceback.print_exc()
         return False
 
@@ -101,6 +102,7 @@ def post_file_udp(file, data, port):
 
             return udp_socket.recv(UDP_SEND_PACKET_LENGTH)
     except :
+        print_log("post_file_udp [" + file + "] failed!")
         traceback.print_exc()
         return 'please check traceback exceptions'
 
@@ -128,6 +130,7 @@ def request_get_file(file, tcp_or_udp, index, udp_port):
                 
         return True       
     except:
+        print_log("request_get_file [" + file + "] failed!")
         traceback.print_exc()
         return False
 
@@ -149,6 +152,7 @@ def request_post_file(file, tcp_or_udp, index, udp_port):
         return True
         
     except:
+        print_log("request_post_file [" + file + "] failed!")
         traceback.print_exc()
         return False
 
