@@ -273,8 +273,12 @@ void icmpd::async_out_send(){
             string body;
 
             std::istream is(&(*data_copy));
-            read_icmp(is, data_copy->size(), ipv4_hdr, icmp_hdr, body);
-            _log_with_date_time("[icmp] async_send_to error: " + ec.message() + " " + ipv4_hdr.source_address().to_string() + " -> " + ipv4_hdr.destination_address().to_string());
+            if(read_icmp(is, data_copy->size(), ipv4_hdr, icmp_hdr, body)){
+                _log_with_date_time("[icmp] async_send_to error: " + ec.message() + " " + 
+                    ipv4_hdr.source_address().to_string() + " -> " + ipv4_hdr.destination_address().to_string());
+            }else{
+                _log_with_date_time("[icmp] async_send_to error: " + ec.message());
+            }
         }
         m_service->get_sending_data_allocator().free(data_copy);
         m_is_sending_cache = false;
