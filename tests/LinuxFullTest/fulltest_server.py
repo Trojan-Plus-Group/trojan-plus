@@ -42,47 +42,26 @@ def run_udp(port):
         udp_processor.recv(data, addr)
                 
 
-class ServerHandler(BaseHTTPRequestHandler):
-    mimedic = [
-        ('.html', 'text/html'),
-        ('.htm', 'text/html'),
-        ('.js', 'application/javascript'),
-        ('.css', 'text/css'),
-        ('.json', 'application/json'),
-        ('.png', 'image/png'),
-        ('.jpg', 'image/jpeg'),
-        ('.gif', 'image/gif'),
-        ('.txt', 'text/plain'),
-        ('.avi', 'video/x-msvideo'),
-    ]    
+class ServerHandler(BaseHTTPRequestHandler): 
 
     def do_GET(self):
-
         filepath = urlparse(self.path).path
 
         if filepath.endswith('/'):
             filepath += 'index.html'
-        _, fileext = os.path.splitext(filepath)
 
-        mimetype = None
-        sendReply = False
-        for e in ServerHandler.mimedic:
-            if e[0] == fileext:
-                mimetype = e[1]
-                sendReply = True
-                break
+        try:
+            content = ''
+            with open(os.path.realpath(serv_dir + filepath),'rb') as f:
+                content = f.read()
 
-        if sendReply == True: 
-            try:
-                with open(os.path.realpath(serv_dir + filepath),'rb') as f:
-                    content = f.read()
-                    self.send_response(200)
-                    self.send_header('Content-type',mimetype)
-                    self.end_headers()
-                    self.wfile.write(content)
-            except :
-                traceback.print_exc(file=sys.stdout)
-                self.send_error(404,'File Not Found: %s' % self.path)
+            self.send_response(200)
+            self.send_header("Content-type", "text/plain")
+            self.end_headers()
+            self.wfile.write(content)
+        except :
+            traceback.print_exc(file=sys.stdout)
+            self.send_error(404,'File Not Found: %s' % self.path)
 
     def do_POST(self) :
         try:
@@ -90,15 +69,17 @@ class ServerHandler(BaseHTTPRequestHandler):
             content_len = int(self.headers.get('Content-Length'))
             post_body = self.rfile.read(content_len)
             
+            content = ''
             with open(os.path.realpath(serv_dir + filepath),'rb') as f:
                 content = f.read()
-                self.send_response(200)
-                self.send_header('Content-type','text/plain')
-                self.end_headers()
-                if content == post_body[2:]:
-                    self.wfile.write(b"OK")
-                else:
-                    self.wfile.write(b"FAILED")
+
+            self.send_response(200)
+            self.send_header('Content-type','text/plain')
+            self.end_headers()
+            if content == post_body[2:]:
+                self.wfile.write(b"OK")
+            else:
+                self.wfile.write(b"FAILED")
         except:
             traceback.print_exc(file=sys.stdout)
 
