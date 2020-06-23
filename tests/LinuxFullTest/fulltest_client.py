@@ -26,7 +26,7 @@ import fulltest_udp_proto
 from fulltest_utils import print_time_log
 
 PARALLEL_REQUEST_COUNT = 5
-RECV_DATA_TIMEOUT = 1
+RECV_DATA_TIMEOUT = 3
 UDP_SEND_PACKET_LENGTH = fulltest_udp_proto.UDP_SEND_PACKET_LENGTH
 UDP_BUFF_SIZE = fulltest_udp_proto.UDP_BUFF_SIZE
 
