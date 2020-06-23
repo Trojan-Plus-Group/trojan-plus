@@ -39,7 +39,7 @@
     },
     "experimental":{
         "pipeline_num" : 10,
-        "pipeline_ack_window" : 3
+        "pipeline_ack_window" : 10
     },
     "tun":{
         "tun_name":"tun0",
