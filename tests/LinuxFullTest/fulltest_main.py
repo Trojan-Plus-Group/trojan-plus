@@ -22,7 +22,7 @@
 import sys, time, threading, signal, os, psutil, traceback, datetime, argparse
 from subprocess import Popen, PIPE
 import fulltest_gen_content, fulltest_server, fulltest_client
-from fulltest_utils import print_time_log, is_macos_system
+from fulltest_utils import print_time_log, is_macos_system, is_windows_system, is_linux_system
 
 
 LOCALHOST_IP="127.0.0.1"
@@ -52,7 +52,7 @@ def start_trojan_plus_process(config):
     output_log_file = open(config + ".output", "w+")
     process = Popen([binary_path, "-c", config], executable = binary_path, bufsize = 1024 * 1024, 
                     stdout = output_log_file, stderr = output_log_file,
-                    restore_signals = False, universal_newlines = True)
+                    restore_signals = True, universal_newlines = True)
     process.output_log_file = output_log_file
     process.executable_name = sys.executable
     time.sleep(1)
@@ -65,10 +65,14 @@ def start_trojan_plus_process(config):
 
 def close_process(process, output_log):
     if process:
-        process.send_signal(signal.SIGTERM)
+        process.output_log_file.flush()
+        if is_windows_system():
+            process.send_signal(signal.SIGTERM)
+        else:
+            process.send_signal(signal.SIGINT)
         time.sleep(1)
         process.output_log_file.flush()
-
+        
         if process.returncode:
             print_time_log(str(process.args) + " closed.")
         else:
@@ -287,6 +291,6 @@ if __name__ == "__main__":
         type=int, nargs='?', const=TEST_FILES_SIZE)
     parser.add_argument("-t", "--tun", help=" whether test tun device (mostly for Android)", \
         action='store_true', default=False)
-
+        
     exit(main(parser.parse_args()))
         
