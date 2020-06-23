@@ -68,7 +68,7 @@ void lwip_tcp_client::client_log(const char *fmt, ...){
     if(Log::level <= logout_level){
         const int buf_size = 256;
         char buf[buf_size];
-        int n = snprintf((char*)buf, buf_size, "[lwip] [%s:%d->%s:%d] [pcb:0x%llx session_id:%d] ", 
+        int n = snprintf((char*)buf, buf_size, "[lwip] [%s:%d->%s:%d] [pcb:0x%llx session_id: %d] ", 
             m_local_addr.address().to_string().c_str(), m_local_addr.port(),
             m_remote_addr.address().to_string().c_str(), m_remote_addr.port(), 
             (unsigned long long)m_pcb, (int)m_tun_session->get_session_id());

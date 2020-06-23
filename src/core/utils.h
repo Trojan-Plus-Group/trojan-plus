@@ -138,7 +138,7 @@ void write_data_to_file(int id, const std::string& tag, const std::string_view& 
 using SentHandler = std::function<void(const boost::system::error_code ec)>;
 using AsyncWriter = std::function<void(const boost::asio::streambuf& data, SentHandler&& handler)>;
 using ConnectionFunc = std::function<bool()> ;
-using ReadHandler = std::function<void(const std::string_view& data)> ;
+using ReadHandler = std::function<void(const std::string_view& data, size_t push_count)> ;
 using PushDataHandler = std::function<void(boost::asio::streambuf& buf)> ;
 
 class SendDataCache{
@@ -173,13 +173,15 @@ public:
 class ReadDataCache{
     boost::asio::streambuf data_queue;
     ReadHandler read_handler;
-    bool is_waiting = { false};
+    size_t push_ack_count{};
+    bool is_waiting{false};
 public :
     inline void push_data(const std::string_view& data) {
         if (is_waiting) {
             is_waiting = false;
-            read_handler(data);
+            read_handler(data, 1);
         }else{
+            push_ack_count++;
             streambuf_append(data_queue, data);
         }
     }
@@ -189,8 +191,9 @@ public :
             is_waiting = true;
             read_handler = std::move(handler);
         }else{
-            handler(streambuf_to_string_view(data_queue));
+            handler(streambuf_to_string_view(data_queue), push_ack_count);
             data_queue.consume(data_queue.size());
+            push_ack_count = 0;
         }
     }
 

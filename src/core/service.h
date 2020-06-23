@@ -86,7 +86,8 @@ public:
 
     void start_session(const std::shared_ptr<Session>& session, SentHandler&& started_handler);
 
-    void session_async_send_to_pipeline(Session& session, PipelineRequest::Command cmd, const std::string_view& data, SentHandler&& sent_handler);
+    void session_async_send_to_pipeline(Session& session, PipelineRequest::Command cmd, 
+        const std::string_view& data, SentHandler&& sent_handler, int ack_count = 0);
     void session_async_send_to_pipeline_icmp(const std::string_view& data, SentHandler&& sent_handler);
     void session_destroy_in_pipeline(Session& session);    
 

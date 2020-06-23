@@ -84,8 +84,8 @@ void ServerSession::start() {
 
 void ServerSession::in_async_read() {
     if(get_pipeline_component().is_using_pipeline()){
-        get_pipeline_component().get_pipeline_data_cache().async_read([this](const string_view &data) {
-            in_recv(data);
+        get_pipeline_component().get_pipeline_data_cache().async_read([this](const string_view &data, int ack_count) {
+            in_recv(data, ack_count);
         });
     }else{
         in_read_buf.begin_read(__FILE__, __LINE__);
@@ -161,7 +161,7 @@ void ServerSession::out_async_read() {
     });
 }
 
-void ServerSession::out_async_write(const string_view &data) {
+void ServerSession::out_async_write(const string_view &data, int ack_count) {
     _log_with_date_time_DEBUG("ServerSession::out_async_write session_id: " + to_string(get_session_id()) + " length: " + to_string(data.length()) + " checksum: " + to_string(get_checksum(data)));
     _write_data_to_file_DEBUG(get_session_id(), "ServerSession_out_async_write", data);
 
@@ -171,7 +171,8 @@ void ServerSession::out_async_write(const string_view &data) {
 
     auto self = shared_from_this();
     auto data_copy = get_service()->get_sending_data_allocator().allocate(data);
-    boost::asio::async_write(out_socket, data_copy->data(), [this, self, data_copy](const boost::system::error_code error, size_t) {
+    boost::asio::async_write(out_socket, data_copy->data(), 
+     [this, self, data_copy, ack_count](const boost::system::error_code error, size_t length) {
         get_service()->get_sending_data_allocator().free(data_copy);
         if (error) {
             output_debug_info_ec(error);
@@ -179,6 +180,11 @@ void ServerSession::out_async_write(const string_view &data) {
             return;
         }
         
+        if(out_sent_len == 0){
+            output_debug_info();
+            _log_with_endpoint(get_in_endpoint(), "session_id: " + to_string(get_session_id()) + "out_sent_len from 0, size == " + to_string(length), Log::INFO);
+        }
+        out_sent_len += length;
         if(get_pipeline_component().is_using_pipeline() && !pipeline_session.expired()){
 
             if(get_pipeline_component().is_write_close_future() 
@@ -190,14 +196,15 @@ void ServerSession::out_async_write(const string_view &data) {
             
             get_pipeline_component().set_async_writing_data(false);
 
-            (dynamic_cast<PipelineSession*>(pipeline_session.lock().get()))->session_write_ack(*this, [this, self](const boost::system::error_code ec){
+            (dynamic_cast<PipelineSession*>(pipeline_session.lock().get()))->session_write_ack(*this, 
+             [this, self](const boost::system::error_code ec){
                 if(ec){
                     output_debug_info_ec(ec);
                     destroy();
                     return;
                 } 
                 out_sent();             
-            });
+            }, ack_count);
         }else{
             out_sent();
         }        
@@ -234,7 +241,7 @@ void ServerSession::out_udp_async_write(const string_view &data, const udp::endp
     });
 }
 
-void ServerSession::in_recv(const string_view &data) {
+void ServerSession::in_recv(const string_view &data, int ack_count) {
     _log_with_date_time_DEBUG("ServerSession::in_recv session_id: " + to_string(get_session_id()) + " length: " + to_string(data.length()) + " checksum: " + to_string(get_checksum(data)));
     _write_data_to_file_DEBUG(get_session_id(), "ServerSession_in_recv", data);
     if (status == HANDSHAKE) {
@@ -242,6 +249,11 @@ void ServerSession::in_recv(const string_view &data) {
         if(has_queried_out){
             // pipeline session will call this in_recv directly so that the HANDSHAKE status will remain for a while
             streambuf_append(out_write_buf, data);
+
+            if(get_sent_len() == 0){
+                output_debug_info();
+                _log_with_endpoint(get_in_endpoint(), "session_id: " + to_string(get_session_id()) + "inc_sent_len from 0, size == " + to_string(data.length()), Log::INFO);
+            }
             inc_sent_len(data.length());
             return;
         }
@@ -311,6 +323,10 @@ void ServerSession::in_recv(const string_view &data) {
             streambuf_append(out_write_buf, data);
         }
         
+        if(get_sent_len() == 0){
+            output_debug_info();
+            _log_with_endpoint(get_in_endpoint(), "session_id: " + to_string(get_session_id()) + "inc_sent_len from 0, size == " + to_string(out_write_buf.size()), Log::INFO);
+        }
         inc_sent_len(out_write_buf.size());
         has_queried_out = true;
 
@@ -326,8 +342,12 @@ void ServerSession::in_recv(const string_view &data) {
         });
 
     } else if (status == FORWARD) {
+        if(get_sent_len() == 0){
+            output_debug_info();
+            _log_with_endpoint(get_in_endpoint(), "session_id: " + to_string(get_session_id()) + "inc_sent_len from 0, size == " + to_string(data.length()), Log::INFO);
+        }
         inc_sent_len(data.length());
-        out_async_write(data);
+        out_async_write(data, ack_count);
     } else if (status == UDP_FORWARD) {
         streambuf_append(udp_data_buf, data);
         out_udp_sent();

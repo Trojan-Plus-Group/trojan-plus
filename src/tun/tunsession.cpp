@@ -48,6 +48,29 @@ TUNSession::TUNSession(Service* _service, bool _is_udp) :
 
     set_udp_forward_session(_is_udp);
     get_pipeline_component().allocate_session_id();
+
+    m_sending_data_cache.set_is_connected_func([this](){ return !is_destroyed() && m_connected; });
+    m_sending_data_cache.set_async_writer([this](const boost::asio::streambuf& data, SentHandler&& handler) {
+        auto self = shared_from_this();
+        boost::asio::async_write(m_out_socket, data.data(), 
+          [this, self, handler](const boost::system::error_code error, size_t length) {
+
+            reset_udp_timeout();
+            if (error) {
+                output_debug_info_ec(error);
+                destroy();
+            }
+
+            if(get_sent_len() == 0){
+                output_debug_info();
+                _log_with_date_time(to_string(m_local_addr.port()) + " session_id: " + to_string(get_session_id()) + 
+                    " inc_sent_len from 0 to size: " + to_string(length), Log::INFO);
+            }
+            inc_sent_len(length);
+
+            handler(error);
+        });
+    });
 }
 
 TUNSession::~TUNSession(){
@@ -71,11 +94,17 @@ void TUNSession::start(){
     auto cb = [this, self](){
         m_connected  = true;
 
-        if(is_udp_forward_session()){
-            _log_with_endpoint(m_local_addr_udp, "TUNSession session_id: " + to_string(get_session_id()) + " started ", Log::INFO);
+        if(!m_service->is_use_pipeline()){
+            boost::system::error_code ec;
+            auto endpoint = m_out_socket.next_layer().local_endpoint(ec);
+            _log_with_endpoint(endpoint, "TUNSession session_id: " + to_string(get_session_id()) + " started", Log::INFO);
         }else{
-            _log_with_endpoint(m_local_addr, "TUNSession session_id: " + to_string(get_session_id()) + " started ", Log::INFO);
-        }  
+            if(is_udp_forward_session()){
+                _log_with_endpoint(m_local_addr_udp, "TUNSession session_id: " + to_string(get_session_id()) + " started in pipeline", Log::INFO);
+            }else{
+                _log_with_endpoint(m_local_addr, "TUNSession session_id: " + to_string(get_session_id()) + " started in pipeline", Log::INFO);
+            }
+        }
 
         auto insert_pwd = [this](){
             if(is_udp_forward_session()){
@@ -102,6 +131,10 @@ void TUNSession::start(){
         }else{
             insert_pwd();
         }
+        
+        _log_with_date_time(to_string(m_local_addr.port()) + " session_id: " + to_string(get_session_id()) + 
+                " increase m_sending_len from "+to_string(m_sending_len)+" size: " + to_string(m_send_buf.size()), Log::INFO);
+        m_sending_len += m_send_buf.size();
 
         out_async_send_impl(streambuf_to_string_view(m_send_buf), [this](boost::system::error_code ec){
             if(ec){
@@ -109,10 +142,12 @@ void TUNSession::start(){
                 destroy();
                 return;
             }
-            for(auto& h : m_wait_connected_handler){
-                h(boost::system::error_code());
+            if(!m_wait_connected_handler.empty()){
+                for(auto& h : m_wait_connected_handler){
+                    h(boost::system::error_code());
+                }
+                m_wait_connected_handler.clear();
             }
-            m_wait_connected_handler.clear();
             out_async_read();
         });
         m_send_buf.consume(m_send_buf.size());
@@ -178,24 +213,38 @@ void TUNSession::destroy(bool pipeline_call){
     }    
 }
 
-void TUNSession::recv_ack_cmd(){
-    Session::recv_ack_cmd();
-    if(!m_wait_ack_handler.empty()){
-        m_wait_ack_handler.front()(boost::system::error_code());
-        m_wait_ack_handler.pop_front();
+void TUNSession::recv_ack_cmd(int ack_count){
+    Session::recv_ack_cmd(ack_count);
+
+    while(ack_count-- > 0){
+        if(!m_wait_ack_handler.empty()){
+            m_wait_ack_handler.front()(boost::system::error_code());
+            m_wait_ack_handler.pop_front();
+        }else{
+            break;
+        }
     }
+    
 }
 
 void TUNSession::out_async_send_impl(const std::string_view& data_to_send, SentHandler&& _handler){
-    auto self = shared_from_this();
     if(m_service->is_use_pipeline()){
+        auto data_sending_len = data_to_send.length();
+        auto self = shared_from_this();
         m_service->session_async_send_to_pipeline(*this, PipelineRequest::DATA, data_to_send,
-         [this, self, _handler](const boost::system::error_code error) {
+         [this, self, _handler, data_sending_len](const boost::system::error_code error) {
             reset_udp_timeout();
             if (error) {
                 output_debug_info_ec(error);
                 destroy();
             }else{
+                if(get_sent_len() == 0){
+                    output_debug_info();
+                    _log_with_date_time(to_string(m_local_addr.port()) + " session_id: " + to_string(get_session_id()) + 
+                        " inc_sent_len from 0 to size: " + to_string(data_sending_len), Log::INFO);
+                }
+                inc_sent_len(data_sending_len);
+                
                 if(!is_udp_forward_session()){
                     if(!get_pipeline_component().pre_call_ack_func()){
                         m_wait_ack_handler.emplace_back(_handler);
@@ -208,21 +257,18 @@ void TUNSession::out_async_send_impl(const std::string_view& data_to_send, SentH
             _handler(error);         
         });
     }else{
-        auto data_copy = get_service()->get_sending_data_allocator().allocate(data_to_send);
-        boost::asio::async_write(m_out_socket, data_copy->data(), [this, self, data_copy, _handler](const boost::system::error_code error, size_t) {
-            get_service()->get_sending_data_allocator().free(data_copy);
-            reset_udp_timeout();
-            if (error) {
-                output_debug_info_ec(error);
-                destroy();
-            }
-
-            _handler(error);
-        });
+        m_sending_data_cache.push_data([&](boost::asio::streambuf& buf){streambuf_append(buf, data_to_send);}, move(_handler));
     }
 }
 void TUNSession::out_async_send(const uint8_t* _data, size_t _length, SentHandler&& _handler){
-    inc_sent_len(_length);
+
+    if(m_sending_len <= 100){
+        output_debug_info();
+        _log_with_date_time(to_string(m_local_addr.port()) + " session_id: " + to_string(get_session_id()) + 
+            " increase sending_len from " + to_string(m_sending_len) + " size: " + to_string(_length), Log::INFO);
+    }
+    m_sending_len += _length;
+
     if(!m_connected){
         if(m_send_buf.size() < numeric_limits<uint16_t>::max()){
             if(is_udp_forward_session()){
@@ -255,7 +301,8 @@ void TUNSession::try_out_async_read(){
     
     if(m_service->is_use_pipeline() && !is_udp_forward_session()){
         auto self = shared_from_this();
-        m_service->session_async_send_to_pipeline(*this, PipelineRequest::ACK, "", [this, self](const boost::system::error_code error) {
+        m_service->session_async_send_to_pipeline(*this, PipelineRequest::ACK, "", 
+          [this, self](const boost::system::error_code error) {
             if (error) {
                 output_debug_info_ec(error);
                 destroy();
@@ -263,7 +310,8 @@ void TUNSession::try_out_async_read(){
             }
 
             out_async_read();
-        });
+        }, m_ack_count);
+        m_ack_count = 0;
     }else{
         out_async_read();
     }
@@ -272,6 +320,16 @@ void TUNSession::try_out_async_read(){
 void TUNSession::recv_buf_ack_sent(uint16_t _length){
     assert(!is_udp_forward_session());
     m_recv_buf_ack_length -= _length;
+
+    if(m_service->is_use_pipeline() && m_recv_buf_ack_length <= 0){
+        if(get_pipeline_component().is_write_close_future()){
+            output_debug_info();
+            destroy();
+            return;
+        }
+
+        get_pipeline_component().set_async_writing_data(false);
+    }
 }
 
 void TUNSession::recv_buf_consume(uint16_t _length){
@@ -320,7 +378,7 @@ size_t TUNSession::parse_udp_packet_data(const string_view& data){
 
 void TUNSession::out_async_read() {
     if(m_service->is_use_pipeline()){    
-        get_pipeline_component().get_pipeline_data_cache().async_read([this](const string_view &data) {
+        get_pipeline_component().get_pipeline_data_cache().async_read([this](const string_view &data, int ack_count) {
             inc_recv_len(data.length());
 
             if(is_udp_forward_session()){
@@ -340,9 +398,11 @@ void TUNSession::out_async_read() {
 
                 try_out_async_read();
             }else{
+                m_ack_count += ack_count;
                 streambuf_append(m_recv_buf, data);
                 m_recv_buf_ack_length += data.length();
 
+                get_pipeline_component().set_async_writing_data(true);
                 if(m_write_to_lwip(this, nullptr) < 0){
                     output_debug_info();
                     destroy();

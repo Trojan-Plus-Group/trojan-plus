@@ -67,7 +67,8 @@ public:
     Service* get_service() { return service; }
 
     void session_start(Session& session,  SentHandler&& started_handler);
-    void session_async_send_cmd(PipelineRequest::Command cmd, Session& session, const std::string_view& send_data, SentHandler&& sent_handler);
+    void session_async_send_cmd(PipelineRequest::Command cmd, Session& session, 
+        const std::string_view& send_data, SentHandler&& sent_handler, int ack_count = 0);
     void session_async_send_icmp(const std::string_view& send_data, SentHandler&& sent_handler);
     void session_destroyed(Session& session);
 

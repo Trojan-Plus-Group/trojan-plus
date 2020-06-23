@@ -68,8 +68,8 @@ void ClientSession::start() {
         in_async_read();
     }
 }
-void ClientSession::recv_ack_cmd(){
-    SocketSession::recv_ack_cmd();
+void ClientSession::recv_ack_cmd(int ack_count){
+    SocketSession::recv_ack_cmd(ack_count);
     if(get_pipeline_component().is_wait_for_pipeline_ack()){
         in_async_read();
     }
@@ -102,9 +102,12 @@ void ClientSession::in_async_read() {
     });
 }
 
-void ClientSession::in_async_write(const string_view &data) {
+void ClientSession::in_async_write(const string_view &data, int ack_count) {
     
-    _log_with_date_time_DEBUG("ClientSession::in_async_write status: " + to_string((int)status) + " session_id: " + to_string(get_session_id()) + " length: " + to_string(data.length()) + " checksum: " + to_string(get_checksum(data)));
+    _log_with_date_time_DEBUG("ClientSession::in_async_write status: " + to_string((int)status) + 
+        " session_id: " + to_string(get_session_id()) + " length: " + to_string(data.length()) + 
+        " checksum: " + to_string(get_checksum(data)));
+
     _write_data_to_file_DEBUG(get_session_id(), "ClientSession_in_async_write", data);
 
     if(get_pipeline_component().is_using_pipeline() && status == FORWARD){
@@ -113,7 +116,8 @@ void ClientSession::in_async_write(const string_view &data) {
 
     auto self = shared_from_this();
     auto data_copy = get_service()->get_sending_data_allocator().allocate(data);
-    boost::asio::async_write(in_socket, data_copy->data(), [this, self, data_copy](const boost::system::error_code error, size_t) {
+    boost::asio::async_write(in_socket, data_copy->data(), 
+     [this, self, data_copy, ack_count](const boost::system::error_code error, size_t) {
         get_service()->get_sending_data_allocator().free(data_copy);
         if (error) {
             output_debug_info_ec(error);
@@ -132,7 +136,8 @@ void ClientSession::in_async_write(const string_view &data) {
 
             get_pipeline_component().set_async_writing_data(false);
 
-            get_service()->session_async_send_to_pipeline(*this, PipelineRequest::ACK, "", [this, self](const boost::system::error_code error) {
+            get_service()->session_async_send_to_pipeline(*this, PipelineRequest::ACK, "", 
+             [this, self](const boost::system::error_code error) {
                 if (error) {
                     output_debug_info_ec(error);
                     destroy();
@@ -140,7 +145,7 @@ void ClientSession::in_async_write(const string_view &data) {
                 }
 
                 in_sent();
-            });
+            }, ack_count);
         }else{
             in_sent();
         }
@@ -149,8 +154,8 @@ void ClientSession::in_async_write(const string_view &data) {
 
 void ClientSession::out_async_read() {
     if(get_pipeline_component().is_using_pipeline()){
-        get_pipeline_component().get_pipeline_data_cache().async_read([this](const string_view &data) {
-            out_recv(data);
+        get_pipeline_component().get_pipeline_data_cache().async_read([this](const string_view &data, int ack_count) {
+            out_recv(data, ack_count);
         });
     }else{
         out_read_buf.begin_read(__FILE__, __LINE__);
@@ -170,11 +175,17 @@ void ClientSession::out_async_read() {
 }
 
 void ClientSession::out_async_write(const string_view &data) {
-    _write_data_to_file_DEBUG("ClientSession::out_async_write status: " + to_string((int)status) + " session_id: " + to_string(get_session_id()) + " length: " + to_string(data.length()) + " checksum: " + to_string(get_checksum(data)));
+    
+    _write_data_to_file_DEBUG("ClientSession::out_async_write status: " + to_string((int)status) + 
+        " session_id: " + to_string(get_session_id()) + " length: " + to_string(data.length()) + 
+        " checksum: " + to_string(get_checksum(data)));
+
     _write_data_to_file_DEBUG(get_session_id(), "ClientSession_out_async_write", data);
+    
     auto self = shared_from_this();
     if(get_pipeline_component().is_using_pipeline()){
-        get_service()->session_async_send_to_pipeline(*this, PipelineRequest::DATA, data, [this, self](const boost::system::error_code error) {
+        get_service()->session_async_send_to_pipeline(*this, PipelineRequest::DATA, data, 
+         [this, self](const boost::system::error_code error) {
             if (error) {
                 output_debug_info_ec(error);
                 destroy();
@@ -184,7 +195,8 @@ void ClientSession::out_async_write(const string_view &data) {
         });
     }else{
         auto data_copy = get_service()->get_sending_data_allocator().allocate(data);
-        boost::asio::async_write(out_socket, data_copy->data(), [this, self, data_copy](const boost::system::error_code error, size_t) {
+        boost::asio::async_write(out_socket, data_copy->data(), 
+         [this, self, data_copy](const boost::system::error_code error, size_t) {
             get_service()->get_sending_data_allocator().free(data_copy);
             if (error) {
                 output_debug_info_ec(error);
@@ -415,12 +427,12 @@ void ClientSession::request_remote(){
     }    
 }
 
-void ClientSession::out_recv(const string_view &data) {
+void ClientSession::out_recv(const string_view &data, int ack_count) {
     _write_data_to_file_DEBUG("ClientSession::out_recv session_id: " + to_string(get_session_id()) + " length: " + to_string(data.length()) + " checksum: " + to_string(get_checksum(data)));
     _write_data_to_file_DEBUG(get_session_id(), "ClientSession_out_recv", data);
     if (status == FORWARD) {
         inc_recv_len(data.length());
-        in_async_write(data);
+        in_async_write(data, ack_count);
     } else if (status == UDP_FORWARD) {
         streambuf_append(udp_data_buf, data);
         udp_sent();

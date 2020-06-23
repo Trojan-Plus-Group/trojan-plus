@@ -51,15 +51,14 @@ private:
     uint64_t recv_len{0};
     uint64_t sent_len{0};
     time_t start_time{};
-
 public:
     Session(Service* _service, const Config& _config);
     
     virtual void start() = 0;
     virtual ~Session();
     virtual void destroy(bool pipeline_call = false) = 0;
-    virtual void recv_ack_cmd(){
-        pipeline_com.recv_ack_cmd();
+    virtual void recv_ack_cmd(int ack_count){
+        pipeline_com.recv_ack_cmd(ack_count);
     }
 
     uint64_t inc_recv_len(uint64_t inc){ recv_len += inc; return recv_len;}

@@ -51,6 +51,8 @@ private:
     CloseCallback m_close_cb;
     bool m_close_from_tundev_flag;
     bool m_connected;
+    int m_ack_count{0};
+    size_t m_sending_len{};
     boost::asio::streambuf m_send_buf;
     WriteToLwipCallback m_write_to_lwip;
     std::list<SentHandler> m_wait_ack_handler;
@@ -64,6 +66,7 @@ private:
     boost::asio::steady_timer m_udp_timout_timer;
 
     std::list<SentHandler> m_wait_connected_handler;
+    SendDataCache m_sending_data_cache;
 
     void out_async_read();
     void try_out_async_read();
@@ -110,7 +113,7 @@ public:
     void destroy(bool pipeline_call = false) override;
 
     void out_async_send(const uint8_t* _data, size_t _length, SentHandler&& _handler);
-    void recv_ack_cmd() override;
+    void recv_ack_cmd(int ack_count) override;
 
     void recv_buf_ack_sent(uint16_t _length);
 

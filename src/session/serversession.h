@@ -61,6 +61,8 @@ private:
     std::string auth_password;
     const std::string &plain_http_response;
 
+    size_t out_sent_len{};
+
     using PipelineSessionRef = std::weak_ptr<Session>;
     PipelineSessionRef pipeline_session;
     bool has_queried_out;
@@ -68,9 +70,9 @@ private:
     void in_async_read();
     void in_async_write(const std::string_view &data);
     void in_sent();
-    void in_recv(const std::string_view &data);
+    void in_recv(const std::string_view &data, int ack_count = 0);
     
-    void out_async_write(const std::string_view &data);
+    void out_async_write(const std::string_view &data, int ack_count = 0);
     void out_recv(const std::string_view &data);
     void out_sent();
     void out_udp_async_read();

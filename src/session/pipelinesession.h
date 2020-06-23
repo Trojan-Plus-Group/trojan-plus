@@ -65,7 +65,8 @@ class PipelineSession : public SocketSession {
 
     void in_async_read();
     void in_recv(const std::string_view& data);
-    void in_send(PipelineRequest::Command cmd, ServerSession& session, const std::string_view& session_data, SentHandler&& sent_handler);
+    void in_send(PipelineRequest::Command cmd, ServerSession& session, 
+        const std::string_view& session_data, SentHandler&& sent_handler, int ack_count = 0);
     bool find_and_process_session(PipelineComponent::SessionIdType session_id, std::function<void(SessionsList::iterator&)>&& processor);
 public:
     PipelineSession(Service* _service, const Config& config, boost::asio::ssl::context &ssl_context, 
@@ -75,7 +76,7 @@ public:
     boost::asio::ip::tcp::socket& accept_socket() final;
     void start() final;
 
-    void session_write_ack(ServerSession& session, SentHandler&& sent_handler);
+    void session_write_ack(ServerSession& session, SentHandler&& sent_handler, int ack_count);
     void session_write_data(ServerSession& session, const std::string_view& session_data, SentHandler&& sent_handler);
     void session_write_icmp(const std::string_view& data, SentHandler&& sent_handler);
     void remove_session_after_destroy(ServerSession& session);

@@ -113,7 +113,7 @@ bool UDPForwardSession::process(const udp::endpoint &endpoint, const string_view
 
 void UDPForwardSession::out_async_read() {
     if (get_pipeline_component().is_using_pipeline()) {
-        get_pipeline_component().get_pipeline_data_cache().async_read([this](const string_view &data) {
+        get_pipeline_component().get_pipeline_data_cache().async_read([this](const string_view &data, int) {
             out_recv(data);
         });
     } else {

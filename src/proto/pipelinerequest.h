@@ -34,6 +34,7 @@
 class PipelineRequest {
 public:
     size_t consume_length{0};
+    int ack_count{0};
     std::string_view packet_data;
     PipelineComponent::SessionIdType session_id;
     enum Command {
@@ -66,7 +67,7 @@ public:
     }
     
     static boost::asio::streambuf& generate(boost::asio::streambuf& buf, enum Command cmd, 
-        PipelineComponent::SessionIdType session_id, const std::string_view& data);
+        PipelineComponent::SessionIdType session_id, const std::string_view& data, int ack_count = 0);
 };
 
 #endif // _PIPELINEREQUEST_H_

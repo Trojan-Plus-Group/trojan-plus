@@ -69,7 +69,9 @@ public:
     inline bool is_using_pipeline()const{ return m_is_use_pipeline; }
     inline void set_use_pipeline() { m_is_use_pipeline = true; };
 
-    inline void recv_ack_cmd() { pipeline_ack_counter++; }
+    inline void recv_ack_cmd(int ack_count) { 
+        pipeline_ack_counter += ack_count; 
+    }
 
     [[nodiscard]] 
     inline bool is_wait_for_pipeline_ack() const { return pipeline_wait_for_ack; }    

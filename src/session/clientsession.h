@@ -65,7 +65,7 @@ private:
 protected:
 
     void in_async_read();
-    void in_async_write(const std::string_view &data);
+    void in_async_write(const std::string_view &data, int ack_count = 0);
     void out_async_read();
     void out_async_write(const std::string_view &data);
     void out_sent();
@@ -73,7 +73,7 @@ protected:
     void udp_async_write(const std::string_view &data, const boost::asio::ip::udp::endpoint &endpoint);
     void udp_recv(const std::string_view &data, const boost::asio::ip::udp::endpoint &endpoint);
     void udp_sent();
-    void out_recv(const std::string_view &data);
+    void out_recv(const std::string_view &data, int ack_count = 0);
 
     virtual void in_recv(const std::string_view &data);
     virtual void in_sent();
@@ -93,7 +93,7 @@ public:
     void start() override;
     void destroy(bool pipeline_call = false) override;
     
-    void recv_ack_cmd() override;
+    void recv_ack_cmd(int ack_count) override;
 };
 
 #endif // _CLIENTSESSION_H_

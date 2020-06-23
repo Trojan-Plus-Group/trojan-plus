@@ -71,9 +71,13 @@ int PipelineRequest::parse(const string_view &data){
         | DATA | 2 bytes as session id | 4 bytes as data length |
         +------+-----------------------+------------------------+
 
-        +------+--------------------=---+------------------------+
+        +------+-----------------------+------------------------+
+        | DATA | 2 bytes as session id | 2 bytes as ack count   |
+        +------+-----------------------+------------------------+
+
+        +------+------------------------+------------------------+
         | ICMP | 2 bytes as data length |        data            |
-        +------+-------------------==---+------------------------+
+        +------+------------------------+------------------------+
     */
 
     if(data.length() < 1){
@@ -120,6 +124,16 @@ int PipelineRequest::parse(const string_view &data){
         packet_data = data.substr(ICMP_CMD_HEADER_LENGTH, icmp_length);
         consume_length = ICMP_CMD_HEADER_LENGTH + icmp_length;
     }
+    else if(command == ACK){
+        const size_t ACK_CMD_HEADER_LENGTH = 5;
+
+        if (data.length() < ACK_CMD_HEADER_LENGTH) {
+            return -1;
+        }
+        session_id = (PipelineComponent::SessionIdType)parse_uint16(1, data);
+        ack_count = (int)parse_uint16(3, data);
+        consume_length = ACK_CMD_HEADER_LENGTH;
+    }
     else{
 
         const size_t CMD_HEADER_LENGTH = 3;
@@ -134,7 +148,8 @@ int PipelineRequest::parse(const string_view &data){
     return (int)packet_data.length();
 }
 
-boost::asio::streambuf& PipelineRequest::generate(boost::asio::streambuf& buf, enum Command cmd, PipelineComponent::SessionIdType session_id, const std::string_view& data){
+boost::asio::streambuf& PipelineRequest::generate(boost::asio::streambuf& buf, 
+    enum Command cmd, PipelineComponent::SessionIdType session_id, const std::string_view& data, int ack_count /* = 0*/){
     
     // if(session_id > MAX_SESSION_ID_LENGTH){
     //     throw logic_error("PipelineRequest::generate session_id " + to_string(session_id) + " > numeric_limits<uint16_t>::max() " + to_string(MAX_SESSION_ID_LENGTH));
@@ -152,6 +167,7 @@ boost::asio::streambuf& PipelineRequest::generate(boost::asio::streambuf& buf, e
         streambuf_append(buf, data);
 
     } else {
+        
         generate_uint16(buf, session_id);
 
         if (cmd == DATA) {
@@ -162,6 +178,8 @@ boost::asio::streambuf& PipelineRequest::generate(boost::asio::streambuf& buf, e
 
             generate_uint32(buf, (uint32_t)data_length);
             streambuf_append(buf, data);
+        }else if(cmd == ACK){
+            generate_uint16(buf, (uint16_t)ack_count);
         }
     }
 
