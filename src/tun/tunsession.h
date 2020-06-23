@@ -52,7 +52,7 @@ private:
     bool m_close_from_tundev_flag;
     bool m_connected;
     int m_ack_count{0};
-    size_t m_sending_len{};
+
     boost::asio::streambuf m_send_buf;
     WriteToLwipCallback m_write_to_lwip;
     std::list<SentHandler> m_wait_ack_handler;

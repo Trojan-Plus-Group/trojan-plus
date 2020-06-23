@@ -77,7 +77,7 @@ void Pipeline::session_async_send_cmd(PipelineRequest::Command cmd, Session& ses
 
     _log_with_date_time_ALL("pipeline " + to_string(get_pipeline_id()) + " session_id: " + 
         to_string(session.get_session_id()) + " --> send to server cmd: " + PipelineRequest::get_cmd_string(cmd) + 
-        (cmd == PipelineRequest::ACK ? ( "ack count:" + to_string(ack_count)) : (" data length:" + to_string(send_data.length()))) + 
+        (cmd == PipelineRequest::ACK ? ( " ack count: " + to_string(ack_count)) : (" data length:" + to_string(send_data.length()))) + 
         " checksum: " + to_string(get_checksum(send_data)));
 
     sending_data_cache.push_data([&](boost::asio::streambuf& buf){

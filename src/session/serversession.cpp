@@ -172,7 +172,7 @@ void ServerSession::out_async_write(const string_view &data, int ack_count) {
     auto self = shared_from_this();
     auto data_copy = get_service()->get_sending_data_allocator().allocate(data);
     boost::asio::async_write(out_socket, data_copy->data(), 
-     [this, self, data_copy, ack_count](const boost::system::error_code error, size_t length) {
+     [this, self, data_copy, ack_count](const boost::system::error_code error, size_t) {
         get_service()->get_sending_data_allocator().free(data_copy);
         if (error) {
             output_debug_info_ec(error);
@@ -180,11 +180,6 @@ void ServerSession::out_async_write(const string_view &data, int ack_count) {
             return;
         }
         
-        if(out_sent_len == 0){
-            output_debug_info();
-            _log_with_endpoint(get_in_endpoint(), "session_id: " + to_string(get_session_id()) + "out_sent_len from 0, size == " + to_string(length), Log::INFO);
-        }
-        out_sent_len += length;
         if(get_pipeline_component().is_using_pipeline() && !pipeline_session.expired()){
 
             if(get_pipeline_component().is_write_close_future() 

@@ -61,8 +61,6 @@ private:
     std::string auth_password;
     const std::string &plain_http_response;
 
-    size_t out_sent_len{};
-
     using PipelineSessionRef = std::weak_ptr<Session>;
     PipelineSessionRef pipeline_session;
     bool has_queried_out;

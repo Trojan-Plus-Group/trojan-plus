@@ -61,11 +61,6 @@ TUNSession::TUNSession(Service* _service, bool _is_udp) :
                 destroy();
             }
 
-            if(get_sent_len() == 0){
-                output_debug_info();
-                _log_with_date_time(to_string(m_local_addr.port()) + " session_id: " + to_string(get_session_id()) + 
-                    " inc_sent_len from 0 to size: " + to_string(length), Log::INFO);
-            }
             inc_sent_len(length);
 
             handler(error);
@@ -99,13 +94,13 @@ void TUNSession::start(){
             auto endpoint = m_out_socket.next_layer().local_endpoint(ec);
             _log_with_endpoint(endpoint, "TUNSession session_id: " + to_string(get_session_id()) + " started", Log::INFO);
         }else{
+            auto note_str = "TUNSession session_id: " + to_string(get_session_id()) + " started in pipeline";
             if(is_udp_forward_session()){
-                _log_with_endpoint(m_local_addr_udp, "TUNSession session_id: " + to_string(get_session_id()) + " started in pipeline", Log::INFO);
+                _log_with_endpoint(m_local_addr_udp, note_str, Log::INFO);
             }else{
-                _log_with_endpoint(m_local_addr, "TUNSession session_id: " + to_string(get_session_id()) + " started in pipeline", Log::INFO);
+                _log_with_endpoint(m_local_addr, note_str, Log::INFO);
             }
         }
-
         auto insert_pwd = [this](){
             if(is_udp_forward_session()){
                 streambuf_append(m_send_buf, TrojanRequest::generate(get_config().get_password().cbegin()->first, 
@@ -131,10 +126,6 @@ void TUNSession::start(){
         }else{
             insert_pwd();
         }
-        
-        _log_with_date_time(to_string(m_local_addr.port()) + " session_id: " + to_string(get_session_id()) + 
-                " increase m_sending_len from "+to_string(m_sending_len)+" size: " + to_string(m_send_buf.size()), Log::INFO);
-        m_sending_len += m_send_buf.size();
 
         out_async_send_impl(streambuf_to_string_view(m_send_buf), [this](boost::system::error_code ec){
             if(ec){
@@ -238,20 +229,17 @@ void TUNSession::out_async_send_impl(const std::string_view& data_to_send, SentH
                 output_debug_info_ec(error);
                 destroy();
             }else{
-                if(get_sent_len() == 0){
-                    output_debug_info();
-                    _log_with_date_time(to_string(m_local_addr.port()) + " session_id: " + to_string(get_session_id()) + 
-                        " inc_sent_len from 0 to size: " + to_string(data_sending_len), Log::INFO);
-                }
                 inc_sent_len(data_sending_len);
                 
                 if(!is_udp_forward_session()){
                     if(!get_pipeline_component().pre_call_ack_func()){
                         m_wait_ack_handler.emplace_back(_handler);
-                        _log_with_endpoint_DEBUG(m_local_addr, "session_id: " + to_string(get_session_id()) + " cannot TUNSession::out_async_send ! Is waiting for ack");
+                        _log_with_endpoint_DEBUG(m_local_addr, "session_id: " + to_string(get_session_id()) + 
+                            " cannot TUNSession::out_async_send ! Is waiting for ack");
                         return;
                     }
-                    _log_with_endpoint_DEBUG(m_local_addr, "session_id: " + to_string(get_session_id()) + " permit to TUNSession::out_async_send ! ack:" + to_string(get_pipeline_component().pipeline_ack_counter));
+                    _log_with_endpoint_DEBUG(m_local_addr, "session_id: " + to_string(get_session_id()) + 
+                        " permit to TUNSession::out_async_send ! ack:" + to_string(get_pipeline_component().pipeline_ack_counter));
                 }
             }
             _handler(error);         
@@ -261,13 +249,6 @@ void TUNSession::out_async_send_impl(const std::string_view& data_to_send, SentH
     }
 }
 void TUNSession::out_async_send(const uint8_t* _data, size_t _length, SentHandler&& _handler){
-
-    if(m_sending_len <= 100){
-        output_debug_info();
-        _log_with_date_time(to_string(m_local_addr.port()) + " session_id: " + to_string(get_session_id()) + 
-            " increase sending_len from " + to_string(m_sending_len) + " size: " + to_string(_length), Log::INFO);
-    }
-    m_sending_len += _length;
 
     if(!m_connected){
         if(m_send_buf.size() < numeric_limits<uint16_t>::max()){
