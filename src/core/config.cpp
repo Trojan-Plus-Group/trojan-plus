@@ -66,6 +66,8 @@ const static uint32_t default_experimental_pipeline_ack_window = 200;
 const static uint16_t default_tun_mtu = 1500;
 const static int default_tun_fd = -1;
 
+const static uint16_t default_dns_port = 53;
+
 void Config::load(const string &filename) {
     ptree tree;
     read_json(filename, tree);
@@ -130,7 +132,7 @@ void Config::populate(const ptree &tree) {
     ssl.cipher_tls13 = tree.get("ssl.cipher_tls13", string());
     ssl.prefer_server_cipher = tree.get("ssl.prefer_server_cipher", true);
     ssl.sni = tree.get("ssl.sni", string());
-    ssl.alpn = "";
+    ssl.alpn = string();
     if (tree.get_child_optional("ssl.alpn")) {
         for (const auto& item: tree.get_child("ssl.alpn")) {
             const auto& proto = item.second.get_value<string>();
@@ -200,12 +202,59 @@ void Config::populate(const ptree &tree) {
     }
     experimental.pipeline_proxy_icmp = tree.get("experimental.pipeline_proxy_icmp", false);
 
-    tun.tun_name = tree.get("tun.tun_name", "");
-    tun.net_ip = tree.get("tun.net_ip", "");
-    tun.net_mask = tree.get("tun.net_mask", "");
+    tun.tun_name = tree.get("tun.tun_name", string());
+    tun.net_ip = tree.get("tun.net_ip", string());
+    tun.net_mask = tree.get("tun.net_mask", string());
     tun.mtu = tree.get("tun.mtu", default_tun_mtu);
     tun.tun_fd = tree.get("tun.tun_fd", default_tun_fd);
     tun.redirect_local = tree.get("tun.redirect_local", false);
+
+    dns.enabled = tree.get("dns.enabled", false);
+    dns.port = tree.get("dns.port",default_dns_port);
+    dns.gfwlist = tree.get("dns.gfwlist",string());
+    if(dns.enabled){
+        if(!dns.gfwlist.empty()){
+            ifstream file("main.cpp");
+            if(file){
+                for(string line; std::getline(file, line);){
+                    if(!line.empty()){
+                        dns._gfwlist.emplace_back(line);
+                    }
+                }
+                if(dns._gfwlist.empty()){
+                    dns.enabled = false;
+                    _log_with_date_time("[dns] '" + dns.gfwlist + "' is empty!", Log::ERROR);
+                }
+            }else{
+                dns.enabled = false;
+                _log_with_date_time("[dns] cannot open '" + dns.gfwlist + "' file to read!", Log::ERROR);
+            }
+        }else{
+            dns.enabled = false;
+            _log_with_date_time("[dns] please fill 'tun.gfwlist' as filename!", Log::ERROR);
+        }
+
+        if(dns.enabled){
+            for (const auto &item : tree.get_child("dns.up_dns_server")){
+                dns.up_dns_server.emplace_back(item.second.get_value<string>());
+            }
+
+            if(dns.up_dns_server.empty()){
+                _log_with_date_time("[dns] up_dns_server is empty filled by default up stream server!", Log::WARN);
+                dns.up_dns_server.emplace_back("119.29.29.29");
+                dns.up_dns_server.emplace_back("223.5.5.5");
+            }
+
+            for (const auto &item : tree.get_child("dns.up_gfw_dns_server")){
+                dns.up_gfw_dns_server.emplace_back(item.second.get_value<string>());
+            }
+
+            if(dns.up_gfw_dns_server.empty()){
+                _log_with_date_time("[dns] up_gfw_dns_server is empty filled by default up stream server!", Log::WARN);
+                dns.up_gfw_dns_server.emplace_back("8.8.8.8");
+            }
+        }
+    }
 
     const auto hash_str = get_remote_addr() + ":" + to_string(get_remote_port());
     compare_hash = get_hashCode(hash_str);

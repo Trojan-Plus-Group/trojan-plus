@@ -101,6 +101,15 @@ public:
         bool redirect_local; // redirect all ip to localhost for test
     };
 
+    using DNS = struct{
+        bool enabled;
+        uint16_t port;
+        std::string gfwlist;
+        std::vector<std::string> _gfwlist;
+        std::vector<std::string> up_dns_server;
+        std::vector<std::string> up_gfw_dns_server;
+    };
+
 private:
 
     RunType run_type;
@@ -121,6 +130,7 @@ private:
     MySQLConfig mysql;
     Experimental experimental;
     TUN tun;
+    DNS dns;
 
     int compare_hash = 0;
 
@@ -155,6 +165,7 @@ public:
     _define_getter_const(const MySQLConfig&, mysql)
     _define_getter_const(const Experimental&, experimental)
     _define_getter_const(const TUN&, tun)
+    _define_getter_const(const DNS&, dns)
 };
 
 #endif // _CONFIG_H_
