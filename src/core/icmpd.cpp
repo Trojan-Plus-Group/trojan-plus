@@ -38,24 +38,9 @@ using namespace std;
 using namespace boost::asio::ip;
 
 int icmpd::s_icmpd_file_lock = 0;
-
 bool icmpd::get_icmpd_lock() {
-#ifndef _WIN32
-    s_icmpd_file_lock = open("./trojan_icmpd_lock", O_WRONLY | O_CREAT | O_APPEND, S_IRUSR | S_IWUSR);
-    if (s_icmpd_file_lock == 0) {
-        return false;
-    }
-
-    if (flock(s_icmpd_file_lock, LOCK_EX | LOCK_NB) != 0) {
-        close(s_icmpd_file_lock);
-        s_icmpd_file_lock = 0;
-        return false;
-    }
-
-    return true;
-#else
-    return false;
-#endif
+    s_icmpd_file_lock = get_file_lock("./trojan_icmpd_lock");
+    return s_icmpd_file_lock != -1;
 }
 
 icmpd::icmpd(boost::asio::io_context& io_context) : 

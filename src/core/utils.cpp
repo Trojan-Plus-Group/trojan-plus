@@ -284,6 +284,23 @@ udp::endpoint make_udp_endpoint_safe(const std::string& address, uint16_t port, 
     return endpoint;
 }
 
+int get_file_lock(const char* filename){
+#ifndef _WIN32
+    int lock = open(filename, O_WRONLY | O_CREAT | O_APPEND, S_IRUSR | S_IWUSR);
+    if (lock == 0) {
+        return -1;
+    }
+
+    if (flock(lock, LOCK_EX | LOCK_NB) != 0) {
+        close(lock);
+        return -1;
+    }
+
+    return lock;
+#else
+    return -1;
+#endif
+}
 
 #ifndef _WIN32  // nat mode does not support in windows platform
 // copied from shadowsocks-libev udpreplay.c

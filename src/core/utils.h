@@ -412,4 +412,5 @@ boost::asio::ip::udp::endpoint make_udp_endpoint_safe(const std::string& address
 bool prepare_nat_udp_bind(int fd, bool is_ipv4, bool recv_ttl);
 bool prepare_nat_udp_target_bind(int fd, bool is_ipv4, const boost::asio::ip::udp::endpoint& udp_target_endpoint, int buf_size);
 
+int get_file_lock(const char* filename);
 #endif  //_TROJAN_UTILS_H_
