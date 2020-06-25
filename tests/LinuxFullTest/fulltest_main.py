@@ -43,7 +43,7 @@ binary_path = "..\\..\\win32-build\\Release\\trojan.exe"
 
 def get_cooldown_rss_limit():
     if is_macos_system():
-        return 20 * (1024)
+        return 25 * (1024)
     else:
         return 30 * (1024)
 
