@@ -29,6 +29,10 @@
 #include <jni.h>
 #endif //__ANDROID__
 
+#ifndef _WIN32
+#include <sys/file.h>
+#endif //_WIN32
+
 #include "log.h"
 #include "core/service.h"
 

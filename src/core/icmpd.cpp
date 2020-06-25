@@ -22,10 +22,6 @@
 #include "icmpd.h"
 
 
-#ifndef _WIN32
-#include <sys/file.h>
-#endif //_WIN32
-
 #include <iostream>
 #include <stdexcept>
 
