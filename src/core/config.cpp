@@ -67,6 +67,10 @@ const static uint16_t default_tun_mtu = 1500;
 const static int default_tun_fd = -1;
 
 const static uint16_t default_dns_port = 53;
+const static int default_dns_udp_timeout = 5;
+const static int default_dns_udp_recv_buf = 512 * 4;
+const static int default_dns_udp_socket_buf = -1;
+
 
 void Config::load(const string &filename) {
     ptree tree;
@@ -211,19 +215,39 @@ void Config::populate(const ptree &tree) {
 
     dns.enabled = tree.get("dns.enabled", false);
     dns.port = tree.get("dns.port",default_dns_port);
+    dns.udp_timeout = tree.get("dns.dns_udp_timeout", default_dns_udp_timeout);
+    dns.udp_recv_buf = tree.get("dns.udp_recv_buf", default_dns_udp_recv_buf);
+    dns.udp_socket_buf = tree.get("dns.udp_socket_buf", default_dns_udp_socket_buf);
     dns.gfwlist = tree.get("dns.gfwlist",string());
+    dns.enable_cached = tree.get("dns.enable_cached", false); 
+    dns.enable_ping_test = tree.get("dns.enable_ping_test", false);
     if(dns.enabled){
         if(!dns.gfwlist.empty()){
-            ifstream file("main.cpp");
+            ifstream file(dns.gfwlist);
             if(file){
+
+                size_t total_count = 0;
                 for(string line; std::getline(file, line);){
+                    line.erase(std::remove(line.begin(), line.end(), ' '), line.end());
                     if(!line.empty()){
-                        dns._gfwlist.emplace_back(line);
+                        total_count++;
+                        auto it = dns._gfwlist.find(line.size());
+                        if(it != dns._gfwlist.end()){
+                            it->second.emplace_back(line);
+                        }else{
+                            vector<string> list;
+                            list.emplace_back(line);
+                            dns._gfwlist.emplace(line.size(), list);
+                        }
                     }
                 }
+
                 if(dns._gfwlist.empty()){
                     dns.enabled = false;
                     _log_with_date_time("[dns] '" + dns.gfwlist + "' is empty!", Log::ERROR);
+                }else{
+                    _log_with_date_time("[dns] '" + dns.gfwlist + "' loaded "+to_string(total_count) + 
+                        " domains in " + to_string(dns._gfwlist.size()) + " groups", Log::WARN);
                 }
             }else{
                 dns.enabled = false;
@@ -235,22 +259,26 @@ void Config::populate(const ptree &tree) {
         }
 
         if(dns.enabled){
-            for (const auto &item : tree.get_child("dns.up_dns_server")){
-                dns.up_dns_server.emplace_back(item.second.get_value<string>());
+            if(tree.get_child_optional("dns.up_dns_server")){
+                for (const auto &item : tree.get_child("dns.up_dns_server")){
+                    dns.up_dns_server.emplace_back(item.second.get_value<string>());
+                }
             }
 
             if(dns.up_dns_server.empty()){
-                _log_with_date_time("[dns] up_dns_server is empty filled by default up stream server!", Log::WARN);
+                _log_with_date_time("[dns] up_dns_server is empty, filled by default up stream server!", Log::WARN);
                 dns.up_dns_server.emplace_back("119.29.29.29");
                 dns.up_dns_server.emplace_back("223.5.5.5");
             }
 
-            for (const auto &item : tree.get_child("dns.up_gfw_dns_server")){
-                dns.up_gfw_dns_server.emplace_back(item.second.get_value<string>());
+            if(tree.get_child_optional("dns.up_gfw_dns_server")){
+                for (const auto &item : tree.get_child("dns.up_gfw_dns_server")){
+                    dns.up_gfw_dns_server.emplace_back(item.second.get_value<string>());
+                }
             }
 
             if(dns.up_gfw_dns_server.empty()){
-                _log_with_date_time("[dns] up_gfw_dns_server is empty filled by default up stream server!", Log::WARN);
+                _log_with_date_time("[dns] up_gfw_dns_server is empty, filled by default up stream server!", Log::WARN);
                 dns.up_gfw_dns_server.emplace_back("8.8.8.8");
             }
         }

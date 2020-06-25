@@ -49,8 +49,6 @@ tcp::socket& ServerSession::accept_socket() {
 
 void ServerSession::start() {
     
-    set_start_time(time(nullptr));
-
     if(!get_pipeline_component().is_using_pipeline()){
         boost::system::error_code ec;
         set_in_endpoint(in_socket.next_layer().remote_endpoint(ec));
@@ -64,7 +62,7 @@ void ServerSession::start() {
             if (error) {
                 _log_with_endpoint(get_in_endpoint(), "SSL handshake failed: " + error.message(), Log::ERROR);
                 if (error.message() == "http request" && plain_http_response.empty()) {
-                    inc_recv_len(plain_http_response.length());
+                    get_stat().inc_recv_len(plain_http_response.length());
                     boost::asio::async_write(accept_socket(), boost::asio::buffer(plain_http_response), [this, self](const boost::system::error_code, size_t) {
                         output_debug_info();
                         destroy();
@@ -245,11 +243,11 @@ void ServerSession::in_recv(const string_view &data, int ack_count) {
             // pipeline session will call this in_recv directly so that the HANDSHAKE status will remain for a while
             streambuf_append(out_write_buf, data);
 
-            if(get_sent_len() == 0){
+            if(get_stat().get_sent_len() == 0){
                 output_debug_info();
-                _log_with_endpoint(get_in_endpoint(), "session_id: " + to_string(get_session_id()) + "inc_sent_len from 0, size == " + to_string(data.length()), Log::INFO);
+                _log_with_endpoint(get_in_endpoint(), "session_id: " + to_string(get_session_id()) + "get_stat().inc_sent_len from 0, size == " + to_string(data.length()), Log::INFO);
             }
-            inc_sent_len(data.length());
+            get_stat().inc_sent_len(data.length());
             return;
         }
 
@@ -318,11 +316,11 @@ void ServerSession::in_recv(const string_view &data, int ack_count) {
             streambuf_append(out_write_buf, data);
         }
         
-        if(get_sent_len() == 0){
+        if(get_stat().get_sent_len() == 0){
             output_debug_info();
-            _log_with_endpoint(get_in_endpoint(), "session_id: " + to_string(get_session_id()) + "inc_sent_len from 0, size == " + to_string(out_write_buf.size()), Log::INFO);
+            _log_with_endpoint(get_in_endpoint(), "session_id: " + to_string(get_session_id()) + "get_stat().inc_sent_len from 0, size == " + to_string(out_write_buf.size()), Log::INFO);
         }
-        inc_sent_len(out_write_buf.size());
+        get_stat().inc_sent_len(out_write_buf.size());
         has_queried_out = true;
 
         auto self = shared_from_this();
@@ -337,11 +335,11 @@ void ServerSession::in_recv(const string_view &data, int ack_count) {
         });
 
     } else if (status == FORWARD) {
-        if(get_sent_len() == 0){
+        if(get_stat().get_sent_len() == 0){
             output_debug_info();
-            _log_with_endpoint(get_in_endpoint(), "session_id: " + to_string(get_session_id()) + "inc_sent_len from 0, size == " + to_string(data.length()), Log::INFO);
+            _log_with_endpoint(get_in_endpoint(), "session_id: " + to_string(get_session_id()) + "get_stat().inc_sent_len from 0, size == " + to_string(data.length()), Log::INFO);
         }
-        inc_sent_len(data.length());
+        get_stat().inc_sent_len(data.length());
         out_async_write(data, ack_count);
     } else if (status == UDP_FORWARD) {
         streambuf_append(udp_data_buf, data);
@@ -361,7 +359,7 @@ void ServerSession::out_recv(const string_view &data) {
     _log_with_date_time_DEBUG("ServerSession::out_recv session_id: " + to_string(get_session_id()) + " length: " + to_string(data.length()) + " checksum: " + to_string(get_checksum(data)));
     _write_data_to_file_DEBUG(get_session_id(), "ServerSession_out_recv", data);
     if (status == FORWARD) {
-        inc_recv_len(data.length());
+        get_stat().inc_recv_len(data.length());
         in_async_write(data);
     }
 }
@@ -377,7 +375,7 @@ void ServerSession::out_udp_recv(const string_view &data, const udp::endpoint &e
         udp_timer_async_wait();
         size_t length = data.length();
         _log_with_endpoint(udp_associate_endpoint, "session_id: " + to_string(get_session_id()) + " received a UDP packet of length " + to_string(length) + " bytes from " + endpoint.address().to_string() + ':' + to_string(endpoint.port()));
-        inc_recv_len(length);
+        get_stat().inc_recv_len(length);
         out_write_buf.consume(out_write_buf.size());
         in_async_write(streambuf_to_string_view(UDPPacket::generate(out_write_buf, endpoint, data)));
     }
@@ -415,7 +413,12 @@ void ServerSession::out_udp_sent() {
                     return;
                 }
                 set_udp_send_recv_buf((int)udp_socket.native_handle(), get_config().get_udp_socket_buf());
-                udp_socket.bind(udp::endpoint(protocol, 0));
+                udp_socket.bind(udp::endpoint(protocol, 0), ec);
+                if(ec){
+                    output_debug_info_ec(ec);
+                    destroy();
+                    return;  
+                }
 
                 _log_with_endpoint(udp_associate_endpoint, "session_id: " + to_string(get_session_id()) + 
                     " open UDP socket " + udp_socket.local_endpoint().address().to_string() + ':' + to_string(udp_socket.local_endpoint().port()) + " for relay", Log::INFO);
@@ -423,7 +426,7 @@ void ServerSession::out_udp_sent() {
                 out_udp_async_read();
             }
 
-            inc_sent_len(packet.length);
+            get_stat().inc_sent_len(packet.length);
             _log_with_endpoint(udp_associate_endpoint, "session_id: " + to_string(get_session_id()) + " sent a UDP packet of length " + to_string(packet.length) + 
                 " bytes to " + packet.address.address + ':' + to_string(packet.address.port));
             
@@ -495,12 +498,11 @@ void ServerSession::destroy(bool pipeline_call /*= false*/) {
     }
     status = DESTROY;    
     
-    _log_with_endpoint(get_in_endpoint(), (is_udp_forward_session() ? "[udp] session_id: " : "session_id: ") + to_string(get_session_id()) + 
-        " disconnected, " + to_string(get_recv_len()) + " bytes received, " + to_string(get_sent_len()) + 
-        " bytes sent, lasted for " + to_string(time(nullptr) - get_start_time()) + " seconds", Log::INFO);
+    _log_with_endpoint(get_in_endpoint(), (is_udp_forward_session() ? "[udp] session_id: " : "session_id: ") + 
+        to_string(get_session_id()) + " disconnected, " + get_stat().to_string(), Log::INFO);
 
     if (auth && !auth_password.empty()) {
-        auth->record(auth_password, get_recv_len(), get_sent_len());
+        auth->record(auth_password, get_stat().get_recv_len(), get_stat().get_sent_len());
     }
     boost::system::error_code ec;
     get_resolver().cancel();

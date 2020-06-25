@@ -59,11 +59,11 @@ void NATSession::start() {
 
 void NATSession::in_recv(const string_view &data) {
     if (get_status() == CONNECT) {
-        inc_sent_len(data.length());
+        get_stat().inc_sent_len(data.length());
         set_first_packet_recv(true);
         streambuf_append(get_out_write_buf(), data);
     } else if (get_status() == FORWARD) {
-        inc_sent_len(data.length());
+        get_stat().inc_sent_len(data.length());
         out_async_write(data);
     }
 }

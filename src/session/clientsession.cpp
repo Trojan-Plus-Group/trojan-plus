@@ -52,7 +52,7 @@ tcp::socket& ClientSession::accept_socket() {
 
 bool ClientSession::prepare_session(){
     boost::system::error_code ec;
-    set_start_time(time(nullptr));
+
     set_in_endpoint(in_socket.remote_endpoint(ec));
     if (ec) {
         _log_with_date_time("cannot get get_in_endpoint() in prepare_session", Log::FATAL);
@@ -355,13 +355,13 @@ void ClientSession::in_recv(const string_view &data) {
             break;
         }
         case CONNECT: {
-            inc_sent_len(data.length());
+            get_stat().inc_sent_len(data.length());
             first_packet_recv = true;
             streambuf_append(out_write_buf, data);
             break;
         }
         case FORWARD: {
-            inc_sent_len(data.length());
+            get_stat().inc_sent_len(data.length());
             out_async_write(data);
             break;
         }
@@ -431,7 +431,7 @@ void ClientSession::out_recv(const string_view &data, int ack_count) {
     _write_data_to_file_DEBUG("ClientSession::out_recv session_id: " + to_string(get_session_id()) + " length: " + to_string(data.length()) + " checksum: " + to_string(get_checksum(data)));
     _write_data_to_file_DEBUG(get_session_id(), "ClientSession_out_recv", data);
     if (status == FORWARD) {
-        inc_recv_len(data.length());
+        get_stat().inc_recv_len(data.length());
         in_async_write(data, ack_count);
     } else if (status == UDP_FORWARD) {
         streambuf_append(udp_data_buf, data);
@@ -467,10 +467,11 @@ void ClientSession::udp_recv(const string_view &data, const udp::endpoint&) {
     udp_timer_async_wait();
 
     size_t length = data.length() - 3 - address_len;
-    inc_sent_len(length);
+    get_stat().inc_sent_len(length);
 
-    _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(get_session_id()) + " sent a UDP packet of length " + to_string(length) + 
-        " bytes to " + address.address + ':' + to_string(address.port) + " get_sent_len(): " + to_string(get_sent_len()));
+    _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(get_session_id()) + 
+        " sent a UDP packet of length " + to_string(length) + 
+        " bytes to " + address.address + ':' + to_string(address.port));
 
     if (status == CONNECT) {
         first_packet_recv = true;
@@ -530,7 +531,7 @@ void ClientSession::udp_sent() {
         streambuf_append(udp_send_buf, udp_data_buf, 0, address_len);
         streambuf_append(udp_send_buf, packet.payload);
         
-        inc_recv_len(packet.length);
+        get_stat().inc_recv_len(packet.length);
         udp_async_write(streambuf_to_string_view(udp_send_buf), udp_recv_endpoint);
 
         udp_data_buf.consume(packet_len);
@@ -543,9 +544,8 @@ void ClientSession::destroy(bool pipeline_call /*= false*/) {
     }
     status = DESTROY;
 
-    _log_with_endpoint(get_in_endpoint(), "session_id: " + to_string(get_session_id()) + " disconnected, " + 
-        to_string(get_recv_len()) + " bytes received, " + to_string(get_sent_len()) + " bytes sent, lasted for " + 
-        to_string(time(nullptr) - get_start_time()) + " seconds", Log::INFO);
+    _log_with_endpoint(get_in_endpoint(), "session_id: " + to_string(get_session_id()) + 
+        " disconnected, " + get_stat().to_string(), Log::INFO);
 
     boost::system::error_code ec;
     get_resolver().cancel();

@@ -36,12 +36,14 @@ using namespace boost::asio::ip;
 using namespace boost::asio::ssl;
 
 UDPForwardSession::UDPForwardSession(Service* _service, const Config& config, context &ssl_context, 
-    const udp::endpoint &endpoint,const std::pair<std::string, uint16_t>& targetdst, UDPWrite in_write) :
+    const udp::endpoint &endpoint,const std::pair<std::string, uint16_t>& targetdst, UDPWriter in_write, 
+    bool nat, bool dns) :
     SocketSession(_service, config),
     status(CONNECT),
     in_write(move(in_write)),
     out_socket(_service->get_io_context(), ssl_context),
-    udp_target_socket(_service->get_io_context()){
+    udp_target_socket(_service->get_io_context()),
+    is_nat(nat),is_dns(dns){
 
     udp_recv_endpoint = endpoint;
     out_udp_endpoint = udp::endpoint(boost::asio::ip::make_address(targetdst.first), targetdst.second);    
@@ -54,6 +56,10 @@ UDPForwardSession::~UDPForwardSession(){
     get_pipeline_component().free_session_id();
 }
 
+int UDPForwardSession::get_udp_timer_timeout_val()const{
+    return is_dns ? get_config().get_dns().udp_timeout : SocketSession::get_udp_timer_timeout_val();
+}
+
 tcp::socket& UDPForwardSession::accept_socket() {
     throw logic_error("accept_socket does not exist in UDPForwardSession");
 }
@@ -63,11 +69,10 @@ void UDPForwardSession::start(){
 
 void UDPForwardSession::start_udp(const std::string_view& data) {
     udp_timer_async_wait();
-    set_start_time(time(nullptr));
 
     auto self = shared_from_this();
     auto cb = [this, self](){
-        if(get_config().get_run_type() == Config::NAT){
+        if(is_nat){
             udp_target_socket.open(out_udp_endpoint.protocol());
             bool is_ipv4 = out_udp_endpoint.protocol().family() == boost::asio::ip::tcp::v6().family();
             if (prepare_nat_udp_target_bind((int)udp_target_socket.native_handle(), is_ipv4, out_udp_endpoint, get_config().get_udp_socket_buf())) {
@@ -163,12 +168,12 @@ void UDPForwardSession::in_recv(const string_view &data) {
     udp_timer_async_wait();
     
     size_t length = data.length();
-    inc_sent_len(length);
+    get_stat().inc_sent_len(length);
 
     _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(get_session_id()) + 
         " sent a UDP packet of length " + to_string(length) + " bytes to " + 
         out_udp_endpoint.address().to_string() + ':' + to_string(out_udp_endpoint.port()) + 
-        " sent_len: " + to_string(get_sent_len()));
+        " sent_len: " + to_string(get_stat().get_sent_len()));
 
     UDPPacket::generate(out_write_buf, out_udp_endpoint.address().to_string(), out_udp_endpoint.port(), data);
     if (status == FORWARD) {
@@ -196,7 +201,7 @@ void UDPForwardSession::out_recv(const string_view &data) {
             }
             _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(get_session_id()) + " received a UDP packet of length " + to_string(packet.length) + " bytes from " + packet.address.address + ':' + to_string(packet.address.port));
             
-            if(get_config().get_run_type() == Config::NAT){
+            if(is_nat){
                 boost::system::error_code ec;
                 udp_target_socket.send_to(boost::asio::buffer(packet.payload.data(), packet.payload.length()), udp_recv_endpoint, 0 , ec);
                 if (ec == boost::asio::error::no_permission) {
@@ -211,7 +216,7 @@ void UDPForwardSession::out_recv(const string_view &data) {
             }
 
             udp_data_buf.consume(packet_len);
-            inc_recv_len(packet.length);          
+            get_stat().inc_recv_len(packet.length);          
         }
         out_async_read();
     }
@@ -234,9 +239,8 @@ void UDPForwardSession::destroy(bool pipeline_call /*= false*/) {
     }
     status = DESTROY;
 
-    _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(get_session_id()) + " disconnected, " + 
-        to_string(get_recv_len()) + " bytes received, " + to_string(get_sent_len()) + " bytes sent, lasted for " + 
-        to_string(time(nullptr) - get_start_time()) + " seconds", Log::INFO);
+    _log_with_endpoint(udp_recv_endpoint, "session_id: " + to_string(get_session_id()) + 
+        " disconnected, " + get_stat().to_string(), Log::INFO);
 
     get_resolver().cancel();
     

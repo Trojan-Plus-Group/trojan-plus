@@ -33,7 +33,7 @@
 class Service;
 class UDPForwardSession : public SocketSession {
 public:
-    using UDPWrite = std::function<void(const boost::asio::ip::udp::endpoint&, const std::string_view&)>;
+    using UDPWriter = std::function<void(const boost::asio::ip::udp::endpoint&, const std::string_view&)>;
 private:
     enum Status {
         CONNECT,
@@ -42,7 +42,7 @@ private:
         DESTROY
     } status;
     
-    UDPWrite in_write;
+    UDPWriter in_write;
 
     ReadBufWithGuard out_read_buf;
     boost::asio::streambuf out_write_buf;
@@ -53,15 +53,23 @@ private:
     boost::asio::ip::udp::endpoint udp_recv_endpoint;
     boost::asio::ip::udp::endpoint out_udp_endpoint;
 
+    bool is_nat;
+    bool is_dns;
+
     void out_recv(const std::string_view &data);
     void in_recv(const std::string_view &data);
     void out_async_read();
     void out_async_write(const std::string_view &data);
     
     void out_sent();
+
+protected:
+    int get_udp_timer_timeout_val()const override;
 public:
     UDPForwardSession(Service* _service, const Config& config, boost::asio::ssl::context &ssl_context, 
-        const boost::asio::ip::udp::endpoint &endpoint, const std::pair<std::string, uint16_t>& targetdst, UDPWrite in_write);
+        const boost::asio::ip::udp::endpoint &endpoint, const std::pair<std::string, uint16_t>& targetdst, 
+        UDPWriter in_write, bool nat, bool dns);
+        
     ~UDPForwardSession();
     
     boost::asio::ip::tcp::socket& accept_socket() override;

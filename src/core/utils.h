@@ -33,6 +33,7 @@
 #include <vector>
 #include <string>
 #include <exception>
+#include <ctime>
 
 #include "log.h"
 
@@ -109,6 +110,8 @@ typedef boost::asio::detail::socket_option::boolean<SOL_SOCKET, SO_REUSEPORT> re
 #define _define_getter_const(type, name) \
     [[nodiscard]] inline type get_##name() const {return name;}
 
+
+
 const static int half_byte_shift_4_bits = 4;
 const static int one_byte_shift_8_bits = 8;
 const static int two_bytes_shift_16_bits = 16;
@@ -140,6 +143,34 @@ using AsyncWriter = std::function<void(const boost::asio::streambuf& data, SentH
 using ConnectionFunc = std::function<bool()> ;
 using ReadHandler = std::function<void(const std::string_view& data, size_t push_count)> ;
 using PushDataHandler = std::function<void(boost::asio::streambuf& buf)> ;
+
+
+// please don't return uint16_t for the performance, maybe byte align problem
+[[nodiscard]] 
+static inline size_t parse_uint16(int start_pos, const std::string_view& data){
+    return size_t(uint8_t(data[0 + start_pos])) << one_byte_shift_8_bits | 
+           size_t(uint8_t(data[1 + start_pos]));
+}
+
+static inline void generate_uint16(boost::asio::streambuf& data, uint16_t value){
+    streambuf_append(data, char(value >> one_byte_shift_8_bits & one_byte_mask_0xFF));
+    streambuf_append(data, char(value & one_byte_mask_0xFF));
+}
+
+[[nodiscard]]
+static inline uint32_t parse_uint32(int start_pos, const std::string_view& data){
+    return uint32_t(uint8_t(data[0 + start_pos])) << three_bytes_shift_24_bits | 
+           uint32_t(uint8_t(data[1 + start_pos])) << two_bytes_shift_16_bits | 
+           uint32_t(uint8_t(data[2 + start_pos])) << one_byte_shift_8_bits | 
+           uint32_t(uint8_t(data[3 + start_pos]));
+}
+
+static inline void generate_uint32(boost::asio::streambuf& data, uint32_t value){
+    streambuf_append(data, char(value >> three_bytes_shift_24_bits));
+    streambuf_append(data, char(value >> two_bytes_shift_16_bits & one_byte_mask_0xFF));
+    streambuf_append(data, char(value >> one_byte_shift_8_bits & one_byte_mask_0xFF));
+    streambuf_append(data, char(value & one_byte_mask_0xFF));
+}
 
 class SendDataCache{
     std::vector<SentHandler> handler_queue;
@@ -282,13 +313,34 @@ public:
     inline void begin_read(const char* __file__, int __line__){
         if(read_buf_guard){
             throw std::logic_error("!! guard_read_buf failed! Cannot enter this function before _guard_read_buf_end  !! " + 
-                std::string(__file__) + std::to_string(__line__));
+                std::string(__file__) + ":" + std::to_string(__line__));
         } 
         read_buf_guard = true;
     }
 
     inline void end_read(){
         read_buf_guard = false;
+    }
+};
+
+class bytes_stat{
+
+    uint64_t recv_len{0};
+    uint64_t sent_len{0};
+    time_t start_time{ time(nullptr) };
+
+public:
+
+    uint64_t inc_recv_len(uint64_t inc){ recv_len += inc; return recv_len;}
+    uint64_t inc_sent_len(uint64_t inc){ sent_len += inc; return sent_len;}
+
+    _define_getter_const(uint64_t, recv_len)
+    _define_getter_const(uint64_t, sent_len)
+
+    [[nodiscard]]
+    inline std::string to_string()const{
+        return std::to_string(get_recv_len()) + " bytes received, " + std::to_string(get_sent_len()) + 
+            " bytes sent, lasted for " + std::to_string(time(nullptr) - start_time) + " seconds";
     }
 };
 
@@ -404,6 +456,23 @@ void shutdown_ssl_socket(ThisPtr this_ptr, boost::asio::ssl::stream<boost::asio:
     }
 }
 
+
+template<class T>
+bool clear_weak_ptr_list(std::list<std::weak_ptr<T>>& l){
+    bool changed = false;
+    auto it = l.begin();
+    while(it != l.end()){
+        if(it->expired()){
+            it = l.erase(it);
+            changed = true;
+        }else{
+            it++;
+        }
+    }
+
+    return changed;
+}
+
 std::pair<std::string, uint16_t> recv_target_endpoint(int _native_fd);
 std::pair<std::string, uint16_t> recv_tproxy_udp_msg(int fd, boost::asio::ip::udp::endpoint& target_endpoint, char* buf, int& buf_len, int& ttl);
 bool set_udp_send_recv_buf(int fd, int buf_size);
@@ -413,4 +482,5 @@ bool prepare_nat_udp_bind(int fd, bool is_ipv4, bool recv_ttl);
 bool prepare_nat_udp_target_bind(int fd, bool is_ipv4, const boost::asio::ip::udp::endpoint& udp_target_endpoint, int buf_size);
 
 int get_file_lock(const char* filename);
+void close_file_lock(int& file_fd);
 #endif  //_TROJAN_UTILS_H_

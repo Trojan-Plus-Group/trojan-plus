@@ -61,7 +61,7 @@ TUNSession::TUNSession(Service* _service, bool _is_udp) :
                 destroy();
             }
 
-            inc_sent_len(length);
+            get_stat().inc_sent_len(length);
 
             handler(error);
         });
@@ -84,7 +84,6 @@ udp::endpoint TUNSession::get_redirect_local_remote_addr(bool output_log /*= fal
 
 void TUNSession::start(){
     reset_udp_timeout();
-    set_start_time(time(nullptr));
     auto self = shared_from_this();
     auto cb = [this, self](){
         m_connected  = true;
@@ -180,9 +179,8 @@ void TUNSession::destroy(bool pipeline_call){
     }
     m_destroyed = true;
 
-    auto note_str = "TUNSession session_id: " + to_string(get_session_id()) + " disconnected, " + 
-        to_string(get_recv_len()) + " bytes received, " + to_string(get_sent_len()) + " bytes sent, lasted for " + 
-        to_string(time(nullptr) - get_start_time()) + " seconds";
+    auto note_str = "TUNSession session_id: " + to_string(get_session_id()) + 
+        " disconnected, " + get_stat().to_string();
 
     if(is_udp_forward_session()){
         _log_with_endpoint(m_local_addr_udp, note_str, Log::INFO);
@@ -229,7 +227,7 @@ void TUNSession::out_async_send_impl(const std::string_view& data_to_send, SentH
                 output_debug_info_ec(error);
                 destroy();
             }else{
-                inc_sent_len(data_sending_len);
+                get_stat().inc_sent_len(data_sending_len);
                 
                 if(!is_udp_forward_session()){
                     if(!get_pipeline_component().pre_call_ack_func()){
@@ -360,7 +358,7 @@ size_t TUNSession::parse_udp_packet_data(const string_view& data){
 void TUNSession::out_async_read() {
     if(m_service->is_use_pipeline()){    
         get_pipeline_component().get_pipeline_data_cache().async_read([this](const string_view &data, int ack_count) {
-            inc_recv_len(data.length());
+            get_stat().inc_recv_len(data.length());
 
             if(is_udp_forward_session()){
                 
@@ -402,7 +400,7 @@ void TUNSession::out_async_read() {
                 return;
             }
             m_recv_buf.commit(length);
-            inc_recv_len(length);
+            get_stat().inc_recv_len(length);
 
             if(is_udp_forward_session()){
                 reset_udp_timeout();    

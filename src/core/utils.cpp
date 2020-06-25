@@ -302,6 +302,15 @@ int get_file_lock(const char* filename){
 #endif
 }
 
+void close_file_lock(int& file_fd){
+#ifndef _WIN32
+    if(file_fd != -1){
+        close(file_fd);
+        file_fd = -1;
+    }
+#endif
+}
+
 #ifndef _WIN32  // nat mode does not support in windows platform
 // copied from shadowsocks-libev udpreplay.c
 static int get_dstaddr(struct msghdr *msg, struct sockaddr_storage *dstaddr) {

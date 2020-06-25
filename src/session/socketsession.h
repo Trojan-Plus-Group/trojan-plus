@@ -41,7 +41,9 @@ class SocketSession : public Session {
     boost::asio::ip::tcp::resolver resolver;
     boost::asio::ip::tcp::endpoint in_endpoint;
 
-protected:  
+protected: 
+
+    virtual int get_udp_timer_timeout_val() const;
     void udp_timer_async_wait();
     void udp_timer_cancel();
 

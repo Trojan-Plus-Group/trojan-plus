@@ -39,6 +39,7 @@
 #include "session/udpforwardsession.h"
 
 class TUNDev;
+class DNSServer;
 class Pipeline;
 class icmpd;
 class Service {
@@ -65,6 +66,7 @@ private:
     std::shared_ptr<icmpd> icmp_processor;
     void prepare_icmpd(Config& config, bool is_ipv4);
 
+    std::shared_ptr<DNSServer> m_dns_server;
     std::shared_ptr<TUNDev> m_tundev;
     SendingDataAllocator m_sending_data_allocator;
 

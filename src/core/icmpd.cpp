@@ -37,7 +37,7 @@ using namespace trojan;
 using namespace std;
 using namespace boost::asio::ip;
 
-int icmpd::s_icmpd_file_lock = 0;
+int icmpd::s_icmpd_file_lock = -1;
 bool icmpd::get_icmpd_lock() {
     s_icmpd_file_lock = get_file_lock("./trojan_icmpd_lock");
     return s_icmpd_file_lock != -1;
@@ -69,12 +69,7 @@ void icmpd::add_transfer_table(std::string&& hash, std::shared_ptr<IcmpSentData>
 }
 
 icmpd::~icmpd(){
-#ifndef _WIN32
-    if (s_icmpd_file_lock != 0) {
-        close(s_icmpd_file_lock);
-        s_icmpd_file_lock = 0;
-    }
-#endif // _WIN32
+    close_file_lock(s_icmpd_file_lock);
 }
 
 void icmpd::check_transfer_table_timeout() {

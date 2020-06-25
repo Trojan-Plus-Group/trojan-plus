@@ -23,38 +23,10 @@
 
 #include "pipelinerequest.h"
 #include "core/log.h"
+#include "core/utils.h"
 #include "session/pipelinecomponent.h"
 
 using namespace std;
-
-// please don't return uint16_t for the performance, maybe byte align problem
-static 
-size_t parse_uint16(int start_pos, const string_view& data){
-    return size_t(uint8_t(data[0 + start_pos])) << one_byte_shift_8_bits | 
-           size_t(uint8_t(data[1 + start_pos]));
-}
-
-static 
-void generate_uint16(boost::asio::streambuf& data, uint16_t value){
-    streambuf_append(data, char(value >> one_byte_shift_8_bits & one_byte_mask_0xFF));
-    streambuf_append(data, char(value & one_byte_mask_0xFF));
-}
-
-static 
-uint32_t parse_uint32(int start_pos, const string_view& data){
-    return uint32_t(uint8_t(data[0 + start_pos])) << three_bytes_shift_24_bits | 
-           uint32_t(uint8_t(data[1 + start_pos])) << two_bytes_shift_16_bits | 
-           uint32_t(uint8_t(data[2 + start_pos])) << one_byte_shift_8_bits | 
-           uint32_t(uint8_t(data[3 + start_pos]));
-}
-
-static 
-void generate_uint32(boost::asio::streambuf& data, uint32_t value){
-    streambuf_append(data, char(value >> three_bytes_shift_24_bits));
-    streambuf_append(data, char(value >> two_bytes_shift_16_bits & one_byte_mask_0xFF));
-    streambuf_append(data, char(value >> one_byte_shift_8_bits & one_byte_mask_0xFF));
-    streambuf_append(data, char(value & one_byte_mask_0xFF));
-}
 
 int PipelineRequest::parse(const string_view &data){
     /*

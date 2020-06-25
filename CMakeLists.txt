@@ -148,6 +148,7 @@ set(TROJAN_SOURCE_FILES
     src/proto/trojanrequest.cpp
     src/proto/udppacket.cpp
     src/proto/pipelinerequest.cpp
+    src/proto/dns_header.cpp
     src/session/clientsession.cpp
     src/session/forwardsession.cpp
     src/session/natsession.cpp
@@ -163,6 +164,8 @@ set(TROJAN_SOURCE_FILES
     src/tun/lwip_tcp_client.cpp
     src/tun/tundev.cpp
     src/tun/tunsession.cpp
+    src/tun/dnsserver.cpp
+    src/tun/udplocalforwarder.cpp
 )
 
 if(ANDROID)

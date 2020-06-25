@@ -25,6 +25,7 @@
 
 #include <cstdint>
 #include <map>
+#include <unordered_map>
 #include <boost/property_tree/ptree.hpp>
 #include <boost/asio/ssl.hpp>
 #include "log.h"
@@ -104,8 +105,13 @@ public:
     using DNS = struct{
         bool enabled;
         uint16_t port;
+        int udp_timeout;
+        int udp_recv_buf;
+        int udp_socket_buf;
         std::string gfwlist;
-        std::vector<std::string> _gfwlist;
+        bool enable_cached;
+        bool enable_ping_test;
+        std::unordered_map<size_t, std::vector<std::string>> _gfwlist;
         std::vector<std::string> up_dns_server;
         std::vector<std::string> up_gfw_dns_server;
     };

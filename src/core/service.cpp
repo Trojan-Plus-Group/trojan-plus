@@ -36,6 +36,7 @@
 #include "session/serversession.h"
 #include "utils.h"
 
+#include "tun/dnsserver.h"
 #include "tun/tundev.h"
 
 using namespace std;
@@ -131,6 +132,17 @@ Service::Service(Config &config, bool test) :
 #endif // ENABLE_MYSQL
         }
     }
+
+    if(!test && config.get_dns().enabled){
+        if(DNSServer::get_dns_lock()){
+            m_dns_server = make_shared<DNSServer>(this);
+            if(m_dns_server->start()){
+                _log_with_date_time("[dns] start local dns server at " + to_string(config.get_dns().port), Log::WARN);
+            }
+        }else{
+            _log_with_date_time("[dns] dns server has been created in other process.", Log::WARN);
+        }
+    }
 }
 
 void Service::prepare_icmpd(Config& config, bool is_ipv4){
@@ -182,6 +194,7 @@ void Service::run() {
 
 void Service::stop() {
     m_tundev = nullptr;
+    m_dns_server = nullptr;
     boost::system::error_code ec;
     socket_acceptor.cancel(ec);
     if (udp_socket.is_open()) {
@@ -194,18 +207,8 @@ void Service::stop() {
 void Service::prepare_pipelines(){
     if(config.get_run_type() != Config::SERVER && config.get_experimental().pipeline_num > 0){
 
-        bool changed = false;
+        bool changed = clear_weak_ptr_list(pipelines);
 
-        auto it = pipelines.begin();
-        while(it != pipelines.end()){
-            if(it->expired()){
-                it = pipelines.erase(it);
-                changed = true;
-            }else{
-                ++it;
-            }
-        }
-       
         size_t curr_num = 0;
         for (const auto& p : pipelines) {
             if (p.lock()->get_config() == config) {
@@ -512,16 +515,12 @@ void Service::udp_async_read() {
         }
 
         if(targetdst.second != 0){
-            for (auto it = udp_sessions.begin(); it != udp_sessions.end();) {
-                auto next = ++it;
-                --it;
-                if (it->expired()) {
-                    udp_sessions.erase(it);
-                } else if (it->lock()->process(udp_recv_endpoint, udp_read_buf)) {
+            clear_weak_ptr_list(udp_sessions);
+            for (auto s : udp_sessions){
+                if(s.lock()->process(udp_recv_endpoint, udp_read_buf)) {
                     udp_async_read();
                     return;
                 }
-                it = next;
             }
             
             _log_with_endpoint(udp_recv_endpoint, "new UDP session");
@@ -539,7 +538,7 @@ void Service::udp_async_read() {
                 } else if (ec) {
                     throw runtime_error(ec.message());
                 }
-            });
+            }, config.get_run_type() == Config::NAT, false);
 
             auto data = get_sending_data_allocator().allocate(udp_read_buf);
             start_session(session, [this, session, data](boost::system::error_code ec){
