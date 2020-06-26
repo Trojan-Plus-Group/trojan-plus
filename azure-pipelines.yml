@@ -64,6 +64,12 @@ stages:
         set -euo pipefail
         set -v
 
+        BINARY="$PIPELINE_WORKSPACE/LinuxBinary/trojan"
+        chmod +x "$BINARY"
+
+        cd tests/LinuxFullTest/
+        sudo /usr/local/bin/python3.8 fulltest_main.py $BINARY -g -d
+
         ifconfig
         route -n
 
@@ -74,11 +80,8 @@ stages:
 
         ifconfig
         route -n
-
-        BINARY="$PIPELINE_WORKSPACE/LinuxBinary/trojan"
-        chmod +x "$BINARY"
-        cd tests/LinuxFullTest/
-        sudo /usr/local/bin/python3.8 fulltest_main.py $BINARY -g -t
+        
+        sudo /usr/local/bin/python3.8 fulltest_main.py $BINARY -t -n
       env:
         PIPELINE_WORKSPACE: $(Pipeline.Workspace)
 
@@ -93,7 +96,7 @@ stages:
         BINARY="$PIPELINE_WORKSPACE/WindowsBinary/trojan.exe"
         py -3 -m pip install PySocks psutil
         cd tests/LinuxFullTest/
-        py -3 fulltest_main.py $BINARY -g
+        py -3 fulltest_main.py $BINARY -g -n
       env:
         PIPELINE_WORKSPACE: $(Pipeline.Workspace)
 
@@ -113,7 +116,7 @@ stages:
           brew install python@3.8
         fi
         $PYTHON -m pip install PySocks psutil
-        $PYTHON fulltest_main.py $BINARY -g
+        $PYTHON fulltest_main.py $BINARY -g -n
       env:
         PIPELINE_WORKSPACE: $(Pipeline.Workspace)
 

@@ -45,11 +45,6 @@ request_host_ip = "127.0.0.1"
 client_udp_bind_port_start = fulltest_udp_proto.client_udp_bind_port_start
 
 
-def print_log(log):
-    if enable_log:
-        print_time_log(log)
-
-
 def get_url(url):
     f = urllib.request.urlopen(url, timeout=RECV_DATA_TIMEOUT)
     return f.read()
@@ -88,12 +83,12 @@ def get_file_udp(file, length, port):
 
                 return fulltest_udp_proto.compose_udp_file_data(data_arr)
             except:
-                print_log("exception occur, data recv length: " +
-                          str(recv_length) + " port: " + str(port))
+                print_time_log("exception occur, data recv length: " +
+                               str(recv_length) + " port: " + str(port))
                 traceback.print_exc(file=sys.stdout)
                 return False
     except:
-        print_log("get_file_udp [" + file + "] failed!")
+        print_time_log("get_file_udp [" + file + "] failed!")
         traceback.print_exc(file=sys.stdout)
         return False
 
@@ -118,14 +113,14 @@ def post_file_udp(file, data, port):
 
             return udp_socket.recv(UDP_SEND_PACKET_LENGTH)
     except:
-        print_log("post_file_udp [" + file + "] failed!")
+        print_time_log("post_file_udp [" + file + "] failed!")
         traceback.print_exc(file=sys.stdout)
         return 'please check traceback exceptions'
 
 
 def request_get_file(file, tcp_or_udp, index, udp_port):
     try:
-        #print_log(str(index) + (" [TCP]" if tcp_or_udp else " [UDP]") + " request GET file: " + str(file))
+        #print_time_log(str(index) + (" [TCP]" if tcp_or_udp else " [UDP]") + " request GET file: " + str(file))
         with open(compare_folder + file, "rb") as f:
             compare_txt = f.read()
 
@@ -136,8 +131,8 @@ def request_get_file(file, tcp_or_udp, index, udp_port):
                 txt = get_file_udp(file, len(compare_txt), udp_port)
 
             if txt != compare_txt:
-                print_log(str(index) + " " + file + " content is not same!!! read from disk length: " +
-                          str(len(compare_txt)) + " read from network length: " + (str(len(txt)) if type(txt) is bytes else str(txt)))
+                print_time_log(str(index) + " " + file + " content is not same!!! read from disk length: " +
+                               str(len(compare_txt)) + " read from network length: " + (str(len(txt)) if type(txt) is bytes else str(txt)))
 
                 if type(txt) is bytes and len(txt) == len(compare_txt):
                     print_time_log(txt)
@@ -146,15 +141,15 @@ def request_get_file(file, tcp_or_udp, index, udp_port):
 
         return True
     except:
-        print_log("request_get_file #" + str(index) +
-                  " [" + file + "] failed!")
+        print_time_log("request_get_file #" + str(index) +
+                       " [" + file + "] failed!")
         traceback.print_exc(file=sys.stdout)
         return False
 
 
 def request_post_file(file, tcp_or_udp, index, udp_port):
     try:
-        #print_log(str(index) + (" [TCP]" if tcp_or_udp else " [UDP]") + " request POST file: " + file)
+        #print_time_log(str(index) + (" [TCP]" if tcp_or_udp else " [UDP]") + " request POST file: " + file)
         with open(compare_folder + file, "rb") as f:
             data = f.read()
             result = None
@@ -164,15 +159,15 @@ def request_post_file(file, tcp_or_udp, index, udp_port):
                 result = post_file_udp(file, data, udp_port)
 
             if result != b"OK":
-                print_log(str(index) + " file POST FAILED! " +
-                          file + " " + str(result))
+                print_time_log(str(index) + " file POST FAILED! " +
+                               file + " " + str(result))
                 return False
 
         return True
 
     except:
-        print_log("request_post_file #" + str(index) +
-                  " [" + file + "] failed!")
+        print_time_log("request_post_file #" + str(index) +
+                       " [" + file + "] failed!")
         traceback.print_exc(file=sys.stdout)
         return False
 
@@ -221,7 +216,7 @@ def start_query(host_ip, socks_port, port, folder, log=True):
         enable_log = log
         serv_port = port
 
-        print_log("start query index file....")
+        print_time_log("start query index file....")
 
         # get the main index file
         index = get_url(request_url_prefix).decode("utf-8")
@@ -230,41 +225,41 @@ def start_query(host_ip, socks_port, port, folder, log=True):
             files.append(f)
 
         if len(files) == 0:
-            print_log("read index file get error!!")
+            print_time_log("read index file get error!!")
             return False
 
-        print_log("read index files " + str(len(files)) + " done!")
+        print_time_log("read index files " + str(len(files)) + " done!")
 
-        print_log("start query....")
+        print_time_log("start query....")
         with ThreadPoolExecutor(max_workers=PARALLEL_REQUEST_COUNT) as executor:
 
-            print_log("start query get http...")
+            print_time_log("start query get http...")
             if not compare_process(files, executor, True, True):
                 return False
-            print_log("finished!")
+            print_time_log("finished!")
 
             time.sleep(1)
 
-            print_log("start query post http...")
+            print_time_log("start query post http...")
             if not compare_process(files, executor, False, True):
                 return False
-            print_log("finish!")
+            print_time_log("finish!")
 
             time.sleep(1)
 
-            print_log("start query get udp...")
+            print_time_log("start query get udp...")
             if not compare_process(files, executor, True, False):
                 return False
-            print_log("finish!")
+            print_time_log("finish!")
 
             time.sleep(1)
 
-            print_log("start query post udp...")
+            print_time_log("start query post udp...")
             if not compare_process(files, executor, False, False):
                 return False
-            print_log("finish!!")
+            print_time_log("finish!!")
 
-        print_log("SUCC")
+        print_time_log("SUCC")
         return True
     finally:
         socket.socket = origin_socket

@@ -9,10 +9,10 @@
     "password": [
         "88888888"
     ],
-    "udp_timeout":10,
-    "udp_socket_buf":1024000,
-    "udp_forward_socket_buf":10240000,
-    "udp_recv_buf":65536,
+    "udp_timeout": 10,
+    "udp_socket_buf": 1024000,
+    "udp_forward_socket_buf": 10240000,
+    "udp_recv_buf": 65536,
     "log_level": 1,
     "ssl": {
         "verify": false,
@@ -35,17 +35,31 @@
         "reuse_port": true,
         "fast_open": false,
         "fast_open_qlen": 20,
-        "connect_time_out" : 1
+        "connect_time_out": 1
     },
-    "experimental":{
-        "pipeline_num" : 10,
-        "pipeline_ack_window" : 10
+    "experimental": {
+        "pipeline_num": 10,
+        "pipeline_ack_window": 10
     },
-    "tun":{
-        "tun_name":"tun0",
-        "net_ip":"10.0.0.2",
-        "net_mask":"255.255.255.0",
-        "mtu":1500,
-        "redirect_local":true
+    "tun": {
+        "tun_name": "tun0",
+        "net_ip": "10.0.0.2",
+        "net_mask": "255.255.255.0",
+        "mtu": 1500,
+        "redirect_local": true
+    },
+    "dns": {
+        "enabled": true,
+        "enable_cached": true,
+        "udp_timeout": 5,
+        "udp_socket_buf": 1024000,
+        "udp_recv_buf": 65536,
+        "up_dns_server": [
+            "114.114.114.114"
+        ],
+        "up_gfw_dns_server": [
+            "114.114.114.114"
+        ],
+        "gfwlist": "config/gfwlist_domain.txt"
     }
 }

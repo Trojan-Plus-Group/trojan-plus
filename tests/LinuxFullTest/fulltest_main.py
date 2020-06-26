@@ -32,6 +32,7 @@ from subprocess import Popen, PIPE
 import fulltest_gen_content
 import fulltest_server
 import fulltest_client
+import fulltest_dns
 from fulltest_utils import print_time_log, is_macos_system, is_windows_system, is_linux_system
 
 
@@ -51,12 +52,20 @@ TEST_WATING_FOR_RSS_COOLDOWN_TIME_IN_SEC = 11
 # initial var for windows
 binary_path = "..\\..\\win32-build\\Release\\trojan.exe"
 
+cmd_args = None
+
 
 def get_cooldown_rss_limit():
+    limit = 0
     if is_macos_system():
-        return 25 * (1024)
+        limit = 25 * (1024)
     else:
-        return 30 * (1024)
+        limit = 30 * (1024)
+
+    if cmd_args.dns and cmd_args.normal:
+        limit = limit + limit / 2
+
+    return limit
 
 
 def start_trojan_plus_process(config):
@@ -122,7 +131,7 @@ def get_process_rss_in_KB(process):
         return 0
 
 
-def main_stage(server_config, client_config, server_balance_config=None, is_foward=False, tun_test=False):
+def main_stage(server_config, client_config, server_balance_config=None, is_foward=False):
 
     server_balance_process = None
     if server_balance_config:
@@ -171,14 +180,20 @@ def main_stage(server_config, client_config, server_balance_config=None, is_fowa
             if not fulltest_client.start_query(LOCALHOST_IP, 0, TEST_PROXY_PORT, TEST_FILES_DIR):
                 output_log = True
                 return 1
-        elif tun_test:
+        elif cmd_args.tun:
             if not fulltest_client.start_query("188.188.188.188", 0, TEST_SERVER_PORT, TEST_FILES_DIR):
                 output_log = True
                 return 1
         else:
-            if not fulltest_client.start_query(LOCALHOST_IP, TEST_PROXY_PORT, TEST_SERVER_PORT, TEST_FILES_DIR):
-                output_log = True
-                return 1
+            if cmd_args.normal:
+                if not fulltest_client.start_query(LOCALHOST_IP, TEST_PROXY_PORT, TEST_SERVER_PORT, TEST_FILES_DIR):
+                    output_log = True
+                    return 1
+
+            if cmd_args.dns:
+                if not fulltest_dns.start_query("127.0.0.1", 3):
+                    output_log = True
+                    return 1
 
         print_time_log("server balance process RSS after testing: " +
                        "{:,}KB".format(get_process_rss_in_KB(server_balance_process)))
@@ -250,15 +265,15 @@ def prepare_client_tun_config(client_config):
             return filename
 
 
-def main(args):
-    if args.genfile:
-        size = args.genfileSize if args.genfileSize else TEST_FILES_SIZE
-        print_time_log('generating ' + str(args.genfile) +
+def main():
+    if cmd_args.genfile:
+        size = cmd_args.genfileSize if cmd_args.genfileSize else TEST_FILES_SIZE
+        print_time_log('generating ' + str(cmd_args.genfile) +
                        ' test files each ' + str(size) + ' bytes...')
-        fulltest_gen_content.gen_files(TEST_FILES_DIR, args.genfile, size)
+        fulltest_gen_content.gen_files(TEST_FILES_DIR, cmd_args.genfile, size)
 
     global binary_path
-    binary_path = os.path.realpath(args.binary)
+    binary_path = os.path.realpath(cmd_args.binary)
     print_time_log("binary_path == " + binary_path)
 
     print_time_log("start testing server...")
@@ -268,29 +283,35 @@ def main(args):
     output_log = False
     print_time_log("done!")
     try:
-        print_time_log(
-            "start trojan plus in client run_type without pipeline...")
-        if main_stage("server_config.json", "client_config.json") != 0:
-            output_log = True
-            return 1
+        if cmd_args.normal or cmd_args.dns:
+            print_time_log(
+                "start trojan plus in client run_type without pipeline...")
+            if main_stage("server_config.json", "client_config.json") != 0:
+                output_log = True
+                return 1
 
-        print_time_log("start trojan plus in client run_type in pipeline...")
-        if main_stage("server_config_pipeline.json", "client_config_pipeline.json", "server_config_pipeline_balance.json") != 0:
-            output_log = True
-            return 1
+            print_time_log(
+                "start trojan plus in client run_type in pipeline...")
+            if main_stage("server_config_pipeline.json", "client_config_pipeline.json",
+                          "server_config_pipeline_balance.json") != 0:
+                output_log = True
+                return 1
 
-        print_time_log(
-            "start trojan plus in forward run_type without pipeline...")
-        if main_stage("server_config.json", prepare_forward_config("client_config.json"), is_foward=True) != 0:
-            output_log = True
-            return 1
+            if cmd_args.normal:
+                print_time_log(
+                    "start trojan plus in forward run_type without pipeline...")
+                if main_stage("server_config.json", prepare_forward_config("client_config.json"), is_foward=True) != 0:
+                    output_log = True
+                    return 1
 
-        print_time_log("start trojan plus in forward run_type in pipeline...")
-        if main_stage("server_config_pipeline.json", prepare_forward_config("client_config_pipeline.json"), "server_config_pipeline_balance.json", is_foward=True) != 0:
-            output_log = True
-            return 1
+                print_time_log(
+                    "start trojan plus in forward run_type in pipeline...")
+                if main_stage("server_config_pipeline.json", prepare_forward_config("client_config_pipeline.json"),
+                              "server_config_pipeline_balance.json", is_foward=True, ) != 0:
+                    output_log = True
+                    return 1
 
-        if args.tun:
+        if cmd_args.tun:
             print_time_log(
                 "restart test http server to test client_tun run_type...")
             close_process(test_server_process, False)
@@ -301,13 +322,14 @@ def main(args):
 
             print_time_log(
                 "start trojan plus in client_tun run_type without pipeline...")
-            if main_stage("server_config.json", prepare_client_tun_config("client_config.json"), tun_test=True) != 0:
+            if main_stage("server_config.json", prepare_client_tun_config("client_config.json"), ) != 0:
                 output_log = True
                 return 1
 
             print_time_log(
                 "start trojan plus in client_tun run_type in pipeline...")
-            if main_stage("server_config_pipeline.json", prepare_client_tun_config("client_config_pipeline.json"), "server_config_pipeline_balance.json", tun_test=True) != 0:
+            if main_stage("server_config_pipeline.json", prepare_client_tun_config("client_config_pipeline.json"),
+                          "server_config_pipeline_balance.json", ) != 0:
                 output_log = True
                 return 1
 
@@ -326,9 +348,17 @@ if __name__ == "__main__":
                         type=int, nargs='?', const=TEST_FILES_COUNT)
     parser.add_argument("-gs", "--genfileSize", help='generating files\' size',
                         type=int, nargs='?', const=TEST_FILES_SIZE)
+    parser.add_argument("-n", "--normal", help=" whether test normal client/forward mode in or not in pipeline",
+                        action='store_true', default=False)
     parser.add_argument("-t", "--tun", help=" whether test tun device (mostly for Android)",
                         action='store_true', default=False)
     parser.add_argument("-d", "--dns", help=" whether test dns forwarding",
                         action='store_true', default=False)
 
-    exit(main(parser.parse_args()))
+    cmd_args = parser.parse_args()
+    if not cmd_args.normal and not cmd_args.dns and not cmd_args.tun:
+        print("Error: must use -n or -d or -t args\n\n")
+        parser.print_help()
+        exit(1)
+
+    exit(main())
