@@ -19,27 +19,32 @@
  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 '''
 
-import random, os, shutil
+import random
+import os
+import shutil
 import fulltest_udp_proto
+
 
 def get_random_string(length):
     RANDOM_STRING = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
     arr = [None] * length
-    for i in range(0, length) :
-        arr[i] =  RANDOM_STRING[random.randint(0, len(RANDOM_STRING) - 1)]
+    for i in range(0, length):
+        arr[i] = RANDOM_STRING[random.randint(0, len(RANDOM_STRING) - 1)]
     return "".join(arr)
+
 
 def gen_files(parent_dir, files_count, file_size):
     if file_size / fulltest_udp_proto.UDP_SEND_PACKET_LENGTH >= 256:
-        raise Exception(" gen files is too large! we need remain 1 byte for index of udp")
+        raise Exception(
+            " gen files is too large! we need remain 1 byte for index of udp")
 
-    if os.path.exists(parent_dir) :
+    if os.path.exists(parent_dir):
         shutil.rmtree(parent_dir)
 
     os.mkdir(parent_dir)
 
-    files_index=[]
-    for _ in range(0, files_count) : 
+    files_index = []
+    for _ in range(0, files_count):
         while True:
             name = (get_random_string(10) + '.txt')
             if not (name in files_index):
@@ -54,6 +59,7 @@ def gen_files(parent_dir, files_count, file_size):
         for file in files_index:
             fd.write(('' if first_line else '\n') + file)
             first_line = False
-        
+
+
 if __name__ == '__main__':
     gen_files('html', 10, 8192 * 10)

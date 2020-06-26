@@ -18,25 +18,33 @@
  You should have received a copy of the GNU General Public License
  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 '''
-import sys, datetime
+import sys
+import datetime
+
 
 def is_linux_system():
     return sys.platform == "linux" or sys.platform == "linux2"
 
+
 def is_macos_system():
     return sys.platform == "darwin"
+
 
 def is_windows_system():
     return sys.platform == "win32"
 
+
 former_print_time_log_datatime = None
-def print_time_log(log = None, end = '\n'):
+
+
+def print_time_log(log=None, end='\n'):
     current_datetime = datetime.datetime.now()
     time_str = current_datetime.strftime('%H:%M:%S')
 
     global former_print_time_log_datatime
-    if former_print_time_log_datatime :
-        time_str = time_str + ' E' + str(current_datetime - former_print_time_log_datatime)
+    if former_print_time_log_datatime:
+        time_str = time_str + ' E' + \
+            str(current_datetime - former_print_time_log_datatime)
 
-    print('[' + time_str + '] ' + str(log if log else ''), end = end)
+    print('[' + time_str + '] ' + str(log if log else ''), end=end)
     former_print_time_log_datatime = current_datetime

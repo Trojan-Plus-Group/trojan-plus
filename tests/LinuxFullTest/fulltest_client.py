@@ -19,9 +19,15 @@
  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 '''
 
-import urllib.request, socket, socks, traceback, os, time, sys
+import urllib.request
+import socket
+import socks
+import traceback
+import os
+import time
+import sys
 import threading
-from concurrent.futures import ThreadPoolExecutor , as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import fulltest_udp_proto
 from fulltest_utils import print_time_log
 
@@ -38,70 +44,80 @@ request_host_ip = "127.0.0.1"
 
 client_udp_bind_port_start = fulltest_udp_proto.client_udp_bind_port_start
 
+
 def print_log(log):
     if enable_log:
         print_time_log(log)
 
+
 def get_url(url):
-    f = urllib.request.urlopen(url, timeout = RECV_DATA_TIMEOUT)
+    f = urllib.request.urlopen(url, timeout=RECV_DATA_TIMEOUT)
     return f.read()
 
+
 def post_url(url, data):
-    data = urllib.parse.urlencode({'d':data}).encode()
-    req =  urllib.request.Request(url, data=data)
-    f = urllib.request.urlopen(req, timeout = RECV_DATA_TIMEOUT)
+    data = urllib.parse.urlencode({'d': data}).encode()
+    req = urllib.request.Request(url, data=data)
+    f = urllib.request.urlopen(req, timeout=RECV_DATA_TIMEOUT)
     return f.read()
 
 
 def get_file_udp(file, length, port):
     try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp_socket :
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp_socket:
             udp_socket.settimeout(RECV_DATA_TIMEOUT)
-            udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, UDP_BUFF_SIZE)
+            udp_socket.setsockopt(
+                socket.SOL_SOCKET, socket.SO_RCVBUF, UDP_BUFF_SIZE)
             fulltest_udp_proto.bind_port(udp_socket, port)
 
             global request_host_ip
             addr = (request_host_ip, serv_port)
 
-            param = urllib.parse.urlencode({'file':file, 'len':length, 'm':'GET'}).encode()
+            param = urllib.parse.urlencode(
+                {'file': file, 'len': length, 'm': 'GET'}).encode()
             udp_socket.sendto(param + b'\r\n', addr)
-            
+
             data_arr = []
             recv_length = 0
             try:
                 while recv_length < length:
                     data = udp_socket.recv(UDP_SEND_PACKET_LENGTH)
-                    recv_length = recv_length + len(data) - fulltest_udp_proto.UDP_INDEX_HEADER_SIZE
+                    recv_length = recv_length + \
+                        len(data) - fulltest_udp_proto.UDP_INDEX_HEADER_SIZE
                     data_arr.append(data)
 
                 return fulltest_udp_proto.compose_udp_file_data(data_arr)
             except:
-                print_log("exception occur, data recv length: " + str(recv_length) + " port: " + str(port))
+                print_log("exception occur, data recv length: " +
+                          str(recv_length) + " port: " + str(port))
                 traceback.print_exc(file=sys.stdout)
                 return False
-    except :
+    except:
         print_log("get_file_udp [" + file + "] failed!")
         traceback.print_exc(file=sys.stdout)
         return False
 
+
 def post_file_udp(file, data, port):
     try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp_socket :
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp_socket:
             udp_socket.settimeout(RECV_DATA_TIMEOUT)
-            udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, UDP_BUFF_SIZE)
+            udp_socket.setsockopt(
+                socket.SOL_SOCKET, socket.SO_SNDBUF, UDP_BUFF_SIZE)
             fulltest_udp_proto.bind_port(udp_socket, port)
-            
+
             global request_host_ip
             addr = (request_host_ip, serv_port)
 
-            param = urllib.parse.urlencode({'file':file, 'len':len(data), 'm':'POST'}).encode()
+            param = urllib.parse.urlencode(
+                {'file': file, 'len': len(data), 'm': 'POST'}).encode()
             udp_socket.sendto(param + b'\r\n', addr)
             time.sleep(0.01)
 
             fulltest_udp_proto.send_udp_file_data(udp_socket, addr, data)
 
             return udp_socket.recv(UDP_SEND_PACKET_LENGTH)
-    except :
+    except:
         print_log("post_file_udp [" + file + "] failed!")
         traceback.print_exc(file=sys.stdout)
         return 'please check traceback exceptions'
@@ -120,19 +136,21 @@ def request_get_file(file, tcp_or_udp, index, udp_port):
                 txt = get_file_udp(file, len(compare_txt), udp_port)
 
             if txt != compare_txt:
-                print_log(str(index) + " " + file + " content is not same!!! read from disk length: " + \
-                    str(len(compare_txt)) + " read from network length: " + (str(len(txt)) if type(txt) is bytes else str(txt)))
-                
+                print_log(str(index) + " " + file + " content is not same!!! read from disk length: " +
+                          str(len(compare_txt)) + " read from network length: " + (str(len(txt)) if type(txt) is bytes else str(txt)))
+
                 if type(txt) is bytes and len(txt) == len(compare_txt):
                     print_time_log(txt)
 
                 return False
-                
-        return True       
+
+        return True
     except:
-        print_log("request_get_file #" + str(index) + " [" + file + "] failed!")
+        print_log("request_get_file #" + str(index) +
+                  " [" + file + "] failed!")
         traceback.print_exc(file=sys.stdout)
         return False
+
 
 def request_post_file(file, tcp_or_udp, index, udp_port):
     try:
@@ -140,35 +158,40 @@ def request_post_file(file, tcp_or_udp, index, udp_port):
         with open(compare_folder + file, "rb") as f:
             data = f.read()
             result = None
-            if tcp_or_udp : 
+            if tcp_or_udp:
                 result = post_url(request_url_prefix + file, data)
             else:
                 result = post_file_udp(file, data, udp_port)
 
-            if result != b"OK" :
-                print_log(str(index) + " file POST FAILED! " + file + " " + str(result))
+            if result != b"OK":
+                print_log(str(index) + " file POST FAILED! " +
+                          file + " " + str(result))
                 return False
-        
+
         return True
-        
+
     except:
-        print_log("request_post_file #" + str(index) + " [" + file + "] failed!")
+        print_log("request_post_file #" + str(index) +
+                  " [" + file + "] failed!")
         traceback.print_exc(file=sys.stdout)
         return False
+
 
 def compare_process(files, executor, get_or_post, tcp_or_udp):
     tasks = []
     index = 0
     global client_udp_bind_port_start
     for f in files:
-        if get_or_post : 
-            tasks.append(executor.submit(request_get_file, f, tcp_or_udp, index, client_udp_bind_port_start))
+        if get_or_post:
+            tasks.append(executor.submit(request_get_file, f,
+                                         tcp_or_udp, index, client_udp_bind_port_start))
         else:
-            tasks.append(executor.submit(request_post_file, f, tcp_or_udp, index, client_udp_bind_port_start))
+            tasks.append(executor.submit(request_post_file, f,
+                                         tcp_or_udp, index, client_udp_bind_port_start))
         index = index + 1
 
         if not tcp_or_udp:
-            client_udp_bind_port_start = client_udp_bind_port_start + 1        
+            client_udp_bind_port_start = client_udp_bind_port_start + 1
 
     for result in as_completed(tasks):
         if not result.result():
@@ -177,10 +200,10 @@ def compare_process(files, executor, get_or_post, tcp_or_udp):
     return True
 
 
-def start_query(host_ip, socks_port, port, folder, log = True):
+def start_query(host_ip, socks_port, port, folder, log=True):
     # setup socket as socks5 proxy
     origin_socket = socket.socket
-    if socks_port != 0 :
+    if socks_port != 0:
         socks.set_default_proxy(socks.SOCKS5, host_ip, socks_port)
         socket.socket = socks.socksocket
         print_time_log("using pysocks version: " + str(socks.__version__))
@@ -191,7 +214,7 @@ def start_query(host_ip, socks_port, port, folder, log = True):
         global compare_folder
         global enable_log
         global serv_port
-               
+
         request_host_ip = host_ip
         request_url_prefix = 'http://' + host_ip + ':' + str(port) + '/'
         compare_folder = folder + '/'
@@ -204,16 +227,16 @@ def start_query(host_ip, socks_port, port, folder, log = True):
         index = get_url(request_url_prefix).decode("utf-8")
         files = []
         for f in index.splitlines():
-            files.append(f)    
+            files.append(f)
 
         if len(files) == 0:
             print_log("read index file get error!!")
-            return False  
-        
+            return False
+
         print_log("read index files " + str(len(files)) + " done!")
 
         print_log("start query....")
-        with ThreadPoolExecutor(max_workers = PARALLEL_REQUEST_COUNT) as executor:
+        with ThreadPoolExecutor(max_workers=PARALLEL_REQUEST_COUNT) as executor:
 
             print_log("start query get http...")
             if not compare_process(files, executor, True, True):
@@ -224,7 +247,7 @@ def start_query(host_ip, socks_port, port, folder, log = True):
 
             print_log("start query post http...")
             if not compare_process(files, executor, False, True):
-                return False        
+                return False
             print_log("finish!")
 
             time.sleep(1)
@@ -244,9 +267,10 @@ def start_query(host_ip, socks_port, port, folder, log = True):
         print_log("SUCC")
         return True
     finally:
-        socket.socket = origin_socket    
+        socket.socket = origin_socket
 
-if __name__ == '__main__':   
+
+if __name__ == '__main__':
     # client run_type:
     #start_query("127.0.0.1", 10620, 18080, "html")
 
@@ -258,4 +282,3 @@ if __name__ == '__main__':
 
     # for pure fulltest script run
     start_query("127.0.0.1", 0, 18080, "html")
-

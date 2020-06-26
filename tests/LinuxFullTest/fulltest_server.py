@@ -19,7 +19,12 @@
  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 '''
 
-import os, socket, threading, select, sys, traceback
+import os
+import socket
+import threading
+import select
+import sys
+import traceback
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse
 import fulltest_udp_proto
@@ -27,22 +32,24 @@ from fulltest_utils import print_time_log, is_macos_system
 
 serv_dir = ""
 
-def run_udp(port):    
+
+def run_udp(port):
     udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, \
-        fulltest_udp_proto.UDP_BUFF_SIZE * \
-        (5 if is_macos_system() else 50)) # max 5MB for mac os
+    udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF,
+                          fulltest_udp_proto.UDP_BUFF_SIZE *
+                          (5 if is_macos_system() else 50))  # max 5MB for mac os
 
     udp_socket.bind(('127.0.0.1', port))
-    
+
     udp_processor = fulltest_udp_proto.UDPProcessor(serv_dir, udp_socket)
     while True:
-        data, addr = udp_socket.recvfrom(fulltest_udp_proto.UDP_SEND_PACKET_LENGTH)
+        data, addr = udp_socket.recvfrom(
+            fulltest_udp_proto.UDP_SEND_PACKET_LENGTH)
         #print_time_log(('Received UDP from %s:%s' % addr) + " length:" + str(len(data)))
         udp_processor.recv(data, addr)
-                
 
-class ServerHandler(BaseHTTPRequestHandler): 
+
+class ServerHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         filepath = urlparse(self.path).path
@@ -52,29 +59,29 @@ class ServerHandler(BaseHTTPRequestHandler):
 
         try:
             content = ''
-            with open(os.path.realpath(serv_dir + filepath),'rb') as f:
+            with open(os.path.realpath(serv_dir + filepath), 'rb') as f:
                 content = f.read()
 
             self.send_response(200)
             self.send_header("Content-type", "text/plain")
             self.end_headers()
             self.wfile.write(content)
-        except :
+        except:
             traceback.print_exc(file=sys.stdout)
-            self.send_error(404,'File Not Found: %s' % self.path)
+            self.send_error(404, 'File Not Found: %s' % self.path)
 
-    def do_POST(self) :
+    def do_POST(self):
         try:
             filepath = urlparse(self.path).path
             content_len = int(self.headers.get('Content-Length'))
             post_body = self.rfile.read(content_len)
-            
+
             content = ''
-            with open(os.path.realpath(serv_dir + filepath),'rb') as f:
+            with open(os.path.realpath(serv_dir + filepath), 'rb') as f:
                 content = f.read()
 
             self.send_response(200)
-            self.send_header('Content-type','text/plain')
+            self.send_header('Content-type', 'text/plain')
             self.end_headers()
             if content == post_body[2:]:
                 self.wfile.write(b"OK")
@@ -83,15 +90,16 @@ class ServerHandler(BaseHTTPRequestHandler):
         except:
             traceback.print_exc(file=sys.stdout)
 
+
 def run(dir, port):
     if not os.path.exists(dir):
-        print_time_log("can't find the directory [" + dir +"]")
+        print_time_log("can't find the directory [" + dir + "]")
         exit(1)
     else:
         global serv_dir
         serv_dir = dir + "/"
 
-    t = threading.Thread(target = run_udp, args = (port,))
+    t = threading.Thread(target=run_udp, args=(port,))
     t.daemon = True
     t.start()
 
@@ -99,9 +107,10 @@ def run(dir, port):
     print_time_log("start fulltest server port: " + str(port))
     httpd.serve_forever()
 
+
 if __name__ == '__main__':
     print_time_log(__file__ + " args " + str(sys.argv))
-    if len(sys.argv) >= 3:  
+    if len(sys.argv) >= 3:
         run(sys.argv[1], int(sys.argv[2]))
     else:
         run('html', 18080)

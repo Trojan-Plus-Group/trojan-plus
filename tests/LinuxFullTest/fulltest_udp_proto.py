@@ -19,17 +19,25 @@
  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 '''
 
-import urllib, os, threading, traceback, socket, select, time, sys
-from concurrent.futures import ThreadPoolExecutor , as_completed
+import urllib
+import os
+import threading
+import traceback
+import socket
+import select
+import time
+import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from fulltest_utils import print_time_log
 
-UDP_SEND_PACKET_LENGTH = 1472 # MTU - (IP header) - (UDP header) 
+UDP_SEND_PACKET_LENGTH = 1472  # MTU - (IP header) - (UDP header)
 UDP_BUFF_SIZE = 1024 * 1024
 
 UDP_INDEX_HEADER_SIZE = 1
 
 client_udp_bind_port_start = 30000
 server_udp_send_port_start = 40000
+
 
 def bind_port(udp_socket, port):
     try_max_count = 10
@@ -49,13 +57,15 @@ def bind_port(udp_socket, port):
 
     raise Exception("[ERROR] Cannot bind a new port for udp socket!")
 
+
 def send_udp_file_data(udp_socket, addr, content):
     content_setment_len = UDP_SEND_PACKET_LENGTH - UDP_INDEX_HEADER_SIZE
     index = 0
     i = 0
     while i < len(content):
-        
-        send_content = index.to_bytes(1, 'big') + content[i:i + content_setment_len]
+
+        send_content = index.to_bytes(
+            1, 'big') + content[i:i + content_setment_len]
         sent = udp_socket.sendto(send_content, addr)
 
         if sent > 0:
@@ -67,26 +77,31 @@ def send_udp_file_data(udp_socket, addr, content):
         # wait for a while, otherwise server will flood client in pipeline mode, avoid dropping udp packet
         # in forward/nat mode, client only has one socket to recv
         if index % 2 == 0:
-            time.sleep(0.01)         
+            time.sleep(0.01)
+
 
 def compose_udp_file_data(data_arr):
-    sorted(data_arr, key = lambda d : d[0])
+    sorted(data_arr, key=lambda d: d[0])
     data = b''
     for d in data_arr:
         data = data + d[1:]
     return data
 
+
 def send_get_func(serv_dir, addr, udp_data, port):
     try:
-        with open(os.path.realpath(serv_dir + udp_data.file()),'rb') as f:
+        with open(os.path.realpath(serv_dir + udp_data.file()), 'rb') as f:
             content = f.read()
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as us :
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as us:
                 port = bind_port(us, port)
-                us.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, UDP_BUFF_SIZE)
-                print_time_log("bind port " + str(port) + " to send udp file to " + str(addr))
+                us.setsockopt(socket.SOL_SOCKET,
+                              socket.SO_SNDBUF, UDP_BUFF_SIZE)
+                print_time_log("bind port " + str(port) +
+                               " to send udp file to " + str(addr))
                 send_udp_file_data(us, addr, content)
     except:
         traceback.print_exc(file=sys.stdout)
+
 
 class UDPData:
 
@@ -114,14 +129,15 @@ class UDPData:
 
     def compose_data(self):
         return compose_udp_file_data(self.data_arr)
-    
+
+
 class UDPProcessor:
 
     def __init__(self, serv_dir, udp_socket):
         self.serv_dir = serv_dir
-        self.executor = ThreadPoolExecutor(max_workers = 10)
+        self.executor = ThreadPoolExecutor(max_workers=10)
         self.udp_socket = udp_socket
-        self.recv_map={}
+        self.recv_map = {}
 
     def recv(self, data, addr):
         udp_data = None
@@ -130,27 +146,30 @@ class UDPProcessor:
             udp_data.append(data)
         else:
             args_idx = data.index(b'\r\n')
-            args = dict(urllib.parse.parse_qsl(data[:args_idx].decode('ascii')))
+            args = dict(urllib.parse.parse_qsl(
+                data[:args_idx].decode('ascii')))
             udp_data = UDPData(args, data[args_idx + 2:])
 
-            if udp_data.method() == 'POST' :
+            if udp_data.method() == 'POST':
                 self.recv_map[addr] = udp_data
-                       
-        
+
         global server_udp_send_port_start
-        if udp_data.method() == 'GET' :
-            self.executor.submit(send_get_func, self.serv_dir, addr, udp_data, server_udp_send_port_start)
+        if udp_data.method() == 'GET':
+            self.executor.submit(send_get_func, self.serv_dir,
+                                 addr, udp_data, server_udp_send_port_start)
             server_udp_send_port_start = server_udp_send_port_start + 1
         else:
             #print_time_log('udp_data.recv_length  == ' + str(udp_data.recv_length) + ' udp_data.file_length() == '+ str(udp_data.file_length()))
             if udp_data.recv_length == udp_data.file_length():
-                self.executor.submit(self.post_data, addr, self.recv_map[addr], server_udp_send_port_start)
+                self.executor.submit(
+                    self.post_data, addr, self.recv_map[addr], server_udp_send_port_start)
                 self.recv_map.pop(addr)
                 server_udp_send_port_start = server_udp_send_port_start + 1
 
     def post_data(self, addr, udp_data, port):
-        with open(os.path.realpath(self.serv_dir + udp_data.file()),'rb') as f:
+        with open(os.path.realpath(self.serv_dir + udp_data.file()), 'rb') as f:
             cmp_content = f.read()
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as us :
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as us:
                 bind_port(us, port)
-                us.sendto(b'OK' if cmp_content == udp_data.compose_data() else b'FAILED', addr)
+                us.sendto(b'OK' if cmp_content ==
+                          udp_data.compose_data() else b'FAILED', addr)
