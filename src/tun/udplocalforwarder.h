@@ -56,7 +56,7 @@ class UDPLocalForwarder : public std::enable_shared_from_this<UDPLocalForwarder>
     bool process(const boost::asio::ip::udp::endpoint& endpoint, const std::string_view& data);
 
     [[nodiscard]] bool is_destroyed() const { return m_destroyed; }
-    void set_destroy_callback(std::function<void()> destroy_cb) { m_destroy_cb = destroy_cb; }
+    void set_destroy_callback(std::function<void()>&& destroy_cb) { m_destroy_cb = std::move(destroy_cb); }
 };
 
 #endif //_TROJAN_UDP_LOCAL_FORWARDER_HPP
