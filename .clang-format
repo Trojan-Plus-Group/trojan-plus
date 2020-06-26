@@ -1,0 +1,15 @@
+#http://clang.llvm.org/docs/ClangFormatStyleOptions.html
+BasedOnStyle: LLVM
+IndentWidth: 4
+TabWidth: 4
+ContinuationIndentWidth: 2
+---
+Language: Cpp
+IndentCaseLabels: true
+DerivePointerAlignment: false
+PointerAlignment: Left
+AlignConsecutiveAssignments: true
+AlignConsecutiveMacros: true
+ColumnLimit: 120
+AlignAfterOpenBracket: DontAlign
+ConstructorInitializerAllOnOneLineOrOnePerLine: true
