@@ -21,6 +21,7 @@
 
 #include "tun/udplocalforwarder.h"
 #include "core/service.h"
+#include "session/session.h"
 
 using namespace std;
 using namespace boost::asio::ip;
@@ -33,8 +34,15 @@ UDPLocalForwarder::UDPLocalForwarder(Service* service, udp::endpoint local_src, 
       m_remote_dst(move(remote_dst)),
       m_gc_timer(service->get_io_context()),
       m_udp_socket(service->get_io_context()),
-      m_is_dns(is_dns) {}
+      m_is_dns(is_dns) {
+    Session::s_total_session_count++;
+}
 
+UDPLocalForwarder::~UDPLocalForwarder() {
+    Session::s_total_session_count--;
+    _log_with_date_time_ALL("[mem] UDPLocalForwarder checking memory leak, current all session count is " +
+                            to_string(Session::s_total_session_count));
+}
 bool UDPLocalForwarder::start(const std::string_view& data) {
     auto protocol = m_remote_dst.protocol();
     boost::system::error_code ec;
@@ -86,10 +94,10 @@ bool UDPLocalForwarder::write_to(const std::string_view& data) {
         output_debug_info_ec(ec);
         destroy();
         return false;
-    } else {
-        m_stat.inc_sent_len(data.length());
-        return true;
     }
+
+    m_stat.inc_sent_len(data.length());
+    return true;
 }
 
 void UDPLocalForwarder::async_read() {

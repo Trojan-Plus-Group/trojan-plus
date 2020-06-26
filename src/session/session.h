@@ -34,6 +34,7 @@
 #include "session/pipelinecomponent.h"
 
 class Service;
+class UDPLocalForwarder;
 class Session : public std::enable_shared_from_this<Session> {
 
   public:
@@ -48,6 +49,9 @@ class Session : public std::enable_shared_from_this<Session> {
     bool is_udp_forward;
     const Config& config;
     bytes_stat stat;
+
+    friend class UDPLocalForwarder;
+    static size_t s_total_session_count;
 
   public:
     Session(Service* _service, const Config& _config);

@@ -1,7 +1,7 @@
 /*
  * This file is part of the Trojan Plus project.
  * Trojan is an unidentifiable mechanism that helps you bypass GFW.
- * Trojan Plus is derived from original trojan project and writing 
+ * Trojan Plus is derived from original trojan project and writing
  * for more experimental features.
  * Copyright (C) 2017-2020  The Trojan Authors.
  * Copyright (C) 2020 The Trojan Plus Group Authors.
@@ -21,13 +21,13 @@
  */
 
 #include "log.h"
-#include <cstring>
-#include <cerrno>
-#include <stdexcept>
-#include <sstream>
 #include <boost/date_time/posix_time/posix_time.hpp>
 #include <boost/date_time/posix_time/posix_time_io.hpp>
+#include <cerrno>
+#include <cstring>
 #include <gsl/gsl>
+#include <sstream>
+#include <stdexcept>
 #ifdef ENABLE_ANDROID_LOG
 #include <android/log.h>
 #endif // ENABLE_ANDROID_LOG
@@ -38,24 +38,35 @@ using namespace boost::asio::ip;
 unique_ptr<char> __debug_str_buf(new char[__max_debug_str_buf_size]);
 
 Log::Level Log::level(INVALID);
-FILE *Log::keylog(nullptr);
-FILE *Log::output_stream(stderr);
+FILE* Log::keylog(nullptr);
+FILE* Log::output_stream(stderr);
 Log::LogCallback Log::log_callback{};
 
-void Log::log(const string &message, Level level) {
+void Log::log(const string& message, Level level) {
     if (level >= Log::level) {
 #ifdef ENABLE_ANDROID_LOG
         int log_level;
-        switch(level){
-            case Log::ALL:  log_level = ANDROID_LOG_VERBOSE; break;
-            case Log::INFO: log_level = ANDROID_LOG_DEBUG; break;
-            case Log::WARN: log_level = ANDROID_LOG_WARN; break;
-            case Log::ERROR: log_level = ANDROID_LOG_ERROR; break;
-            case Log::FATAL: log_level = ANDROID_LOG_FATAL; break;
-            default: log_level = ANDROID_LOG_DEBUG; break;
+        switch (level) {
+            case Log::ALL:
+                log_level = ANDROID_LOG_VERBOSE;
+                break;
+            case Log::INFO:
+                log_level = ANDROID_LOG_DEBUG;
+                break;
+            case Log::WARN:
+                log_level = ANDROID_LOG_WARN;
+                break;
+            case Log::ERROR:
+                log_level = ANDROID_LOG_ERROR;
+                break;
+            case Log::FATAL:
+                log_level = ANDROID_LOG_FATAL;
+                break;
+            default:
+                log_level = ANDROID_LOG_DEBUG;
+                break;
         }
-        __android_log_print(log_level, "trojan", "%s\n",
-                            message.c_str());
+        __android_log_print(log_level, "trojan", "%s\n", message.c_str());
 #else
         fprintf(output_stream, "%s\n", message.c_str());
         fflush(output_stream);
@@ -66,33 +77,36 @@ void Log::log(const string &message, Level level) {
     }
 }
 
-void Log::log_with_date_time(const string &message, Level level) {
-    static const char *level_strings[]= { "ALL", "INFO", "WARN", "ERROR", "FATAL", "OFF" };
+void Log::log_with_date_time(const string& message, Level level) {
+    static const char* level_strings[] = {"ALL", "INFO", "WARN", "ERROR", "FATAL", "OFF"};
 
     static ostringstream time_stream;
-    static const locale loc(time_stream.getloc(), new time_facet("[%Y-%m-%d %H:%M:%S] ")); // have to use fu*k nacked new
+    static const locale loc(
+      time_stream.getloc(), new time_facet("[%Y-%m-%d %H:%M:%S] ")); // have to use fu*k nacked new
     static bool set_time_stream = false;
-    if(!set_time_stream){
+    if (!set_time_stream) {
         set_time_stream = true;
         time_stream.imbue(loc);
     }
-    
+
     time_stream.str(string());
     time_stream << second_clock::local_time();
 
-    log(time_stream.str() + '[' + string(gsl::at(level_strings,level)) + "] " + message, level);
+    log(time_stream.str() + '[' + string(gsl::at(level_strings, level)) + "] " + message, level);
 }
 
-void Log::log_with_endpoint(const tcp::endpoint &endpoint, const string &message, Level level) {
-    log_with_date_time(string("[tcp] ") + endpoint.address().to_string() + ':' + to_string(endpoint.port()) + ' ' + message, level);
+void Log::log_with_endpoint(const tcp::endpoint& endpoint, const string& message, Level level) {
+    log_with_date_time(
+      string("[tcp] ") + endpoint.address().to_string() + ':' + to_string(endpoint.port()) + ' ' + message, level);
 }
 
-void Log::log_with_endpoint(const udp::endpoint &endpoint, const string &message, Level level) {
-    log_with_date_time(string("[udp] ") + endpoint.address().to_string() + ':' + to_string(endpoint.port()) + ' ' + message, level);
+void Log::log_with_endpoint(const udp::endpoint& endpoint, const string& message, Level level) {
+    log_with_date_time(
+      string("[udp] ") + endpoint.address().to_string() + ':' + to_string(endpoint.port()) + ' ' + message, level);
 }
 
-void Log::redirect(const string &filename) {
-    FILE *fp = fopen(filename.c_str(), "a");
+void Log::redirect(const string& filename) {
+    FILE* fp = fopen(filename.c_str(), "a");
     if (fp == nullptr) {
         throw runtime_error(filename + ": " + strerror(errno));
     }
@@ -102,8 +116,8 @@ void Log::redirect(const string &filename) {
     output_stream = fp;
 }
 
-void Log::redirect_keylog(const string &filename) {
-    FILE *fp = fopen(filename.c_str(), "a");
+void Log::redirect_keylog(const string& filename) {
+    FILE* fp = fopen(filename.c_str(), "a");
     if (fp == nullptr) {
         throw runtime_error(filename + ": " + strerror(errno));
     }
@@ -113,9 +127,7 @@ void Log::redirect_keylog(const string &filename) {
     keylog = fp;
 }
 
-void Log::set_callback(LogCallback cb) {
-    log_callback = move(cb);
-}
+void Log::set_callback(LogCallback&& cb) { log_callback = move(cb); }
 
 void Log::reset() {
     if (output_stream != stderr) {

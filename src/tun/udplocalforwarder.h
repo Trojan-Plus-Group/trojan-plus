@@ -52,6 +52,8 @@ class UDPLocalForwarder : public std::enable_shared_from_this<UDPLocalForwarder>
     UDPLocalForwarder(Service* service, boost::asio::ip::udp::endpoint local_recv,
       boost::asio::ip::udp::endpoint remote_dst, UDPForwardSession::UDPWriter&& writer, bool is_dns);
 
+    ~UDPLocalForwarder();
+
     [[nodiscard]] bool start(const std::string_view& data);
     bool process(const boost::asio::ip::udp::endpoint& endpoint, const std::string_view& data);
 
