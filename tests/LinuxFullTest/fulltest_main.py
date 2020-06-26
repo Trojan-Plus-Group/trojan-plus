@@ -131,7 +131,7 @@ def get_process_rss_in_KB(process):
         return 0
 
 
-def main_stage(server_config, client_config, server_balance_config=None, is_foward=False):
+def main_stage(server_config, client_config, server_balance_config=None, is_foward=False, is_tun=False):
 
     server_balance_process = None
     if server_balance_config:
@@ -180,7 +180,7 @@ def main_stage(server_config, client_config, server_balance_config=None, is_fowa
             if not fulltest_client.start_query(LOCALHOST_IP, 0, TEST_PROXY_PORT, TEST_FILES_DIR):
                 output_log = True
                 return 1
-        elif cmd_args.tun:
+        elif is_tun:
             if not fulltest_client.start_query("188.188.188.188", 0, TEST_SERVER_PORT, TEST_FILES_DIR):
                 output_log = True
                 return 1
@@ -307,7 +307,7 @@ def main():
                 print_time_log(
                     "start trojan plus in forward run_type in pipeline...")
                 if main_stage("server_config_pipeline.json", prepare_forward_config("client_config_pipeline.json"),
-                              "server_config_pipeline_balance.json", is_foward=True, ) != 0:
+                              "server_config_pipeline_balance.json", is_foward=True) != 0:
                     output_log = True
                     return 1
 
@@ -322,14 +322,14 @@ def main():
 
             print_time_log(
                 "start trojan plus in client_tun run_type without pipeline...")
-            if main_stage("server_config.json", prepare_client_tun_config("client_config.json"), ) != 0:
+            if main_stage("server_config.json", prepare_client_tun_config("client_config.json"), is_tun=True) != 0:
                 output_log = True
                 return 1
 
             print_time_log(
                 "start trojan plus in client_tun run_type in pipeline...")
             if main_stage("server_config_pipeline.json", prepare_client_tun_config("client_config_pipeline.json"),
-                          "server_config_pipeline_balance.json", ) != 0:
+                          "server_config_pipeline_balance.json", is_tun=True) != 0:
                 output_log = True
                 return 1
 
