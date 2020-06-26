@@ -7,10 +7,10 @@
     "password": [
         "88888888"
     ],
-    "udp_timeout":10,
-    "udp_socket_buf":1024000,
-    "udp_recv_buf":65536,
-    "log_level": 1,
+    "udp_timeout": 10,
+    "udp_socket_buf": 1024000,
+    "udp_recv_buf": 65536,
+    "log_level": 0,
     "ssl": {
         "cert": "config/server.crt",
         "key": "config/server.key",
@@ -36,7 +36,7 @@
         "reuse_port": true,
         "fast_open": true,
         "fast_open_qlen": 20,
-        "connect_time_out" : 1
+        "connect_time_out": 1
     },
     "mysql": {
         "enabled": false,
@@ -46,8 +46,8 @@
         "username": "trojan",
         "password": ""
     },
-    "experimental":{
-        "pipeline_num" : 0,
-        "pipeline_ack_window" : 3
+    "experimental": {
+        "pipeline_num": 0,
+        "pipeline_ack_window": 3
     }
 }

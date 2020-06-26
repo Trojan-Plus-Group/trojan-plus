@@ -13,7 +13,7 @@
     "udp_socket_buf": 1024000,
     "udp_forward_socket_buf": 10240000,
     "udp_recv_buf": 65536,
-    "log_level": 1,
+    "log_level": 0,
     "ssl": {
         "verify": false,
         "verify_hostname": false,
@@ -52,8 +52,8 @@
         "enabled": true,
         "enable_cached": true,
         "udp_timeout": 5,
-        "udp_socket_buf": 1024000,
-        "udp_recv_buf": 65536,
+        "udp_socket_buf": -1,
+        "udp_recv_buf": 1024,
         "up_dns_server": [
             "114.114.114.114"
         ],

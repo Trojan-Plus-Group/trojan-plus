@@ -96,7 +96,7 @@ stages:
         BINARY="$PIPELINE_WORKSPACE/WindowsBinary/trojan.exe"
         py -3 -m pip install PySocks psutil dnspython
         cd tests/LinuxFullTest/
-        py -3 fulltest_main.py $BINARY -g -n
+        py -3 fulltest_main.py $BINARY -g -n -d
       env:
         PIPELINE_WORKSPACE: $(Pipeline.Workspace)
 
@@ -116,7 +116,7 @@ stages:
           brew install python@3.8
         fi
         $PYTHON -m pip install PySocks psutil dnspython
-        $PYTHON fulltest_main.py $BINARY -g -n
+        $PYTHON fulltest_main.py $BINARY -g -n -d
       env:
         PIPELINE_WORKSPACE: $(Pipeline.Workspace)
 

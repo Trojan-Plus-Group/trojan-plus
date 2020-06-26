@@ -62,8 +62,8 @@ def get_cooldown_rss_limit():
     else:
         limit = 30 * (1024)
 
-    if cmd_args.dns and cmd_args.normal:
-        limit = limit + limit / 2
+    if cmd_args.dns:
+        limit = limit * 2
 
     return limit
 
@@ -191,7 +191,7 @@ def main_stage(server_config, client_config, server_balance_config=None, is_fowa
                     return 1
 
             if cmd_args.dns:
-                if not fulltest_dns.start_query("127.0.0.1", 3):
+                if not fulltest_dns.start_query("127.0.0.1", 10):
                     output_log = True
                     return 1
 
