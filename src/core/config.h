@@ -1,7 +1,7 @@
 /*
  * This file is part of the Trojan Plus project.
  * Trojan is an unidentifiable mechanism that helps you bypass GFW.
- * Trojan Plus is derived from original trojan project and writing 
+ * Trojan Plus is derived from original trojan project and writing
  * for more experimental features.
  * Copyright (C) 2017-2020  The Trojan Authors.
  * Copyright (C) 2020 The Trojan Plus Group Authors.
@@ -23,17 +23,17 @@
 #ifndef _CONFIG_H_
 #define _CONFIG_H_
 
+#include "log.h"
+#include "utils.h"
+#include <boost/asio/ssl.hpp>
+#include <boost/property_tree/ptree.hpp>
 #include <cstdint>
 #include <map>
 #include <unordered_map>
-#include <boost/property_tree/ptree.hpp>
-#include <boost/asio/ssl.hpp>
-#include "log.h"
-#include "utils.h"
 
 class Config {
-   
-public:
+
+  public:
     enum RunType {
         SERVER,
         CLIENT,
@@ -74,7 +74,7 @@ public:
         int connect_time_out;
     };
 
-    using MySQLConfig = struct  {
+    using MySQLConfig = struct {
         bool enabled;
         std::string server_addr;
         uint16_t server_port;
@@ -84,7 +84,7 @@ public:
         std::string cafile;
     };
 
-    using Experimental = struct{
+    using Experimental = struct {
         uint32_t pipeline_num;
         uint32_t pipeline_ack_window;
         std::vector<std::string> pipeline_loadbalance_configs;
@@ -93,7 +93,7 @@ public:
         bool pipeline_proxy_icmp;
     };
 
-    using TUN = struct{
+    using TUN = struct {
         std::string tun_name;
         std::string net_ip;
         std::string net_mask;
@@ -102,7 +102,7 @@ public:
         bool redirect_local; // redirect all ip to localhost for test
     };
 
-    using DNS = struct{
+    using DNS = struct {
         bool enabled;
         uint16_t port;
         int udp_timeout;
@@ -116,8 +116,7 @@ public:
         std::vector<std::string> up_gfw_dns_server;
     };
 
-private:
-
+  private:
     RunType run_type;
     std::string local_addr;
     uint16_t local_port;
@@ -140,38 +139,38 @@ private:
 
     int compare_hash = 0;
 
-    void populate(const boost::property_tree::ptree &tree);
-    void populate(const std::string &JSON);
-    
-    static std::string SHA224(const std::string &message);
+    void populate(const boost::property_tree::ptree& tree);
+    void populate(const std::string& JSON);
 
-public:
+    static std::string SHA224(const std::string& message);
+
+  public:
     [[nodiscard]] bool sip003();
-    void load(const std::string &filename);
+    void load(const std::string& filename);
     void prepare_ssl_context(boost::asio::ssl::context& ssl_context, std::string& plain_http_response);
     void prepare_ssl_reuse(boost::asio::ssl::stream<boost::asio::ip::tcp::socket>& socket) const;
-    [[nodiscard]] bool operator==(const Config& other) const{ return compare_hash == other.compare_hash; }
+    [[nodiscard]] bool operator==(const Config& other) const { return compare_hash == other.compare_hash; }
     [[nodiscard]] bool try_prepare_pipeline_proxy_icmp(bool is_ipv4);
 
-    _define_getter_const(RunType, run_type)
-    _define_getter_const(const std::string&, local_addr)
-    _define_getter_const(uint16_t, local_port)
-    _define_getter_const(const std::string&, remote_addr)
-    _define_getter_const(uint16_t, remote_port)
-    _define_getter_const(const std::string&, target_addr)
-    _define_getter_const(uint16_t, target_port)
-    [[nodiscard]] const std::map<std::string, std::string>& get_password() const {return password;}
-    _define_getter_const(int, udp_timeout)
-    _define_getter_const(int, udp_socket_buf)
-    _define_getter_const(int, udp_forward_socket_buf)
-    _define_getter_const(int, udp_recv_buf)
-    _define_getter_const(Log::Level, log_level)
-    _define_getter_const(const SSLConfig&, ssl)
-    _define_getter_const(const TCPConfig&, tcp)
-    _define_getter_const(const MySQLConfig&, mysql)
-    _define_getter_const(const Experimental&, experimental)
-    _define_getter_const(const TUN&, tun)
-    _define_getter_const(const DNS&, dns)
+    _define_getter_const(RunType, run_type);
+    _define_getter_const(const std::string&, local_addr);
+    _define_getter_const(uint16_t, local_port);
+    _define_getter_const(const std::string&, remote_addr);
+    _define_getter_const(uint16_t, remote_port);
+    _define_getter_const(const std::string&, target_addr);
+    _define_getter_const(uint16_t, target_port);
+    [[nodiscard]] const std::map<std::string, std::string>& get_password() const { return password; }
+    _define_getter_const(int, udp_timeout);
+    _define_getter_const(int, udp_socket_buf);
+    _define_getter_const(int, udp_forward_socket_buf);
+    _define_getter_const(int, udp_recv_buf);
+    _define_getter_const(Log::Level, log_level);
+    _define_getter_const(const SSLConfig&, ssl);
+    _define_getter_const(const TCPConfig&, tcp);
+    _define_getter_const(const MySQLConfig&, mysql);
+    _define_getter_const(const Experimental&, experimental);
+    _define_getter_const(const TUN&, tun);
+    _define_getter_const(const DNS&, dns);
 };
 
 #endif // _CONFIG_H_

@@ -1,7 +1,7 @@
 /*
  * This file is part of the Trojan Plus project.
  * Trojan is an unidentifiable mechanism that helps you bypass GFW.
- * Trojan Plus is derived from original trojan project and writing 
+ * Trojan Plus is derived from original trojan project and writing
  * for more experimental features.
  * Copyright (C) 2020 The Trojan Plus Group Authors.
  *
@@ -25,7 +25,7 @@
 #include "session/udpforwardsession.h"
 
 class Service;
-class UDPLocalForwarder : public std::enable_shared_from_this<UDPLocalForwarder>{
+class UDPLocalForwarder : public std::enable_shared_from_this<UDPLocalForwarder> {
 
     Service* m_service;
     UDPForwardSession::UDPWriter m_writer;
@@ -37,8 +37,9 @@ class UDPLocalForwarder : public std::enable_shared_from_this<UDPLocalForwarder>
     ReadBufWithGuard m_read_buf;
     bytes_stat m_stat;
     bool m_is_dns;
-    
+
     bool m_destroyed{false};
+    std::function<void()> m_destroy_cb;
 
     bool write_to(const std::string_view& data);
     void async_read();
@@ -46,13 +47,16 @@ class UDPLocalForwarder : public std::enable_shared_from_this<UDPLocalForwarder>
     void udp_timer_async_wait();
     void udp_timer_cancel();
     void destroy();
-public:
-    UDPLocalForwarder(Service* service, boost::asio::ip::udp::endpoint local_recv, 
-        boost::asio::ip::udp::endpoint remote_dst, UDPForwardSession::UDPWriter&& writer, bool is_dns);
 
-    [[nodiscard]]
-    bool start(const std::string_view& data);
-    bool process(const boost::asio::ip::udp::endpoint &endpoint, const std::string_view &data);
+  public:
+    UDPLocalForwarder(Service* service, boost::asio::ip::udp::endpoint local_recv,
+      boost::asio::ip::udp::endpoint remote_dst, UDPForwardSession::UDPWriter&& writer, bool is_dns);
+
+    [[nodiscard]] bool start(const std::string_view& data);
+    bool process(const boost::asio::ip::udp::endpoint& endpoint, const std::string_view& data);
+
+    [[nodiscard]] bool is_destroyed() const { return m_destroyed; }
+    void set_destroy_callback(std::function<void()> destroy_cb) { m_destroy_cb = destroy_cb; }
 };
 
 #endif //_TROJAN_UDP_LOCAL_FORWARDER_HPP

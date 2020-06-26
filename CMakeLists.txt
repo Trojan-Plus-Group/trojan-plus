@@ -164,6 +164,8 @@ set(TROJAN_SOURCE_FILES
     src/tun/lwip_tcp_client.cpp
     src/tun/tundev.cpp
     src/tun/tunsession.cpp
+    src/tun/tunproxysession.cpp
+    src/tun/tunlocalsession.cpp
     src/tun/dnsserver.cpp
     src/tun/udplocalforwarder.cpp
 )

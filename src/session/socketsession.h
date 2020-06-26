@@ -1,7 +1,7 @@
 /*
  * This file is part of the Trojan Plus project.
  * Trojan is an unidentifiable mechanism that helps you bypass GFW.
- * Trojan Plus is derived from original trojan project and writing 
+ * Trojan Plus is derived from original trojan project and writing
  * for more experimental features.
  * Copyright (C) 2020 The Trojan Plus Group Authors.
  *
@@ -22,12 +22,12 @@
 #ifndef _SOCKET_SESSION_HPP_
 #define _SOCKET_SESSION_HPP_
 
-#include <ctime>
-#include <set>
-#include <memory>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/steady_timer.hpp>
+#include <ctime>
+#include <memory>
+#include <set>
 
 #include <boost/asio/streambuf.hpp>
 
@@ -36,24 +36,18 @@
 
 class Service;
 class SocketSession : public Session {
-    boost::asio::steady_timer udp_gc_timer;
-    
+
     boost::asio::ip::tcp::resolver resolver;
     boost::asio::ip::tcp::endpoint in_endpoint;
 
-protected: 
+  protected:
+    _define_getter(boost::asio::ip::tcp::resolver&, resolver);
 
-    virtual int get_udp_timer_timeout_val() const;
-    void udp_timer_async_wait();
-    void udp_timer_cancel();
-
-    _define_getter(boost::asio::ip::tcp::resolver&, resolver)
-    
-public:
+  public:
     SocketSession(Service* _service, const Config& config);
     virtual boost::asio::ip::tcp::socket& accept_socket() = 0;
 
-    _define_simple_getter_setter(const boost::asio::ip::tcp::endpoint&, in_endpoint)
+    _define_simple_getter_setter(const boost::asio::ip::tcp::endpoint&, in_endpoint);
 };
 
 #endif //_SOCKET_SESSION_HPP_

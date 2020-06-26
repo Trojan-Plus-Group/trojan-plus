@@ -1,7 +1,7 @@
 /*
  * This file is part of the Trojan Plus project.
  * Trojan is an unidentifiable mechanism that helps you bypass GFW.
- * Trojan Plus is derived from original trojan project and writing 
+ * Trojan Plus is derived from original trojan project and writing
  * for more experimental features.
  * Copyright (C) 2020 The Trojan Plus Group Authors.
  *
@@ -22,40 +22,24 @@
 #ifndef _TUNSESSION_H_
 #define _TUNSESSION_H_
 
-#include <string>
-#include <boost/asio/streambuf.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ip/udp.hpp>
+#include <boost/asio/streambuf.hpp>
+#include <string>
 
-#include "session/session.h"
 #include "core/pipeline.h"
 #include "core/utils.h"
+#include "session/session.h"
 
 class Service;
-class TUNSession : public Session{
+class TUNSession : public Session {
 
-public:
-    using CloseCallback = std::function<void(TUNSession*)>;
-    using WriteToLwipCallback = std::function<int(TUNSession*, std::string_view*)>;
+  public:
+    using CloseCallback       = std::function<void(TUNSession*)>;
+    using WriteToLwipCallback = std::function<int(const TUNSession*, std::string_view*)>;
 
-private:
-
-    Service* m_service;
-    ReadBufWithGuard m_recv_buf;
-    size_t m_recv_buf_ack_length;
-
-    boost::asio::ssl::stream<boost::asio::ip::tcp::socket> m_out_socket;
-    boost::asio::ip::tcp::resolver m_out_resolver;
-
-    bool m_destroyed;
-    CloseCallback m_close_cb;
-    bool m_close_from_tundev_flag;
-    bool m_connected;
-    int m_ack_count{0};
-
-    boost::asio::streambuf m_send_buf;
-    WriteToLwipCallback m_write_to_lwip;
-    std::list<SentHandler> m_wait_ack_handler;
+  protected:
+    SendDataCache m_sending_data_cache;
 
     boost::asio::ip::tcp::endpoint m_local_addr;
     boost::asio::ip::tcp::endpoint m_remote_addr;
@@ -63,77 +47,58 @@ private:
     boost::asio::ip::udp::endpoint m_local_addr_udp;
     boost::asio::ip::udp::endpoint m_remote_addr_udp;
 
-    boost::asio::steady_timer m_udp_timout_timer;
+    ReadBufWithGuard m_recv_buf;
+    size_t m_recv_buf_ack_length{0};
+    bool m_destroyed{false};
 
+    CloseCallback m_close_cb;
+    bool m_close_from_tundev_flag{false};
+    bool m_connected{false};
+
+    boost::asio::streambuf m_send_buf;
+    WriteToLwipCallback m_write_to_lwip;
+    std::list<SentHandler> m_wait_ack_handler;
     std::list<SentHandler> m_wait_connected_handler;
-    SendDataCache m_sending_data_cache;
 
-    void out_async_read();
-    void try_out_async_read();
-    void reset_udp_timeout();
-
-    [[nodiscard]]
-    size_t parse_udp_packet_data(const std::string_view& data);
-
-    void out_async_send_impl(const std::string_view& data_to_send, SentHandler&& _handler);
-
-    [[nodiscard]]
-    boost::asio::ip::udp::endpoint get_redirect_local_remote_addr(bool output_log = false) const;
-public:
+  public:
     TUNSession(Service* _service, bool _is_udp);
-    ~TUNSession() final;
+    ~TUNSession();
 
-    void set_tcp_connect(const boost::asio::ip::tcp::endpoint& _local, 
-      const boost::asio::ip::tcp::endpoint& _remote){
-        m_local_addr = _local;
+    // common interfaces for UDP and TCP
+    void set_tcp_connect(const boost::asio::ip::tcp::endpoint& _local, const boost::asio::ip::tcp::endpoint& _remote) {
+        m_local_addr  = _local;
         m_remote_addr = _remote;
     }
 
-    void set_udp_connect(const boost::asio::ip::udp::endpoint& _local, 
-      const boost::asio::ip::udp::endpoint& _remote){
-        m_local_addr_udp = _local;
+    void set_udp_connect(const boost::asio::ip::udp::endpoint& _local, const boost::asio::ip::udp::endpoint& _remote) {
+        m_local_addr_udp  = _local;
         m_remote_addr_udp = _remote;
     }
-    
-    [[nodiscard]]
-    const boost::asio::ip::udp::endpoint& get_udp_local_endpoint()const { 
-        return m_local_addr_udp;
-    }
 
-    [[nodiscard]]
-    const boost::asio::ip::udp::endpoint& get_udp_remote_endpoint()const { 
-        return m_remote_addr_udp;
-    }
+    [[nodiscard]] const boost::asio::ip::udp::endpoint& get_udp_local_endpoint() const { return m_local_addr_udp; }
+    [[nodiscard]] const boost::asio::ip::udp::endpoint& get_udp_remote_endpoint() const { return m_remote_addr_udp; }
 
-    void set_write_to_lwip(WriteToLwipCallback&& _handler){ m_write_to_lwip = std::move(_handler); }
-    void set_close_callback(CloseCallback&& _cb){ m_close_cb = std::move(_cb); }
-    void set_close_from_tundev_flag(){ m_close_from_tundev_flag = true;}
+    [[nodiscard]] bool is_destroyed() const { return m_destroyed; }
 
-    void start() override;
-    void destroy(bool pipeline_call = false) override;
+    void set_write_to_lwip(WriteToLwipCallback&& _handler) { m_write_to_lwip = std::move(_handler); }
+    void set_close_callback(CloseCallback&& _cb) { m_close_cb = std::move(_cb); }
+    void set_close_from_tundev_flag() { m_close_from_tundev_flag = true; }
 
-    void out_async_send(const uint8_t* _data, size_t _length, SentHandler&& _handler);
-    void recv_ack_cmd(int ack_count) override;
+    virtual void out_async_send(const uint8_t* _data, size_t _length, SentHandler&& _handler) = 0;
 
-    void recv_buf_ack_sent(uint16_t _length);
+    // interfaces for TCP
+    [[nodiscard]] size_t recv_buf_ack_length() const { return m_recv_buf_ack_length; }
+    [[nodiscard]] size_t recv_buf_size() const { return m_recv_buf.size(); }
 
-    [[nodiscard]]
-    size_t recv_buf_ack_length() const { return m_recv_buf_ack_length; }
-
-    void recv_buf_consume(uint16_t _length);
-
-    [[nodiscard]]
-    size_t recv_buf_size() const { return m_recv_buf.size(); }
-
-    [[nodiscard]]
-    const uint8_t* recv_buf() const {
+    [[nodiscard]] const uint8_t* recv_buf() const {
         return boost::asio::buffer_cast<const uint8_t*>(m_recv_buf.data());
     }
 
-    [[nodiscard]]
-    bool is_destroyed()const { return m_destroyed; }
+    virtual void recv_buf_consume(uint16_t _length)  = 0;
+    virtual void recv_buf_ack_sent(uint16_t _length) = 0;
 
-    bool try_to_process_udp(const boost::asio::ip::udp::endpoint& _local, 
-        const boost::asio::ip::udp::endpoint& _remote, const uint8_t* payload, size_t payload_length);
+    // interface for UDP
+    virtual bool try_to_process_udp(const boost::asio::ip::udp::endpoint& _local,
+      const boost::asio::ip::udp::endpoint& _remote, const uint8_t* payload, size_t payload_length) = 0;
 };
 #endif //_TUNSESSION_H_

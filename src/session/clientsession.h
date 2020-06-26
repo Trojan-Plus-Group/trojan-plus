@@ -1,7 +1,7 @@
 /*
  * This file is part of the Trojan Plus project.
  * Trojan is an unidentifiable mechanism that helps you bypass GFW.
- * Trojan Plus is derived from original trojan project and writing 
+ * Trojan Plus is derived from original trojan project and writing
  * for more experimental features.
  * Copyright (C) 2017-2020  The Trojan Authors.
  * Copyright (C) 2020 The Trojan Plus Group Authors.
@@ -26,32 +26,23 @@
 #include <boost/asio/ssl.hpp>
 #include <string_view>
 
-#include "socketsession.h"
 #include "core/pipeline.h"
 #include "core/utils.h"
+#include "socketsession.h"
 
 class Service;
 class ClientSession : public SocketSession {
-protected:
-    enum Status {
-        HANDSHAKE,
-        REQUEST,
-        CONNECT,
-        FORWARD,
-        UDP_FORWARD,
-        INVALID,
-        DESTROY
-    };
+  protected:
+    enum Status { HANDSHAKE, REQUEST, CONNECT, FORWARD, UDP_FORWARD, INVALID, DESTROY };
 
-private:
-
+  private:
     Status status;
     bool first_packet_recv;
     boost::asio::ip::tcp::socket in_socket;
     boost::asio::ssl::stream<boost::asio::ip::tcp::socket> out_socket;
     boost::asio::ip::udp::socket udp_socket;
     boost::asio::ip::udp::endpoint udp_recv_endpoint;
-    
+
     boost::asio::streambuf udp_recv_buf;
     boost::asio::streambuf udp_send_buf;
 
@@ -62,37 +53,34 @@ private:
     boost::asio::streambuf out_write_buf;
     boost::asio::streambuf udp_data_buf;
 
-protected:
-
+  protected:
     void in_async_read();
-    void in_async_write(const std::string_view &data, int ack_count = 0);
+    void in_async_write(const std::string_view& data, int ack_count = 0);
     void out_async_read();
-    void out_async_write(const std::string_view &data);
+    void out_async_write(const std::string_view& data);
     void out_sent();
     void udp_async_read();
-    void udp_async_write(const std::string_view &data, const boost::asio::ip::udp::endpoint &endpoint);
-    void udp_recv(const std::string_view &data, const boost::asio::ip::udp::endpoint &endpoint);
+    void udp_async_write(const std::string_view& data, const boost::asio::ip::udp::endpoint& endpoint);
+    void udp_recv(const std::string_view& data, const boost::asio::ip::udp::endpoint& endpoint);
     void udp_sent();
-    void out_recv(const std::string_view &data, int ack_count = 0);
+    void out_recv(const std::string_view& data, int ack_count = 0);
 
-    virtual void in_recv(const std::string_view &data);
+    virtual void in_recv(const std::string_view& data);
     virtual void in_sent();
 
     bool prepare_session();
     void request_remote();
 
-    _define_simple_getter_setter(Status, status)
-    _define_simple_getter_setter(bool, first_packet_recv)
-    _define_getter(boost::asio::ip::tcp::socket&, in_socket)
-    _define_getter(boost::asio::streambuf&, out_write_buf)
+    _define_simple_getter_setter(Status, status) _define_simple_getter_setter(bool, first_packet_recv);
+    _define_getter(boost::asio::ip::tcp::socket&, in_socket) _define_getter(boost::asio::streambuf&, out_write_buf);
 
-public:
-    ClientSession(Service* _service, const Config& config, boost::asio::ssl::context &ssl_context);
+  public:
+    ClientSession(Service* _service, const Config& config, boost::asio::ssl::context& ssl_context);
     ~ClientSession();
-    boost::asio::ip::tcp::socket &accept_socket() override;
+    boost::asio::ip::tcp::socket& accept_socket() override;
     void start() override;
     void destroy(bool pipeline_call = false) override;
-    
+
     void recv_ack_cmd(int ack_count) override;
 };
 

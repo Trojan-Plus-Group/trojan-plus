@@ -20,18 +20,17 @@
 #ifndef _PIPELINEESSION_H_
 #define _PIPELINEESSION_H_
 
+#include <boost/asio/ssl.hpp>
 #include <list>
 #include <string_view>
-#include <boost/asio/ssl.hpp>
 
-#include "session.h"
-#include "socketsession.h"
-#include "serversession.h"
-#include "proto/pipelinerequest.h"
 #include "core/authenticator.h"
 #include "core/utils.h"
 #include "pipelinecomponent.h"
-
+#include "proto/pipelinerequest.h"
+#include "serversession.h"
+#include "session.h"
+#include "socketsession.h"
 
 class icmpd;
 class Service;
@@ -39,21 +38,16 @@ class ServerSession;
 class PipelineSession : public SocketSession {
     typedef std::list<std::shared_ptr<ServerSession>> SessionsList;
 
-    enum Status {
-        HANDSHAKE,
-        STREAMING,
-        DESTROY
-    } status;
-
+    enum Status { HANDSHAKE, STREAMING, DESTROY } status;
 
     std::shared_ptr<Authenticator> auth;
     std::string auth_password;
-    const std::string &plain_http_response;
-    
+    const std::string& plain_http_response;
+
     SessionsList sessions;
     boost::asio::ssl::stream<boost::asio::ip::tcp::socket> live_socket;
     boost::asio::steady_timer gc_timer;
-    SendDataCache sending_data_cache;    
+    SendDataCache sending_data_cache;
     boost::asio::ssl::context& ssl_context;
 
     std::shared_ptr<icmpd> icmp_processor;
@@ -65,12 +59,14 @@ class PipelineSession : public SocketSession {
 
     void in_async_read();
     void in_recv(const std::string_view& data);
-    void in_send(PipelineRequest::Command cmd, ServerSession& session, 
-        const std::string_view& session_data, SentHandler&& sent_handler, int ack_count = 0);
-    bool find_and_process_session(PipelineComponent::SessionIdType session_id, std::function<void(SessionsList::iterator&)>&& processor);
-public:
-    PipelineSession(Service* _service, const Config& config, boost::asio::ssl::context &ssl_context, 
-        std::shared_ptr<Authenticator> auth, const std::string &plain_http_response);
+    void in_send(PipelineRequest::Command cmd, ServerSession& session, const std::string_view& session_data,
+      SentHandler&& sent_handler, int ack_count = 0);
+    bool find_and_process_session(
+      PipelineComponent::SessionIdType session_id, std::function<void(SessionsList::iterator&)>&& processor);
+
+  public:
+    PipelineSession(Service* _service, const Config& config, boost::asio::ssl::context& ssl_context,
+      std::shared_ptr<Authenticator> auth, const std::string& plain_http_response);
     void destroy(bool pipeline_call = false) final;
 
     boost::asio::ip::tcp::socket& accept_socket() final;

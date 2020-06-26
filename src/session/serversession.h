@@ -1,7 +1,7 @@
 /*
  * This file is part of the Trojan Plus project.
  * Trojan is an unidentifiable mechanism that helps you bypass GFW.
- * Trojan Plus is derived from original trojan project and writing 
+ * Trojan Plus is derived from original trojan project and writing
  * for more experimental features.
  * Copyright (C) 2017-2020  The Trojan Authors.
  * Copyright (C) 2020 The Trojan Plus Group Authors.
@@ -23,72 +23,68 @@
 #ifndef _SERVERSESSION_H_
 #define _SERVERSESSION_H_
 
-#include <string_view>
 #include <boost/asio/ssl.hpp>
+#include <string_view>
 
-#include "socketsession.h"
-#include "pipelinesession.h"
 #include "core/authenticator.h"
 #include "core/pipeline.h"
 #include "core/utils.h"
+#include "pipelinesession.h"
+#include "socketsession.h"
 
 class Service;
 class ServerSession : public SocketSession {
-private:
-    enum Status {
-        HANDSHAKE,
-        FORWARD,
-        UDP_FORWARD,
-        DESTROY
-    } status;
+  private:
+    enum Status { HANDSHAKE, FORWARD, UDP_FORWARD, DESTROY } status;
 
     ReadBufWithGuard in_read_buf;
     ReadBufWithGuard out_read_buf;
     ReadBufWithGuard udp_read_buf;
 
-    boost::asio::ssl::stream<boost::asio::ip::tcp::socket>in_socket;
+    boost::asio::ssl::stream<boost::asio::ip::tcp::socket> in_socket;
     boost::asio::ip::tcp::socket out_socket;
     boost::asio::ip::udp::socket udp_socket;
     boost::asio::ip::udp::endpoint out_udp_endpoint;
-    
+
     boost::asio::streambuf out_write_buf;
     boost::asio::streambuf udp_data_buf;
 
     boost::asio::ip::udp::resolver udp_resolver;
     boost::asio::ip::udp::endpoint udp_associate_endpoint;
-    
+
     std::shared_ptr<Authenticator> auth;
     std::string auth_password;
-    const std::string &plain_http_response;
+    const std::string& plain_http_response;
 
     using PipelineSessionRef = std::weak_ptr<Session>;
     PipelineSessionRef pipeline_session;
     bool has_queried_out;
-    
+
     void in_async_read();
-    void in_async_write(const std::string_view &data);
+    void in_async_write(const std::string_view& data);
     void in_sent();
-    void in_recv(const std::string_view &data, int ack_count = 0);
-    
-    void out_async_write(const std::string_view &data, int ack_count = 0);
-    void out_recv(const std::string_view &data);
+    void in_recv(const std::string_view& data, int ack_count = 0);
+
+    void out_async_write(const std::string_view& data, int ack_count = 0);
+    void out_recv(const std::string_view& data);
     void out_sent();
     void out_udp_async_read();
-    void out_udp_async_write(const std::string_view &data, const boost::asio::ip::udp::endpoint &endpoint);
-    void out_udp_recv(const std::string_view &data, const boost::asio::ip::udp::endpoint &endpoint);
+    void out_udp_async_write(const std::string_view& data, const boost::asio::ip::udp::endpoint& endpoint);
+    void out_udp_recv(const std::string_view& data, const boost::asio::ip::udp::endpoint& endpoint);
     void out_udp_sent();
-public:
-    ServerSession(Service* _service, const Config& config, boost::asio::ssl::context &ssl_context, 
-        std::shared_ptr<Authenticator> auth, const std::string &plain_http_response);
 
-    boost::asio::ip::tcp::socket &accept_socket() override;
+  public:
+    ServerSession(Service* _service, const Config& config, boost::asio::ssl::context& ssl_context,
+      std::shared_ptr<Authenticator> auth, const std::string& plain_http_response);
+
+    boost::asio::ip::tcp::socket& accept_socket() override;
     void start() override;
     void destroy(bool pipeline_call = false) override;
     void out_async_read();
 
-    void set_pipeline_session(const std::shared_ptr<Session>& _session){
-        static_assert(std::is_same<PipelineSessionRef, std::weak_ptr<Session>>::value, 
-            "Pipeline session ref type must be weak_ptr");
+    void set_pipeline_session(const std::shared_ptr<Session>& _session) {
+        static_assert(std::is_same<PipelineSessionRef, std::weak_ptr<Session>>::value,
+          "Pipeline session ref type must be weak_ptr");
         pipeline_session = _session;
     }
     bool is_destoryed() const { return status == DESTROY; }

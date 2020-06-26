@@ -1,7 +1,7 @@
 /*
  * This file is part of the Trojan Plus project.
  * Trojan is an unidentifiable mechanism that helps you bypass GFW.
- * Trojan Plus is derived from original trojan project and writing 
+ * Trojan Plus is derived from original trojan project and writing
  * for more experimental features.
  * Copyright (C) 2020 The Trojan Plus Group Authors.
  *
@@ -28,12 +28,12 @@
 #include <boost/asio/ssl.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/streambuf.hpp>
+#include <ctime>
+#include <exception>
 #include <functional>
 #include <list>
-#include <vector>
 #include <string>
-#include <exception>
-#include <ctime>
+#include <vector>
 
 #include "log.h"
 
@@ -50,7 +50,7 @@
 
 #ifdef ENABLE_REUSE_PORT
 typedef boost::asio::detail::socket_option::boolean<SOL_SOCKET, SO_REUSEPORT> reuse_port;
-#endif  // ENABLE_REUSE_PORT
+#endif // ENABLE_REUSE_PORT
 
 #ifndef IP_RECVTTL
 #define IP_RECVTTL 12
@@ -97,32 +97,34 @@ typedef boost::asio::detail::socket_option::boolean<SOL_SOCKET, SO_REUSEPORT> re
 #define SOL_IPV6 IPPROTO_IPV6
 #endif
 
-#define PACKET_HEADER_SIZE (1 + 28 + 2 + 64)
-#define DEFAULT_PACKET_SIZE 1397  // 1492 - PACKET_HEADER_SIZE = 1397, the default MTU for UDP relay
+#define PACKET_HEADER_SIZE  (1 + 28 + 2 + 64)
+#define DEFAULT_PACKET_SIZE 1397 // 1492 - PACKET_HEADER_SIZE = 1397, the default MTU for UDP relay
 
-#define _define_simple_getter_setter(type, name) \
-    [[nodiscard]] inline type get_##name() const { return name; } \
+#define _define_simple_getter_setter(type, name)                                                                       \
+    [[nodiscard]] inline type get_##name() const { return name; }                                                      \
     inline void set_##name(type val) { name = val; }
 
-#define _define_getter(type, name) \
-    [[nodiscard]] inline type get_##name() {return name;}
+#define _define_getter(type, name)                                                                                     \
+    [[nodiscard]] inline type get_##name() { return name; }
 
-#define _define_getter_const(type, name) \
-    [[nodiscard]] inline type get_##name() const {return name;}
+#define _define_setter(type, name)                                                                                     \
+    [[nodiscard]] inline void set_##name(type _value) { name = _value; }
 
+#define _define_getter_const(type, name)                                                                               \
+    [[nodiscard]] inline type get_##name() const { return name; }
 
-
-const static int half_byte_shift_4_bits = 4;
-const static int one_byte_shift_8_bits = 8;
-const static int two_bytes_shift_16_bits = 16;
+const static int half_byte_shift_4_bits    = 4;
+const static int one_byte_shift_8_bits     = 8;
+const static int two_bytes_shift_16_bits   = 16;
 const static int three_bytes_shift_24_bits = 24;
 
-const static int half_byte_mask_0xF = 0xF;
-const static int one_byte_mask_0xFF = 0xFF;
+const static int half_byte_mask_0xF    = 0xF;
+const static int one_byte_mask_0xFF    = 0xFF;
 const static int two_bytes_mask_0xFFFF = 0xFFFF;
 
 size_t streambuf_append(boost::asio::streambuf& target, const boost::asio::streambuf& append_buf);
-size_t streambuf_append(boost::asio::streambuf& target, const boost::asio::streambuf& append_buf, size_t start, size_t n);
+size_t streambuf_append(
+  boost::asio::streambuf& target, const boost::asio::streambuf& append_buf, size_t start, size_t n);
 size_t streambuf_append(boost::asio::streambuf& target, const char* append_str);
 size_t streambuf_append(boost::asio::streambuf& target, const uint8_t* append_data, size_t append_length);
 size_t streambuf_append(boost::asio::streambuf& target, char append_char);
@@ -138,47 +140,42 @@ int get_hashCode(const std::string& str);
 
 void write_data_to_file(int id, const std::string& tag, const std::string_view& data);
 
-using SentHandler = std::function<void(const boost::system::error_code ec)>;
-using AsyncWriter = std::function<void(const boost::asio::streambuf& data, SentHandler&& handler)>;
-using ConnectionFunc = std::function<bool()> ;
-using ReadHandler = std::function<void(const std::string_view& data, size_t push_count)> ;
-using PushDataHandler = std::function<void(boost::asio::streambuf& buf)> ;
-
+using SentHandler     = std::function<void(const boost::system::error_code ec)>;
+using AsyncWriter     = std::function<void(const boost::asio::streambuf& data, SentHandler&& handler)>;
+using ConnectionFunc  = std::function<bool()>;
+using ReadHandler     = std::function<void(const std::string_view& data, size_t push_count)>;
+using PushDataHandler = std::function<void(boost::asio::streambuf& buf)>;
 
 // please don't return uint16_t for the performance, maybe byte align problem
-[[nodiscard]] 
-static inline size_t parse_uint16(int start_pos, const std::string_view& data){
-    return size_t(uint8_t(data[0 + start_pos])) << one_byte_shift_8_bits | 
-           size_t(uint8_t(data[1 + start_pos]));
+[[nodiscard]] static inline size_t parse_uint16(int start_pos, const std::string_view& data) {
+    return size_t(uint8_t(data[0 + start_pos])) << one_byte_shift_8_bits | size_t(uint8_t(data[1 + start_pos]));
 }
 
-static inline void generate_uint16(boost::asio::streambuf& data, uint16_t value){
+static inline void generate_uint16(boost::asio::streambuf& data, uint16_t value) {
     streambuf_append(data, char(value >> one_byte_shift_8_bits & one_byte_mask_0xFF));
     streambuf_append(data, char(value & one_byte_mask_0xFF));
 }
 
-[[nodiscard]]
-static inline uint32_t parse_uint32(int start_pos, const std::string_view& data){
-    return uint32_t(uint8_t(data[0 + start_pos])) << three_bytes_shift_24_bits | 
-           uint32_t(uint8_t(data[1 + start_pos])) << two_bytes_shift_16_bits | 
-           uint32_t(uint8_t(data[2 + start_pos])) << one_byte_shift_8_bits | 
-           uint32_t(uint8_t(data[3 + start_pos]));
+[[nodiscard]] static inline uint32_t parse_uint32(int start_pos, const std::string_view& data) {
+    return uint32_t(uint8_t(data[0 + start_pos])) << three_bytes_shift_24_bits |
+           uint32_t(uint8_t(data[1 + start_pos])) << two_bytes_shift_16_bits |
+           uint32_t(uint8_t(data[2 + start_pos])) << one_byte_shift_8_bits | uint32_t(uint8_t(data[3 + start_pos]));
 }
 
-static inline void generate_uint32(boost::asio::streambuf& data, uint32_t value){
+static inline void generate_uint32(boost::asio::streambuf& data, uint32_t value) {
     streambuf_append(data, char(value >> three_bytes_shift_24_bits));
     streambuf_append(data, char(value >> two_bytes_shift_16_bits & one_byte_mask_0xFF));
     streambuf_append(data, char(value >> one_byte_shift_8_bits & one_byte_mask_0xFF));
     streambuf_append(data, char(value & one_byte_mask_0xFF));
 }
 
-class SendDataCache{
+class SendDataCache {
     std::vector<SentHandler> handler_queue;
     boost::asio::streambuf data_queue;
-    
+
     std::vector<SentHandler> handler_queue_other;
     boost::asio::streambuf data_queue_other;
-    
+
     std::vector<SentHandler>* current_recv_handler;
     boost::asio::streambuf* current_recv_queue;
 
@@ -190,7 +187,7 @@ class SendDataCache{
 
     void swap_recv();
 
-public: 
+  public:
     SendDataCache();
     ~SendDataCache();
 
@@ -201,17 +198,18 @@ public:
     void async_send();
 };
 
-class ReadDataCache{
+class ReadDataCache {
     boost::asio::streambuf data_queue;
     ReadHandler read_handler;
     size_t push_ack_count{};
     bool is_waiting{false};
-public :
+
+  public:
     inline void push_data(const std::string_view& data) {
         if (is_waiting) {
             is_waiting = false;
             read_handler(data, 1);
-        }else{
+        } else {
             push_ack_count++;
             streambuf_append(data_queue, data);
         }
@@ -219,50 +217,47 @@ public :
 
     inline void async_read(ReadHandler&& handler) {
         if (data_queue.size() == 0) {
-            is_waiting = true;
+            is_waiting   = true;
             read_handler = std::move(handler);
-        }else{
+        } else {
             handler(streambuf_to_string_view(data_queue), push_ack_count);
             data_queue.consume(data_queue.size());
             push_ack_count = 0;
         }
     }
 
-    [[nodiscard]] inline bool has_queued_data()const{
-        return data_queue.size() > 0;
-    }
+    [[nodiscard]] inline bool has_queued_data() const { return data_queue.size() > 0; }
 };
 
-
-class SendingDataAllocator{
+class SendingDataAllocator {
     std::vector<std::shared_ptr<boost::asio::streambuf>> allocated;
     std::list<std::shared_ptr<boost::asio::streambuf>> free_bufs;
 
-public:
-    std::shared_ptr<boost::asio::streambuf> allocate(const std::string_view& data){
+  public:
+    std::shared_ptr<boost::asio::streambuf> allocate(const std::string_view& data) {
         auto buf = std::shared_ptr<boost::asio::streambuf>(nullptr);
-        if(free_bufs.empty()){
+        if (free_bufs.empty()) {
             buf = std::make_shared<boost::asio::streambuf>();
             allocated.push_back(buf);
-        }else{
+        } else {
             buf = free_bufs.front();
             free_bufs.pop_front();
         }
-        
+
         streambuf_append(*buf, data);
         return buf;
     }
 
-    void free(const std::shared_ptr<boost::asio::streambuf>& buf){ 
+    void free(const std::shared_ptr<boost::asio::streambuf>& buf) {
         bool found = false;
-        for(const auto& it : allocated){
-            if(it.get() == buf.get()){
+        for (const auto& it : allocated) {
+            if (it.get() == buf.get()) {
                 found = true;
                 break;
             }
         }
 
-        if(!found){
+        if (!found) {
             throw std::logic_error("cannot find the buf in SendingDataAllocator!");
         }
 
@@ -271,76 +266,63 @@ public:
     }
 };
 
-class ReadBufWithGuard{
+class ReadBufWithGuard {
     boost::asio::streambuf read_buf;
     bool read_buf_guard = false;
-public:
-    inline void consume_all(){
-        read_buf.consume(read_buf.size());
-    }
 
-    inline void consume(size_t length){
-        read_buf.consume(length);
-    }
+  public:
+    inline void consume_all() { read_buf.consume(read_buf.size()); }
 
-    [[nodiscard]]
-    inline size_t size()const noexcept{
-        return read_buf.size();
-    }
+    inline void consume(size_t length) { read_buf.consume(length); }
 
-    inline void commit(size_t length){
-        read_buf.commit(length);
-    }
+    [[nodiscard]] inline size_t size() const noexcept { return read_buf.size(); }
 
-    [[nodiscard]]
-    inline boost::asio::streambuf::const_buffers_type data()const{
-        return read_buf.data();
-    }
+    inline void commit(size_t length) { read_buf.commit(length); }
 
-    [[nodiscard]]
-    inline boost::asio::streambuf::mutable_buffers_type prepare(size_t length){
+    [[nodiscard]] inline boost::asio::streambuf::const_buffers_type data() const { return read_buf.data(); }
+
+    [[nodiscard]] inline boost::asio::streambuf::mutable_buffers_type prepare(size_t length) {
         return read_buf.prepare(length);
     }
-    
-    inline operator std::string_view() const{ 
-        return streambuf_to_string_view(read_buf);
-    }
 
-    inline operator boost::asio::streambuf&(){ 
-        return read_buf;
-    }
+    inline operator std::string_view() const { return streambuf_to_string_view(read_buf); }
 
-    inline void begin_read(const char* __file__, int __line__){
-        if(read_buf_guard){
-            throw std::logic_error("!! guard_read_buf failed! Cannot enter this function before _guard_read_buf_end  !! " + 
-                std::string(__file__) + ":" + std::to_string(__line__));
-        } 
+    inline operator boost::asio::streambuf &() { return read_buf; }
+
+    inline void begin_read(const char* __file__, int __line__) {
+        if (read_buf_guard) {
+            throw std::logic_error(
+              "!! guard_read_buf failed! Cannot enter this function before _guard_read_buf_end  !! " +
+              std::string(__file__) + ":" + std::to_string(__line__));
+        }
         read_buf_guard = true;
     }
 
-    inline void end_read(){
-        read_buf_guard = false;
-    }
+    inline void end_read() { read_buf_guard = false; }
 };
 
-class bytes_stat{
+class bytes_stat {
 
     uint64_t recv_len{0};
     uint64_t sent_len{0};
-    time_t start_time{ time(nullptr) };
+    time_t start_time{time(nullptr)};
 
-public:
+  public:
+    uint64_t inc_recv_len(uint64_t inc) {
+        recv_len += inc;
+        return recv_len;
+    }
+    uint64_t inc_sent_len(uint64_t inc) {
+        sent_len += inc;
+        return sent_len;
+    }
 
-    uint64_t inc_recv_len(uint64_t inc){ recv_len += inc; return recv_len;}
-    uint64_t inc_sent_len(uint64_t inc){ sent_len += inc; return sent_len;}
+    _define_getter_const(uint64_t, recv_len);
+    _define_getter_const(uint64_t, sent_len);
 
-    _define_getter_const(uint64_t, recv_len)
-    _define_getter_const(uint64_t, sent_len)
-
-    [[nodiscard]]
-    inline std::string to_string()const{
-        return std::to_string(get_recv_len()) + " bytes received, " + std::to_string(get_sent_len()) + 
-            " bytes sent, lasted for " + std::to_string(time(nullptr) - start_time) + " seconds";
+    [[nodiscard]] inline std::string to_string() const {
+        return std::to_string(get_recv_len()) + " bytes received, " + std::to_string(get_sent_len()) +
+               " bytes sent, lasted for " + std::to_string(time(nullptr) - start_time) + " seconds";
     }
 };
 
@@ -348,88 +330,100 @@ void android_protect_socket(int fd);
 
 template <typename ThisT, typename EndPoint>
 void connect_out_socket(ThisT this_ptr, std::string addr, std::string port, boost::asio::ip::tcp::resolver& resolver,
-                        boost::asio::ip::tcp::socket& out_socket, EndPoint in_endpoint, std::function<void()>&& connected_handler) {
-    resolver.async_resolve(addr, port, [=, &out_socket](const boost::system::error_code error, const boost::asio::ip::tcp::resolver::results_type& results) {
-        if (error || results.empty()) {
-            _log_with_endpoint(in_endpoint, "cannot resolve remote server hostname " + addr + ":" + port + " reason: " + error.message(), Log::ERROR);
-            this_ptr->destroy();
-            return;
-        }
-        auto iterator = results.begin();
-        _log_with_endpoint(in_endpoint, addr + " is resolved to " + iterator->endpoint().address().to_string(), Log::ALL);
-        boost::system::error_code ec;
-        out_socket.open(iterator->endpoint().protocol(), ec);
-        if (ec) {
-            output_debug_info_ec(ec);
-            this_ptr->destroy();
-            return;
-        }
-        android_protect_socket((int)out_socket.native_handle());
-        if (this_ptr->get_config().get_tcp().no_delay) {
-            out_socket.set_option(boost::asio::ip::tcp::no_delay(true));
-        }
-        if (this_ptr->get_config().get_tcp().keep_alive) {
-            out_socket.set_option(boost::asio::socket_base::keep_alive(true));
-        }
+  boost::asio::ip::tcp::socket& out_socket, EndPoint in_endpoint, std::function<void()>&& connected_handler) {
+    resolver.async_resolve(addr, port,
+      [=, &out_socket](
+        const boost::system::error_code error, const boost::asio::ip::tcp::resolver::results_type& results) {
+          if (error || results.empty()) {
+              _log_with_endpoint(in_endpoint,
+                "cannot resolve remote server hostname " + addr + ":" + port + " reason: " + error.message(),
+                Log::ERROR);
+              this_ptr->destroy();
+              return;
+          }
+          auto iterator = results.begin();
+          _log_with_endpoint(
+            in_endpoint, addr + " is resolved to " + iterator->endpoint().address().to_string(), Log::ALL);
+          boost::system::error_code ec;
+          out_socket.open(iterator->endpoint().protocol(), ec);
+          if (ec) {
+              output_debug_info_ec(ec);
+              this_ptr->destroy();
+              return;
+          }
+          android_protect_socket((int)out_socket.native_handle());
+          if (this_ptr->get_config().get_tcp().no_delay) {
+              out_socket.set_option(boost::asio::ip::tcp::no_delay(true));
+          }
+          if (this_ptr->get_config().get_tcp().keep_alive) {
+              out_socket.set_option(boost::asio::socket_base::keep_alive(true));
+          }
 #ifdef TCP_FASTOPEN_CONNECT
-        if (this_ptr->get_config().get_tcp().fast_open) {
-            using fastopen_connect = boost::asio::detail::socket_option::boolean<IPPROTO_TCP, TCP_FASTOPEN_CONNECT>;
-            boost::system::error_code ec;
-            out_socket.set_option(fastopen_connect(true), ec);
-        }
-#endif  // TCP_FASTOPEN_CONNECT
-        auto timeout_timer = std::shared_ptr<boost::asio::steady_timer>(nullptr);
-        if (this_ptr->get_config().get_tcp().connect_time_out > 0) {
-            // out_socket.async_connect will be stuck forever when the host is not reachable
-            // we must set a timeout timer
-            timeout_timer = std::make_shared<boost::asio::steady_timer>(this_ptr->get_service()->get_io_context());
-            timeout_timer->expires_after(std::chrono::seconds(this_ptr->get_config().get_tcp().connect_time_out));
-            timeout_timer->async_wait([=](const boost::system::error_code error) {
-                if (!error) {
-                    _log_with_endpoint(in_endpoint, "cannot establish connection to remote server " + addr + ':' + port + " reason: timeout", Log::ERROR);
-                    this_ptr->destroy();
-                }
-            });
-        }
+          if (this_ptr->get_config().get_tcp().fast_open) {
+              using fastopen_connect = boost::asio::detail::socket_option::boolean<IPPROTO_TCP, TCP_FASTOPEN_CONNECT>;
+              boost::system::error_code ec;
+              out_socket.set_option(fastopen_connect(true), ec);
+          }
+#endif // TCP_FASTOPEN_CONNECT
+          auto timeout_timer = std::shared_ptr<boost::asio::steady_timer>(nullptr);
+          if (this_ptr->get_config().get_tcp().connect_time_out > 0) {
+              // out_socket.async_connect will be stuck forever when the host is not reachable
+              // we must set a timeout timer
+              timeout_timer = std::make_shared<boost::asio::steady_timer>(this_ptr->get_service()->get_io_context());
+              timeout_timer->expires_after(std::chrono::seconds(this_ptr->get_config().get_tcp().connect_time_out));
+              timeout_timer->async_wait([=](const boost::system::error_code error) {
+                  if (!error) {
+                      _log_with_endpoint(in_endpoint,
+                        "cannot establish connection to remote server " + addr + ':' + port + " reason: timeout",
+                        Log::ERROR);
+                      this_ptr->destroy();
+                  }
+              });
+          }
 
-        out_socket.async_connect(*iterator, [=](const boost::system::error_code error) {
-            if (timeout_timer) {
-                timeout_timer->cancel();
-            }
+          out_socket.async_connect(*iterator, [=](const boost::system::error_code error) {
+              if (timeout_timer) {
+                  timeout_timer->cancel();
+              }
 
-            if (error) {
-                _log_with_endpoint(in_endpoint, "cannot establish connection to remote server " + addr + ':' + port + " reason: " + error.message(), Log::ERROR);
-                this_ptr->destroy();
-                return;
-            }
+              if (error) {
+                  _log_with_endpoint(in_endpoint,
+                    "cannot establish connection to remote server " + addr + ':' + port + " reason: " + error.message(),
+                    Log::ERROR);
+                  this_ptr->destroy();
+                  return;
+              }
 
-            connected_handler();
-        });
-    });
+              connected_handler();
+          });
+      });
 }
 
 template <typename ThisT, typename EndPoint>
-void connect_remote_server_ssl(ThisT this_ptr, std::string addr, std::string port, boost::asio::ip::tcp::resolver& resolver,
-                               boost::asio::ssl::stream<boost::asio::ip::tcp::socket>& out_socket, EndPoint in_endpoint, std::function<void()>&& connected_handler) {
+void connect_remote_server_ssl(ThisT this_ptr, std::string addr, std::string port,
+  boost::asio::ip::tcp::resolver& resolver, boost::asio::ssl::stream<boost::asio::ip::tcp::socket>& out_socket,
+  EndPoint in_endpoint, std::function<void()>&& connected_handler) {
 
     connect_out_socket(this_ptr, addr, port, resolver, out_socket.next_layer(), in_endpoint, [=, &out_socket]() {
-        out_socket.async_handshake(boost::asio::ssl::stream_base::client, [=, &out_socket](const boost::system::error_code error) {
-            if (error) {
-                _log_with_endpoint(in_endpoint, "SSL handshake failed with " + addr + ':' + port + " reason: " + error.message(), Log::ERROR);
-                this_ptr->destroy();
-                return;
-            }
-            _log_with_endpoint(in_endpoint, "tunnel established");
-            if (this_ptr->get_config().get_ssl().reuse_session) {
-                auto* ssl = out_socket.native_handle();
-                if (!SSL_session_reused(ssl)) {
-                    _log_with_endpoint(in_endpoint, "SSL session not reused");
-                } else {
-                    _log_with_endpoint(in_endpoint, "SSL session reused");
-                }
-            }
-            connected_handler();
-        });
+        out_socket.async_handshake(
+          boost::asio::ssl::stream_base::client, [=, &out_socket](const boost::system::error_code error) {
+              if (error) {
+                  _log_with_endpoint(in_endpoint,
+                    "SSL handshake failed with " + addr + ':' + port + " reason: " + error.message(), Log::ERROR);
+                  this_ptr->destroy();
+                  return;
+              }
+              _log_with_endpoint(in_endpoint, "tunnel established");
+              if (this_ptr->get_config().get_ssl().reuse_session) {
+                  auto* ssl = out_socket.native_handle();
+                  if (!SSL_session_reused(ssl)) {
+                      _log_with_endpoint(in_endpoint, "SSL session not reused");
+                  } else {
+                      _log_with_endpoint(in_endpoint, "SSL session reused");
+                  }
+              }
+              connected_handler();
+          });
     });
 }
 
@@ -437,7 +431,8 @@ template <typename ThisPtr>
 void shutdown_ssl_socket(ThisPtr this_ptr, boost::asio::ssl::stream<boost::asio::ip::tcp::socket>& socket) {
     if (socket.next_layer().is_open()) {
         auto self = this_ptr->shared_from_this();
-        auto ssl_shutdown_timer = std::make_shared<boost::asio::steady_timer>(this_ptr->get_service()->get_io_context());
+        auto ssl_shutdown_timer =
+          std::make_shared<boost::asio::steady_timer>(this_ptr->get_service()->get_io_context());
         auto ssl_shutdown_cb = [self, ssl_shutdown_timer, &socket](const boost::system::error_code error) {
             if (error == boost::asio::error::operation_aborted) {
                 return;
@@ -451,21 +446,20 @@ void shutdown_ssl_socket(ThisPtr this_ptr, boost::asio::ssl::stream<boost::asio:
         boost::system::error_code ec;
         socket.next_layer().cancel(ec);
         socket.async_shutdown(ssl_shutdown_cb);
-        ssl_shutdown_timer.get()->expires_after(std::chrono::seconds(this_ptr->get_config().get_ssl().ssl_shutdown_wait_time));
+        ssl_shutdown_timer.get()->expires_after(
+          std::chrono::seconds(this_ptr->get_config().get_ssl().ssl_shutdown_wait_time));
         ssl_shutdown_timer.get()->async_wait(ssl_shutdown_cb);
     }
 }
 
-
-template<class T>
-bool clear_weak_ptr_list(std::list<std::weak_ptr<T>>& l){
+template <class T> bool clear_weak_ptr_list(std::list<std::weak_ptr<T>>& l) {
     bool changed = false;
-    auto it = l.begin();
-    while(it != l.end()){
-        if(it->expired()){
-            it = l.erase(it);
+    auto it      = l.begin();
+    while (it != l.end()) {
+        if (it->expired()) {
+            it      = l.erase(it);
             changed = true;
-        }else{
+        } else {
             it++;
         }
     }
@@ -474,13 +468,16 @@ bool clear_weak_ptr_list(std::list<std::weak_ptr<T>>& l){
 }
 
 std::pair<std::string, uint16_t> recv_target_endpoint(int _native_fd);
-std::pair<std::string, uint16_t> recv_tproxy_udp_msg(int fd, boost::asio::ip::udp::endpoint& target_endpoint, char* buf, int& buf_len, int& ttl);
+std::pair<std::string, uint16_t> recv_tproxy_udp_msg(
+  int fd, boost::asio::ip::udp::endpoint& target_endpoint, char* buf, int& buf_len, int& ttl);
 bool set_udp_send_recv_buf(int fd, int buf_size);
-boost::asio::ip::udp::endpoint make_udp_endpoint_safe(const std::string& address, uint16_t port, boost::system::error_code& ec);
+boost::asio::ip::udp::endpoint make_udp_endpoint_safe(
+  const std::string& address, uint16_t port, boost::system::error_code& ec);
 
 bool prepare_nat_udp_bind(int fd, bool is_ipv4, bool recv_ttl);
-bool prepare_nat_udp_target_bind(int fd, bool is_ipv4, const boost::asio::ip::udp::endpoint& udp_target_endpoint, int buf_size);
+bool prepare_nat_udp_target_bind(
+  int fd, bool is_ipv4, const boost::asio::ip::udp::endpoint& udp_target_endpoint, int buf_size);
 
 int get_file_lock(const char* filename);
 void close_file_lock(int& file_fd);
-#endif  //_TROJAN_UTILS_H_
+#endif //_TROJAN_UTILS_H_
