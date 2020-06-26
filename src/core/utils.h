@@ -480,4 +480,16 @@ bool prepare_nat_udp_target_bind(
 
 int get_file_lock(const char* filename);
 void close_file_lock(int& file_fd);
+
+template <class T> bool safe_atov(const std::string& str, T& val) {
+    if (str.empty()) {
+        return false;
+    }
+    std::stringstream ss(str);
+    if ((ss >> val).fail() || !(ss >> std::ws).eof()) {
+        return false;
+    }
+
+    return true;
+}
 #endif //_TROJAN_UTILS_H_

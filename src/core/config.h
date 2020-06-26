@@ -44,6 +44,15 @@ class Config {
         SERVERT_TUN
     };
 
+    enum TUNProxyType {
+        tun_all                          = 0, // controlled by route table
+        tun_bypass_local                 = 1, // controlled by route table
+        tun_bypass_cn_mainland           = 2,
+        tun_bypass_local_and_cn_mainland = 3,
+        tun_gfwlist                      = 4,
+        tun_cn_mainland                  = 5,
+    };
+
     using SSLConfig = struct {
         bool verify;
         bool verify_hostname;
@@ -93,6 +102,9 @@ class Config {
         bool pipeline_proxy_icmp;
     };
 
+    using IPList       = std::set<uint32_t>;
+    using IPSubnetList = std::unordered_map<uint32_t, IPList>;
+
     using TUN = struct {
         std::string tun_name;
         std::string net_ip;
@@ -100,6 +112,20 @@ class Config {
         uint16_t mtu;
         int tun_fd;
         bool redirect_local; // redirect all ip to localhost for test
+
+        TUNProxyType proxy_type;
+
+        std::string cn_mainland_ips_file;
+        IPSubnetList _cn_mainland_ips_subnet;
+        IPList _cn_mainland_ips;
+
+        std::string white_ips;
+        IPSubnetList _white_ips_subnet;
+        IPList _white_ips;
+
+        std::string proxy_ips;
+        IPSubnetList _proxy_ips_subnet;
+        IPList _proxy_ips;
     };
 
     using DNS = struct {
@@ -141,6 +167,10 @@ class Config {
 
     void populate(const boost::property_tree::ptree& tree);
     void populate(const std::string& JSON);
+
+    void load_dns(const boost::property_tree::ptree& tree);
+
+    static void load_ips(const std::string& filename, IPSubnetList& subnet, IPList& ips);
 
     static std::string SHA224(const std::string& message);
 

@@ -142,7 +142,7 @@ Service::Service(Config& config, bool test)
                 m_dns_server = make_shared<DNSServer>(this);
                 if (m_dns_server->start()) {
                     _log_with_date_time(
-                      "[dns] start local dns server at " + to_string(config.get_dns().port), Log::WARN);
+                      "[dns] start local dns server at 0.0.0.0:" + to_string(config.get_dns().port), Log::WARN);
                 }
             } else {
                 _log_with_date_time("[dns] dns server has been created in other process.", Log::WARN);
