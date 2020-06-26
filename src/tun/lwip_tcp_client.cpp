@@ -265,7 +265,7 @@ void lwip_tcp_client::release_client(bool _owner_call /*=false*/) {
         tcp_arg(m_pcb, nullptr);
         m_pcb = nullptr;
 
-        if (!_owner_call) {
+        if (!_owner_call && m_close_cb) {
             // this callback will trigger decontructor
             m_close_cb(this);
         }

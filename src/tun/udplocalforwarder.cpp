@@ -165,5 +165,7 @@ void UDPLocalForwarder::destroy() {
         m_udp_socket.close();
     }
 
-    m_destroy_cb();
+    if (m_destroy_cb) {
+        m_destroy_cb();
+    }
 }

@@ -176,7 +176,7 @@ void TUNProxySession::destroy(bool pipeline_call) {
         get_service()->session_destroy_in_pipeline(*this);
     }
 
-    if (!m_close_from_tundev_flag) {
+    if (!m_close_from_tundev_flag && m_close_cb) {
         m_close_cb(this);
     }
 }
