@@ -30,6 +30,7 @@
 #include <cstdint>
 #include <map>
 #include <unordered_map>
+#include <vector>
 
 class Config {
 
@@ -102,7 +103,7 @@ class Config {
         bool pipeline_proxy_icmp;
     };
 
-    using IPList       = std::set<uint32_t>;
+    using IPList       = std::vector<uint32_t>;
     using IPSubnetList = std::unordered_map<uint32_t, IPList>;
 
     using TUN = struct {

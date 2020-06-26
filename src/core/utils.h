@@ -32,6 +32,7 @@
 #include <exception>
 #include <functional>
 #include <list>
+#include <sstream>
 #include <string>
 #include <vector>
 

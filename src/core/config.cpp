@@ -23,7 +23,9 @@
 #include "config.h"
 #include <boost/property_tree/json_parser.hpp>
 #include <cstdlib>
+#include <gsl/gsl>
 #include <openssl/evp.h>
+#include <openssl/opensslv.h>
 #include <sstream>
 #include <stdexcept>
 
@@ -34,12 +36,12 @@
 #ifdef __APPLE__
 #include <Security/Security.h>
 #endif // __APPLE__
+
 #include "core/icmpd.h"
 #include "core/utils.h"
 #include "session/session.h"
 #include "ssl/ssldefaults.h"
 #include "ssl/sslsession.h"
-#include <openssl/opensslv.h>
 
 using namespace std;
 using namespace boost::property_tree;
@@ -317,7 +319,7 @@ void Config::load_ips(const std::string& filename, IPSubnetList& subnet, IPList&
             line.erase(std::remove(line.begin(), line.end(), ' '), line.end());
             if (!line.empty()) {
                 size_t pos = line.find('/');
-                if (pos != line.npos) {
+                if (pos != string::npos) {
                     auto net      = line.substr(0, pos);
                     auto mask_str = line.substr(pos + 1);
                     uint32_t mask = 0;
@@ -325,31 +327,43 @@ void Config::load_ips(const std::string& filename, IPSubnetList& subnet, IPList&
                     boost::system::error_code ec;
                     auto addr = boost::asio::ip::make_address_v4(net, ec);
                     if (ec || !safe_atov(mask_str, mask)) {
-                        _log_with_date_time("[tun] error load '" + line + "' from " + filename);
+                        string error_msg("[tun] error load '");
+                        error_msg += (line);
+                        error_msg += "' from ";
+                        error_msg += filename;
+                        _log_with_date_time(error_msg, Log::ERROR);
                         continue;
                     }
                     auto it = subnet.find(mask);
                     if (it == subnet.end()) {
                         IPList l;
-                        l.emplace(addr.to_uint());
+                        l.emplace_back(addr.to_uint());
                         subnet.emplace(mask, l);
                     } else {
-                        it->second.emplace(addr.to_uint());
+                        it->second.emplace_back(addr.to_uint());
                     }
                     subnet_count++;
                 } else {
                     boost::system::error_code ec;
                     auto addr = boost::asio::ip::make_address_v4(line, ec);
                     if (!ec) {
-                        _log_with_date_time("[tun] error load '" + line + "' from " + filename);
+                        string error_msg("[tun] error load '");
+                        error_msg += (line);
+                        error_msg += "' from ";
+                        error_msg += filename;
+                        _log_with_date_time(error_msg, Log::ERROR);
                         continue;
                     }
-                    ips.emplace(addr.to_uint());
+                    ips.emplace_back(addr.to_uint());
                 }
             }
         }
 
-        if (!subnet.empty() || !ips.empty()) {
+        for (auto it : subnet) {
+            sort(it.second.begin(), it.second.end());
+        }
+        sort(ips.begin(), ips.end());
+        if (subnet_count > 0 || !ips.empty()) {
             _log_with_date_time("[tun] loaded " + to_string(subnet_count) + " subnet in " + to_string(subnet.size()) +
                                   " groups and " + to_string(ips.size()) + " ips from " + filename,
               Log::INFO);
@@ -471,7 +485,8 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, string&
             plain_http_response = string(istreambuf_iterator<char>(ifs), istreambuf_iterator<char>());
         }
         if (ssl.dhparam.empty()) {
-            ssl_context.use_tmp_dh(boost::asio::const_buffer(SSLDefaults::g_dh2048_sz, SSLDefaults::g_dh2048_sz_size));
+            ssl_context.use_tmp_dh(
+              boost::asio::const_buffer((const void*)SSLDefaults::g_dh2048_sz, SSLDefaults::g_dh2048_sz_size));
         } else {
             ssl_context.use_tmp_dh_file(ssl.dhparam);
         }
@@ -639,25 +654,25 @@ string Config::SHA224(const string& message) {
     unsigned int digest_len = 0;
     EVP_MD_CTX* ctx         = nullptr;
     if ((ctx = EVP_MD_CTX_new()) == nullptr) {
-        throw runtime_error("could not create hash context");
+        throw runtime_error("[sha224] could not create hash context");
     }
     if (EVP_DigestInit_ex(ctx, EVP_sha224(), nullptr) == 0) {
         EVP_MD_CTX_free(ctx);
-        throw runtime_error("could not initialize hash context");
+        throw runtime_error("[sha224] could not initialize hash context");
     }
     if (EVP_DigestUpdate(ctx, message.c_str(), message.length()) == 0) {
         EVP_MD_CTX_free(ctx);
-        throw runtime_error("could not update hash");
+        throw runtime_error("[sha224] could not update hash");
     }
-    if (EVP_DigestFinal_ex(ctx, digest, &digest_len) == 0) {
+    if (EVP_DigestFinal_ex(ctx, (unsigned char*)digest, &digest_len) == 0) {
         EVP_MD_CTX_free(ctx);
-        throw runtime_error("could not output hash");
+        throw runtime_error("[sha224] could not output hash");
     }
 
     for (unsigned int i = 0; i < digest_len; ++i) {
-        sprintf(mdString + (i << 1), "%02x", (unsigned int)digest[i]);
+        sprintf((mdString + (i << 1)), "%02x", (unsigned int)digest[i]);
     }
-    mdString[digest_len << 1] = '\0';
+    gsl::at(mdString, digest_len << 1) = '\0';
     EVP_MD_CTX_free(ctx);
-    return string(mdString);
+    return string((const char*)mdString);
 }
