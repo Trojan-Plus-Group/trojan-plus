@@ -45,13 +45,13 @@ class Config {
         SERVERT_TUN
     };
 
-    enum TUNProxyType {
-        tun_all                          = 0, // controlled by route table
-        tun_bypass_local                 = 1, // controlled by route table
-        tun_bypass_cn_mainland           = 2,
-        tun_bypass_local_and_cn_mainland = 3,
-        tun_gfwlist                      = 4,
-        tun_cn_mainland                  = 5,
+    enum RouteType {
+        route_all                          = 0, // controlled by route table
+        route_bypass_local                 = 1, // controlled by route table
+        route_bypass_cn_mainland           = 2,
+        route_bypass_local_and_cn_mainland = 3,
+        route_gfwlist                      = 4,
+        route_cn_mainland                  = 5,
     };
 
     using SSLConfig = struct {
@@ -103,9 +103,6 @@ class Config {
         bool pipeline_proxy_icmp;
     };
 
-    using IPList       = std::vector<uint32_t>;
-    using IPSubnetList = std::unordered_map<uint32_t, IPList>;
-
     using TUN = struct {
         std::string tun_name;
         std::string net_ip;
@@ -113,20 +110,6 @@ class Config {
         uint16_t mtu;
         int tun_fd;
         bool redirect_local; // redirect all ip to localhost for test
-
-        TUNProxyType proxy_type;
-
-        std::string cn_mainland_ips_file;
-        IPSubnetList _cn_mainland_ips_subnet;
-        IPList _cn_mainland_ips;
-
-        std::string white_ips;
-        IPSubnetList _white_ips_subnet;
-        IPList _white_ips;
-
-        std::string proxy_ips;
-        IPSubnetList _proxy_ips_subnet;
-        IPList _proxy_ips;
     };
 
     using DNS = struct {
@@ -141,6 +124,26 @@ class Config {
         std::unordered_map<size_t, std::vector<std::string>> _gfwlist;
         std::vector<std::string> up_dns_server;
         std::vector<std::string> up_gfw_dns_server;
+    };
+
+    using IPList       = std::vector<uint32_t>;
+    using IPSubnetList = std::unordered_map<uint32_t, IPList>;
+
+    using ROUTE = struct {
+        bool enabled;
+        RouteType proxy_type;
+
+        std::string cn_mainland_ips_file;
+        IPSubnetList _cn_mainland_ips_subnet;
+        IPList _cn_mainland_ips;
+
+        std::string white_ips;
+        IPSubnetList _white_ips_subnet;
+        IPList _white_ips;
+
+        std::string proxy_ips;
+        IPSubnetList _proxy_ips_subnet;
+        IPList _proxy_ips;
     };
 
   private:
@@ -163,6 +166,7 @@ class Config {
     Experimental experimental;
     TUN tun;
     DNS dns;
+    ROUTE route;
 
     int compare_hash = 0;
 

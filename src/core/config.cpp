@@ -212,21 +212,12 @@ void Config::populate(const ptree& tree) {
         }
     }
 
-    tun.tun_name             = tree.get("tun.tun_name", string());
-    tun.net_ip               = tree.get("tun.net_ip", string());
-    tun.net_mask             = tree.get("tun.net_mask", string());
-    tun.mtu                  = tree.get("tun.mtu", default_tun_mtu);
-    tun.tun_fd               = tree.get("tun.tun_fd", default_tun_fd);
-    tun.redirect_local       = tree.get("tun.redirect_local", false);
-    tun.proxy_type           = (TUNProxyType)tree.get("dns.proxy_type", (int)TUNProxyType::tun_all);
-    tun.cn_mainland_ips_file = tree.get("tun.cn_mainland_ips_file", string());
-    tun.white_ips            = tree.get("tun.white_ips", string());
-    tun.proxy_ips            = tree.get("tun.proxy_ips", string());
-    if (!tun.tun_name.empty()) {
-        load_ips(tun.cn_mainland_ips_file, tun._cn_mainland_ips_subnet, tun._cn_mainland_ips);
-        load_ips(tun.white_ips, tun._white_ips_subnet, tun._white_ips);
-        load_ips(tun.proxy_ips, tun._proxy_ips_subnet, tun._proxy_ips);
-    }
+    tun.tun_name       = tree.get("tun.tun_name", string());
+    tun.net_ip         = tree.get("tun.net_ip", string());
+    tun.net_mask       = tree.get("tun.net_mask", string());
+    tun.mtu            = tree.get("tun.mtu", default_tun_mtu);
+    tun.tun_fd         = tree.get("tun.tun_fd", default_tun_fd);
+    tun.redirect_local = tree.get("tun.redirect_local", false);
 
     dns.enabled          = tree.get("dns.enabled", false);
     dns.port             = tree.get("dns.port", default_dns_port);
@@ -238,6 +229,30 @@ void Config::populate(const ptree& tree) {
     dns.enable_ping_test = tree.get("dns.enable_ping_test", false);
 
     load_dns(tree);
+
+    route.enabled              = tree.get("route.enabled", false);
+    route.proxy_type           = (RouteType)tree.get("route.proxy_type", (int)RouteType::route_all);
+    route.cn_mainland_ips_file = tree.get("route.cn_mainland_ips_file", string());
+    route.white_ips            = tree.get("route.white_ips", string());
+    route.proxy_ips            = tree.get("route.proxy_ips", string());
+
+    if (route.enabled) {
+        if (run_type == CLIENT_TUN) {
+            load_ips(route.cn_mainland_ips_file, route._cn_mainland_ips_subnet, route._cn_mainland_ips);
+            load_ips(route.white_ips, route._white_ips_subnet, route._white_ips);
+            load_ips(route.proxy_ips, route._proxy_ips_subnet, route._proxy_ips);
+
+            if (route.proxy_type == RouteType::route_gfwlist && !dns.enabled) {
+                _log_with_date_time("[route] route_gfwlist need dns with gfw's list support!", Log::ERROR);
+            }
+        } else {
+            _log_with_date_time("[route] Now cannot enable route function without tun mode!", Log::ERROR);
+        }
+    } else {
+        if (run_type == CLIENT_TUN) {
+            _log_with_date_time("[tun] tun mode need route's config support!", Log::WARN);
+        }
+    }
 
     const auto hash_str = get_remote_addr() + ":" + to_string(get_remote_port());
     compare_hash        = get_hashCode(hash_str);
