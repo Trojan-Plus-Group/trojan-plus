@@ -328,7 +328,8 @@ void Config::load_dns(const boost::property_tree::ptree& tree) {
 void Config::load_ips(const std::string& filename, IPSubnetList& subnet, IPList& ips) {
     ifstream file(filename);
     if (file) {
-        size_t subnet_count = 0;
+        size_t subnet_count           = 0;
+        const uint32_t max_mask_value = numeric_limits<uint32_t>::digits;
 
         for (string line; std::getline(file, line);) {
             line.erase(std::remove(line.begin(), line.end(), ' '), line.end());
@@ -341,7 +342,7 @@ void Config::load_ips(const std::string& filename, IPSubnetList& subnet, IPList&
 
                     boost::system::error_code ec;
                     auto addr = boost::asio::ip::make_address_v4(net, ec);
-                    if (ec || !safe_atov(mask_str, mask)) {
+                    if (ec || !safe_atov(mask_str, mask) || mask == 0 || mask > max_mask_value) {
                         string error_msg("[tun] error load '");
                         error_msg += (line);
                         error_msg += "' from ";
@@ -353,7 +354,7 @@ void Config::load_ips(const std::string& filename, IPSubnetList& subnet, IPList&
                     if (it == subnet.end()) {
                         IPList l;
                         l.emplace_back(addr.to_uint());
-                        subnet.emplace(mask, l);
+                        subnet.emplace(mask - 1, l);
                     } else {
                         it->second.emplace_back(addr.to_uint());
                     }

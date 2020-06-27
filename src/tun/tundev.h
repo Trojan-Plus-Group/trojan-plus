@@ -44,6 +44,8 @@
 #include <boost/asio/posix/stream_descriptor.hpp>
 #include <boost/asio/streambuf.hpp>
 
+#include "core/config.h"
+
 #ifndef _WIN32
 using BoostStreamDescriptor = boost::asio::posix::stream_descriptor;
 #else
@@ -68,6 +70,7 @@ class BoostStreamDescriptor {
 class Service;
 class lwip_tcp_client;
 class TUNSession;
+class DNSServer;
 // this class canot support ipv6
 class TUNDev {
 
@@ -107,6 +110,7 @@ class TUNDev {
     std::list<std::shared_ptr<TUNSession>> m_udp_clients;
 
     Service* m_service;
+    std::shared_ptr<DNSServer> m_dns_server;
     int m_tun_fd;
     const bool m_is_outside_tun_fd;
     uint16_t m_mtu;
@@ -128,11 +132,15 @@ class TUNDev {
     void input_netif_packet(const uint8_t* data, uint16_t packet_len);
     int handle_write_upd_data(const TUNSession* _session, std::string_view& data);
 
+    [[nodiscard]] static bool is_in_ips(uint32_t ip, const Config::IPList& ips, const Config::IPSubnetList& subnet);
+    [[nodiscard]] bool proxy_by_route(uint32_t ip) const;
+
   public:
     TUNDev(Service* _service, const std::string& _tun_name, const std::string& _ipaddr, const std::string& _netmask,
       uint16_t _mtu, int _outside_tun_fd = -1);
     ~TUNDev();
 
+    void set_dns_server(std::shared_ptr<DNSServer> dns) { m_dns_server = std::move(dns); }
     [[nodiscard]] int get_tun_fd() const { return m_tun_fd; }
 };
 #endif //_TROJAN_TUNDEV_HPP

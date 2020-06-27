@@ -43,17 +43,23 @@ class DNSServer : public std::enable_shared_from_this<DNSServer> {
     class DNSCache {
         std::string domain;
         int ttl;
+        std::vector<uint32_t> ips;
+        bool proxyed;
         time_t cached_time{time(nullptr)};
         std::string answer_data;
 
       public:
-        DNSCache(std::string _domain, int _ttl, const std::string_view& data)
-            : domain(std::move(_domain)), ttl(_ttl), answer_data(data) {}
+        DNSCache(
+          std::string _domain, int _ttl, std::vector<uint32_t>& _ips, bool _proxyed, const std::string_view& data)
+            : domain(std::move(_domain)), ttl(_ttl), ips(move(_ips)), proxyed(_proxyed), answer_data(data) {}
 
         [[nodiscard]] inline bool expired(time_t curr) const { return int(curr - cached_time) >= ttl; }
 
-        _define_getter_const(const std::string&, domain) _define_getter_const(int, ttl);
+        _define_getter_const(const std::string&, domain);
+         _define_getter_const(int, ttl);
+         _define_getter_const(const std::vector<uint32_t>&, ips);
         _define_getter_const(time_t, cached_time);
+        _define_is_const(proxyed);
 
         _define_getter(std::string&, answer_data);
     };
@@ -70,11 +76,12 @@ class DNSServer : public std::enable_shared_from_this<DNSServer> {
 
     void in_recved(std::istream& is, const trojan::dns_header& header, const std::string_view& former_data);
     void async_read_udp();
-    void recv_up_stream_data(const boost::asio::ip::udp::endpoint& local_src, const std::string_view& data);
+    void recv_up_stream_data(
+      const boost::asio::ip::udp::endpoint& local_src, const std::string_view& data, bool proxyed);
     void send_to_local(const boost::asio::ip::udp::endpoint& local_src, const std::string_view& data);
     bool find_in_dns_cache(const boost::asio::ip::udp::endpoint& local_src, const trojan::dns_header& header,
       const trojan::dns_question& question);
-    void store_in_dns_cache(const std::string_view& data);
+    void store_in_dns_cache(const std::string_view& data, bool proxyed);
 
     [[nodiscard]] bool is_in_gfwlist(const std::string& domain) const;
 
@@ -91,8 +98,10 @@ class DNSServer : public std::enable_shared_from_this<DNSServer> {
     DNSServer(Service* _service);
     ~DNSServer();
 
-    bool start();
-    static bool get_dns_lock();
+    [[nodiscard]] bool start();
+    [[nodiscard]] bool is_ip_in_gfwlist(uint32_t ip) const;
+
+    [[nodiscard]] static bool get_dns_lock();
 };
 
 #endif //_TROJAN_DNS_SERVER_HPP

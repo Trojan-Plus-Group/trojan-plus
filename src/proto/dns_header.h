@@ -317,8 +317,12 @@ class dns_answer {
         uint16_t CLASS;
         uint32_t TTL;
         std::string RD;
-        std::string A;
-        std::string AAAA;
+
+        uint32_t A;
+        char AAAA[16];
+
+        std::string A_str;
+        std::string AAAA_str;
     };
 
   private:

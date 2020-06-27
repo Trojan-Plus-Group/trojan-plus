@@ -35,12 +35,27 @@
 
 #include "core/log.h"
 #include "core/service.h"
+#include "tun/dnsserver.h"
 #include "tun/lwip_tcp_client.h"
+#include "tun/tunlocalsession.h"
 #include "tun/tunproxysession.h"
 #include "tun/tunsession.h"
 
 using namespace std;
 using namespace boost::asio::ip;
+
+// clang-format off
+static const uint32_t mask_values[] = {
+  0x80000000, 0xC0000000, 0xE0000000, 0xF0000000,
+  0xF8000000, 0xFC000000, 0xFE000000, 0xFF000000,
+  0xFF800000, 0xFFC00000, 0xFFE00000, 0xFFF00000,
+  0xFFF80000, 0xFFFC0000, 0xFFFE0000, 0xFFFF0000,
+  0xFFFF8000, 0xFFFFC000, 0xFFFFE000, 0xFFFFF000,
+  0xFFFFF800, 0xFFFFFC00, 0xFFFFFE00, 0xFFFFFF00,
+  0xFFFFFF80, 0xFFFFFFC0, 0xFFFFFFE0, 0xFFFFFFF0,
+  0xFFFFFFF8, 0xFFFFFFFC, 0xFFFFFFFE, 0xFFFFFFFF,
+};
+// clang-format on
 
 static void tcp_remove(struct tcp_pcb* pcb_list) {
     struct tcp_pcb* pcb  = pcb_list;
@@ -258,13 +273,59 @@ err_t TUNDev::netif_output_func(struct netif*, struct pbuf* p, const ip4_addr_t*
     return ERR_OK;
 }
 
+bool TUNDev::is_in_ips(uint32_t ip, const Config::IPList& ips, const Config::IPSubnetList& subnet) {
+    if (!ips.empty() && binary_search(ips.cbegin(), ips.cend(), ip)) {
+        return true;
+    }
+
+    for (const auto& sub : subnet) {
+        uint32_t net = ip & gsl::at(mask_values, sub.first);
+        if (binary_search(sub.second.cbegin(), sub.second.cend(), net)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool TUNDev::proxy_by_route(uint32_t ip) const {
+    auto route = m_service->get_config().get_route();
+    if (is_in_ips(ip, route._proxy_ips, route._proxy_ips_subnet)) {
+        return true;
+    }
+
+    if (is_in_ips(ip, route._white_ips, route._white_ips_subnet)) {
+        return false;
+    }
+
+    switch (route.proxy_type) {
+        case Config::route_all:          // Controlled by route tables
+        case Config::route_bypass_local: // Controlled by route tables
+            return true;
+        case Config::route_bypass_cn_mainland:
+        case Config::route_bypass_local_and_cn_mainland: // Local ips Controlled by route tables
+            return !is_in_ips(ip, route._cn_mainland_ips, route._cn_mainland_ips_subnet);
+        case Config::route_gfwlist:
+            return m_dns_server != nullptr && m_dns_server->is_ip_in_gfwlist(ip);
+        case Config::route_cn_mainland:
+            return is_in_ips(ip, route._cn_mainland_ips, route._cn_mainland_ips_subnet);
+        default:
+            throw logic_error("[dns] error proxy type: " + to_string((int)route.proxy_type));
+    }
+}
+
 err_t TUNDev::listener_accept_func(struct tcp_pcb* newpcb, err_t err) {
 
     if (err != ERR_OK) {
         return err;
     }
 
-    auto session    = make_shared<TUNProxySession>(m_service, false);
+    shared_ptr<TUNSession> session = nullptr;
+    if (proxy_by_route(ntoh32(newpcb->local_ip.u_addr.ip4.addr))) {
+        session = make_shared<TUNProxySession>(m_service, false);
+    } else {
+        session = make_shared<TUNLocalSession>(m_service, false);
+    }
     auto tcp_client = make_shared<lwip_tcp_client>(newpcb, session, [this](lwip_tcp_client* client) {
         for (auto it = m_tcp_clients.begin(); it != m_tcp_clients.end(); it++) {
             if (it->get() == client) {
@@ -486,7 +547,12 @@ int TUNDev::try_to_process_udp_packet(uint8_t* data, int data_len) {
             }
         }
 
-        auto session = make_shared<TUNProxySession>(m_service, true);
+        shared_ptr<TUNSession> session = nullptr;
+        if (proxy_by_route(ntoh32(ipv4_hdr.destination_address))) {
+            session = make_shared<TUNProxySession>(m_service, true);
+        } else {
+            session = make_shared<TUNLocalSession>(m_service, true);
+        }
         session->set_udp_connect(local_endpoint, remote_endpoint);
         session->set_write_to_lwip([this](const TUNSession* _se, string_view* _data) {
             assert(_data != nullptr);

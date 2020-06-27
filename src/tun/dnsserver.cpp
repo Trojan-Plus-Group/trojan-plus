@@ -145,7 +145,7 @@ bool DNSServer::find_in_dns_cache(
     return false;
 }
 
-void DNSServer::store_in_dns_cache(const string_view& data) {
+void DNSServer::store_in_dns_cache(const string_view& data, bool proxyed) {
     if (m_service->get_config().get_dns().enable_cached) {
         string read_data(data);
         istringstream is(read_data);
@@ -156,17 +156,20 @@ void DNSServer::store_in_dns_cache(const string_view& data) {
 
                 const auto& domain = answer.get_questions()[0].get_QNAME();
                 uint32_t ttl       = numeric_limits<uint32_t>::max();
-
+                vector<uint32_t> A_list;
                 for (const auto& an : answer.get_answers()) {
-                    if (!an.A.empty() || !an.AAAA.empty()) {
+                    if (an.A != 0) {
                         if (ttl > an.TTL) { // find min
                             ttl = an.TTL;
                         }
+
+                        A_list.emplace_back(an.A);
                     }
                 }
 
                 if (ttl != numeric_limits<uint32_t>::max()) {
-                    m_dns_cache.emplace_back(DNSCache(domain, ttl, data));
+                    sort(A_list.begin(), A_list.end());
+                    m_dns_cache.emplace_back(DNSCache(domain, ttl, A_list, proxyed, data));
                     _log_with_date_time_ALL("[dns] cache " + domain + " in ttl: " + to_string(ttl));
                 }
             }
@@ -181,9 +184,9 @@ void DNSServer::send_to_local(const udp::endpoint& local_src, const string_view&
     m_serv_udp_socket.send_to(boost::asio::buffer(data), local_src, 0, ec);
 }
 
-void DNSServer::recv_up_stream_data(const udp::endpoint& local_src, const string_view& data) {
+void DNSServer::recv_up_stream_data(const udp::endpoint& local_src, const string_view& data, bool proxyed) {
     send_to_local(local_src, data);
-    store_in_dns_cache(data);
+    store_in_dns_cache(data, proxyed);
 }
 
 void DNSServer::in_recved(istream& is, const dns_header& header, const string_view& former_data) {
@@ -208,7 +211,7 @@ void DNSServer::in_recved(istream& is, const dns_header& header, const string_vi
         auto dst              = make_pair(up_stream_ns_svr, DEFAULT_UP_STREAM_NS_SVR_PORT);
         auto forwarder        = make_shared<UDPForwardSession>(
           m_service, m_service->get_config(), m_service->get_ssl_context(), m_udp_recv_endpoint, dst,
-          [this](const udp::endpoint& endpoint, const string_view& data) { recv_up_stream_data(endpoint, data); },
+          [this](const udp::endpoint& endpoint, const string_view& data) { recv_up_stream_data(endpoint, data, true); },
           false, true);
 
         auto data = m_service->get_sending_data_allocator().allocate(former_data);
@@ -225,7 +228,8 @@ void DNSServer::in_recved(istream& is, const dns_header& header, const string_vi
         auto dst              = udp::endpoint(make_address(up_stream_ns_svr), DEFAULT_UP_STREAM_NS_SVR_PORT);
         auto forwarder        = make_shared<UDPLocalForwarder>(
           m_service, m_udp_recv_endpoint, dst,
-          [this](const udp::endpoint& endpoint, const string_view& data) { recv_up_stream_data(endpoint, data); },
+          [this](
+            const udp::endpoint& endpoint, const string_view& data) { recv_up_stream_data(endpoint, data, false); },
           true);
 
         if (forwarder->start(former_data)) {
@@ -259,4 +263,14 @@ void DNSServer::async_read_udp() {
 
           async_read_udp();
       });
+}
+
+bool DNSServer::is_ip_in_gfwlist(uint32_t ip) const {
+    for (const auto& dns : m_dns_cache) {
+        if (dns.is_proxyed() && binary_search(dns.get_ips().cbegin(), dns.get_ips().cend(), ip)) {
+            return true;
+        }
+    }
+
+    return false;
 }

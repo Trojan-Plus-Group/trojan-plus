@@ -206,6 +206,7 @@ class Config {
     _define_getter_const(const Experimental&, experimental);
     _define_getter_const(const TUN&, tun);
     _define_getter_const(const DNS&, dns);
+    _define_getter_const(const ROUTE&, route);
 };
 
 #endif // _CONFIG_H_

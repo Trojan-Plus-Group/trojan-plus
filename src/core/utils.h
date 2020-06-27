@@ -114,6 +114,9 @@ typedef boost::asio::detail::socket_option::boolean<SOL_SOCKET, SO_REUSEPORT> re
 #define _define_getter_const(type, name)                                                                               \
     [[nodiscard]] inline type get_##name() const { return name; }
 
+#define _define_is_const(name)                                                                                         \
+    [[nodiscard]] inline bool is_##name() const { return name; }
+
 const static int half_byte_shift_4_bits    = 4;
 const static int one_byte_shift_8_bits     = 8;
 const static int two_bytes_shift_16_bits   = 16;

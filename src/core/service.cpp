@@ -143,6 +143,10 @@ Service::Service(Config& config, bool test)
                 if (m_dns_server->start()) {
                     _log_with_date_time(
                       "[dns] start local dns server at 0.0.0.0:" + to_string(config.get_dns().port), Log::WARN);
+
+                    if (m_tundev != nullptr) {
+                        m_tundev->set_dns_server(m_dns_server);
+                    }
                 }
             } else {
                 _log_with_date_time("[dns] dns server has been created in other process.", Log::WARN);
