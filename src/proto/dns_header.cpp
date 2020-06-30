@@ -244,7 +244,7 @@ istream& dns_answer::read_answer(istream& is, answer& an) {
             an.A     = parse_uint32(0, an.RD);
             an.A_str = boost::asio::ip::make_address_v4(an.A).to_string();
         } else if (an.TYPE == dns_header::QTYPE_AAAA_RECORD) {
-            strncpy(an.AAAA, an.RD.data(), sizeof(an.AAAA));
+            memcpy(an.AAAA, an.RD.data(), sizeof(an.AAAA));
             an.AAAA_str = boost::asio::ip::make_address_v6(an.RD.data()).to_string();
         }
     }
