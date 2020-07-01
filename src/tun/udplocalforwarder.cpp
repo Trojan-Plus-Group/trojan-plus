@@ -149,5 +149,6 @@ void UDPLocalForwarder::destroy(bool pipeline_called) {
 
     if (m_destroy_cb) {
         m_destroy_cb();
+        m_destroy_cb = nullptr;
     }
 }

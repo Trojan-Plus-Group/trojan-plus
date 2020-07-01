@@ -562,6 +562,8 @@ void ServerSession::destroy(bool pipeline_call /*= false*/) {
         out_socket.shutdown(tcp::socket::shutdown_both, ec);
         out_socket.close(ec);
     }
+
+    udp_timer_cancel();
     if (udp_socket.is_open()) {
         udp_socket.cancel(ec);
         udp_socket.close(ec);

@@ -50,7 +50,7 @@ class UDPLocalForwarder : public Session {
     UDPLocalForwarder(Service* service, boost::asio::ip::udp::endpoint local_recv,
       boost::asio::ip::udp::endpoint remote_dst, UDPForwardSession::UDPWriter&& writer, bool is_dns);
 
-    ~UDPLocalForwarder();
+    ~UDPLocalForwarder() override;
 
     void start() override;
     void destroy(bool pipeline_call = false) override;
