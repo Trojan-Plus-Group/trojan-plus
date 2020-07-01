@@ -32,10 +32,10 @@ using namespace trojan;
 using namespace std;
 using namespace boost::asio::ip;
 
-int icmpd::s_icmpd_file_lock = -1;
+FILE_LOCK_HANDLE icmpd::s_icmpd_file_lock = INVALID_LOCK_HANDLE;
 bool icmpd::get_icmpd_lock() {
     s_icmpd_file_lock = get_file_lock("./trojan_icmpd_lock.output");
-    return s_icmpd_file_lock != -1;
+    return s_icmpd_file_lock != INVALID_LOCK_HANDLE;
 }
 
 icmpd::icmpd(boost::asio::io_context& io_context)

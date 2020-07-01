@@ -30,10 +30,10 @@ using namespace std;
 using namespace boost::asio::ip;
 using namespace trojan;
 
-int DNSServer::s_dns_file_lock = -1;
+FILE_LOCK_HANDLE DNSServer::s_dns_file_lock = INVALID_LOCK_HANDLE;
 bool DNSServer::get_dns_lock() {
     s_dns_file_lock = get_file_lock("./trojan_dns_lock.output");
-    return s_dns_file_lock != -1;
+    return s_dns_file_lock != INVALID_LOCK_HANDLE;
 }
 
 DNSServer::DNSServer(Service* _service) : m_service(_service), m_serv_udp_socket(_service->get_io_context()) {}
@@ -73,7 +73,7 @@ bool DNSServer::is_proxy_dns_msg(const trojan::dns_question& qt) {
 
 bool DNSServer::is_in_gfwlist(const string& domain) const {
     const auto& gfwlist = m_service->get_config().get_dns()._gfwlist;
-    for (int start_size = domain.size(); start_size > 0; start_size--) {
+    for (size_t start_size = domain.size(); start_size > 0; start_size--) {
         const auto& it = gfwlist.find(start_size);
         if (it != gfwlist.end()) {
             for (const auto& d : it->second) {
@@ -232,7 +232,9 @@ void DNSServer::in_recved(istream& is, const dns_header& header, const string_vi
             const udp::endpoint& endpoint, const string_view& data) { recv_up_stream_data(endpoint, data, false); },
           true);
 
-        if (forwarder->start(former_data)) {
+        forwarder->start();
+
+        if (forwarder->process(m_udp_recv_endpoint, former_data)) {
             m_forwarders.emplace_back(forwarder);
         }
     }

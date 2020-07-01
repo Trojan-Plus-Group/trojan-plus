@@ -56,8 +56,8 @@ class DNSServer : public std::enable_shared_from_this<DNSServer> {
         [[nodiscard]] inline bool expired(time_t curr) const { return int(curr - cached_time) >= ttl; }
 
         _define_getter_const(const std::string&, domain);
-         _define_getter_const(int, ttl);
-         _define_getter_const(const std::vector<uint32_t>&, ips);
+        _define_getter_const(int, ttl);
+        _define_getter_const(const std::vector<uint32_t>&, ips);
         _define_getter_const(time_t, cached_time);
         _define_is_const(proxyed);
 
@@ -92,7 +92,7 @@ class DNSServer : public std::enable_shared_from_this<DNSServer> {
 
     [[nodiscard]] static bool is_proxy_dns_msg(const trojan::dns_question& question);
 
-    static int s_dns_file_lock;
+    static FILE_LOCK_HANDLE s_dns_file_lock;
 
   public:
     DNSServer(Service* _service);

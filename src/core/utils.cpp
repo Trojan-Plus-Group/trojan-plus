@@ -29,10 +29,6 @@
 #include <signal.h>
 #endif //__ANDROID__
 
-#ifndef _WIN32
-#include <sys/file.h>
-#endif //_WIN32
-
 #include "core/service.h"
 #include "log.h"
 
@@ -283,7 +279,7 @@ udp::endpoint make_udp_endpoint_safe(const std::string& address, uint16_t port, 
     return endpoint;
 }
 
-int get_file_lock(const char* filename) {
+FILE_LOCK_HANDLE get_file_lock(const char* filename) {
 #ifndef _WIN32
     int lock = open(filename, O_WRONLY | O_CREAT | O_APPEND, S_IRUSR | S_IWUSR);
     if (lock == 0) {
@@ -297,17 +293,32 @@ int get_file_lock(const char* filename) {
 
     return lock;
 #else
-    return -1;
+    auto hFile = CreateFileA(filename, // name of the write
+      GENERIC_WRITE,                   // open for writing
+      0,                               // do not share
+      NULL,                            // default security
+      CREATE_ALWAYS,                   // create new file only
+      FILE_ATTRIBUTE_NORMAL,           // normal file
+      NULL);                           // no attr. template
+
+    if (hFile == INVALID_LOCK_HANDLE) {
+        _log_with_date_time(
+          "CreateFileA " + string(filename) + " failed, LastError : " + to_string(::GetLastError()), Log::ERROR);
+    }
+    return hFile;
 #endif
 }
 
-void close_file_lock(int& file_fd) {
+void close_file_lock(FILE_LOCK_HANDLE& file_fd) {
+
+    if (file_fd != INVALID_LOCK_HANDLE) {
 #ifndef _WIN32
-    if (file_fd != -1) {
         close(file_fd);
-        file_fd = -1;
-    }
+#else
+        CloseHandle(file_fd);
 #endif
+        file_fd = INVALID_LOCK_HANDLE;
+    }
 }
 
 #ifndef _WIN32 // nat mode does not support in windows platform

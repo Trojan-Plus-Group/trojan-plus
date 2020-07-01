@@ -36,6 +36,12 @@
 #include <string>
 #include <vector>
 
+#ifndef _WIN32
+#include <sys/file.h>
+#else
+#include <windows.h>
+#endif //_WIN32
+
 #include "log.h"
 
 // These 2 definitions are respectively from linux/netfilter_ipv4.h and
@@ -291,7 +297,7 @@ class ReadBufWithGuard {
 
     inline operator std::string_view() const { return streambuf_to_string_view(read_buf); }
 
-    inline operator boost::asio::streambuf &() { return read_buf; }
+    inline operator boost::asio::streambuf&() { return read_buf; }
 
     inline void begin_read(const char* __file__, int __line__) {
         if (read_buf_guard) {
@@ -482,8 +488,16 @@ bool prepare_nat_udp_bind(int fd, bool is_ipv4, bool recv_ttl);
 bool prepare_nat_udp_target_bind(
   int fd, bool is_ipv4, const boost::asio::ip::udp::endpoint& udp_target_endpoint, int buf_size);
 
-int get_file_lock(const char* filename);
-void close_file_lock(int& file_fd);
+#ifndef _WIN32
+using FILE_LOCK_HANDLE = int;
+#define INVALID_LOCK_HANDLE (-1)
+#else
+using FILE_LOCK_HANDLE = HANDLE;
+#define INVALID_LOCK_HANDLE INVALID_HANDLE_VALUE
+#endif
+
+FILE_LOCK_HANDLE get_file_lock(const char* filename);
+void close_file_lock(FILE_LOCK_HANDLE& file_fd);
 
 template <class T> bool safe_atov(const std::string& str, T& val) {
     if (str.empty()) {

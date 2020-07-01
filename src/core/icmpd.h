@@ -87,7 +87,7 @@ class icmpd : public std::enable_shared_from_this<icmpd> {
     void send_data_to_socket(const std::string& data, boost::asio::ip::address_v4 addr);
     void async_out_send();
 
-    static int s_icmpd_file_lock;
+    static FILE_LOCK_HANDLE s_icmpd_file_lock;
 
 public :
     icmpd(boost::asio::io_context& io_context);
