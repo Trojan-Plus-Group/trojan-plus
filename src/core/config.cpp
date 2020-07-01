@@ -362,7 +362,7 @@ void Config::load_ips(const std::string& filename, IPSubnetList& subnet, IPList&
                 } else {
                     boost::system::error_code ec;
                     auto addr = boost::asio::ip::make_address_v4(line, ec);
-                    if (!ec) {
+                    if (ec) {
                         string error_msg("[tun] error load '");
                         error_msg += (line);
                         error_msg += "' from ";
