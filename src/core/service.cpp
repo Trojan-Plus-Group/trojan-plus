@@ -368,7 +368,7 @@ void Service::start_session(const shared_ptr<Session>& session, SentHandler&& st
 }
 
 void Service::session_async_send_to_pipeline(Session& session, PipelineRequest::Command cmd,
-  const std::string_view& data, SentHandler&& sent_handler, int ack_count /* = 0*/) {
+  const std::string_view& data, SentHandler&& sent_handler, size_t ack_count /* = 0*/) {
     if (config.get_experimental().pipeline_num > 0 && config.get_run_type() != Config::SERVER) {
 
         Pipeline* pipeline = nullptr;

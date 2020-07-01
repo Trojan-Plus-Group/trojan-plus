@@ -136,7 +136,7 @@ void PipelineSession::in_recv(const string_view&) {
 }
 
 void PipelineSession::in_send(PipelineRequest::Command cmd, ServerSession& session,
-  const std::string_view& session_data, SentHandler&& sent_handler, int ack_count) {
+  const std::string_view& session_data, SentHandler&& sent_handler, size_t ack_count) {
     auto found = find_and_process_session(session.get_session_id(), [&](SessionsList::iterator&) {
         _log_with_endpoint_ALL(
           get_in_endpoint(), "PipelineSession session_id: " + to_string(session.get_session_id()) +
@@ -231,8 +231,8 @@ void PipelineSession::process_streaming_data() {
                   "PipelineSession cann't find a session " + to_string(req.session_id) + " to destroy", Log::WARN);
             }
         } else if (req.command == PipelineRequest::ACK) {
-            int ack_count = req.ack_count;
-            auto found    = find_and_process_session(req.session_id, [ack_count](SessionsList::iterator& it) {
+            size_t ack_count = req.ack_count;
+            auto found       = find_and_process_session(req.session_id, [ack_count](SessionsList::iterator& it) {
                 auto* session = it->get();
                 session->recv_ack_cmd(ack_count);
                 if (session->get_pipeline_component().is_wait_for_pipeline_ack()) {
@@ -260,7 +260,7 @@ void PipelineSession::process_streaming_data() {
     in_async_read();
 }
 
-void PipelineSession::session_write_ack(ServerSession& session, SentHandler&& sent_handler, int ack_count) {
+void PipelineSession::session_write_ack(ServerSession& session, SentHandler&& sent_handler, size_t ack_count) {
     in_send(PipelineRequest::ACK, session, "", move(sent_handler), ack_count);
 }
 

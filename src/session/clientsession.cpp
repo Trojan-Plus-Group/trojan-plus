@@ -64,7 +64,7 @@ void ClientSession::start() {
         in_async_read();
     }
 }
-void ClientSession::recv_ack_cmd(int ack_count) {
+void ClientSession::recv_ack_cmd(size_t ack_count) {
     SocketSession::recv_ack_cmd(ack_count);
     if (get_pipeline_component().is_wait_for_pipeline_ack()) {
         in_async_read();
@@ -102,7 +102,7 @@ void ClientSession::in_async_read() {
       });
 }
 
-void ClientSession::in_async_write(const string_view& data, int ack_count) {
+void ClientSession::in_async_write(const string_view& data, size_t ack_count) {
 
     _log_with_date_time_DEBUG("ClientSession::in_async_write status: " + to_string((int)status) +
                               " session_id: " + to_string(get_session_id()) + " length: " + to_string(data.length()) +
@@ -157,7 +157,7 @@ void ClientSession::in_async_write(const string_view& data, int ack_count) {
 void ClientSession::out_async_read() {
     if (get_pipeline_component().is_using_pipeline()) {
         get_pipeline_component().get_pipeline_data_cache().async_read(
-          [this](const string_view& data, int ack_count) { out_recv(data, ack_count); });
+          [this](const string_view& data, size_t ack_count) { out_recv(data, ack_count); });
     } else {
         out_read_buf.begin_read(__FILE__, __LINE__);
         out_read_buf.consume_all();
@@ -445,7 +445,7 @@ void ClientSession::request_remote() {
     }
 }
 
-void ClientSession::out_recv(const string_view& data, int ack_count) {
+void ClientSession::out_recv(const string_view& data, size_t ack_count) {
     _write_data_to_file_DEBUG("ClientSession::out_recv session_id: " + to_string(get_session_id()) +
                               " length: " + to_string(data.length()) + " checksum: " + to_string(get_checksum(data)));
     _write_data_to_file_DEBUG(get_session_id(), "ClientSession_out_recv", data);

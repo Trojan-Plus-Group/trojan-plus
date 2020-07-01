@@ -45,7 +45,7 @@ class PipelineComponent {
     bool m_is_async_writing;
     bool m_write_close_future;
 
-    int pipeline_ack_counter;
+    size_t pipeline_ack_counter;
     bool pipeline_wait_for_ack;
     bool pipeline_first_call_ack;
 
@@ -66,7 +66,7 @@ class PipelineComponent {
     [[nodiscard]] inline bool is_using_pipeline() const { return m_is_use_pipeline; }
     inline void set_use_pipeline() { m_is_use_pipeline = true; };
 
-    inline void recv_ack_cmd(int ack_count) { pipeline_ack_counter += ack_count; }
+    inline void recv_ack_cmd(size_t ack_count) { pipeline_ack_counter += ack_count; }
 
     [[nodiscard]] inline bool is_wait_for_pipeline_ack() const { return pipeline_wait_for_ack; }
 

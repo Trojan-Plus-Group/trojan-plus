@@ -82,7 +82,7 @@ void ServerSession::start() {
 void ServerSession::in_async_read() {
     if (get_pipeline_component().is_using_pipeline()) {
         get_pipeline_component().get_pipeline_data_cache().async_read(
-          [this](const string_view& data, int ack_count) { in_recv(data, ack_count); });
+          [this](const string_view& data, size_t ack_count) { in_recv(data, ack_count); });
     } else {
         in_read_buf.begin_read(__FILE__, __LINE__);
         in_read_buf.consume_all();
@@ -164,7 +164,7 @@ void ServerSession::out_async_read() {
       });
 }
 
-void ServerSession::out_async_write(const string_view& data, int ack_count) {
+void ServerSession::out_async_write(const string_view& data, size_t ack_count) {
     _log_with_date_time_DEBUG("ServerSession::out_async_write session_id: " + to_string(get_session_id()) +
                               " length: " + to_string(data.length()) + " checksum: " + to_string(get_checksum(data)));
     _write_data_to_file_DEBUG(get_session_id(), "ServerSession_out_async_write", data);
@@ -245,7 +245,7 @@ void ServerSession::out_udp_async_write(const string_view& data, const udp::endp
       });
 }
 
-void ServerSession::in_recv(const string_view& data, int ack_count) {
+void ServerSession::in_recv(const string_view& data, size_t ack_count) {
     _log_with_date_time_DEBUG("ServerSession::in_recv session_id: " + to_string(get_session_id()) +
                               " length: " + to_string(data.length()) + " checksum: " + to_string(get_checksum(data)));
     _write_data_to_file_DEBUG(get_session_id(), "ServerSession_in_recv", data);

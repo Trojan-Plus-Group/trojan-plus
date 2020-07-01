@@ -1,7 +1,7 @@
 /*
  * This file is part of the Trojan Plus project.
  * Trojan is an unidentifiable mechanism that helps you bypass GFW.
- * Trojan Plus is derived from original trojan project and writing 
+ * Trojan Plus is derived from original trojan project and writing
  * for more experimental features.
  * Copyright (C) 2017-2020  The Trojan Authors.
  * Copyright (C) 2020 The Trojan Plus Group Authors.
@@ -43,7 +43,7 @@ class DNSServer;
 class Pipeline;
 class icmpd;
 class Service {
-private:
+  private:
     typedef std::list<std::weak_ptr<Pipeline>> PipelineList;
 
     boost::asio::io_context io_context;
@@ -52,17 +52,17 @@ private:
     std::shared_ptr<Authenticator> auth;
     std::string plain_http_response;
     boost::asio::ip::udp::socket udp_socket;
-    std::list<std::weak_ptr<UDPForwardSession> > udp_sessions;
+    std::list<std::weak_ptr<UDPForwardSession>> udp_sessions;
     ReadBufWithGuard udp_read_buf;
     boost::asio::ip::udp::endpoint udp_recv_endpoint;
-    
+
     void async_accept();
     void udp_async_read();
 
     PipelineList pipelines;
     size_t pipeline_select_idx;
     void prepare_pipelines();
-    
+
     std::shared_ptr<icmpd> icmp_processor;
     void prepare_icmpd(Config& config, bool is_ipv4);
 
@@ -70,32 +70,32 @@ private:
     std::shared_ptr<TUNDev> m_tundev;
     SendingDataAllocator m_sending_data_allocator;
 
-    const Config &config;
+    const Config& config;
 
-public:
-    explicit Service(Config &config, bool test = false);
+  public:
+    explicit Service(Config& config, bool test = false);
     ~Service();
 
-    [[nodiscard]] const Config& get_config()const{ return config; }
-    
+    [[nodiscard]] const Config& get_config() const { return config; }
+
     void run();
     void stop();
 
     boost::asio::io_context& get_io_context() { return io_context; }
-    boost::asio::ssl::context& get_ssl_context(){ return ssl_context; }
-    
-    void reload_cert();  
+    boost::asio::ssl::context& get_ssl_context() { return ssl_context; }
+
+    void reload_cert();
 
     void start_session(const std::shared_ptr<Session>& session, SentHandler&& started_handler);
 
-    void session_async_send_to_pipeline(Session& session, PipelineRequest::Command cmd, 
-        const std::string_view& data, SentHandler&& sent_handler, int ack_count = 0);
+    void session_async_send_to_pipeline(Session& session, PipelineRequest::Command cmd, const std::string_view& data,
+      SentHandler&& sent_handler, size_t ack_count = 0);
     void session_async_send_to_pipeline_icmp(const std::string_view& data, SentHandler&& sent_handler);
-    void session_destroy_in_pipeline(Session& session);    
+    void session_destroy_in_pipeline(Session& session);
 
     [[nodiscard]] bool is_use_pipeline() const { return config.get_experimental().pipeline_num > 0; }
     Pipeline* search_default_pipeline();
 
-    SendingDataAllocator& get_sending_data_allocator(){ return m_sending_data_allocator;}
+    SendingDataAllocator& get_sending_data_allocator() { return m_sending_data_allocator; }
 };
 #endif // _SERVICE_H_

@@ -63,9 +63,9 @@ class ServerSession : public SocketSession {
     void in_async_read();
     void in_async_write(const std::string_view& data);
     void in_sent();
-    void in_recv(const std::string_view& data, int ack_count = 0);
+    void in_recv(const std::string_view& data, size_t ack_count = 0);
 
-    void out_async_write(const std::string_view& data, int ack_count = 0);
+    void out_async_write(const std::string_view& data, size_t ack_count = 0);
     void out_recv(const std::string_view& data);
     void out_sent();
     void out_udp_async_read();

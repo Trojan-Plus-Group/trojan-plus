@@ -1,7 +1,7 @@
 /*
  * This file is part of the Trojan Plus project.
  * Trojan is an unidentifiable mechanism that helps you bypass GFW.
- * Trojan Plus is derived from original trojan project and writing 
+ * Trojan Plus is derived from original trojan project and writing
  * for more experimental features.
  * Copyright (C) 2017-2020  The Trojan Authors.
  * Copyright (C) 2020 The Trojan Plus Group Authors.
@@ -24,8 +24,8 @@
 using namespace std;
 using namespace boost::asio::ssl;
 
-ForwardSession::ForwardSession(Service* _service, const Config& config, context &ssl_context) :
-    NATSession(_service, config, ssl_context){}
+ForwardSession::ForwardSession(Service* _service, const Config& config, context& ssl_context)
+    : NATSession(_service, config, ssl_context) {}
 
 pair<string, uint16_t> ForwardSession::get_target_endpoint() {
     return make_pair(get_config().get_target_addr(), get_config().get_target_port());
