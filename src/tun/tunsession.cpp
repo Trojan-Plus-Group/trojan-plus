@@ -22,8 +22,19 @@
 #include "tunsession.h"
 #include "core/service.h"
 
+using namespace boost::asio::ip;
 TUNSession::TUNSession(Service* _service, bool _is_udp) : Session(_service, _service->get_config()) {
     set_udp_forward_session(_is_udp);
 }
 
 TUNSession::~TUNSession() {}
+
+udp::endpoint TUNSession::get_redirect_local_remote_addr(bool output_log /*= false*/) const {
+    auto remote_addr = m_remote_addr_udp;
+    remote_addr.address(make_address_v4(LOCALHOST_IP_ADDRESS));
+    if (output_log) {
+        _log_with_date_time(m_remote_addr_udp.address().to_string() + " redirect to local for test");
+    }
+
+    return remote_addr;
+}

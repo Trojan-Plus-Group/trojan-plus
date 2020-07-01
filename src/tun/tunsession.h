@@ -31,6 +31,8 @@
 #include "core/utils.h"
 #include "session/session.h"
 
+#define LOCALHOST_IP_ADDRESS ("127.0.0.1")
+
 class Service;
 class TUNSession : public Session {
 
@@ -59,6 +61,8 @@ class TUNSession : public Session {
     WriteToLwipCallback m_write_to_lwip;
     std::list<SentHandler> m_wait_ack_handler;
     std::list<SentHandler> m_wait_connected_handler;
+
+    [[nodiscard]] boost::asio::ip::udp::endpoint get_redirect_local_remote_addr(bool output_log = false) const;
 
   public:
     TUNSession(Service* _service, bool _is_udp);

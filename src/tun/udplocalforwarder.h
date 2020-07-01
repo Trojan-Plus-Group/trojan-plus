@@ -22,16 +22,18 @@
 #ifndef _TROJAN_UDP_LOCAL_FORWARDER_HPP
 #define _TROJAN_UDP_LOCAL_FORWARDER_HPP
 
+#include "session/session.h"
 #include "session/udpforwardsession.h"
 
 class Service;
-class UDPLocalForwarder : public std::enable_shared_from_this<UDPLocalForwarder> {
+class UDPLocalForwarder : public Session {
 
     Service* m_service;
     UDPForwardSession::UDPWriter m_writer;
     boost::asio::ip::udp::endpoint m_local_src;
     boost::asio::ip::udp::endpoint m_remote_dst;
     boost::asio::steady_timer m_gc_timer;
+    time_t m_gc_timer_checker{};
     boost::asio::ip::udp::socket m_udp_socket;
 
     ReadBufWithGuard m_read_buf;
@@ -44,17 +46,14 @@ class UDPLocalForwarder : public std::enable_shared_from_this<UDPLocalForwarder>
     bool write_to(const std::string_view& data);
     void async_read();
 
-    void udp_timer_async_wait();
-    void udp_timer_cancel();
-    void destroy();
-
   public:
     UDPLocalForwarder(Service* service, boost::asio::ip::udp::endpoint local_recv,
       boost::asio::ip::udp::endpoint remote_dst, UDPForwardSession::UDPWriter&& writer, bool is_dns);
 
     ~UDPLocalForwarder();
 
-    [[nodiscard]] bool start(const std::string_view& data);
+    void start() override;
+    void destroy(bool pipeline_call = false) override;
     bool process(const boost::asio::ip::udp::endpoint& endpoint, const std::string_view& data);
 
     [[nodiscard]] bool is_destroyed() const { return m_destroyed; }

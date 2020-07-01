@@ -26,7 +26,7 @@
 
 class TUNProxySession : public TUNSession {
 
-    int m_read_ack_count{0};
+    size_t m_read_ack_count{0};
 
     boost::asio::ssl::stream<boost::asio::ip::tcp::socket> m_out_socket;
     boost::asio::ip::tcp::resolver m_out_resolver;
@@ -38,8 +38,6 @@ class TUNProxySession : public TUNSession {
 
     void out_async_send_impl(const std::string_view& data_to_send, SentHandler&& _handler);
 
-    [[nodiscard]] boost::asio::ip::udp::endpoint get_redirect_local_remote_addr(bool output_log = false) const;
-
   public:
     TUNProxySession(Service* service, bool udp);
     ~TUNProxySession();
@@ -47,7 +45,7 @@ class TUNProxySession : public TUNSession {
     void start() override;
     void destroy(bool pipeline_call = false) override;
     void out_async_send(const uint8_t* _data, size_t _length, SentHandler&& _handler) override;
-    void recv_ack_cmd(int ack_count) override;
+    void recv_ack_cmd(size_t ack_count) override;
 
     // interfaces for TCP
     void recv_buf_consume(uint16_t _length) override;

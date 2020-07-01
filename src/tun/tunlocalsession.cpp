@@ -50,8 +50,9 @@ TUNLocalSession::TUNLocalSession(Service* _service, bool is_udp)
 
 void TUNLocalSession::start() {
     if (is_udp_forward_session()) {
-        m_udp_forwarder = make_shared<UDPLocalForwarder>(
-          get_service(), m_local_addr_udp, m_remote_addr_udp,
+        auto remote_addr = get_config().get_tun().redirect_local ? get_redirect_local_remote_addr() : m_remote_addr_udp;
+        m_udp_forwarder  = make_shared<UDPLocalForwarder>(
+          get_service(), m_local_addr_udp, remote_addr,
           [this](const udp::endpoint&, const string_view& data) {
               if (m_write_to_lwip(this, (string_view*)&data) < 0) {
                   output_debug_info();
@@ -65,17 +66,18 @@ void TUNLocalSession::start() {
             destroy();
         });
 
-        if (m_udp_forwarder->start(streambuf_to_string_view(m_send_buf))) {
+        m_udp_forwarder->start();
+
+        if (m_udp_forwarder->process(m_local_addr_udp, streambuf_to_string_view(m_send_buf))) {
             m_connected = true;
-        } else {
-            output_debug_info();
-            destroy();
         }
     } else {
         // TODO tcp connected
+        auto remote_addr =
+          get_config().get_tun().redirect_local ? LOCALHOST_IP_ADDRESS : m_remote_addr.address().to_string();
         auto self = shared_from_this();
-        connect_out_socket(this, m_remote_addr.address().to_string(), to_string(m_remote_addr.port()), m_resolver,
-          m_tcp_socket, m_local_addr_udp, [this, self]() {
+        connect_out_socket(this, remote_addr, to_string(m_remote_addr.port()), m_resolver, m_tcp_socket,
+          m_local_addr_udp, [this, self]() {
               out_async_send_impl(streambuf_to_string_view(m_send_buf), [this](boost::system::error_code ec) {
                   if (ec) {
                       output_debug_info_ec(ec);

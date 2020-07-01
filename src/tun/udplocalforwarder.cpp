@@ -28,29 +28,27 @@ using namespace boost::asio::ip;
 
 UDPLocalForwarder::UDPLocalForwarder(Service* service, udp::endpoint local_src, udp::endpoint remote_dst,
   UDPForwardSession::UDPWriter&& writer, bool is_dns)
-    : m_service(service),
+    : Session(service, service->get_config()),
+      m_service(service),
       m_writer(move(writer)),
       m_local_src(move(local_src)),
       m_remote_dst(move(remote_dst)),
       m_gc_timer(service->get_io_context()),
       m_udp_socket(service->get_io_context()),
       m_is_dns(is_dns) {
-    Session::s_total_session_count++;
+
+    set_udp_forward_session(true);
 }
 
-UDPLocalForwarder::~UDPLocalForwarder() {
-    Session::s_total_session_count--;
-    _log_with_date_time_ALL("[mem] UDPLocalForwarder checking memory leak, current all session count is " +
-                            to_string(Session::s_total_session_count));
-}
-bool UDPLocalForwarder::start(const std::string_view& data) {
+UDPLocalForwarder::~UDPLocalForwarder() {}
+void UDPLocalForwarder::start() {
     auto protocol = m_remote_dst.protocol();
     boost::system::error_code ec;
     m_udp_socket.open(protocol, ec);
     if (ec) {
         output_debug_info_ec(ec);
         destroy();
-        return false;
+        return;
     }
 
     set_udp_send_recv_buf((int)m_udp_socket.native_handle(),
@@ -62,7 +60,7 @@ bool UDPLocalForwarder::start(const std::string_view& data) {
     if (ec) {
         output_debug_info_ec(ec);
         destroy();
-        return false;
+        return;
     }
 
     udp_timer_async_wait();
@@ -73,7 +71,6 @@ bool UDPLocalForwarder::start(const std::string_view& data) {
       Log::INFO);
 
     async_read();
-    return write_to(data);
 }
 
 bool UDPLocalForwarder::process(const udp::endpoint& endpoint, const string_view& data) {
@@ -85,6 +82,10 @@ bool UDPLocalForwarder::process(const udp::endpoint& endpoint, const string_view
 }
 
 bool UDPLocalForwarder::write_to(const std::string_view& data) {
+    if (is_destroyed()) {
+        return false;
+    }
+
     _log_with_endpoint_ALL(m_local_src, "[dns] --> [" + m_remote_dst.address().to_string() + ":" +
                                           to_string(m_remote_dst.port()) + "] length: " + to_string(data.length()));
 
@@ -127,34 +128,7 @@ void UDPLocalForwarder::async_read() {
       });
 }
 
-void UDPLocalForwarder::udp_timer_async_wait() {
-
-    boost::system::error_code ec;
-    m_gc_timer.cancel(ec);
-    if (ec) {
-        return;
-    }
-    const auto timeout =
-      m_is_dns ? m_service->get_config().get_dns().udp_timeout : m_service->get_config().get_udp_timeout();
-
-    m_gc_timer.expires_after(chrono::seconds(timeout));
-    auto self = shared_from_this();
-    m_gc_timer.async_wait([this, self](const boost::system::error_code error) {
-        if (!error) {
-            _log_with_endpoint(m_local_src,
-              "UDP local forwarder to [" + m_remote_dst.address().to_string() + ":" + to_string(m_remote_dst.port()) +
-                "] timeout",
-              Log::INFO);
-            destroy();
-        }
-    });
-}
-void UDPLocalForwarder::udp_timer_cancel() {
-    boost::system::error_code ec;
-    m_gc_timer.cancel(ec);
-}
-
-void UDPLocalForwarder::destroy() {
+void UDPLocalForwarder::destroy(bool pipeline_called) {
     if (m_destroyed) {
         return;
     }

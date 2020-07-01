@@ -34,8 +34,6 @@
 using namespace std;
 using namespace boost::asio::ip;
 
-static const char* const localhost_ip_addr = "127.0.0.1";
-
 TUNProxySession::TUNProxySession(Service* _service, bool _is_udp)
     : TUNSession(_service, _is_udp),
       m_out_socket(_service->get_io_context(), _service->get_ssl_context()),
@@ -63,16 +61,6 @@ TUNProxySession::TUNProxySession(Service* _service, bool _is_udp)
 
 TUNProxySession::~TUNProxySession() { get_pipeline_component().free_session_id(); }
 
-udp::endpoint TUNProxySession::get_redirect_local_remote_addr(bool output_log /*= false*/) const {
-    auto remote_addr = m_remote_addr_udp;
-    remote_addr.address(make_address_v4(localhost_ip_addr));
-    if (output_log) {
-        _log_with_date_time(m_remote_addr_udp.address().to_string() + " redirect to local for test");
-    }
-
-    return remote_addr;
-}
-
 void TUNProxySession::start() {
     udp_timer_async_wait();
     auto self = shared_from_this();
@@ -96,14 +84,14 @@ void TUNProxySession::start() {
             if (is_udp_forward_session()) {
                 streambuf_append(
                   m_send_buf, TrojanRequest::generate(get_config().get_password().cbegin()->first,
-                                get_config().get_tun().redirect_local ? localhost_ip_addr
+                                get_config().get_tun().redirect_local ? LOCALHOST_IP_ADDRESS
                                                                       : m_remote_addr_udp.address().to_string().c_str(),
                                 m_remote_addr_udp.port(), false));
             } else {
                 auto remote_addr = m_remote_addr.address().to_string();
                 if (get_config().get_tun().redirect_local) {
                     _log_with_date_time(remote_addr + " redirect to local for test");
-                    remote_addr = localhost_ip_addr;
+                    remote_addr = LOCALHOST_IP_ADDRESS;
                 }
                 streambuf_append(m_send_buf, TrojanRequest::generate(get_config().get_password().cbegin()->first,
                                                remote_addr, m_remote_addr.port(), true));
@@ -181,7 +169,7 @@ void TUNProxySession::destroy(bool pipeline_call) {
     }
 }
 
-void TUNProxySession::recv_ack_cmd(int ack_count) {
+void TUNProxySession::recv_ack_cmd(size_t ack_count) {
     Session::recv_ack_cmd(ack_count);
 
     while (ack_count-- > 0) {
@@ -343,37 +331,38 @@ size_t TUNProxySession::parse_udp_packet_data(const string_view& data) {
 
 void TUNProxySession::out_async_read() {
     if (get_service()->is_use_pipeline()) {
-        get_pipeline_component().get_pipeline_data_cache().async_read([this](const string_view& data, int ack_count) {
-            get_stat().inc_recv_len(data.length());
+        get_pipeline_component().get_pipeline_data_cache().async_read(
+          [this](const string_view& data, size_t ack_count) {
+              get_stat().inc_recv_len(data.length());
 
-            if (is_udp_forward_session()) {
+              if (is_udp_forward_session()) {
 
-                udp_timer_async_wait();
+                  udp_timer_async_wait();
 
-                if (m_recv_buf.size() == 0) {
-                    auto parsed = parse_udp_packet_data(data);
-                    if (parsed < data.length()) {
-                        streambuf_append(m_recv_buf, data.substr(parsed));
-                    }
-                } else {
-                    streambuf_append(m_recv_buf, data);
-                    auto parsed = parse_udp_packet_data(m_recv_buf);
-                    m_recv_buf.consume(parsed);
-                }
+                  if (m_recv_buf.size() == 0) {
+                      auto parsed = parse_udp_packet_data(data);
+                      if (parsed < data.length()) {
+                          streambuf_append(m_recv_buf, data.substr(parsed));
+                      }
+                  } else {
+                      streambuf_append(m_recv_buf, data);
+                      auto parsed = parse_udp_packet_data(m_recv_buf);
+                      m_recv_buf.consume(parsed);
+                  }
 
-                try_out_async_read();
-            } else {
-                m_read_ack_count += ack_count;
-                streambuf_append(m_recv_buf, data);
-                m_recv_buf_ack_length += data.length();
+                  try_out_async_read();
+              } else {
+                  m_read_ack_count += ack_count;
+                  streambuf_append(m_recv_buf, data);
+                  m_recv_buf_ack_length += data.length();
 
-                get_pipeline_component().set_async_writing_data(true);
-                if (m_write_to_lwip(this, nullptr) < 0) {
-                    output_debug_info();
-                    destroy();
-                }
-            }
-        });
+                  get_pipeline_component().set_async_writing_data(true);
+                  if (m_write_to_lwip(this, nullptr) < 0) {
+                      output_debug_info();
+                      destroy();
+                  }
+              }
+          });
     } else {
         m_recv_buf.begin_read(__FILE__, __LINE__);
         auto self = shared_from_this();

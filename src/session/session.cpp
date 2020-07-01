@@ -43,21 +43,47 @@ Session::~Session() {
 
 int Session::get_udp_timer_timeout_val() const { return get_config().get_udp_timeout(); }
 
-void Session::udp_timer_async_wait() {
+void Session::udp_timer_async_wait(int timeout /*=-1*/) {
     if (!is_udp_forward_session()) {
         return;
+    }
+
+    bool check = timeout == -1;
+
+    if (timeout == -1) {
+        timeout = get_udp_timer_timeout_val();
+    }
+
+    if (udp_gc_timer_checker != 0 && check) {
+        auto curr = time(nullptr);
+        if (curr - udp_gc_timer_checker < timeout) {
+            udp_gc_timer_checker = curr;
+            return;
+        }
+    } else {
+        udp_gc_timer_checker = time(nullptr);
     }
 
     boost::system::error_code ec;
     udp_gc_timer.cancel(ec);
     if (ec) {
+        output_debug_info_ec(ec);
+        destroy();
         return;
     }
 
-    udp_gc_timer.expires_after(chrono::seconds(get_udp_timer_timeout_val()));
+    udp_gc_timer.expires_after(chrono::seconds(timeout));
     auto self = shared_from_this();
-    udp_gc_timer.async_wait([this, self](const boost::system::error_code error) {
+    udp_gc_timer.async_wait([this, self, timeout](const boost::system::error_code error) {
         if (!error) {
+            auto curr = time(nullptr);
+            if (curr - udp_gc_timer_checker < timeout) {
+                auto diff            = int(timeout - (curr - udp_gc_timer_checker));
+                udp_gc_timer_checker = 0;
+                udp_timer_async_wait(diff);
+                return;
+            }
+
             _log_with_date_time("session_id: " + to_string(get_session_id()) + " UDP session timeout");
             destroy();
         }
@@ -67,4 +93,7 @@ void Session::udp_timer_async_wait() {
 void Session::udp_timer_cancel() {
     boost::system::error_code ec;
     udp_gc_timer.cancel(ec);
+    if (ec) {
+        output_debug_info_ec(ec);
+    }
 }

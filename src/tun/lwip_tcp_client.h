@@ -55,11 +55,11 @@ class lwip_tcp_client : public std::enable_shared_from_this<lwip_tcp_client> {
     bool m_closed;
     bool m_aborted;
 
-    uint32_t m_recved_len{};
-    uint32_t m_output_len{};
+    size_t m_recved_len{};
+    size_t m_output_len{};
 
-    uint32_t m_sending_len{};
-    uint32_t m_sent_len{};
+    size_t m_sending_len{};
+    size_t m_sent_len{};
 
     uint8_t send_buf[TCP_WND]{};
     std::shared_ptr<TUNSession> m_tun_session;

@@ -34,7 +34,6 @@
 #include "session/pipelinecomponent.h"
 
 class Service;
-class UDPLocalForwarder;
 class Session : public std::enable_shared_from_this<Session> {
 
   public:
@@ -45,12 +44,12 @@ class Session : public std::enable_shared_from_this<Session> {
   private:
     Service* service;
     boost::asio::steady_timer udp_gc_timer;
+    time_t udp_gc_timer_checker{};
     PipelineComponent pipeline_com;
     bool is_udp_forward;
     const Config& config;
     bytes_stat stat;
 
-    friend class UDPLocalForwarder;
     static size_t s_total_session_count;
 
   public:
@@ -59,12 +58,12 @@ class Session : public std::enable_shared_from_this<Session> {
     virtual void start() = 0;
     virtual ~Session();
     virtual void destroy(bool pipeline_call = false) = 0;
-    virtual void recv_ack_cmd(int ack_count) { pipeline_com.recv_ack_cmd(ack_count); }
+    virtual void recv_ack_cmd(size_t ack_count) { pipeline_com.recv_ack_cmd(ack_count); }
 
     _define_getter(bytes_stat&, stat);
 
     virtual int get_udp_timer_timeout_val() const;
-    void udp_timer_async_wait();
+    void udp_timer_async_wait(int timeout = -1);
     void udp_timer_cancel();
 
     const Config& get_config() const { return config; }
