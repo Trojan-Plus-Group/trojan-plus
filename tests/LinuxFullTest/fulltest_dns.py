@@ -25,8 +25,8 @@ import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from fulltest_utils import print_time_log
 
-RESOLVER_TIMEOUT = 2
-PARALLEL_REQUEST_COUNT = 5
+RESOLVER_TIMEOUT = 3
+PARALLEL_REQUEST_COUNT = 3
 MAX_RETRY_COUNT = 3
 
 query_port = 53
