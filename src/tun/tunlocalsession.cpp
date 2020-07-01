@@ -72,13 +72,12 @@ void TUNLocalSession::start() {
             m_connected = true;
         }
     } else {
-        // TODO tcp connected
         auto remote_addr =
           get_config().get_tun().redirect_local ? LOCALHOST_IP_ADDRESS : m_remote_addr.address().to_string();
         auto self = shared_from_this();
         connect_out_socket(this, remote_addr, to_string(m_remote_addr.port()), m_resolver, m_tcp_socket,
           m_local_addr_udp, [this, self]() {
-              out_async_send_impl(streambuf_to_string_view(m_send_buf), [this](boost::system::error_code ec) {
+              out_async_send_impl(streambuf_to_string_view(m_send_buf), [this, self](boost::system::error_code ec) {
                   if (ec) {
                       output_debug_info_ec(ec);
                       destroy();
