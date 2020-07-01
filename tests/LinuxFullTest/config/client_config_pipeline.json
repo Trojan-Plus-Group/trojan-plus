@@ -54,6 +54,7 @@
     "dns": {
         "enabled": true,
         "enable_cached": true,
+        "port": 5333,
         "udp_timeout": 5,
         "udp_socket_buf": -1,
         "udp_recv_buf": 1024,

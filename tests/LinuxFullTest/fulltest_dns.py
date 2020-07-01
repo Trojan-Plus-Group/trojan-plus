@@ -28,6 +28,8 @@ from fulltest_utils import print_time_log
 RESOLVER_TIMEOUT = 2
 PARALLEL_REQUEST_COUNT = 5
 MAX_RETRY_COUNT = 3
+
+query_port = 53
 print_log = False
 
 ipv4_valid_regex = "^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$"
@@ -149,6 +151,7 @@ proxy_lookup_non_domains = [
 def lookup_domains(domain, ns, count, non_domain):
     resolver = dns.resolver.Resolver()
     resolver.nameservers = [ns]
+    resolver.port = query_port
     resolver.timeout = RESOLVER_TIMEOUT
     resolver.lifetime = RESOLVER_TIMEOUT
 
@@ -193,7 +196,10 @@ def main_process(executor, domains, ns, count, non_domain=False):
     return True
 
 
-def start_query(ns, count):
+def start_query(ns, count, port):
+    global query_port
+    query_port = port
+
     with ThreadPoolExecutor(max_workers=PARALLEL_REQUEST_COUNT) as executor:
         for _ in range(0, 2):
             print_time_log('start lookup ' +

@@ -191,7 +191,7 @@ def main_stage(server_config, client_config, server_balance_config=None, is_fowa
                     return 1
 
             if cmd_args.dns:
-                if not fulltest_dns.start_query("127.0.0.1", 10):
+                if not fulltest_dns.start_query("127.0.0.1", 10, cmd_args.dns):
                     output_log = True
                     return 1
 
@@ -352,8 +352,8 @@ if __name__ == "__main__":
                         action='store_true', default=False)
     parser.add_argument("-t", "--tun", help=" whether test tun device (mostly for Android)",
                         action='store_true', default=False)
-    parser.add_argument("-d", "--dns", help=" whether test dns forwarding",
-                        action='store_true', default=False)
+    parser.add_argument("-d", "--dns", help='whether test dns forwarding [port]',
+                        type=int, nargs='?', const=53)
 
     cmd_args = parser.parse_args()
     if not cmd_args.normal and not cmd_args.dns and not cmd_args.tun:
