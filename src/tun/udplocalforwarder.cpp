@@ -128,7 +128,7 @@ void UDPLocalForwarder::async_read() {
       });
 }
 
-void UDPLocalForwarder::destroy(bool pipeline_called) {
+void UDPLocalForwarder::destroy(bool) {
     if (m_destroyed) {
         return;
     }
