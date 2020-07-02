@@ -254,14 +254,6 @@ void ServerSession::in_recv(const string_view& data, size_t ack_count) {
         if (has_queried_out) {
             // pipeline session will call this in_recv directly so that the HANDSHAKE status will remain for a while
             streambuf_append(out_write_buf, data);
-
-            if (get_stat().get_sent_len() == 0) {
-                output_debug_info();
-                _log_with_endpoint(get_in_endpoint(),
-                  "session_id: " + to_string(get_session_id()) +
-                    "get_stat().inc_sent_len from 0, size == " + to_string(data.length()),
-                  Log::INFO);
-            }
             get_stat().inc_sent_len(data.length());
             return;
         }
@@ -341,13 +333,6 @@ void ServerSession::in_recv(const string_view& data, size_t ack_count) {
             streambuf_append(out_write_buf, data);
         }
 
-        if (get_stat().get_sent_len() == 0) {
-            output_debug_info();
-            _log_with_endpoint(get_in_endpoint(),
-              "session_id: " + to_string(get_session_id()) +
-                "get_stat().inc_sent_len from 0, size == " + to_string(out_write_buf.size()),
-              Log::INFO);
-        }
         get_stat().inc_sent_len(out_write_buf.size());
         has_queried_out = true;
 
@@ -363,13 +348,6 @@ void ServerSession::in_recv(const string_view& data, size_t ack_count) {
         });
 
     } else if (status == FORWARD) {
-        if (get_stat().get_sent_len() == 0) {
-            output_debug_info();
-            _log_with_endpoint(get_in_endpoint(),
-              "session_id: " + to_string(get_session_id()) +
-                "get_stat().inc_sent_len from 0, size == " + to_string(data.length()),
-              Log::INFO);
-        }
         get_stat().inc_sent_len(data.length());
         out_async_write(data, ack_count);
     } else if (status == UDP_FORWARD) {
