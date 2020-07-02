@@ -536,8 +536,9 @@ int TUNDev::try_to_process_udp_packet(uint8_t* data, int data_len) {
         auto remote_endpoint = udp::endpoint(
           make_address_v4((address_v4::uint_type)ntoh32(ipv4_hdr.destination_address)), ntoh16(udp_hdr.dest_port));
 
-        _log_with_endpoint_ALL(local_endpoint, "-> " + remote_endpoint.address().to_string() + ":" +
-                                                 to_string(remote_endpoint.port()) + " length:" + to_string(data_len));
+        _log_with_endpoint_ALL(local_endpoint, " -> " + remote_endpoint.address().to_string() + ":" +
+                                                 to_string(remote_endpoint.port()) +
+                                                 " [tun] length:" + to_string(data_len));
 
         for (auto& it : m_udp_clients) {
             if (it->try_to_process_udp(local_endpoint, remote_endpoint, data, data_len)) {
@@ -570,7 +571,8 @@ int TUNDev::try_to_process_udp_packet(uint8_t* data, int data_len) {
         m_udp_clients.emplace_back(session);
 
         _log_with_endpoint(local_endpoint,
-          "start to connected " + remote_endpoint.address().to_string() + ":" + to_string(remote_endpoint.port()),
+          "TUNDev start to connected " + remote_endpoint.address().to_string() + ":" +
+            to_string(remote_endpoint.port()),
           Log::INFO);
 
         m_service->start_session(session, [session, local_endpoint, remote_endpoint](boost::system::error_code ec) {

@@ -86,8 +86,10 @@ bool UDPLocalForwarder::write_to(const std::string_view& data) {
         return false;
     }
 
-    _log_with_endpoint_ALL(m_local_src, "[dns] --> [" + m_remote_dst.address().to_string() + ":" +
-                                          to_string(m_remote_dst.port()) + "] length: " + to_string(data.length()));
+    if (m_is_dns) {
+        _log_with_endpoint_ALL(m_local_src, "[dns] --> [" + m_remote_dst.address().to_string() + ":" +
+                                              to_string(m_remote_dst.port()) + "] length: " + to_string(data.length()));
+    }
 
     boost::system::error_code ec;
     m_udp_socket.send_to(boost::asio::buffer(data), m_remote_dst, 0, ec);
