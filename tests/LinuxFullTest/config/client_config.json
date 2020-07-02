@@ -56,10 +56,10 @@
         "udp_socket_buf": -1,
         "udp_recv_buf": 1024,
         "up_dns_server": [
-            "8.8.8.8"
+            "114.114.114.114"
         ],
         "up_gfw_dns_server": [
-            "8.8.8.8"
+            "114.114.114.114"
         ],
         "gfwlist": "config/gfwlist_domain.txt"
     },
