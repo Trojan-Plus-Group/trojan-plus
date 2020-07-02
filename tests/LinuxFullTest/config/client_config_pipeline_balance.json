@@ -40,27 +40,5 @@
     "experimental": {
         "pipeline_num": 10,
         "pipeline_ack_window": 10
-    },
-    "tun": {
-        "tun_name": "tun0",
-        "net_ip": "10.0.0.2",
-        "net_mask": "255.255.255.0",
-        "mtu": 1500,
-        "redirect_local": true
-    },
-    "dns": {
-        "enabled": true,
-        "enable_cached": true,
-        "port": 5333,
-        "udp_timeout": 5,
-        "udp_socket_buf": -1,
-        "udp_recv_buf": 1024,
-        "up_dns_server": [
-            "8.8.8.8"
-        ],
-        "up_gfw_dns_server": [
-            "8.8.8.8"
-        ],
-        "gfwlist": "config/gfwlist_domain.txt"
     }
 }

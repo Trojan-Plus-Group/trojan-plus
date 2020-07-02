@@ -65,5 +65,12 @@
             "8.8.8.8"
         ],
         "gfwlist": "config/gfwlist_domain.txt"
+    },
+    "route": {
+        "enabled": true,
+        "proxy_type": 2,
+        "cn_mainland_ips_file": "config/cn_mainland_ips_list.txt",
+        "proxy_ips": "config/proxy_ips.txt",
+        "white_ips": "config/white_ips.txt"
     }
 }

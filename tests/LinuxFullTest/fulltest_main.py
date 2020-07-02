@@ -45,14 +45,20 @@ TEST_FILES_SIZE = 8192 * 10
 TEST_SERVER_PORT = 18080
 TEST_PROXY_PORT = 10620
 
-TEST_INIT_MAX_RSS_IN_KB = 10 * (1024)
-
 TEST_WATING_FOR_RSS_COOLDOWN_TIME_IN_SEC = 11
 
 # initial var for windows
 binary_path = "..\\..\\win32-build\\Release\\trojan.exe"
 
 cmd_args = None
+
+
+def get_init_rss_limit():
+    limit = 10 * (1024)
+    if cmd_args.tun:
+        limit = limit + limit / 2
+
+    return limit
 
 
 def get_cooldown_rss_limit():
@@ -167,11 +173,11 @@ def main_stage(server_config, client_config, server_balance_config=None, is_fowa
                        "{:,}KB".format(client_process_init_rss))
 
         print_time_log("testing max init RSS: " +
-                       "{:,}KB".format(TEST_INIT_MAX_RSS_IN_KB))
+                       "{:,}KB".format(get_init_rss_limit()))
 
-        if server_process_init_rss > TEST_INIT_MAX_RSS_IN_KB \
-                or client_process_init_rss > TEST_INIT_MAX_RSS_IN_KB \
-                or server_balance_process_init_rss > TEST_INIT_MAX_RSS_IN_KB:
+        if server_process_init_rss > get_init_rss_limit() \
+                or client_process_init_rss > get_init_rss_limit() \
+                or server_balance_process_init_rss > get_init_rss_limit():
             print_time_log("init RSS error!!")
             output_log = True
             return 1
@@ -181,7 +187,12 @@ def main_stage(server_config, client_config, server_balance_config=None, is_fowa
                 output_log = True
                 return 1
         elif is_tun:
+            # for proxy (config/proxy_ips.txt)
             if not fulltest_client.start_query("188.188.188.188", 0, TEST_SERVER_PORT, TEST_FILES_DIR):
+                output_log = True
+                return 1
+            # for forwarding (config/white_ips.txt)
+            if not fulltest_client.start_query("199.199.199.199", 0, TEST_SERVER_PORT, TEST_FILES_DIR):
                 output_log = True
                 return 1
         else:

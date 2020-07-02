@@ -273,7 +273,8 @@ if __name__ == '__main__':
     #start_query("127.0.0.1", 0, 10620, "html")
 
     # for client_tun redirect to local test
-    #start_query("188.188.188.188", 0, 18080, "html")
+    start_query("188.188.188.188", 0, 18080, "html")
+    #start_query("199.199.199.199", 0, 18080, "html")
 
     # for pure fulltest script run
-    start_query("127.0.0.1", 0, 18080, "html")
+    #start_query("127.0.0.1", 0, 18080, "html")
