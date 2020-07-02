@@ -92,9 +92,7 @@ TUNDev::TUNDev(Service* _service, const std::string& _tun_name, const std::strin
             throw runtime_error("[tun] error opening device");
         }
 
-        struct ifreq ifr;
-        memset(&ifr, 0, sizeof(ifr));
-
+        struct ifreq ifr {};
         ifr.ifr_flags = IFF_NO_PI | IFF_TUN;
         snprintf(ifr.ifr_name, IFNAMSIZ, "%s", _tun_name.c_str());
 

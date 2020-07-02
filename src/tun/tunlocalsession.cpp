@@ -68,29 +68,40 @@ void TUNLocalSession::start() {
 
         m_udp_forwarder->start();
 
-        if (m_udp_forwarder->process(m_local_addr_udp, streambuf_to_string_view(m_send_buf))) {
+        if (m_send_buf.size() != 0) {
+            if (m_udp_forwarder->process(m_local_addr_udp, streambuf_to_string_view(m_send_buf))) {
+                m_connected = true;
+            }
+        } else if (!m_udp_forwarder->is_destroyed()) {
             m_connected = true;
         }
+
     } else {
         auto remote_addr =
           get_config().get_tun().redirect_local ? LOCALHOST_IP_ADDRESS : m_remote_addr.address().to_string();
         auto self = shared_from_this();
         connect_out_socket(this, remote_addr, to_string(m_remote_addr.port()), m_resolver, m_tcp_socket,
           m_local_addr_udp, [this, self]() {
-              out_async_send_impl(streambuf_to_string_view(m_send_buf), [this, self](boost::system::error_code ec) {
-                  if (ec) {
-                      output_debug_info_ec(ec);
-                      destroy();
-                      return;
-                  }
-                  if (!m_wait_connected_handler.empty()) {
-                      for (auto& h : m_wait_connected_handler) {
-                          h(boost::system::error_code());
+              m_connected = true;
+
+              if (m_send_buf.size() != 0) {
+                  out_async_send_impl(streambuf_to_string_view(m_send_buf), [this, self](boost::system::error_code ec) {
+                      if (ec) {
+                          output_debug_info_ec(ec);
+                          destroy();
+                          return;
                       }
-                      m_wait_connected_handler.clear();
-                  }
+                      if (!m_wait_connected_handler.empty()) {
+                          for (auto& h : m_wait_connected_handler) {
+                              h(boost::system::error_code());
+                          }
+                          m_wait_connected_handler.clear();
+                      }
+                      out_async_read();
+                  });
+              } else {
                   out_async_read();
-              });
+              }
           });
     }
 }
@@ -157,7 +168,7 @@ void TUNLocalSession::out_async_send(const uint8_t* _data, size_t _length, SentH
             destroy();
         }
     } else {
-        out_async_send_impl(streambuf_to_string_view(m_send_buf), move(_handler));
+        out_async_send_impl(string_view((const char*)_data, _length), move(_handler));
     }
 }
 
@@ -176,7 +187,16 @@ void TUNLocalSession::destroy(bool /*= false*/) {
 
     m_wait_ack_handler.clear();
 
-    // TODO TCP socket close
+    if (m_udp_forwarder && !m_udp_forwarder->is_destroyed()) {
+        m_udp_forwarder->destroy();
+    }
+
+    if (m_tcp_socket.is_open()) {
+        boost::system::error_code ec;
+        m_tcp_socket.cancel(ec);
+        m_tcp_socket.shutdown(tcp::socket::shutdown_both, ec);
+        m_tcp_socket.close(ec);
+    }
 
     if (!m_close_from_tundev_flag) {
         m_close_cb(this);
