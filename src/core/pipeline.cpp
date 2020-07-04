@@ -23,7 +23,6 @@
 #include "core/utils.h"
 #include "proto/pipelinerequest.h"
 #include "session/clientsession.h"
-#include "tun/tunsession.h"
 
 using namespace std;
 using namespace boost::asio::ip;

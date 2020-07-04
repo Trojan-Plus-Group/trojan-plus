@@ -36,9 +36,6 @@
 #include "session/serversession.h"
 #include "utils.h"
 
-#include "tun/dnsserver.h"
-#include "tun/tundev.h"
-
 using namespace std;
 using namespace boost::asio::ip;
 using namespace boost::asio::ssl;
@@ -58,12 +55,6 @@ Service::Service(Config& config, bool test)
 #endif // ENABLE_NAT
 
     if (!test) {
-        if (config.get_run_type() == Config::CLIENT_TUN || config.get_run_type() == Config::SERVERT_TUN) {
-            m_tundev = make_shared<TUNDev>(this, config.get_tun().tun_name, config.get_tun().net_ip,
-              config.get_tun().net_mask, config.get_tun().mtu, config.get_tun().tun_fd);
-        }
-
-        if (config.get_run_type() != Config::CLIENT_TUN) {
             tcp::resolver resolver(io_context);
             tcp::endpoint listen_endpoint =
               *resolver.resolve(config.get_local_addr(), to_string(config.get_local_port())).begin();
@@ -119,7 +110,6 @@ Service::Service(Config& config, bool test)
                 _log_with_date_time("TCP_FASTOPEN_CONNECT is not supported", Log::WARN);
 #endif // TCP_FASTOPEN_CONNECT
             }
-        }
     }
 
     config.prepare_ssl_context(ssl_context, plain_http_response);
@@ -134,25 +124,6 @@ Service::Service(Config& config, bool test)
         }
     }
 
-    if (!test && config.get_dns().enabled) {
-        if (config.get_run_type() == Config::SERVER || config.get_run_type() == Config::FORWARD) {
-            _log_with_date_time("[dns] dns server cannot run in type 'server' or 'forward'", Log::ERROR);
-        } else {
-            if (DNSServer::get_dns_lock()) {
-                m_dns_server = make_shared<DNSServer>(this);
-                if (m_dns_server->start()) {
-                    _log_with_date_time(
-                      "[dns] start local dns server at 0.0.0.0:" + to_string(config.get_dns().port), Log::WARN);
-
-                    if (m_tundev != nullptr) {
-                        m_tundev->set_dns_server(m_dns_server);
-                    }
-                }
-            } else {
-                _log_with_date_time("[dns] dns server has been created in other process.", Log::WARN);
-            }
-        }
-    }
 }
 
 void Service::prepare_icmpd(Config& config, bool is_ipv4) {
@@ -175,10 +146,6 @@ void Service::run() {
         rt = "nat";
     } else if (config.get_run_type() == Config::CLIENT) {
         rt = "client";
-    } else if (config.get_run_type() == Config::CLIENT_TUN) {
-        rt = "client tun";
-    } else if (config.get_run_type() == Config::SERVERT_TUN) {
-        rt = "server tun";
     } else {
         throw logic_error("unknow run type error");
     }
@@ -187,7 +154,6 @@ void Service::run() {
         rt += " in pipeline mode";
     }
 
-    if (config.get_run_type() != Config::CLIENT_TUN) {
         async_accept();
         if (config.get_run_type() == Config::FORWARD || config.get_run_type() == Config::NAT) {
             udp_async_read();
@@ -197,18 +163,11 @@ void Service::run() {
         _log_with_date_time(string("trojan plus service (") + rt + ") started at " +
                               local_endpoint.address().to_string() + ':' + to_string(local_endpoint.port()),
           Log::FATAL);
-    } else {
-        _log_with_date_time(string("trojan plus service (") + rt + ") started at [" + config.get_tun().tun_name + "] " +
-                              config.get_tun().net_ip + "/" + config.get_tun().net_mask,
-          Log::FATAL);
-    }
     io_context.run();
     _log_with_date_time("trojan service stopped", Log::WARN);
 }
 
 void Service::stop() {
-    m_tundev     = nullptr;
-    m_dns_server = nullptr;
     boost::system::error_code ec;
     socket_acceptor.cancel(ec);
     if (udp_socket.is_open()) {

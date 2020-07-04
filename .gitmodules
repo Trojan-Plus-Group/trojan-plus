@@ -1,6 +1,3 @@
-[submodule "badvpn"]
-	path = badvpn
-	url = https://github.com/Trojan-Plus-Group/badvpn
 [submodule "trojan-plus-android-libs"]
 	path = trojan-plus-android-libs
 	url = https://github.com/Trojan-Plus-Group/trojan-plus-android-libs.git

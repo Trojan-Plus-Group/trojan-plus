@@ -178,16 +178,11 @@ int main(int argc, const char *argv[]) {
         _log_with_date_time("trojan service exit.", Log::WARN);
         Log::reset();
 
-#ifndef __ANDROID__
-        exit(EXIT_SUCCESS);
-#endif
 
     } catch (const exception &e) {
         _log_with_date_time(string("fatal: ") + e.what(), Log::FATAL);
         _log_with_date_time("exiting. . . ", Log::FATAL);
 
-#ifndef __ANDROID__
         exit(EXIT_FAILURE);
-#endif
     }
 }
