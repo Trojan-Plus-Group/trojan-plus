@@ -35,7 +35,7 @@
 class Config {
 
   public:
-    enum { MAX_PASSWORD_LENGTH = (EVP_MAX_MD_SIZE << 1) + 1 };
+    enum { MAX_PASSWORD_LENGTH = (EVP_MAX_MD_SIZE << 1) };
     enum RunType {
         SERVER,
         CLIENT,

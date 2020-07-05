@@ -87,6 +87,13 @@ void Config::populate(const string& JSON) {
 }
 
 void Config::populate(const ptree& tree) {
+    // read the log_level first
+    log_level = static_cast<Log::Level>(tree.get("log_level", default_log_level));
+    if (Log::level == Log::INVALID) {
+        // don't let load-balance config override the log level
+        Log::level = log_level;
+    }
+
     string rt = tree.get("run_type", string("client"));
     if (rt == "server") {
         run_type = SERVER;
@@ -115,12 +122,6 @@ void Config::populate(const ptree& tree) {
             const auto& p       = item.second.get_value<string>();
             password[SHA224(p)] = p;
         }
-    }
-
-    log_level = static_cast<Log::Level>(tree.get("log_level", default_log_level));
-    if (Log::level == Log::INVALID) {
-        // don't let load-balance config override the log level
-        Log::level = log_level;
     }
 
     udp_timeout            = tree.get("udp_timeout", default_udp_timeout);
@@ -666,7 +667,7 @@ void Config::prepare_ssl_reuse(SSLSocket& socket) const {
 
 string Config::SHA224(const string& message) {
     uint8_t digest[EVP_MAX_MD_SIZE];
-    char mdString[MAX_PASSWORD_LENGTH];
+    char mdString[MAX_PASSWORD_LENGTH + 1];
     unsigned int digest_len = 0;
     EVP_MD_CTX* ctx         = nullptr;
     if ((ctx = EVP_MD_CTX_new()) == nullptr) {
@@ -683,6 +684,10 @@ string Config::SHA224(const string& message) {
     if (EVP_DigestFinal_ex(ctx, (unsigned char*)digest, &digest_len) == 0) {
         EVP_MD_CTX_free(ctx);
         throw runtime_error("[sha224] could not output hash");
+    }
+
+    if (digest_len * 2 >= MAX_PASSWORD_LENGTH) {
+        throw runtime_error("[sha224] password length is too large");
     }
 
     for (unsigned int i = 0; i < digest_len; ++i) {
