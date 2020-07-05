@@ -39,7 +39,7 @@ class ClientSession : public SocketSession {
     Status status;
     bool first_packet_recv;
     boost::asio::ip::tcp::socket in_socket;
-    boost::asio::ssl::stream<boost::asio::ip::tcp::socket> out_socket;
+    SSLSocket out_socket;
     boost::asio::ip::udp::socket udp_socket;
     boost::asio::ip::udp::endpoint udp_recv_endpoint;
 

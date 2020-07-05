@@ -35,6 +35,7 @@
 class Config {
 
   public:
+    enum { MAX_PASSWORD_LENGTH = (EVP_MAX_MD_SIZE << 1) + 1 };
     enum RunType {
         SERVER,
         CLIENT,
@@ -183,7 +184,7 @@ class Config {
     [[nodiscard]] bool sip003();
     void load(const std::string& filename);
     void prepare_ssl_context(boost::asio::ssl::context& ssl_context, std::string& plain_http_response);
-    void prepare_ssl_reuse(boost::asio::ssl::stream<boost::asio::ip::tcp::socket>& socket) const;
+    void prepare_ssl_reuse(SSLSocket& socket) const;
     [[nodiscard]] bool operator==(const Config& other) const { return compare_hash == other.compare_hash; }
     [[nodiscard]] bool try_prepare_pipeline_proxy_icmp(bool is_ipv4);
 

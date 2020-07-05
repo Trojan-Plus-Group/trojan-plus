@@ -651,7 +651,7 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, string&
     }
 }
 
-void Config::prepare_ssl_reuse(boost::asio::ssl::stream<boost::asio::ip::tcp::socket>& socket) const {
+void Config::prepare_ssl_reuse(SSLSocket& socket) const {
     auto* ssl_handle = socket.native_handle();
     if (!ssl.sni.empty()) {
         SSL_set_tlsext_host_name(ssl_handle, ssl.sni.c_str());
@@ -666,7 +666,7 @@ void Config::prepare_ssl_reuse(boost::asio::ssl::stream<boost::asio::ip::tcp::so
 
 string Config::SHA224(const string& message) {
     uint8_t digest[EVP_MAX_MD_SIZE];
-    char mdString[(EVP_MAX_MD_SIZE << 1) + 1];
+    char mdString[MAX_PASSWORD_LENGTH];
     unsigned int digest_len = 0;
     EVP_MD_CTX* ctx         = nullptr;
     if ((ctx = EVP_MD_CTX_new()) == nullptr) {

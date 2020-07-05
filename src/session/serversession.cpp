@@ -35,28 +35,50 @@ ServerSession::ServerSession(Service* _service, const Config& config, boost::asi
   shared_ptr<Authenticator> auth, const std::string& plain_http_response)
     : SocketSession(_service, config),
       status(HANDSHAKE),
-      in_socket(_service->get_io_context(), ssl_context),
       out_socket(_service->get_io_context()),
       udp_socket(_service->get_io_context()),
       udp_resolver(_service->get_io_context()),
       auth(move(auth)),
       plain_http_response(plain_http_response),
-      has_queried_out(false) {}
+      has_queried_out(false) {
+    in_socket = make_shared<SSLSocket>(_service->get_io_context(), ssl_context);
+}
 
-tcp::socket& ServerSession::accept_socket() { return (tcp::socket&)in_socket.next_layer(); }
+ServerSession::ServerSession(Service* _service, const Config& config, shared_ptr<SSLSocket> socket,
+  std::shared_ptr<Authenticator> auth, const std::string& plain_http_response)
+    : SocketSession(_service, config),
+      status(HANDSHAKE),
+      in_socket(move(socket)),
+      out_socket(_service->get_io_context()),
+      udp_socket(_service->get_io_context()),
+      udp_resolver(_service->get_io_context()),
+      auth(move(auth)),
+      plain_http_response(plain_http_response),
+      has_queried_out(false) {
+
+    boost::system::error_code ec;
+    set_in_endpoint(in_socket->next_layer().remote_endpoint(ec));
+    if (ec) {
+        output_debug_info_ec(ec);
+        destroy();
+        return;
+    }
+}
+
+tcp::socket& ServerSession::accept_socket() { return (tcp::socket&)in_socket->next_layer(); }
 
 void ServerSession::start() {
 
     if (!get_pipeline_component().is_using_pipeline()) {
         boost::system::error_code ec;
-        set_in_endpoint(in_socket.next_layer().remote_endpoint(ec));
+        set_in_endpoint(in_socket->next_layer().remote_endpoint(ec));
         if (ec) {
             output_debug_info_ec(ec);
             destroy();
             return;
         }
         auto self = shared_from_this();
-        in_socket.async_handshake(stream_base::server, [this, self](const boost::system::error_code error) {
+        in_socket->async_handshake(stream_base::server, [this, self](const boost::system::error_code error) {
             if (error) {
                 _log_with_endpoint(get_in_endpoint(), "SSL handshake failed: " + error.message(), Log::ERROR);
                 if (error.message() == "http request" && plain_http_response.empty()) {
@@ -87,7 +109,7 @@ void ServerSession::in_async_read() {
         in_read_buf.begin_read(__FILE__, __LINE__);
         in_read_buf.consume_all();
         auto self = shared_from_this();
-        in_socket.async_read_some(
+        in_socket->async_read_some(
           in_read_buf.prepare(MAX_BUF_LENGTH), [this, self](const boost::system::error_code error, size_t length) {
               in_read_buf.end_read();
               if (error) {
@@ -124,7 +146,7 @@ void ServerSession::in_async_write(const string_view& data) {
     } else {
         auto data_copy = get_service()->get_sending_data_allocator().allocate(data);
         boost::asio::async_write(
-          in_socket, data_copy->data(), [this, self, data_copy](const boost::system::error_code error, size_t) {
+          *in_socket, data_copy->data(), [this, self, data_copy](const boost::system::error_code error, size_t) {
               get_service()->get_sending_data_allocator().free(data_copy);
               if (error) {
                   output_debug_info_ec(error);
@@ -286,7 +308,7 @@ void ServerSession::in_recv(const string_view& data, size_t ack_count) {
             }
             const unsigned char* alpn_out = nullptr;
             unsigned int alpn_len         = 0;
-            SSL_get0_alpn_selected(in_socket.native_handle(), &alpn_out, &alpn_len);
+            SSL_get0_alpn_selected(in_socket->native_handle(), &alpn_out, &alpn_len);
             if (alpn_out == nullptr) {
                 return get_config().get_remote_port();
             }
@@ -547,7 +569,9 @@ void ServerSession::destroy(bool pipeline_call /*= false*/) {
         udp_socket.close(ec);
     }
 
-    shutdown_ssl_socket(this, in_socket);
+    if (in_socket) {
+        shutdown_ssl_socket(this, *in_socket);
+    }
 
     if (!pipeline_call && get_pipeline_component().is_using_pipeline() && !pipeline_session.expired()) {
         (dynamic_cast<PipelineSession*>(pipeline_session.lock().get()))->remove_session_after_destroy(*this);

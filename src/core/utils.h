@@ -150,6 +150,8 @@ int get_hashCode(const std::string& str);
 
 void write_data_to_file(int id, const std::string& tag, const std::string_view& data);
 
+using SSLSocket = boost::asio::ssl::stream<boost::asio::ip::tcp::socket>;
+
 using SentHandler     = std::function<void(const boost::system::error_code ec)>;
 using AsyncWriter     = std::function<void(const boost::asio::streambuf& data, SentHandler&& handler)>;
 using ConnectionFunc  = std::function<bool()>;
@@ -411,8 +413,8 @@ void connect_out_socket(ThisT this_ptr, std::string addr, std::string port, boos
 
 template <typename ThisT, typename EndPoint>
 void connect_remote_server_ssl(ThisT this_ptr, std::string addr, std::string port,
-  boost::asio::ip::tcp::resolver& resolver, boost::asio::ssl::stream<boost::asio::ip::tcp::socket>& out_socket,
-  EndPoint in_endpoint, std::function<void()>&& connected_handler) {
+  boost::asio::ip::tcp::resolver& resolver, SSLSocket& out_socket, EndPoint in_endpoint,
+  std::function<void()>&& connected_handler) {
 
     connect_out_socket(this_ptr, addr, port, resolver, out_socket.next_layer(), in_endpoint, [=, &out_socket]() {
         out_socket.async_handshake(
@@ -437,8 +439,7 @@ void connect_remote_server_ssl(ThisT this_ptr, std::string addr, std::string por
     });
 }
 
-template <typename ThisPtr>
-void shutdown_ssl_socket(ThisPtr this_ptr, boost::asio::ssl::stream<boost::asio::ip::tcp::socket>& socket) {
+template <typename ThisPtr> void shutdown_ssl_socket(ThisPtr this_ptr, SSLSocket& socket) {
     if (socket.next_layer().is_open()) {
         auto self = this_ptr->shared_from_this();
         auto ssl_shutdown_timer =

@@ -41,7 +41,7 @@ class ServerSession : public SocketSession {
     ReadBufWithGuard out_read_buf;
     ReadBufWithGuard udp_read_buf;
 
-    boost::asio::ssl::stream<boost::asio::ip::tcp::socket> in_socket;
+    std::shared_ptr<SSLSocket> in_socket;
     boost::asio::ip::tcp::socket out_socket;
     boost::asio::ip::udp::socket udp_socket;
     boost::asio::ip::udp::endpoint out_udp_endpoint;
@@ -60,6 +60,7 @@ class ServerSession : public SocketSession {
     PipelineSessionRef pipeline_session;
     bool has_queried_out;
 
+    friend class PipelineSession;
     void in_async_read();
     void in_async_write(const std::string_view& data);
     void in_sent();
@@ -75,6 +76,9 @@ class ServerSession : public SocketSession {
 
   public:
     ServerSession(Service* _service, const Config& config, boost::asio::ssl::context& ssl_context,
+      std::shared_ptr<Authenticator> auth, const std::string& plain_http_response);
+
+    ServerSession(Service* _service, const Config& config, std::shared_ptr<SSLSocket> socket,
       std::shared_ptr<Authenticator> auth, const std::string& plain_http_response);
 
     boost::asio::ip::tcp::socket& accept_socket() override;

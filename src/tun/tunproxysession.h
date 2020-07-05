@@ -28,7 +28,7 @@ class TUNProxySession : public TUNSession {
 
     size_t m_read_ack_count{0};
 
-    boost::asio::ssl::stream<boost::asio::ip::tcp::socket> m_out_socket;
+    SSLSocket m_out_socket;
     boost::asio::ip::tcp::resolver m_out_resolver;
 
     void out_async_read();

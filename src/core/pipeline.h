@@ -45,7 +45,7 @@ class Pipeline : public std::enable_shared_from_this<Pipeline> {
     Service* service;
     SendDataCache sending_data_cache;
     bool destroyed;
-    boost::asio::ssl::stream<boost::asio::ip::tcp::socket> out_socket;
+    SSLSocket out_socket;
     bool connected;
     ReadBufWithGuard out_read_buf;
     boost::asio::ip::tcp::resolver resolver;

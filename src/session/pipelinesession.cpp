@@ -40,10 +40,9 @@ PipelineSession::PipelineSession(Service* _service, const Config& config, boost:
       status(HANDSHAKE),
       auth(move(auth)),
       plain_http_response(plain_http_response),
-      live_socket(_service->get_io_context(), ssl_context),
       gc_timer(_service->get_io_context()),
       ssl_context(ssl_context) {
-
+    live_socket = make_shared<SSLSocket>(_service->get_io_context(), ssl_context);
     sending_data_cache.set_async_writer([this](const boost::asio::streambuf& data, SentHandler&& handler) {
         if (status == DESTROY) {
             return;
@@ -51,7 +50,7 @@ PipelineSession::PipelineSession(Service* _service, const Config& config, boost:
 
         auto self = shared_from_this();
         boost::asio::async_write(
-          live_socket, data.data(), [this, self, handler](const boost::system::error_code ec, size_t) {
+          *live_socket, data.data(), [this, self, handler](const boost::system::error_code ec, size_t) {
               if (ec) {
                   output_debug_info_ec(ec);
                   destroy();
@@ -62,19 +61,19 @@ PipelineSession::PipelineSession(Service* _service, const Config& config, boost:
     });
 }
 
-tcp::socket& PipelineSession::accept_socket() { return (tcp::socket&)live_socket.next_layer(); }
+tcp::socket& PipelineSession::accept_socket() { return (tcp::socket&)live_socket->next_layer(); }
 
 void PipelineSession::start() {
     boost::system::error_code ec;
     timer_async_wait();
-    set_in_endpoint(live_socket.next_layer().remote_endpoint(ec));
+    set_in_endpoint(live_socket->next_layer().remote_endpoint(ec));
     if (ec) {
         output_debug_info_ec(ec);
         destroy();
         return;
     }
     auto self = shared_from_this();
-    live_socket.async_handshake(stream_base::server, [this, self](const boost::system::error_code error) {
+    live_socket->async_handshake(stream_base::server, [this, self](const boost::system::error_code error) {
         if (error) {
             _log_with_endpoint(get_in_endpoint(), "SSL handshake failed: " + error.message(), Log::ERROR);
             if (error.message() == "http request" && plain_http_response.empty()) {
@@ -96,7 +95,7 @@ void PipelineSession::start() {
 void PipelineSession::in_async_read() {
     in_read_buf.begin_read(__FILE__, __LINE__);
     auto self = shared_from_this();
-    live_socket.async_read_some(in_read_buf.prepare(Pipeline::RECV_BUF_LENGTH),
+    live_socket->async_read_some(in_read_buf.prepare(Pipeline::RECV_BUF_LENGTH),
       [this, self](const boost::system::error_code error, size_t length) {
           in_read_buf.end_read();
           if (error) {
@@ -108,19 +107,30 @@ void PipelineSession::in_async_read() {
           in_recv(in_read_buf);
       });
 }
+void PipelineSession::move_socket_to_serversession(const std::string_view& data) {
+    _log_with_endpoint(get_in_endpoint(), "PipelineSession error password, move data to ServerSession", Log::ERROR);
+    auto session = make_shared<ServerSession>(get_service(), get_config(), live_socket, auth, plain_http_response);
+    session->in_recv(data);
+    live_socket.reset();
+    destroy();
+}
 
 void PipelineSession::in_recv(const string_view&) {
     if (status == HANDSHAKE) {
         string_view data = in_read_buf;
         size_t npos      = data.find("\r\n");
         if (npos == string::npos) {
-            in_async_read();
-            return;
+            if (data.length() < Config::MAX_PASSWORD_LENGTH) {
+                in_async_read();
+                return;
+            } else {
+                move_socket_to_serversession(data);
+                return;
+            }
         }
 
         if (data.substr(0, npos) != get_config().get_password().cbegin()->first) {
-            _log_with_endpoint(get_in_endpoint(), "PipelineSession error password", Log::ERROR);
-            destroy();
+            move_socket_to_serversession(data);
             return;
         }
 
@@ -314,5 +324,8 @@ void PipelineSession::destroy(bool /*pipeline_call = false*/) {
         it->destroy(true);
     }
     sessions.clear();
-    shutdown_ssl_socket(this, live_socket);
+
+    if (live_socket) {
+        shutdown_ssl_socket(this, *live_socket);
+    }
 }

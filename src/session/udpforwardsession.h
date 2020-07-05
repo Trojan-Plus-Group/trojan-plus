@@ -44,7 +44,7 @@ class UDPForwardSession : public SocketSession {
     boost::asio::streambuf out_write_buf;
     boost::asio::streambuf udp_data_buf;
 
-    boost::asio::ssl::stream<boost::asio::ip::tcp::socket> out_socket;
+    SSLSocket out_socket;
     boost::asio::ip::udp::socket udp_target_socket;
     boost::asio::ip::udp::endpoint udp_recv_endpoint;
     boost::asio::ip::udp::endpoint out_udp_endpoint;

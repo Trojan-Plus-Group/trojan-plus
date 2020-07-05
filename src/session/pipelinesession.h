@@ -45,7 +45,7 @@ class PipelineSession : public SocketSession {
     const std::string& plain_http_response;
 
     SessionsList sessions;
-    boost::asio::ssl::stream<boost::asio::ip::tcp::socket> live_socket;
+    std::shared_ptr<SSLSocket> live_socket;
     boost::asio::steady_timer gc_timer;
     SendDataCache sending_data_cache;
     boost::asio::ssl::context& ssl_context;
@@ -63,6 +63,8 @@ class PipelineSession : public SocketSession {
       SentHandler&& sent_handler, size_t ack_count = 0);
     bool find_and_process_session(
       PipelineComponent::SessionIdType session_id, std::function<void(SessionsList::iterator&)>&& processor);
+
+    void move_socket_to_serversession(const std::string_view& data);
 
   public:
     PipelineSession(Service* _service, const Config& config, boost::asio::ssl::context& ssl_context,
