@@ -541,8 +541,11 @@ jclass g_android_java_service_class     = NULL;
 jmethodID g_android_java_protect_socket = NULL;
 
 JNIEXPORT void JNICALL Java_com_trojan_1plus_android_TrojanPlusVPNService_runMain(
-  JNIEnv* env, jclass, jstring configPath) {
-    g_android_java_env = env;
+  JNIEnv* env, jclass service_class, jstring configPath) {
+    g_android_java_env           = env;
+    g_android_java_service_class = service_class;
+    g_android_java_protect_socket =
+      g_android_java_env->GetStaticMethodID(g_android_java_service_class, "protectSocket", "(I)V");
 
     const char* path   = g_android_java_env->GetStringUTFChars(configPath, 0);
     const char* args[] = {"trojan", "-c", path};
@@ -557,25 +560,11 @@ JNIEXPORT void JNICALL Java_com_trojan_1plus_android_TrojanPlusVPNService_stopMa
         raise(SIGUSR2);
     }
 }
-}
+
+} // extern "C"
 
 void android_protect_socket(int fd) {
     if (g_android_java_env) {
-        if (g_android_java_protect_socket == NULL) {
-            g_android_java_service_class =
-              g_android_java_env->FindClass("com/trojan_plus/android/TrojanPlusVPNService");
-            if (g_android_java_service_class != NULL) {
-
-                g_android_java_protect_socket =
-                  g_android_java_env->GetStaticMethodID(g_android_java_service_class, "protectSocket", "(I)V");
-
-                if (NULL == g_android_java_protect_socket) {
-                    _log_with_date_time("[jni] can't find method protectSocket from TrojanPlusVPNService", Log::ERROR);
-                    return;
-                }
-            }
-        }
-
         if (g_android_java_protect_socket != NULL) {
             g_android_java_env->CallStaticVoidMethod(g_android_java_service_class, g_android_java_protect_socket, fd);
         }
