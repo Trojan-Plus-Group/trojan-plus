@@ -33,7 +33,6 @@ UDPLocalForwarder::UDPLocalForwarder(Service* service, udp::endpoint local_src, 
       m_writer(move(writer)),
       m_local_src(move(local_src)),
       m_remote_dst(move(remote_dst)),
-      m_gc_timer(service->get_io_context()),
       m_udp_socket(service->get_io_context()),
       m_is_dns(is_dns) {
 

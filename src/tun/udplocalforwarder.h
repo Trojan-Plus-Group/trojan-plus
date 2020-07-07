@@ -32,8 +32,6 @@ class UDPLocalForwarder : public Session {
     UDPForwardSession::UDPWriter m_writer;
     boost::asio::ip::udp::endpoint m_local_src;
     boost::asio::ip::udp::endpoint m_remote_dst;
-    boost::asio::steady_timer m_gc_timer;
-    time_t m_gc_timer_checker{};
     boost::asio::ip::udp::socket m_udp_socket;
 
     ReadBufWithGuard m_read_buf;
