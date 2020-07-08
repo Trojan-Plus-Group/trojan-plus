@@ -183,18 +183,14 @@ void Config::populate(const ptree& tree) {
     experimental._pipeline_loadbalance_configs.clear();
     experimental._pipeline_loadbalance_context.clear();
     experimental.pipeline_proxy_icmp = tree.get("experimental.pipeline_proxy_icmp", false);
-
     if (run_type != SERVER) {
         if (tree.get_child_optional("experimental.pipeline_loadbalance_configs")) {
-            if (experimental.pipeline_num == 0) {
-                _log_with_date_time(
-                  "Pipeline load balance need to enable pipeline (set pipeline_num as non zero)", Log::ERROR);
-            } else {
-                for (const auto& item : tree.get_child("experimental.pipeline_loadbalance_configs")) {
-                    const auto& config = item.second.get_value<string>();
-                    experimental.pipeline_loadbalance_configs.emplace_back(config);
-                }
+            for (const auto& item : tree.get_child("experimental.pipeline_loadbalance_configs")) {
+                const auto& config = item.second.get_value<string>();
+                experimental.pipeline_loadbalance_configs.emplace_back(config);
+            }
 
+            if (!experimental.pipeline_loadbalance_configs.empty()) {
                 std::string tmp;
                 _log_with_date_time("Pipeline will use load balance config:", Log::WARN);
                 for (const auto& item : experimental.pipeline_loadbalance_configs) {
@@ -208,6 +204,11 @@ void Config::populate(const ptree& tree) {
                     experimental._pipeline_loadbalance_configs.emplace_back(other);
                     experimental._pipeline_loadbalance_context.emplace_back(ssl);
                     _log_with_date_time("Loaded " + item + " config.", Log::WARN);
+                }
+
+                if (experimental.pipeline_num == 0) {
+                    _log_with_date_time(
+                      "Pipeline load balance need to enable pipeline (set pipeline_num as non zero)", Log::ERROR);
                 }
             }
         }
