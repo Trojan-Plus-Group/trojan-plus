@@ -155,6 +155,9 @@ def lookup_domains(domain, ns, count, non_domain):
     resolver.timeout = RESOLVER_TIMEOUT
     resolver.lifetime = RESOLVER_TIMEOUT
 
+    if non_domain:
+        count = min(count, 2)
+
     for _ in range(0, count):
         for r in range(1, MAX_RETRY_COUNT + 1):
             try:
@@ -235,4 +238,4 @@ def start_query(ns, count, port):
 
 if __name__ == "__main__":
     # print_log = True
-    start_query("114.114.114.114", 1)
+    start_query("114.114.114.114", 1, 5333)
