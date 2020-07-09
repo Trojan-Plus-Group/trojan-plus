@@ -32,8 +32,13 @@ using namespace trojan;
 
 FILE_LOCK_HANDLE DNSServer::s_dns_file_lock = INVALID_LOCK_HANDLE;
 bool DNSServer::get_dns_lock() {
+#ifndef __ANDROID__
     s_dns_file_lock = get_file_lock("./trojan_dns_lock.output");
     return s_dns_file_lock != INVALID_LOCK_HANDLE;
+#else
+    // android don't need the lock file
+    return true;
+#endif // __ANDROID__
 }
 
 DNSServer::DNSServer(Service* _service) : m_service(_service), m_serv_udp_socket(_service->get_io_context()) {}
