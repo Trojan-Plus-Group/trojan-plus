@@ -36,6 +36,8 @@ RECV_DATA_TIMEOUT = 3
 UDP_SEND_PACKET_LENGTH = fulltest_udp_proto.UDP_SEND_PACKET_LENGTH
 UDP_BUFF_SIZE = fulltest_udp_proto.UDP_BUFF_SIZE
 
+UDP_RETRY_MAX_COUNT = 2
+
 request_url_prefix = "http://"
 compare_folder = "html"
 enable_log = True
@@ -58,64 +60,68 @@ def post_url(url, data):
 
 
 def get_file_udp(file, length, port):
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp_socket:
-            udp_socket.settimeout(RECV_DATA_TIMEOUT)
-            udp_socket.setsockopt(
-                socket.SOL_SOCKET, socket.SO_RCVBUF, UDP_BUFF_SIZE)
-            fulltest_udp_proto.bind_port(udp_socket, port)
+    for _ in range(0, UDP_RETRY_MAX_COUNT):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp_socket:
+                udp_socket.settimeout(RECV_DATA_TIMEOUT)
+                udp_socket.setsockopt(
+                    socket.SOL_SOCKET, socket.SO_RCVBUF, UDP_BUFF_SIZE)
+                fulltest_udp_proto.bind_port(udp_socket, port)
 
-            global request_host_ip
-            addr = (request_host_ip, serv_port)
+                global request_host_ip
+                addr = (request_host_ip, serv_port)
 
-            param = urllib.parse.urlencode(
-                {'file': file, 'len': length, 'm': 'GET'}).encode()
-            udp_socket.sendto(param + b'\r\n', addr)
+                param = urllib.parse.urlencode(
+                    {'file': file, 'len': length, 'm': 'GET'}).encode()
+                udp_socket.sendto(param + b'\r\n', addr)
 
-            data_arr = []
-            recv_length = 0
-            try:
-                while recv_length < length:
-                    data = udp_socket.recv(UDP_SEND_PACKET_LENGTH)
-                    recv_length = recv_length + \
-                        len(data) - fulltest_udp_proto.UDP_INDEX_HEADER_SIZE
-                    data_arr.append(data)
+                data_arr = []
+                recv_length = 0
+                try:
+                    while recv_length < length:
+                        data = udp_socket.recv(UDP_SEND_PACKET_LENGTH)
+                        recv_length = recv_length + \
+                            len(data) - fulltest_udp_proto.UDP_INDEX_HEADER_SIZE
+                        data_arr.append(data)
 
-                return fulltest_udp_proto.compose_udp_file_data(data_arr)
-            except:
-                print_time_log("exception occur, data recv length: " +
-                               str(recv_length) + " port: " + str(port))
-                traceback.print_exc(file=sys.stdout)
-                return False
-    except:
-        print_time_log("get_file_udp [" + file + "] failed!")
-        traceback.print_exc(file=sys.stdout)
-        return False
+                    return fulltest_udp_proto.compose_udp_file_data(data_arr)
+
+                except:
+                    print_time_log("exception occur, data recv length: " +
+                                   str(recv_length) + " port: " + str(port))
+                    traceback.print_exc(file=sys.stdout)
+        except:
+            print_time_log("get_file_udp [" + file + "] failed!")
+            traceback.print_exc(file=sys.stdout)
+
+    return False
 
 
 def post_file_udp(file, data, port):
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp_socket:
-            udp_socket.settimeout(RECV_DATA_TIMEOUT)
-            udp_socket.setsockopt(
-                socket.SOL_SOCKET, socket.SO_SNDBUF, UDP_BUFF_SIZE)
-            fulltest_udp_proto.bind_port(udp_socket, port)
+    for _ in range(0, UDP_RETRY_MAX_COUNT):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp_socket:
+                udp_socket.settimeout(RECV_DATA_TIMEOUT)
+                udp_socket.setsockopt(
+                    socket.SOL_SOCKET, socket.SO_SNDBUF, UDP_BUFF_SIZE)
+                fulltest_udp_proto.bind_port(udp_socket, port)
 
-            global request_host_ip
-            addr = (request_host_ip, serv_port)
+                global request_host_ip
+                addr = (request_host_ip, serv_port)
 
-            param = urllib.parse.urlencode(
-                {'file': file, 'len': len(data), 'm': 'POST'}).encode()
-            udp_socket.sendto(param + b'\r\n', addr)
-            time.sleep(0.01)
+                param = urllib.parse.urlencode(
+                    {'file': file, 'len': len(data), 'm': 'POST'}).encode()
+                udp_socket.sendto(param + b'\r\n', addr)
+                time.sleep(0.01)
 
-            fulltest_udp_proto.send_udp_file_data(udp_socket, addr, data)
+                fulltest_udp_proto.send_udp_file_data(udp_socket, addr, data)
 
-            return udp_socket.recv(UDP_SEND_PACKET_LENGTH)
-    except:
-        print_time_log("post_file_udp [" + file + "] failed!")
-        traceback.print_exc(file=sys.stdout)
-        return 'please check traceback exceptions'
+                return udp_socket.recv(UDP_SEND_PACKET_LENGTH)
+        except:
+            print_time_log("post_file_udp [" + file + "] failed!")
+            traceback.print_exc(file=sys.stdout)
+
+    return 'please check traceback exceptions'
 
 
 def request_get_file(file, tcp_or_udp, index, udp_port):
