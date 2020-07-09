@@ -195,6 +195,11 @@ def main_stage(server_config, client_config, server_balance_config=None, is_fowa
             if not fulltest_client.start_query("199.199.199.199", 0, TEST_SERVER_PORT, TEST_FILES_DIR):
                 output_log = True
                 return 1
+
+            if cmd_args.dns:
+                if not fulltest_dns.start_query("10.0.0.2", 10, cmd_args.dns):
+                    output_log = True
+                    return 1
         else:
             if cmd_args.normal:
                 if not fulltest_client.start_query(LOCALHOST_IP, TEST_PROXY_PORT, TEST_SERVER_PORT, TEST_FILES_DIR):

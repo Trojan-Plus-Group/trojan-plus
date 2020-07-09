@@ -237,5 +237,11 @@ def start_query(ns, count, port):
 
 
 if __name__ == "__main__":
-    # print_log = True
-    start_query("114.114.114.114", 1, 5333)
+    # script test
+    #start_query("114.114.114.114", 1, 5333)
+
+    # local dns server test
+    #start_query("127.0.0.1", 1, 5333)
+
+    # tun dns server test
+    start_query("10.0.0.2", 1, 5333)

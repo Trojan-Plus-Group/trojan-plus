@@ -73,15 +73,19 @@ stages:
         ifconfig
         route -n
 
+        default_gw=`route -n | grep "0\.0\.0\.0.*UG" | awk '{print $2}'`
+
         sudo ip tuntap add dev tun0 mode tun user root
         sudo ifconfig tun0 10.0.0.1 netmask 255.255.255.0
         sudo ip link set dev tun0 up mtu 1500 txqueuelen 1000
         sudo route add default gw 10.0.0.2 metric 0
+        sudo route add 114.114.114.114 gw $default_gw metric 0
+        sudo route add 8.8.8.8 gw $default_gw metric 0
 
         ifconfig
         route -n
         
-        sudo /usr/local/bin/python3.8 fulltest_main.py $BINARY -t -n
+        sudo /usr/local/bin/python3.8 fulltest_main.py $BINARY -t -n -d 5333
       env:
         PIPELINE_WORKSPACE: $(Pipeline.Workspace)
 
