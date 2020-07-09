@@ -88,6 +88,8 @@ class DNSServer : public std::enable_shared_from_this<DNSServer> {
     [[nodiscard]] bool try_to_find_existed(
       const boost::asio::ip::udp::endpoint& local_src, const std::string_view& data);
 
+    [[nodiscard]] bool is_remote_domain(const std::string& domain) const;
+
     [[nodiscard]] static bool is_proxy_dns_msg(const trojan::dns_header& hdr);
 
     [[nodiscard]] static bool is_proxy_dns_msg(const trojan::dns_question& question);

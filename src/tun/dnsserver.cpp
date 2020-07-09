@@ -194,6 +194,23 @@ void DNSServer::recv_up_stream_data(const udp::endpoint& local_src, const string
     store_in_dns_cache(data, proxyed);
 }
 
+bool DNSServer::is_remote_domain(const std::string& domain) const {
+    const auto& config = m_service->get_config();
+    if (domain == config.get_remote_addr()) {
+        return true;
+    }
+
+    if (config.get_experimental().pipeline_num > 0) {
+        for (const auto& c : config.get_experimental()._pipeline_loadbalance_configs) {
+            if (c->get_remote_addr() == domain) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
 void DNSServer::in_recved(istream& is, const dns_header& header, const string_view& former_data) {
     bool proxy = false;
     dns_question qt;
@@ -203,7 +220,10 @@ void DNSServer::in_recved(istream& is, const dns_header& header, const string_vi
             if (find_in_dns_cache(m_udp_recv_endpoint, header, qt)) {
                 return;
             }
-            proxy = is_in_gfwlist(qt.get_QNAME());
+
+            if (!is_remote_domain(qt.get_QNAME())) {
+                proxy = is_in_gfwlist(qt.get_QNAME());
+            }
         }
     }
 
