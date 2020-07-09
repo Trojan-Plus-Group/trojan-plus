@@ -42,6 +42,8 @@ class DNSServer : public std::enable_shared_from_this<DNSServer> {
       std::function<void(const boost::asio::ip::udp::endpoint& src, boost::asio::streambuf& data)>;
     class IDataQueryer : public std::enable_shared_from_this<IDataQueryer> {
       public:
+        virtual ~IDataQueryer(){};
+
         virtual bool open(DataQueryHandler&& handler, int port)                                   = 0;
         virtual bool send(const boost::asio::ip::udp::endpoint& to, const std::string_view& data) = 0;
     };
