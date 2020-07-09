@@ -564,10 +564,8 @@ JNIEXPORT void JNICALL Java_com_trojan_1plus_android_TrojanPlusVPNService_stopMa
 } // extern "C"
 
 void android_protect_socket(int fd) {
-    if (g_android_java_env) {
-        if (g_android_java_protect_socket != NULL) {
-            g_android_java_env->CallStaticVoidMethod(g_android_java_service_class, g_android_java_protect_socket, fd);
-        }
+    if (g_android_java_env != NULL && g_android_java_service_class != NULL && g_android_java_protect_socket != NULL) {
+        g_android_java_env->CallStaticVoidMethod(g_android_java_service_class, g_android_java_protect_socket, fd);
     }
 }
 #else
