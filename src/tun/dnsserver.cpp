@@ -41,29 +41,88 @@ bool DNSServer::get_dns_lock() {
 #endif // __ANDROID__
 }
 
-DNSServer::DNSServer(Service* _service) : m_service(_service), m_serv_udp_socket(_service->get_io_context()) {}
+DNSServer::SocketQueryer::SocketQueryer(Service* serv) : service(serv), socket(service->get_io_context()) {}
+DNSServer::SocketQueryer::~SocketQueryer() {
+    if (socket.is_open()) {
+        boost::system::error_code ec;
+        socket.cancel(ec);
+        socket.close(ec);
+    }
+}
+
+bool DNSServer::SocketQueryer::open(DataQueryHandler&& handler, int port) {
+    boost::system::error_code ec;
+
+    auto udp_bind_endpoint = udp::endpoint(make_address_v4("0.0.0.0"), port);
+    auto udp_protocol      = udp_bind_endpoint.protocol();
+
+    socket.open(udp_protocol, ec);
+    if (ec) {
+        output_debug_info_ec(ec);
+        return false;
+    }
+    socket.bind(udp_bind_endpoint, ec);
+    if (ec) {
+        output_debug_info_ec(ec);
+        return false;
+    }
+
+    data_handler = move(handler);
+    async_read_udp();
+    return true;
+}
+
+void DNSServer::SocketQueryer::async_read_udp() {
+    if (!socket.is_open()) {
+        return;
+    }
+
+    auto self         = shared_from_this();
+    auto prepare_size = service->get_config().get_udp_recv_buf();
+    buf.begin_read(__FILE__, __LINE__);
+    buf.consume_all();
+    socket.async_receive_from(
+      buf.prepare(prepare_size), recv_endpoint, [self, this](const boost::system::error_code error, size_t length) {
+          buf.end_read();
+          if (error) {
+              async_read_udp();
+              return;
+          }
+
+          buf.commit(length);
+          data_handler(recv_endpoint, buf);
+          async_read_udp();
+      });
+}
+
+bool DNSServer::SocketQueryer::send(const boost::asio::ip::udp::endpoint& to, const std::string_view& data) {
+    boost::system::error_code ec;
+    socket.send_to(boost::asio::buffer(data), to, 0, ec);
+    return (!ec);
+}
+
+DNSServer::DNSServer(Service* _service) : m_service(_service) { m_data_queryer = make_shared<SocketQueryer>(_service); }
+
+DNSServer::DNSServer(Service* _service, std::shared_ptr<IDataQueryer> queryer)
+    : m_service(_service), m_data_queryer(move(queryer)) {}
 
 DNSServer::~DNSServer() { close_file_lock(s_dns_file_lock); }
 
 bool DNSServer::start() {
-    boost::system::error_code ec;
+    return m_data_queryer->open(
+      [this](const boost::asio::ip::udp::endpoint& recv_endpoint, boost::asio::streambuf& data) {
+          m_udp_recv_endpoint     = recv_endpoint;
+          string_view former_data = streambuf_to_string_view(data);
+          std::istream is(&data);
 
-    auto udp_bind_endpoint = udp::endpoint(make_address_v4("0.0.0.0"), m_service->get_config().get_dns().port);
-    auto udp_protocol      = udp_bind_endpoint.protocol();
+          dns_header dns_hdr;
+          is >> dns_hdr;
 
-    m_serv_udp_socket.open(udp_protocol, ec);
-    if (ec) {
-        output_debug_info_ec(ec);
-        return false;
-    }
-    m_serv_udp_socket.bind(udp_bind_endpoint, ec);
-    if (ec) {
-        output_debug_info_ec(ec);
-        return false;
-    }
-
-    async_read_udp();
-    return true;
+          if (is && is_proxy_dns_msg(dns_hdr)) {
+              in_recved(is, dns_hdr, former_data);
+          }
+      },
+      m_service->get_config().get_dns().port);
 }
 
 bool DNSServer::is_proxy_dns_msg(const dns_header& dns_hdr) {
@@ -184,9 +243,7 @@ void DNSServer::store_in_dns_cache(const string_view& data, bool proxyed) {
 
 void DNSServer::send_to_local(const udp::endpoint& local_src, const string_view& data) {
     _log_with_endpoint_ALL(local_src, "[dns] <-- " + to_string(data.length()));
-
-    boost::system::error_code ec;
-    m_serv_udp_socket.send_to(boost::asio::buffer(data), local_src, 0, ec);
+    m_data_queryer->send(local_src, data);
 }
 
 void DNSServer::recv_up_stream_data(const udp::endpoint& local_src, const string_view& data, bool proxyed) {
@@ -227,7 +284,7 @@ void DNSServer::in_recved(istream& is, const dns_header& header, const string_vi
         }
     }
 
-    if (try_to_find_existed(m_udp_recv_endpoint, m_udp_read_buf)) {
+    if (try_to_find_existed(m_udp_recv_endpoint, former_data)) {
         return;
     }
 
@@ -263,33 +320,6 @@ void DNSServer::in_recved(istream& is, const dns_header& header, const string_vi
             m_forwarders.emplace_back(forwarder);
         }
     }
-}
-void DNSServer::async_read_udp() {
-    auto self         = shared_from_this();
-    auto prepare_size = m_service->get_config().get_udp_recv_buf();
-    m_udp_read_buf.begin_read(__FILE__, __LINE__);
-    m_udp_read_buf.consume_all();
-    m_serv_udp_socket.async_receive_from(m_udp_read_buf.prepare(prepare_size), m_udp_recv_endpoint,
-      [self, this](const boost::system::error_code error, size_t length) {
-          m_udp_read_buf.end_read();
-          if (error) {
-              async_read_udp();
-              return;
-          }
-
-          m_udp_read_buf.commit(length);
-          const string_view& former_data = m_udp_read_buf;
-          std::istream is(&(boost::asio::streambuf&)m_udp_read_buf);
-
-          dns_header dns_hdr;
-          is >> dns_hdr;
-
-          if (is && is_proxy_dns_msg(dns_hdr)) {
-              in_recved(is, dns_hdr, former_data);
-          }
-
-          async_read_udp();
-      });
 }
 
 bool DNSServer::is_ip_in_gfwlist(uint32_t ip) const {

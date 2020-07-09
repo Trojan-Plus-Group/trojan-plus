@@ -37,7 +37,16 @@ class UDPForwardSession;
 class UDPLocalForwarder;
 class Service;
 class DNSServer : public std::enable_shared_from_this<DNSServer> {
+  public:
+    using DataQueryHandler =
+      std::function<void(const boost::asio::ip::udp::endpoint& src, boost::asio::streambuf& data)>;
+    class IDataQueryer : public std::enable_shared_from_this<IDataQueryer> {
+      public:
+        virtual bool open(DataQueryHandler&& handler, int port)                                   = 0;
+        virtual bool send(const boost::asio::ip::udp::endpoint& to, const std::string_view& data) = 0;
+    };
 
+  private:
     enum { DEFAULT_UP_STREAM_NS_SVR_PORT = 53 };
 
     class DNSCache {
@@ -64,11 +73,27 @@ class DNSServer : public std::enable_shared_from_this<DNSServer> {
         _define_getter(std::string&, answer_data);
     };
 
-    Service* m_service;
+    class SocketQueryer : public IDataQueryer {
+        Service* service;
+        boost::asio::ip::udp::socket socket;
+        ReadBufWithGuard buf;
+        boost::asio::ip::udp::endpoint recv_endpoint;
+        DataQueryHandler data_handler;
 
+        void async_read_udp();
+
+      public:
+        SocketQueryer(Service* serv);
+        ~SocketQueryer();
+
+        bool open(DataQueryHandler&& handler, int port) override;
+        bool send(const boost::asio::ip::udp::endpoint& to, const std::string_view& data) override;
+    };
+
+    Service* m_service;
     std::vector<DNSCache> m_dns_cache;
-    boost::asio::ip::udp::socket m_serv_udp_socket;
-    ReadBufWithGuard m_udp_read_buf;
+
+    std::shared_ptr<IDataQueryer> m_data_queryer;
     boost::asio::ip::udp::endpoint m_udp_recv_endpoint;
 
     std::list<std::weak_ptr<UDPForwardSession>> m_proxy_forwarders;
@@ -98,6 +123,7 @@ class DNSServer : public std::enable_shared_from_this<DNSServer> {
 
   public:
     DNSServer(Service* _service);
+    DNSServer(Service* _service, std::shared_ptr<IDataQueryer> queryer);
     ~DNSServer();
 
     [[nodiscard]] bool start();

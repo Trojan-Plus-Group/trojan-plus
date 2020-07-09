@@ -71,6 +71,7 @@ class Service;
 class lwip_tcp_client;
 class TUNSession;
 class DNSServer;
+class TUNDNSQueryer;
 // this class canot support ipv6
 class TUNDev {
 
@@ -111,6 +112,8 @@ class TUNDev {
 
     Service* m_service;
     std::shared_ptr<DNSServer> m_dns_server;
+    std::shared_ptr<TUNDNSQueryer> m_dns_queryer;
+    boost::asio::ip::udp::endpoint m_dns_server_endpoint;
     int m_tun_fd;
     const bool m_is_outside_tun_fd;
     uint16_t m_mtu;
@@ -130,7 +133,9 @@ class TUNDev {
     int try_to_process_udp_packet(uint8_t* data, int data_len);
     void parse_packet();
     void input_netif_packet(const uint8_t* data, uint16_t packet_len);
-    int handle_write_upd_data(const TUNSession* _session, std::string_view& data);
+    int handle_write_upd_data(const TUNSession* _session, std::string_view& data_str);
+    int handle_write_upd_data(const boost::asio::ip::udp::endpoint& local_endpoint,
+      const boost::asio::ip::udp::endpoint& remote_endpoint, std::string_view& data_str);
 
     [[nodiscard]] static bool is_in_ips(uint32_t ip, const Config::IPList& ips, const Config::IPSubnetList& subnet);
     [[nodiscard]] bool proxy_by_route(uint32_t ip) const;
@@ -140,7 +145,6 @@ class TUNDev {
       uint16_t _mtu, int _outside_tun_fd = -1);
     ~TUNDev();
 
-    void set_dns_server(std::shared_ptr<DNSServer> dns) { m_dns_server = std::move(dns); }
     [[nodiscard]] int get_tun_fd() const { return m_tun_fd; }
 };
 #endif //_TROJAN_TUNDEV_HPP

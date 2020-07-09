@@ -68,6 +68,31 @@ static void tcp_remove(struct tcp_pcb* pcb_list) {
     }
 }
 
+using DNSSendHanlder = std::function<bool(const boost::asio::ip::udp::endpoint& to, const std::string_view& data)>;
+class TUNDNSQueryer : public DNSServer::IDataQueryer {
+    DNSServer::DataQueryHandler data_handler;
+    DNSSendHanlder send_handler;
+    boost::asio::streambuf buf;
+
+  public:
+    TUNDNSQueryer(DNSSendHanlder&& sender) : send_handler(move(sender)) {}
+
+    void recved(const boost::asio::ip::udp::endpoint& from, const std::string_view& data) {
+        buf.consume(buf.size());
+        streambuf_append(buf, data);
+
+        data_handler(from, buf);
+    }
+
+    bool open(DNSServer::DataQueryHandler&& handler, int) override {
+        data_handler = move(handler);
+        return true;
+    }
+    bool send(const boost::asio::ip::udp::endpoint& to, const std::string_view& data) override {
+        return send_handler(to, data);
+    }
+};
+
 TUNDev* TUNDev::sm_tundev = nullptr;
 
 TUNDev::TUNDev(Service* _service, const std::string& _tun_name, const std::string& _ipaddr, const std::string& _netmask,
@@ -168,6 +193,21 @@ TUNDev::TUNDev(Service* _service, const std::string& _tun_name, const std::strin
     tcp_accept(m_tcp_listener, static_listener_accept_func);
 
     async_read();
+
+    // prepare dns server
+    m_dns_server_endpoint.address(make_address_v4(_ipaddr));
+    m_dns_server_endpoint.port(m_service->get_config().get_dns().port);
+
+    m_dns_queryer =
+      make_shared<TUNDNSQueryer>([this](const boost::asio::ip::udp::endpoint& local, const std::string_view& data) {
+          std::string_view data_str(data);
+          return handle_write_upd_data(local, m_dns_server_endpoint, data_str) == 0;
+      });
+
+    m_dns_server = make_shared<DNSServer>(m_service, m_dns_queryer);
+    if (!m_dns_server->start()) {
+        throw runtime_error("[tun] dns server start failed");
+    }
 }
 
 TUNDev::~TUNDev() {
@@ -429,13 +469,17 @@ void TUNDev::parse_packet() {
     }
 }
 
-int TUNDev::handle_write_upd_data(const TUNSession* _session, string_view& data_str) {
-    assert(_session->is_udp_forward_session());
+int TUNDev::handle_write_upd_data(const boost::asio::ip::udp::endpoint& local_endpoint,
+  const boost::asio::ip::udp::endpoint& remote_endpoint, std::string_view& data_str) {
+
+    auto* local_addr  = (struct sockaddr_in*)local_endpoint.data();
+    auto* remote_addr = (struct sockaddr_in*)remote_endpoint.data();
 
     auto data_len = data_str.length();
     if (data_len == 0) {
         return 0;
     }
+
     const auto* data   = (const uint8_t*)data_str.data();
     auto header_length = (uint16_t)(sizeof(struct ipv4_header) + sizeof(struct udp_header));
     auto max_len       = min(numeric_limits<uint16_t>::max(), m_mtu);
@@ -443,12 +487,6 @@ int TUNDev::handle_write_upd_data(const TUNSession* _session, string_view& data_
     if (data_len > max_len) {
         data_len = max_len;
     }
-
-    auto local_endpoint  = _session->get_udp_local_endpoint();
-    auto remote_endpoint = _session->get_udp_remote_endpoint();
-
-    auto* local_addr  = (struct sockaddr_in*)local_endpoint.data();
-    auto* remote_addr = (struct sockaddr_in*)remote_endpoint.data();
 
     // build IP header
     struct ipv4_header ipv4_hdr;
@@ -490,10 +528,15 @@ int TUNDev::handle_write_upd_data(const TUNSession* _session, string_view& data_
 
     data_str = data_str.substr(data_len);
     if (data_str.length() > 0) {
-        handle_write_upd_data(_session, data_str);
+        handle_write_upd_data(local_endpoint, remote_endpoint, data_str);
     }
 
     return 0;
+}
+
+int TUNDev::handle_write_upd_data(const TUNSession* _session, string_view& data_str) {
+    assert(_session->is_udp_forward_session());
+    return handle_write_upd_data(_session->get_udp_local_endpoint(), _session->get_udp_remote_endpoint(), data_str);
 }
 
 int TUNDev::try_to_process_udp_packet(uint8_t* data, int data_len) {
@@ -526,6 +569,7 @@ int TUNDev::try_to_process_udp_packet(uint8_t* data, int data_len) {
         udp_hdr.checksum            = 0;
         uint16_t checksum_computed =
           udp_checksum(&udp_hdr, data, data_len, ipv4_hdr.source_address, ipv4_hdr.destination_address);
+
         if (checksum_in_packet != checksum_computed) {
             return 1;
         }
@@ -540,6 +584,11 @@ int TUNDev::try_to_process_udp_packet(uint8_t* data, int data_len) {
                                                  to_string(remote_endpoint.port()) +
                                                  " [tun] length:" + to_string(data_len));
 
+        if (m_dns_server_endpoint == remote_endpoint) {
+            m_dns_queryer->recved(local_endpoint, string_view((const char*)data, data_len));
+            return 1;
+        }
+
         for (auto& it : m_udp_clients) {
             if (it->try_to_process_udp(local_endpoint, remote_endpoint, data, data_len)) {
                 return 1;
@@ -547,7 +596,8 @@ int TUNDev::try_to_process_udp_packet(uint8_t* data, int data_len) {
         }
 
         shared_ptr<TUNSession> session = nullptr;
-        if (proxy_by_route(ntoh32(ipv4_hdr.destination_address))) {
+        bool proxy                     = proxy_by_route(ntoh32(ipv4_hdr.destination_address));
+        if (proxy) {
             session = make_shared<TUNProxySession>(m_service, true);
         } else {
             session = make_shared<TUNLocalSession>(m_service, true);
@@ -575,14 +625,18 @@ int TUNDev::try_to_process_udp_packet(uint8_t* data, int data_len) {
             to_string(remote_endpoint.port()),
           Log::INFO);
 
-        m_service->start_session(session, [session, local_endpoint, remote_endpoint](boost::system::error_code ec) {
-            if (!ec) {
-                session->start();
-            } else {
-                output_debug_info_ec(ec);
-                session->destroy();
-            }
-        });
+        if (!proxy) {
+            session->start();
+        } else {
+            m_service->start_session(session, [session, local_endpoint, remote_endpoint](boost::system::error_code ec) {
+                if (!ec) {
+                    session->start();
+                } else {
+                    output_debug_info_ec(ec);
+                    session->destroy();
+                }
+            });
+        }
 
         return 1;
     }
