@@ -34,6 +34,7 @@
 #include <list>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #ifndef _WIN32
@@ -56,7 +57,7 @@
 #endif // IP6T_SO_ORIGINAL_DST
 
 #ifdef ENABLE_REUSE_PORT
-typedef boost::asio::detail::socket_option::boolean<SOL_SOCKET, SO_REUSEPORT> reuse_port;
+using reuse_port = boost::asio::detail::socket_option::boolean<SOL_SOCKET, SO_REUSEPORT>;
 #endif // ENABLE_REUSE_PORT
 
 #ifndef IP_RECVTTL
@@ -122,6 +123,36 @@ typedef boost::asio::detail::socket_option::boolean<SOL_SOCKET, SO_REUSEPORT> re
 
 #define _define_is_const(name)                                                                                         \
     [[nodiscard]] inline bool is_##name() const { return name; }
+
+#define _test_case(hdr, func, val, val_type)                                                                           \
+    do {                                                                                                               \
+        hdr.func((val_type)(val));                                                                                     \
+        if ((val_type)(val) != hdr.func()) {                                                                           \
+            throw std::runtime_error("Error: " #func " is not same!!!");                                               \
+        }                                                                                                              \
+    } while (false)
+
+#define _test_case_call_assert(hdr, func, val, val_type)                                                               \
+    do {                                                                                                               \
+        if ((val_type)(val) != hdr.func()) {                                                                           \
+            throw std::runtime_error("Error: " #func " final value is not correct!!");                                 \
+        }                                                                                                              \
+    } while (false)
+
+#define _test_case_assert(exp, exp1)                                                                                   \
+    do {                                                                                                               \
+        if ((exp) != (exp1)) {                                                                                         \
+            throw std::runtime_error(                                                                                  \
+              "test_cases failed, [" #exp "==" + std::to_string(exp) + "] is not equal [" #exp1 "]");                  \
+        }                                                                                                              \
+    } while (false)
+
+#define _test_case_assert_str(exp, exp1)                                                                               \
+    do {                                                                                                               \
+        if ((exp) != (exp1)) {                                                                                         \
+            throw std::runtime_error("test_cases failed, [" #exp "==" + (exp) + "] is not equal [" #exp1 "]");         \
+        }                                                                                                              \
+    } while (false)
 
 const static int half_byte_shift_4_bits    = 4;
 const static int one_byte_shift_8_bits     = 8;
@@ -338,6 +369,50 @@ class bytes_stat {
     }
 };
 
+class DomainMatcher {
+    class DomainLinkData {
+      public:
+        std::string suffix;
+        std::vector<DomainLinkData> prefix;
+
+        DomainLinkData() = default;
+        DomainLinkData(std::string _suffix) : suffix(std::move(_suffix)) {}
+
+        friend bool operator<(const DomainLinkData& a, const DomainLinkData& b) { return a.suffix < b.suffix; }
+    };
+
+    std::vector<DomainLinkData> domains;
+
+    void parse_line(const std::string& line);
+    static DomainLinkData* insert_domain_seg(std::vector<DomainLinkData>& list, const std::string& seg);
+    static const DomainLinkData* find_domain_seg(const std::vector<DomainLinkData>& list, const std::string& seg);
+
+  public:
+    bool load_from_file(std::istream& is, size_t& loaded_count);
+    bool load_from_file(const std::string& filename, size_t& loaded_count);
+    [[nodiscard]] bool is_match(const std::string& domain) const;
+
+    static void test_cases();
+};
+
+class IPv4Matcher {
+    using IPList       = std::vector<uint32_t>;
+    using IPSubnetList = std::unordered_map<uint32_t, IPList>;
+
+    IPSubnetList subnet;
+    IPList ips;
+
+    static uint32_t get_ip_value(const std::string& ip_str);
+
+  public:
+    bool load_from_stream(std::istream& is, const std::string& filename, size_t& loaded_count);
+    bool load_from_file(const std::string& filename, size_t& loaded_count);
+
+    [[nodiscard]] bool is_match(uint32_t ip) const;
+
+    static void test_cases();
+};
+
 void android_protect_socket(int fd);
 
 template <typename ThisT, typename EndPoint>
@@ -478,6 +553,14 @@ template <class T> bool clear_weak_ptr_list(std::list<std::weak_ptr<T>>& l) {
     return changed;
 }
 
+template <class T> bool safe_atov(const std::string& str, T& val) {
+    if (str.empty()) {
+        return false;
+    }
+    std::stringstream ss(str);
+    return !((ss >> val).fail() || !(ss >> std::ws).eof());
+}
+
 std::pair<std::string, uint16_t> recv_target_endpoint(int _native_fd);
 std::pair<std::string, uint16_t> recv_tproxy_udp_msg(
   int fd, boost::asio::ip::udp::endpoint& target_endpoint, char* buf, int& buf_len, int& ttl);
@@ -500,15 +583,4 @@ using FILE_LOCK_HANDLE = HANDLE;
 FILE_LOCK_HANDLE get_file_lock(const char* filename);
 void close_file_lock(FILE_LOCK_HANDLE& file_fd);
 
-template <class T> bool safe_atov(const std::string& str, T& val) {
-    if (str.empty()) {
-        return false;
-    }
-    std::stringstream ss(str);
-    if ((ss >> val).fail() || !(ss >> std::ws).eof()) {
-        return false;
-    }
-
-    return true;
-}
 #endif //_TROJAN_UTILS_H_

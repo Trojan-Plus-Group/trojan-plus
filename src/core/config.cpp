@@ -240,9 +240,19 @@ void Config::populate(const ptree& tree) {
 
     if (route.enabled) {
         if (run_type == CLIENT_TUN) {
-            load_ips(route.cn_mainland_ips_file, route._cn_mainland_ips_subnet, route._cn_mainland_ips);
-            load_ips(route.white_ips, route._white_ips_subnet, route._white_ips);
-            load_ips(route.proxy_ips, route._proxy_ips_subnet, route._proxy_ips);
+            size_t count = 0;
+            route._cn_mainland_ips_matcher.load_from_file(route.cn_mainland_ips_file, count);
+            _log_with_date_time(
+              "[route] load " + to_string(count) + " cn_mainland_ips from file " + route.cn_mainland_ips_file,
+              Log::ERROR);
+
+            route._white_ips_matcher.load_from_file(route.white_ips, count);
+            _log_with_date_time(
+              "[route] load " + to_string(count) + " white_ips from file " + route.white_ips, Log::ERROR);
+
+            route._proxy_ips_matcher.load_from_file(route.proxy_ips, count);
+            _log_with_date_time(
+              "[route] load " + to_string(count) + " proxy_ips from file " + route.proxy_ips, Log::ERROR);
 
             if (route.proxy_type == RouteType::route_gfwlist && !dns.enabled) {
                 _log_with_date_time("[route] route_gfwlist need dns with gfw's list support!", Log::ERROR);
@@ -266,31 +276,13 @@ void Config::load_dns(const boost::property_tree::ptree& tree) {
         return;
     }
     if (!dns.gfwlist.empty()) {
-        ifstream file(dns.gfwlist);
-        if (file) {
-            size_t total_count = 0;
-            for (string line; std::getline(file, line);) {
-                line.erase(std::remove(line.begin(), line.end(), ' '), line.end());
-                if (!line.empty()) {
-                    total_count++;
-                    auto it = dns._gfwlist.find(line.size());
-                    if (it != dns._gfwlist.end()) {
-                        it->second.emplace_back(line);
-                    } else {
-                        vector<string> list;
-                        list.emplace_back(line);
-                        dns._gfwlist.emplace(line.size(), list);
-                    }
-                }
-            }
-
-            if (dns._gfwlist.empty()) {
+        size_t count = 0;
+        if (dns._gfwlist_matcher.load_from_file(dns.gfwlist, count)) {
+            if (count == 0) {
                 dns.enabled = false;
                 _log_with_date_time("[dns] '" + dns.gfwlist + "' is empty!", Log::ERROR);
             } else {
-                _log_with_date_time("[dns] loaded " + to_string(total_count) + " domains in " +
-                                      to_string(dns._gfwlist.size()) + " groups, from " + dns.gfwlist,
-                  Log::WARN);
+                _log_with_date_time("[dns] loaded " + to_string(count) + " domains from " + dns.gfwlist, Log::WARN);
             }
         } else {
             dns.enabled = false;
@@ -324,71 +316,6 @@ void Config::load_dns(const boost::property_tree::ptree& tree) {
             _log_with_date_time("[dns] up_gfw_dns_server is empty, filled by default up stream server!", Log::WARN);
             dns.up_gfw_dns_server.emplace_back("8.8.8.8");
         }
-    }
-}
-
-void Config::load_ips(const std::string& filename, IPSubnetList& subnet, IPList& ips) {
-    ifstream file(filename);
-    if (file) {
-        size_t subnet_count           = 0;
-        const uint32_t max_mask_value = numeric_limits<uint32_t>::digits;
-
-        for (string line; std::getline(file, line);) {
-            line.erase(std::remove(line.begin(), line.end(), ' '), line.end());
-            if (!line.empty()) {
-                size_t pos = line.find('/');
-                if (pos != string::npos) {
-                    auto net      = line.substr(0, pos);
-                    auto mask_str = line.substr(pos + 1);
-                    uint32_t mask = 0;
-
-                    boost::system::error_code ec;
-                    auto addr = boost::asio::ip::make_address_v4(net, ec);
-                    if (ec || !safe_atov(mask_str, mask) || mask == 0 || mask > max_mask_value) {
-                        string error_msg("[tun] error load '");
-                        error_msg += (line);
-                        error_msg += "' from ";
-                        error_msg += filename;
-                        _log_with_date_time(error_msg, Log::ERROR);
-                        continue;
-                    }
-                    auto it = subnet.find(mask);
-                    if (it == subnet.end()) {
-                        IPList l;
-                        l.emplace_back(addr.to_uint());
-                        subnet.emplace(mask - 1, l);
-                    } else {
-                        it->second.emplace_back(addr.to_uint());
-                    }
-                    subnet_count++;
-                } else {
-                    boost::system::error_code ec;
-                    auto addr = boost::asio::ip::make_address_v4(line, ec);
-                    if (ec) {
-                        string error_msg("[tun] error load '");
-                        error_msg += (line);
-                        error_msg += "' from ";
-                        error_msg += filename;
-                        _log_with_date_time(error_msg, Log::ERROR);
-                        continue;
-                    }
-                    ips.emplace_back(addr.to_uint());
-                }
-            }
-        }
-
-        for (auto it : subnet) {
-            sort(it.second.begin(), it.second.end());
-        }
-        sort(ips.begin(), ips.end());
-        if (subnet_count > 0 || !ips.empty()) {
-            _log_with_date_time("[tun] loaded " + to_string(subnet_count) + " subnet in " + to_string(subnet.size()) +
-                                  " groups and " + to_string(ips.size()) + " ips from " + filename,
-              Log::INFO);
-        }
-
-    } else {
-        _log_with_date_time("[tun] cannot open '" + filename + "' file to read ip list!", Log::ERROR);
     }
 }
 

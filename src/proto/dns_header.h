@@ -31,37 +31,6 @@
 #include "core/utils.h"
 
 namespace trojan {
-
-#define _test_case(hdr, func, val, val_type)                                                                           \
-    do {                                                                                                               \
-        hdr.func((val_type)(val));                                                                                     \
-        if ((val_type)(val) != hdr.func()) {                                                                           \
-            throw std::runtime_error("Error: " #func " is not same!!!");                                               \
-        }                                                                                                              \
-    } while (false)
-
-#define _test_case_call_assert(hdr, func, val, val_type)                                                               \
-    do {                                                                                                               \
-        if ((val_type)(val) != hdr.func()) {                                                                           \
-            throw std::runtime_error("Error: " #func " final value is not correct!!");                                 \
-        }                                                                                                              \
-    } while (false)
-
-#define _test_case_assert(exp, exp1)                                                                                   \
-    do {                                                                                                               \
-        if ((exp) != (exp1)) {                                                                                         \
-            throw std::runtime_error(                                                                                  \
-              "test_cases failed, [" #exp "==" + std::to_string(exp) + "] is not equal [" #exp1 "]");                  \
-        }                                                                                                              \
-    } while (false)
-
-#define _test_case_assert_str(exp, exp1)                                                                               \
-    do {                                                                                                               \
-        if ((exp) != (exp1)) {                                                                                         \
-            throw std::runtime_error("test_cases failed, [" #exp "==" + (exp) + "] is not equal [" #exp1 "]");         \
-        }                                                                                                              \
-    } while (false)
-
 //
 // https://www2.cs.duke.edu/courses/fall16/compsci356/DNS/DNS-primer.pdf
 //

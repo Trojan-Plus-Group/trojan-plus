@@ -44,19 +44,6 @@
 using namespace std;
 using namespace boost::asio::ip;
 
-// clang-format off
-static const uint32_t mask_values[] = {
-  0x80000000, 0xC0000000, 0xE0000000, 0xF0000000,
-  0xF8000000, 0xFC000000, 0xFE000000, 0xFF000000,
-  0xFF800000, 0xFFC00000, 0xFFE00000, 0xFFF00000,
-  0xFFF80000, 0xFFFC0000, 0xFFFE0000, 0xFFFF0000,
-  0xFFFF8000, 0xFFFFC000, 0xFFFFE000, 0xFFFFF000,
-  0xFFFFF800, 0xFFFFFC00, 0xFFFFFE00, 0xFFFFFF00,
-  0xFFFFFF80, 0xFFFFFFC0, 0xFFFFFFE0, 0xFFFFFFF0,
-  0xFFFFFFF8, 0xFFFFFFFC, 0xFFFFFFFE, 0xFFFFFFFF,
-};
-// clang-format on
-
 static void tcp_remove(struct tcp_pcb* pcb_list) {
     struct tcp_pcb* pcb  = pcb_list;
     struct tcp_pcb* pcb2 = nullptr;
@@ -311,28 +298,13 @@ err_t TUNDev::netif_output_func(struct netif*, struct pbuf* p, const ip4_addr_t*
     return ERR_OK;
 }
 
-bool TUNDev::is_in_ips(uint32_t ip, const Config::IPList& ips, const Config::IPSubnetList& subnet) {
-    if (!ips.empty() && binary_search(ips.cbegin(), ips.cend(), ip)) {
-        return true;
-    }
-
-    for (const auto& sub : subnet) {
-        uint32_t net = ip & gsl::at(mask_values, sub.first);
-        if (binary_search(sub.second.cbegin(), sub.second.cend(), net)) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
 bool TUNDev::proxy_by_route(uint32_t ip) const {
     auto route = m_service->get_config().get_route();
-    if (is_in_ips(ip, route._proxy_ips, route._proxy_ips_subnet)) {
+    if (route._proxy_ips_matcher.is_match(ip)) {
         return true;
     }
 
-    if (is_in_ips(ip, route._white_ips, route._white_ips_subnet)) {
+    if (route._white_ips_matcher.is_match(ip)) {
         return false;
     }
 
@@ -342,11 +314,11 @@ bool TUNDev::proxy_by_route(uint32_t ip) const {
             return true;
         case Config::route_bypass_cn_mainland:
         case Config::route_bypass_local_and_cn_mainland: // Local ips Controlled by route tables
-            return !is_in_ips(ip, route._cn_mainland_ips, route._cn_mainland_ips_subnet);
+            return !route._cn_mainland_ips_matcher.is_match(ip);
         case Config::route_gfwlist:
             return m_dns_server != nullptr && m_dns_server->is_ip_in_gfwlist(ip);
         case Config::route_cn_mainland:
-            return is_in_ips(ip, route._cn_mainland_ips, route._cn_mainland_ips_subnet);
+            return route._cn_mainland_ips_matcher.is_match(ip);
         default:
             throw logic_error("[dns] error proxy type: " + to_string((int)route.proxy_type));
     }

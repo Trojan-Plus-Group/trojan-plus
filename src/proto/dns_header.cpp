@@ -20,7 +20,6 @@
  */
 
 #include "proto/dns_header.h"
-#include <unordered_map>
 
 using namespace std;
 

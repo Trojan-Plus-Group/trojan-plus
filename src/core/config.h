@@ -29,7 +29,6 @@
 #include <boost/property_tree/ptree.hpp>
 #include <cstdint>
 #include <map>
-#include <unordered_map>
 #include <vector>
 
 class Config {
@@ -122,29 +121,23 @@ class Config {
         std::string gfwlist;
         bool enable_cached;
         bool enable_ping_test;
-        std::unordered_map<size_t, std::vector<std::string>> _gfwlist;
+        DomainMatcher _gfwlist_matcher;
         std::vector<std::string> up_dns_server;
         std::vector<std::string> up_gfw_dns_server;
     };
-
-    using IPList       = std::vector<uint32_t>;
-    using IPSubnetList = std::unordered_map<uint32_t, IPList>;
 
     using ROUTE = struct {
         bool enabled;
         RouteType proxy_type;
 
         std::string cn_mainland_ips_file;
-        IPSubnetList _cn_mainland_ips_subnet;
-        IPList _cn_mainland_ips;
+        IPv4Matcher _cn_mainland_ips_matcher;
 
         std::string white_ips;
-        IPSubnetList _white_ips_subnet;
-        IPList _white_ips;
+        IPv4Matcher _white_ips_matcher;
 
         std::string proxy_ips;
-        IPSubnetList _proxy_ips_subnet;
-        IPList _proxy_ips;
+        IPv4Matcher _proxy_ips_matcher;
     };
 
   private:
@@ -175,8 +168,6 @@ class Config {
     void populate(const std::string& JSON);
 
     void load_dns(const boost::property_tree::ptree& tree);
-
-    static void load_ips(const std::string& filename, IPSubnetList& subnet, IPList& ips);
 
     static std::string SHA224(const std::string& message);
 

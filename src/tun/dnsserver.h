@@ -110,16 +110,14 @@ class DNSServer : public std::enable_shared_from_this<DNSServer> {
       const trojan::dns_question& question);
     void store_in_dns_cache(const std::string_view& data, bool proxyed);
 
-    [[nodiscard]] bool is_in_gfwlist(const std::string& domain) const;
-
     [[nodiscard]] bool try_to_find_existed(
       const boost::asio::ip::udp::endpoint& local_src, const std::string_view& data);
 
     [[nodiscard]] bool is_remote_domain(const std::string& domain) const;
 
-    [[nodiscard]] static bool is_proxy_dns_msg(const trojan::dns_header& hdr);
+    [[nodiscard]] static bool is_interest_dns_msg(const trojan::dns_header& hdr);
 
-    [[nodiscard]] static bool is_proxy_dns_msg(const trojan::dns_question& question);
+    [[nodiscard]] static bool is_interest_dns_msg(const trojan::dns_question& question);
 
     static FILE_LOCK_HANDLE s_dns_file_lock;
 

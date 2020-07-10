@@ -137,7 +137,6 @@ class TUNDev {
     int handle_write_upd_data(const boost::asio::ip::udp::endpoint& local_endpoint,
       const boost::asio::ip::udp::endpoint& remote_endpoint, std::string_view& data_str);
 
-    [[nodiscard]] static bool is_in_ips(uint32_t ip, const Config::IPList& ips, const Config::IPSubnetList& subnet);
     [[nodiscard]] bool proxy_by_route(uint32_t ip) const;
 
   public:

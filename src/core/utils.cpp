@@ -239,6 +239,290 @@ void SendDataCache::async_send() {
     });
 }
 
+DomainMatcher::DomainLinkData* DomainMatcher::insert_domain_seg(
+  std::vector<DomainLinkData>& list, const std::string& seg) {
+    DomainLinkData* link = nullptr;
+
+    auto it = std::find_if(list.begin(), list.end(), [&](const DomainLinkData& d) { return seg == d.suffix; });
+
+    if (it == list.end()) {
+        DomainLinkData data{seg};
+        list.emplace_back(data);
+
+        link = &(list[list.size() - 1]);
+    } else {
+        link = &(*it);
+    }
+
+    return link;
+}
+
+const DomainMatcher::DomainLinkData* DomainMatcher::find_domain_seg(
+  const std::vector<DomainLinkData>& list, const std::string& seg) {
+    const DomainLinkData* link = nullptr;
+
+    // it's binary_search
+    DomainLinkData cmp(seg);
+    auto it = std::lower_bound(list.cbegin(), list.cend(), cmp,
+      [](const DomainLinkData& a, const DomainLinkData& b) { return a.suffix < b.suffix; });
+
+    if (it != list.cend() && !(seg < it->suffix)) {
+        link = &(*it);
+    }
+
+    return link;
+}
+
+void DomainMatcher::parse_line(const std::string& line) {
+    if (line.empty()) {
+        return;
+    }
+
+    std::string seg;
+    DomainLinkData* link = nullptr;
+
+    for (int r = (int)line.length() - 1; r >= 0; r--) {
+        if (line[r] == '.') {
+            link = insert_domain_seg(link == nullptr ? domains : link->prefix, seg);
+            seg.clear();
+            continue;
+        }
+
+        seg.insert(seg.begin(), line[r]);
+    }
+
+    if (!seg.empty()) {
+        insert_domain_seg(link == nullptr ? domains : link->prefix, seg);
+    }
+}
+
+bool DomainMatcher::load_from_file(std::istream& is, size_t& loaded_count) {
+    loaded_count = 0;
+    if (!is) {
+        return false;
+    }
+
+    const size_t max_domain_length = 256;
+    is >> std::noskipws;
+
+    std::string line;
+    line.reserve(max_domain_length);
+    char a;
+    while (is >> a) {
+        if (a == '\n') {
+            if (!line.empty()) {
+                loaded_count++;
+                parse_line(line);
+                line.clear();
+            }
+        }
+
+        if ((a >= 'a' && a <= 'z') || (a >= 'A' && a <= 'Z') || (a >= '0' && a <= '9') || a == '-' || a == '.') {
+            line += a;
+        }
+    }
+
+    if (!line.empty()) {
+        loaded_count++;
+        parse_line(line);
+    }
+
+    std::sort(domains.begin(), domains.end());
+    for (auto& d : domains) {
+        std::sort(d.prefix.begin(), d.prefix.end());
+    }
+
+    return true;
+}
+bool DomainMatcher::load_from_file(const std::string& filename, size_t& loaded_count) {
+    std::ifstream f(filename);
+    return load_from_file(f, loaded_count);
+}
+
+bool DomainMatcher::is_match(const std::string& domain) const {
+    if (domain.empty()) {
+        return false;
+    }
+
+    std::string seg;
+    const DomainLinkData* link = nullptr;
+
+    size_t domain_level = 1;
+    for (int r = (int)domain.length() - 1; r >= 0; r--) {
+        if (domain[r] == '.') {
+            link = find_domain_seg(link == nullptr ? domains : link->prefix, seg);
+
+            if (link == nullptr) {
+                return domain_level > 2;
+            }
+
+            domain_level++;
+            seg.clear();
+            continue;
+        }
+
+        seg.insert(seg.begin(), domain[r]);
+    }
+
+    if (domain_level == 1) {
+        link = find_domain_seg(domains, domain);
+        if (link != nullptr) {
+            return link->prefix.empty();
+        }
+        return false;
+    }
+
+    if (link->prefix.empty()) {
+        return true;
+    }
+
+    link = find_domain_seg(link->prefix, seg);
+    return link != nullptr && link->prefix.empty();
+}
+
+void DomainMatcher::test_cases() {
+
+    std::string gfw_list("singledomain-in-gfw\n \
+		google.com\n \
+		facebook.com\n \
+		twitter.com\n \
+		api.others.com\n \
+		");
+
+    std::istringstream is(gfw_list);
+
+    size_t count = 0;
+    DomainMatcher matcher;
+    matcher.load_from_file(is, count);
+
+    _test_case_assert(count, 5);
+
+    _test_case_assert(matcher.is_match("com"), false);
+    _test_case_assert(matcher.is_match("singledomain"), false);
+    _test_case_assert(matcher.is_match("singledomain-in-gfw"), true);
+    _test_case_assert(matcher.is_match("www.baidu.com"), false);
+    _test_case_assert(matcher.is_match("aa.www.baidu.com"), false);
+    _test_case_assert(matcher.is_match("android.clients.google.com"), true);
+    _test_case_assert(matcher.is_match("facebook.com"), true);
+    _test_case_assert(matcher.is_match("api.facebook.com"), true);
+    _test_case_assert(matcher.is_match("route.api.facebook.com"), true);
+    _test_case_assert(matcher.is_match("www.jd.com"), false);
+    _test_case_assert(matcher.is_match("jd.com"), false);
+
+    _test_case_assert(matcher.is_match("others.com"), false);
+    _test_case_assert(matcher.is_match("www.others.com"), false);
+    _test_case_assert(matcher.is_match("api.others.com"), true);
+    _test_case_assert(matcher.is_match("www.api.others.com"), true);
+}
+
+// clang-format off
+static const uint32_t mask_values[] = {
+  0x80000000, 0xC0000000, 0xE0000000, 0xF0000000,
+  0xF8000000, 0xFC000000, 0xFE000000, 0xFF000000,
+  0xFF800000, 0xFFC00000, 0xFFE00000, 0xFFF00000,
+  0xFFF80000, 0xFFFC0000, 0xFFFE0000, 0xFFFF0000,
+  0xFFFF8000, 0xFFFFC000, 0xFFFFE000, 0xFFFFF000,
+  0xFFFFF800, 0xFFFFFC00, 0xFFFFFE00, 0xFFFFFF00,
+  0xFFFFFF80, 0xFFFFFFC0, 0xFFFFFFE0, 0xFFFFFFF0,
+  0xFFFFFFF8, 0xFFFFFFFC, 0xFFFFFFFE, 0xFFFFFFFF,
+};
+// clang-format on
+
+uint32_t IPv4Matcher::get_ip_value(const std::string& ip_str) {
+    boost::system::error_code ec;
+    auto addr = boost::asio::ip::make_address_v4(ip_str, ec);
+    return ec ? 0 : addr.to_uint();
+}
+
+bool IPv4Matcher::load_from_stream(std::istream& is, const std::string& filename, size_t& loaded_count) {
+    loaded_count                  = 0;
+    const uint32_t max_mask_value = std::numeric_limits<uint32_t>::digits;
+
+    for (std::string line; std::getline(is, line);) {
+        line.erase(std::remove(line.begin(), line.end(), ' '), line.end());
+        if (!line.empty()) {
+            size_t pos = line.find('/');
+            if (pos != std::string::npos) {
+                auto net      = line.substr(0, pos);
+                auto mask_str = line.substr(pos + 1);
+                uint32_t mask = 0;
+                auto addr     = get_ip_value(net);
+                if (addr == 0 || !safe_atov(mask_str, mask) || mask == 0 || mask > max_mask_value) {
+                    std::string error_msg("[tun] error load '");
+                    error_msg += (line);
+                    error_msg += "' from ";
+                    error_msg += filename;
+                    _log_with_date_time(error_msg, Log::ERROR);
+                    continue;
+                }
+                auto it = subnet.find(mask);
+                if (it == subnet.end()) {
+                    IPList l;
+                    l.emplace_back(addr);
+                    subnet.emplace(mask - 1, l);
+                } else {
+                    it->second.emplace_back(addr);
+                }
+                loaded_count++;
+            } else {
+                auto addr = get_ip_value(line);
+                if (addr == 0) {
+                    std::string error_msg("[tun] error load '");
+                    error_msg += (line);
+                    error_msg += "' from ";
+                    error_msg += filename;
+                    _log_with_date_time(error_msg, Log::ERROR);
+                    continue;
+                }
+                ips.emplace_back(addr);
+                loaded_count++;
+            }
+        }
+    }
+
+    for (auto it : subnet) {
+        sort(it.second.begin(), it.second.end());
+    }
+    sort(ips.begin(), ips.end());
+
+    return true;
+}
+
+bool IPv4Matcher::load_from_file(const std::string& filename, size_t& loaded_count) {
+    std::ifstream f(filename);
+    return load_from_stream(f, filename, loaded_count);
+}
+
+bool IPv4Matcher::is_match(uint32_t ip) const {
+    if (!ips.empty() && binary_search(ips.cbegin(), ips.cend(), ip)) {
+        return true;
+    }
+
+    for (const auto& sub : subnet) {
+        uint32_t net = ip & gsl::at(mask_values, sub.first);
+        if (binary_search(sub.second.cbegin(), sub.second.cend(), net)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void IPv4Matcher::test_cases() {
+
+    size_t load_count = 0;
+    IPv4Matcher matcher;
+    matcher.load_from_file("china_mainland_ips.txt", load_count);
+
+    _test_case_assert(matcher.is_match(get_ip_value("172.217.5.68")), false);
+    _test_case_assert(matcher.is_match(get_ip_value("104.244.42.65")), false);
+    _test_case_assert(matcher.is_match(get_ip_value("31.13.70.36")), false);
+
+    _test_case_assert(matcher.is_match(get_ip_value("180.101.49.11")), true);
+    _test_case_assert(matcher.is_match(get_ip_value("101.227.95.3")), true);
+    _test_case_assert(matcher.is_match(get_ip_value("180.153.93.117")), true);
+}
+
 bool set_udp_send_recv_buf(int fd, int buf_size) {
     if (buf_size > 0) {
 

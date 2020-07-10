@@ -118,45 +118,21 @@ bool DNSServer::start() {
           dns_header dns_hdr;
           is >> dns_hdr;
 
-          if (is && is_proxy_dns_msg(dns_hdr)) {
+          if (is && is_interest_dns_msg(dns_hdr)) {
               in_recved(is, dns_hdr, former_data);
           }
       },
       m_service->get_config().get_dns().port);
 }
 
-bool DNSServer::is_proxy_dns_msg(const dns_header& dns_hdr) {
+bool DNSServer::is_interest_dns_msg(const dns_header& dns_hdr) {
     return dns_hdr.QR() == 0 && dns_hdr.RCODE() == 0 && dns_hdr.ANCOUNT() == 0 && dns_hdr.NSCOUNT() == 0 &&
            dns_hdr.QDCOUNT() > 0;
 }
 
-bool DNSServer::is_proxy_dns_msg(const trojan::dns_question& qt) {
+bool DNSServer::is_interest_dns_msg(const trojan::dns_question& qt) {
     return qt.get_QCLASS() == dns_header::QCLASS_INTERNET &&
            (qt.get_QTYPE() == dns_header::QTYPE_A_RECORD || qt.get_QTYPE() == dns_header::QTYPE_AAAA_RECORD);
-}
-
-bool DNSServer::is_in_gfwlist(const string& domain) const {
-    const auto& gfwlist = m_service->get_config().get_dns()._gfwlist;
-    for (size_t start_size = domain.size(); start_size > 0; start_size--) {
-        const auto& it = gfwlist.find(start_size);
-        if (it != gfwlist.end()) {
-            for (const auto& d : it->second) {
-                int i = int(d.size() - 1);
-                int j = int(domain.size() - 1);
-                for (; i >= 0 && j >= 0; i--, j--) {
-                    if (d[i] != domain[j]) {
-                        break;
-                    }
-                }
-
-                if (i < 0) {
-                    return true;
-                }
-            }
-        }
-    }
-
-    return false;
 }
 
 bool DNSServer::try_to_find_existed(const boost::asio::ip::udp::endpoint& local_src, const std::string_view& data) {
@@ -216,7 +192,7 @@ void DNSServer::store_in_dns_cache(const string_view& data, bool proxyed) {
 
         dns_answer answer;
         if (is >> answer) {
-            if (!answer.get_questions().empty() && is_proxy_dns_msg(answer.get_questions()[0])) {
+            if (!answer.get_questions().empty() && is_interest_dns_msg(answer.get_questions()[0])) {
 
                 const auto& domain = answer.get_questions()[0].get_QNAME();
                 uint32_t ttl       = numeric_limits<uint32_t>::max();
@@ -273,15 +249,18 @@ void DNSServer::in_recved(istream& is, const dns_header& header, const string_vi
     dns_question qt;
     is >> qt;
     if (is) {
-        if (is_proxy_dns_msg(qt)) {
+        if (is_interest_dns_msg(qt)) {
             if (find_in_dns_cache(m_udp_recv_endpoint, header, qt)) {
                 return;
             }
 
             if (!is_remote_domain(qt.get_QNAME())) {
-                proxy = is_in_gfwlist(qt.get_QNAME());
+                proxy = m_service->get_config().get_dns()._gfwlist_matcher.is_match(qt.get_QNAME());
             }
         }
+    } else {
+        _log_with_date_time_ALL("[dns] error dns_question message");
+        return;
     }
 
     if (try_to_find_existed(m_udp_recv_endpoint, former_data)) {
@@ -289,6 +268,9 @@ void DNSServer::in_recved(istream& is, const dns_header& header, const string_vi
     }
 
     if (proxy) {
+
+        _log_with_date_time_ALL("[dns] lookup [" + qt.get_QNAME() + "] by proxy");
+
         auto up_stream_ns_svr = m_service->get_config().get_dns().up_gfw_dns_server.at(0);
         auto dst              = make_pair(up_stream_ns_svr, DEFAULT_UP_STREAM_NS_SVR_PORT);
         auto forwarder        = make_shared<UDPForwardSession>(
@@ -306,6 +288,9 @@ void DNSServer::in_recved(istream& is, const dns_header& header, const string_vi
         });
 
     } else {
+
+        _log_with_date_time_ALL("[dns] lookup [" + qt.get_QNAME() + "] directly");
+
         auto up_stream_ns_svr = m_service->get_config().get_dns().up_dns_server.at(0);
         auto dst              = udp::endpoint(make_address(up_stream_ns_svr), DEFAULT_UP_STREAM_NS_SVR_PORT);
         auto forwarder        = make_shared<UDPLocalForwarder>(
