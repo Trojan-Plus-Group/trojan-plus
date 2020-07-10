@@ -30,6 +30,7 @@
 #endif //__ANDROID__
 
 #include "core/service.h"
+#include "core/version.h"
 #include "log.h"
 
 using namespace std;
@@ -839,10 +840,10 @@ JNIEXPORT void JNICALL Java_com_trojan_1plus_android_TrojanPlusVPNService_runMai
     g_android_java_protect_socket = NULL;
 }
 
-JNIEXPORT void JNICALL Java_com_trojan_1plus_android_TrojanPlusVPNService_stopMain(JNIEnv*, jclass) {
-    if (g_android_java_env != NULL) {
-        raise(SIGUSR2);
-    }
+JNIEXPORT void JNICALL Java_com_trojan_1plus_android_TrojanPlusVPNService_stopMain(JNIEnv*, jclass) { raise(SIGUSR2); }
+
+JNIEXPORT jstring JNICALL Java_com_trojan_1plus_android_TrojanPlusVPNService_getVersion(JNIEnv* env, jclass) {
+    return env->NewStringUTF(Version::get_version().c_str());
 }
 
 } // extern "C"
