@@ -243,16 +243,13 @@ void Config::populate(const ptree& tree) {
             size_t count = 0;
             route._cn_mainland_ips_matcher.load_from_file(route.cn_mainland_ips_file, count);
             _log_with_date_time(
-              "[route] load " + to_string(count) + " cn_mainland_ips from file " + route.cn_mainland_ips_file,
-              Log::ERROR);
+              "[route] load " + to_string(count) + " cn_mainland_ips from file " + route.cn_mainland_ips_file);
 
             route._white_ips_matcher.load_from_file(route.white_ips, count);
-            _log_with_date_time(
-              "[route] load " + to_string(count) + " white_ips from file " + route.white_ips, Log::ERROR);
+            _log_with_date_time("[route] load " + to_string(count) + " white_ips from file " + route.white_ips);
 
             route._proxy_ips_matcher.load_from_file(route.proxy_ips, count);
-            _log_with_date_time(
-              "[route] load " + to_string(count) + " proxy_ips from file " + route.proxy_ips, Log::ERROR);
+            _log_with_date_time("[route] load " + to_string(count) + " proxy_ips from file " + route.proxy_ips);
 
             if (route.proxy_type == RouteType::route_gfwlist && !dns.enabled) {
                 _log_with_date_time("[route] route_gfwlist need dns with gfw's list support!", Log::ERROR);

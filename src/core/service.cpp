@@ -113,7 +113,7 @@ Service::Service(Config& config, bool test)
                 boost::system::error_code ec;
                 socket_acceptor.set_option(fastopen(config.get_tcp().fast_open_qlen), ec);
                 if (ec) {
-                    _log_with_date_time("Enabling TCP_FASTOPEN is failed, " + ec.message(), Log::WARN);
+                    _log_with_date_time("Enabling TCP_FASTOPEN is failed, " + ec.message(), Log::ERROR);
                 }
 #else  // TCP_FASTOPEN
                 _log_with_date_time("TCP_FASTOPEN is not supported", Log::WARN);
