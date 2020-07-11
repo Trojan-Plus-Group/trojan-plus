@@ -62,7 +62,7 @@ do
     cd ${build_path}   
 
     cmake -DENABLE_ANDROID_LOG=ON -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=${ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake \
-        -DANDROID_NDK=${ANDROID_NDK_HOME} -DCMAKE_BUILD_TYPE=Release -DANDROID_PLATFORM=${ANDROID_API} -DANDROID_ABI="${arch}" ..
+        -DANDROID_NDK=${ANDROID_NDK_HOME} -DANDROID_PLATFORM=${ANDROID_API} -DANDROID_ABI="${arch}" ..
 
     make -j$(nproc)
 
