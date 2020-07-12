@@ -426,9 +426,9 @@ void DomainMatcher::test_cases() {
     _test_case_assert(matcher.is_match("api.others.com"), true);
     _test_case_assert(matcher.is_match("www.api.others.com"), true);
 }
-
 // clang-format off
 static const uint32_t mask_values[] = {
+  0,
   0x80000000, 0xC0000000, 0xE0000000, 0xF0000000,
   0xF8000000, 0xFC000000, 0xFE000000, 0xFF000000,
   0xFF800000, 0xFFC00000, 0xFFE00000, 0xFFF00000,
@@ -471,7 +471,7 @@ bool IPv4Matcher::load_from_stream(std::istream& is, const std::string& filename
                 if (it == subnet.end()) {
                     IPList l;
                     l.emplace_back(addr);
-                    subnet.emplace(mask - 1, l);
+                    subnet.emplace(mask, l);
                 } else {
                     it->second.emplace_back(addr);
                 }
@@ -533,6 +533,7 @@ void IPv4Matcher::test_cases() {
     _test_case_assert(matcher.is_match(get_ip_value("180.101.49.11")), true);
     _test_case_assert(matcher.is_match(get_ip_value("101.227.95.3")), true);
     _test_case_assert(matcher.is_match(get_ip_value("180.153.93.117")), true);
+    _test_case_assert(matcher.is_match(get_ip_value("180.163.198.33")), true);
 }
 
 bool set_udp_send_recv_buf(int fd, int buf_size) {
