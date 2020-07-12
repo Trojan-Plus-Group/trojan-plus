@@ -297,7 +297,7 @@ void DomainMatcher::parse_line(const std::string& line) {
     }
 }
 
-bool DomainMatcher::load_from_file(std::istream& is, size_t& loaded_count) {
+bool DomainMatcher::load_from_stream(std::istream& is, size_t& loaded_count) {
     loaded_count = 0;
     if (!is) {
         return false;
@@ -337,7 +337,7 @@ bool DomainMatcher::load_from_file(std::istream& is, size_t& loaded_count) {
 }
 bool DomainMatcher::load_from_file(const std::string& filename, size_t& loaded_count) {
     std::ifstream f(filename);
-    return load_from_file(f, loaded_count);
+    return load_from_stream(f, loaded_count);
 }
 
 bool DomainMatcher::is_match(const std::string& domain) const {
@@ -351,10 +351,17 @@ bool DomainMatcher::is_match(const std::string& domain) const {
     size_t domain_level = 1;
     for (int r = (int)domain.length() - 1; r >= 0; r--) {
         if (domain[r] == '.') {
-            link = find_domain_seg(link == nullptr ? domains : link->prefix, seg);
+            bool is_top = link == nullptr ? true : link->is_top;
+            link        = find_domain_seg(link == nullptr ? domains : link->prefix, seg);
 
             if (link == nullptr) {
-                return domain_level > 2;
+                if (is_top) {
+                    // xxx.com.cn
+                    //     ^
+                    return false;
+                } else {
+                    return domain_level > 2;
+                }
             }
 
             domain_level++;
@@ -388,15 +395,16 @@ void DomainMatcher::test_cases() {
 		facebook.com\n \
 		twitter.com\n \
 		api.others.com\n \
+		some.com.cn\n \
 		");
 
     std::istringstream is(gfw_list);
 
     size_t count = 0;
     DomainMatcher matcher;
-    matcher.load_from_file(is, count);
+    matcher.load_from_stream(is, count);
 
-    _test_case_assert(count, 5);
+    _test_case_assert(count, 6);
 
     _test_case_assert(matcher.is_match("com"), false);
     _test_case_assert(matcher.is_match("singledomain"), false);
@@ -409,6 +417,9 @@ void DomainMatcher::test_cases() {
     _test_case_assert(matcher.is_match("route.api.facebook.com"), true);
     _test_case_assert(matcher.is_match("www.jd.com"), false);
     _test_case_assert(matcher.is_match("jd.com"), false);
+    _test_case_assert(matcher.is_match("h5.china.com.cn"), false);
+    _test_case_assert(matcher.is_match("h5.some.com.cn"), true);
+    _test_case_assert(matcher.is_match("some.com.cn"), true);
 
     _test_case_assert(matcher.is_match("others.com"), false);
     _test_case_assert(matcher.is_match("www.others.com"), false);

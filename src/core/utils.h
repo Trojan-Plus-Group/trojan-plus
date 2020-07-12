@@ -373,10 +373,14 @@ class DomainMatcher {
     class DomainLinkData {
       public:
         std::string suffix;
+        bool is_top{true};
         std::vector<DomainLinkData> prefix;
 
-        DomainLinkData() = default;
-        DomainLinkData(std::string _suffix) : suffix(std::move(_suffix)) {}
+        DomainLinkData() {}
+        DomainLinkData(const std::string& _suffix) : suffix(_suffix) {
+            is_top = suffix == "com" || suffix == "org" || suffix == "net" || suffix == "int" || suffix == "edu" ||
+                     suffix == "gov" || suffix == "mil";
+        }
 
         friend bool operator<(const DomainLinkData& a, const DomainLinkData& b) { return a.suffix < b.suffix; }
     };
@@ -388,9 +392,9 @@ class DomainMatcher {
     static const DomainLinkData* find_domain_seg(const std::vector<DomainLinkData>& list, const std::string& seg);
 
   public:
-    bool load_from_file(std::istream& is, size_t& loaded_count);
+    bool load_from_stream(std::istream& is, size_t& loaded_count);
     bool load_from_file(const std::string& filename, size_t& loaded_count);
-    [[nodiscard]] bool is_match(const std::string& domain) const;
+    bool is_match(const std::string& domain) const;
 
     static void test_cases();
 };
