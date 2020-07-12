@@ -254,6 +254,8 @@ void Config::populate(const ptree& tree) {
             if (route.proxy_type == RouteType::route_gfwlist && !dns.enabled) {
                 _log_with_date_time("[route] route_gfwlist need dns with gfw's list support!", Log::ERROR);
             }
+
+            _log_with_date_time("[route] type: " + to_string(route.proxy_type));
         } else {
             _log_with_date_time("[route] Now cannot enable route function without tun mode!", Log::ERROR);
         }

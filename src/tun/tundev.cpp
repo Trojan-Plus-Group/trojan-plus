@@ -332,8 +332,18 @@ err_t TUNDev::listener_accept_func(struct tcp_pcb* newpcb, err_t err) {
 
     shared_ptr<TUNSession> session = nullptr;
     if (proxy_by_route(ntoh32(newpcb->local_ip.u_addr.ip4.addr))) {
+
+        _log_with_date_time_ALL(
+          "[tun] [tcp] proxy connect: " +
+          make_address_v4((address_v4::uint_type)ntoh32(newpcb->local_ip.u_addr.ip4.addr)).to_string());
+
         session = make_shared<TUNProxySession>(m_service, false);
     } else {
+
+        _log_with_date_time_ALL(
+          "[tun] [tcp] directly connect: " +
+          make_address_v4((address_v4::uint_type)ntoh32(newpcb->local_ip.u_addr.ip4.addr)).to_string());
+
         session = make_shared<TUNLocalSession>(m_service, false);
     }
     auto tcp_client = make_shared<lwip_tcp_client>(newpcb, session, [this](lwip_tcp_client* client) {
@@ -570,8 +580,10 @@ int TUNDev::try_to_process_udp_packet(uint8_t* data, int data_len) {
         shared_ptr<TUNSession> session = nullptr;
         bool proxy                     = proxy_by_route(ntoh32(ipv4_hdr.destination_address));
         if (proxy) {
+            _log_with_date_time_ALL("[tun] [udp] proxy connect: " + remote_endpoint.address().to_string());
             session = make_shared<TUNProxySession>(m_service, true);
         } else {
+            _log_with_date_time_ALL("[tun] [udp] directly connect: " + remote_endpoint.address().to_string());
             session = make_shared<TUNLocalSession>(m_service, true);
         }
         session->set_udp_connect(local_endpoint, remote_endpoint);

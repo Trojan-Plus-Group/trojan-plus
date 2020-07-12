@@ -197,6 +197,7 @@ void DNSServer::store_in_dns_cache(const string_view& data, bool proxyed) {
                 const auto& domain = answer.get_questions()[0].get_QNAME();
                 uint32_t ttl       = numeric_limits<uint32_t>::max();
                 vector<uint32_t> A_list;
+                const char* ip = nullptr;
                 for (const auto& an : answer.get_answers()) {
                     if (an.A != 0) {
                         if (ttl > an.TTL) { // find min
@@ -204,13 +205,16 @@ void DNSServer::store_in_dns_cache(const string_view& data, bool proxyed) {
                         }
 
                         A_list.emplace_back(an.A);
+                        ip = an.A_str.c_str();
                     }
                 }
 
                 if (ttl != numeric_limits<uint32_t>::max()) {
                     sort(A_list.begin(), A_list.end());
                     m_dns_cache.emplace_back(DNSCache(domain, ttl, A_list, proxyed, data));
-                    _log_with_date_time_ALL("[dns] cache " + domain + " in ttl: " + to_string(ttl));
+
+                    _log_with_date_time_ALL("[dns] cache " + domain + " ip: " + string(ip == nullptr ? "" : ip) +
+                                            " in ttl: " + to_string(ttl));
                 }
             }
         }
