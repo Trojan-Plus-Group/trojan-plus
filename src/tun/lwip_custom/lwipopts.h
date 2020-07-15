@@ -50,8 +50,8 @@
 #define LWIP_IPV6            1
 #define LWIP_IPV6_MLD        0
 #define LWIP_IPV6_AUTOCONFIG 0
-#define LWIP_WND_SCALE       1
-#define TCP_RCV_SCALE        5
+//#define LWIP_WND_SCALE       1
+//#define TCP_RCV_SCALE        5
 
 #define MEMP_NUM_TCP_PCB_LISTEN 16
 #define MEMP_NUM_TCP_PCB        1024
