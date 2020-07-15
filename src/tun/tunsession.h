@@ -99,7 +99,7 @@ class TUNSession : public Session {
     }
 
     virtual void recv_buf_consume(uint16_t _length)  = 0;
-    virtual void recv_buf_ack_sent(uint16_t _length) = 0;
+    virtual bool recv_buf_ack_sent(uint16_t _length) = 0;
 
     // interface for UDP
     virtual bool try_to_process_udp(const boost::asio::ip::udp::endpoint& _local,

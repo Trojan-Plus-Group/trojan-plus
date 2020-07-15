@@ -49,7 +49,7 @@ class TUNProxySession : public TUNSession {
 
     // interfaces for TCP
     void recv_buf_consume(uint16_t _length) override;
-    void recv_buf_ack_sent(uint16_t _length) override;
+    bool recv_buf_ack_sent(uint16_t _length) override;
 
     // interfaces for UDP
     bool try_to_process_udp(const boost::asio::ip::udp::endpoint& _local, const boost::asio::ip::udp::endpoint& _remote,

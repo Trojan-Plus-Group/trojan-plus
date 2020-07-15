@@ -140,7 +140,11 @@ err_t lwip_tcp_client::client_sent_func(struct tcp_pcb*, u16_t len) {
     }
 
     m_recved_len += len;
-    m_tun_session->recv_buf_ack_sent(len);
+    if (m_tun_session->recv_buf_ack_sent(len)) {
+        // m_tun_session has been destroyed because of is_write_close_future in pipeline mode,
+        // and important thing is 'this' pointer has been destroyed too
+        return ERR_OK;
+    }
 
     if (m_tun_session->is_destroyed()) {
         if (m_tun_session->recv_buf_ack_length() > 0) {

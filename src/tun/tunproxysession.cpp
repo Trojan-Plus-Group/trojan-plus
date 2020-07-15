@@ -269,7 +269,7 @@ void TUNProxySession::try_out_async_read() {
         out_async_read();
     }
 }
-void TUNProxySession::recv_buf_ack_sent(uint16_t _length) {
+bool TUNProxySession::recv_buf_ack_sent(uint16_t _length) {
     assert(!is_udp_forward_session());
     m_recv_buf_ack_length -= _length;
 
@@ -277,11 +277,13 @@ void TUNProxySession::recv_buf_ack_sent(uint16_t _length) {
         if (get_pipeline_component().is_write_close_future()) {
             output_debug_info();
             destroy();
-            return;
+            return true;
         }
 
         get_pipeline_component().set_async_writing_data(false);
     }
+
+    return false;
 }
 
 void TUNProxySession::recv_buf_consume(uint16_t _length) {

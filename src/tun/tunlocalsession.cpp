@@ -115,9 +115,10 @@ void TUNLocalSession::recv_buf_consume(uint16_t _length) {
     }
 }
 
-void TUNLocalSession::recv_buf_ack_sent(uint16_t _length) {
+bool TUNLocalSession::recv_buf_ack_sent(uint16_t _length) {
     assert(!is_udp_forward_session());
     m_recv_buf_ack_length -= _length;
+    return false;
 }
 
 void TUNLocalSession::out_async_read() {
