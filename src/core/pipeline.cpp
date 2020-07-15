@@ -219,9 +219,12 @@ void Pipeline::destroy() {
         return;
     }
     destroyed = true;
+
     _log_with_date_time("pipeline " + to_string(get_pipeline_id()) + " destroyed. close all " +
                           to_string(sessions.size()) + " sessions in this pipeline.",
       Log::INFO);
+
+    sending_data_cache.destroy();
 
     // close all sessions
     for (auto& session : sessions) {

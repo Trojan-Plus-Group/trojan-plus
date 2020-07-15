@@ -174,7 +174,10 @@ void SendDataCache::swap_recv() {
     }
 }
 
-SendDataCache::~SendDataCache() {
+void SendDataCache::destroy() {
+    if (destroyed) {
+        return;
+    }
     destroyed = true;
 
     for (auto& handler : handler_queue_other) {
@@ -193,6 +196,9 @@ void SendDataCache::set_async_writer(AsyncWriter&& writer) { async_writer = std:
 void SendDataCache::set_is_connected_func(ConnectionFunc&& func) { is_connected = std::move(func); }
 
 void SendDataCache::insert_data(const std::string_view& data) {
+    if (destroyed) {
+        return;
+    }
 
     boost::asio::streambuf copy_data_queue;
     streambuf_append(copy_data_queue, *current_recv_queue);
@@ -205,6 +211,11 @@ void SendDataCache::insert_data(const std::string_view& data) {
 }
 
 void SendDataCache::push_data(PushDataHandler&& push, SentHandler&& handler) {
+    if (destroyed) {
+        handler(boost::asio::error::broken_pipe);
+        return;
+    }
+
     push(*current_recv_queue);
 
     current_recv_handler->emplace_back(std::move(handler));

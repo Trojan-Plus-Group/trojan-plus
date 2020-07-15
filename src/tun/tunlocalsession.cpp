@@ -185,9 +185,9 @@ void TUNLocalSession::destroy(bool /*= false*/) {
     } else {
         _log_with_endpoint(m_local_addr, note_str, Log::INFO);
     }
+    m_sending_data_cache.destroy();
 
     m_wait_ack_handler.clear();
-
     if (m_udp_forwarder && !m_udp_forwarder->is_destroyed()) {
         m_udp_forwarder->destroy();
     }
@@ -199,8 +199,9 @@ void TUNLocalSession::destroy(bool /*= false*/) {
         m_tcp_socket.close(ec);
     }
 
-    if (!m_close_from_tundev_flag) {
+    if (!m_close_from_tundev_flag && m_close_cb) {
         m_close_cb(this);
+        m_close_cb = nullptr;
     }
 }
 

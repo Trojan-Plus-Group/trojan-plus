@@ -319,6 +319,8 @@ void PipelineSession::destroy(bool /*pipeline_call = false*/) {
     _log_with_endpoint(
       get_in_endpoint(), "PipelineSession remove all sessions: " + to_string(sessions.size()), Log::INFO);
 
+    sending_data_cache.destroy();
+
     // clear all sessions which attached this PipelineSession
     for (auto& it : sessions) {
         it->destroy(true);

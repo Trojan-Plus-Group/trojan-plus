@@ -232,8 +232,8 @@ class SendDataCache {
 
   public:
     SendDataCache();
-    ~SendDataCache();
 
+    void destroy();
     void set_async_writer(AsyncWriter&& writer);
     void set_is_connected_func(ConnectionFunc&& func);
     void insert_data(const std::string_view& data);

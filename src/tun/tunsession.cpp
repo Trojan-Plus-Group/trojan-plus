@@ -27,7 +27,7 @@ TUNSession::TUNSession(Service* _service, bool _is_udp) : Session(_service, _ser
     set_udp_forward_session(_is_udp);
 }
 
-TUNSession::~TUNSession() {}
+TUNSession::~TUNSession() = default;
 
 udp::endpoint TUNSession::get_redirect_local_remote_addr(bool output_log /*= false*/) const {
     auto remote_addr = m_remote_addr_udp;
