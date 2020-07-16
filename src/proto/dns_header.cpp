@@ -75,6 +75,8 @@ void dns_header::test_cases() {
 };
 
 std::istream& dns_header::read_label(std::istream& is, std::string& name) {
+    _guard;
+
     is >> std::noskipws;
 
     uint8_t sign;
@@ -112,9 +114,13 @@ std::istream& dns_header::read_label(std::istream& is, std::string& name) {
 
     read_label(is, name);
     return is;
+
+    _unguard;
 }
 
 ostream& dns_header::write_label(ostream& os, const string& name) {
+    _guard;
+
     const char* data      = name.c_str();
     const size_t data_len = name.length();
 
@@ -140,6 +146,7 @@ ostream& dns_header::write_label(ostream& os, const string& name) {
 
     os << (uint8_t)0;
     return os;
+    _unguard;
 }
 
 void dns_question::test_case(const char* domain, uint16_t qtype, uint16_t qclass) {
@@ -217,6 +224,8 @@ void dns_question::test_cases() {
 }
 
 istream& dns_answer::read_answer(istream& is, answer& an) {
+    _guard;
+
     if (!dns_header::read_label(is, an.NAME)) {
         return is;
     }
@@ -243,15 +252,17 @@ istream& dns_answer::read_answer(istream& is, answer& an) {
             an.A     = parse_uint32(0, an.RD);
             an.A_str = boost::asio::ip::make_address_v4(an.A).to_string();
         } else if (an.TYPE == dns_header::QTYPE_AAAA_RECORD) {
-            memcpy(an.AAAA, an.RD.data(), sizeof(an.AAAA));
-            an.AAAA_str = boost::asio::ip::make_address_v6(an.RD.data()).to_string();
+            std::copy(an.RD.data(), an.RD.data() + an.AAAA.max_size(), an.AAAA.begin());
+            an.AAAA_str = boost::asio::ip::make_address_v6(an.AAAA).to_string();
         }
     }
 
     return is;
+    _unguard;
 }
 
 istream& operator>>(istream& is, dns_answer& answer) {
+    _guard;
     is >> std::noskipws;
     is >> answer.header;
     const auto question_count   = answer.header.QDCOUNT();
@@ -291,6 +302,7 @@ istream& operator>>(istream& is, dns_answer& answer) {
         }
     }
     return is;
+    _unguard;
 }
 
 void dns_answer::test_cases() {
