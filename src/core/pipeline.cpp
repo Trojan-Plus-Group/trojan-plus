@@ -37,6 +37,8 @@ Pipeline::Pipeline(Service* _service, const Config& config, boost::asio::ssl::co
       connected(false),
       resolver(_service->get_io_context()),
       config(config) {
+    _guard;
+
     pipeline_id = s_pipeline_id_counter++;
 
     sending_data_cache.set_is_connected_func([this]() { return is_connected() && !destroyed; });
@@ -44,20 +46,27 @@ Pipeline::Pipeline(Service* _service, const Config& config, boost::asio::ssl::co
         auto self = shared_from_this();
         boost::asio::async_write(
           out_socket, data.data(), [this, self, handler](const boost::system::error_code error, size_t) {
+              _guard;
               if (error) {
                   output_debug_info_ec(error);
                   destroy();
               }
 
               handler(error);
+              _unguard;
           });
     });
+
+    _unguard;
 }
 
 void Pipeline::start() {
+    _guard;
+
     auto self = shared_from_this();
     connect_remote_server_ssl(this, config.get_remote_addr(), to_string(config.get_remote_port()), resolver, out_socket,
       tcp::endpoint(), [this, self]() {
+          _guard;
           connected           = true;
           out_socket_endpoint = out_socket.next_layer().remote_endpoint();
 
@@ -68,11 +77,15 @@ void Pipeline::start() {
           _log_with_date_time(
             "pipeline " + to_string(get_pipeline_id()) + " is going to connect remote server and send password...");
           out_async_recv();
+          _unguard;
       });
+
+    _unguard;
 }
 
 void Pipeline::session_async_send_cmd(PipelineRequest::Command cmd, Session& session, const std::string_view& send_data,
   SentHandler&& sent_handler, size_t ack_count /* = 0*/) {
+    _guard;
     if (destroyed) {
         sent_handler(boost::asio::error::broken_pipe);
         return;
@@ -90,9 +103,12 @@ void Pipeline::session_async_send_cmd(PipelineRequest::Command cmd, Session& ses
           PipelineRequest::generate(buf, cmd, session.get_session_id(), send_data, ack_count);
       },
       move(sent_handler));
+
+    _unguard;
 }
 
 void Pipeline::session_async_send_icmp(const std::string_view& send_data, SentHandler&& sent_handler) {
+    _guard;
     if (destroyed) {
         sent_handler(boost::asio::error::broken_pipe);
         return;
@@ -104,14 +120,19 @@ void Pipeline::session_async_send_icmp(const std::string_view& send_data, SentHa
     sending_data_cache.push_data(
       [&](boost::asio::streambuf& buf) { PipelineRequest::generate(buf, PipelineRequest::ICMP, 0, send_data); },
       move(sent_handler));
+
+    _unguard;
 }
 
 void Pipeline::session_start(Session& session, SentHandler&& started_handler) {
+    _guard;
     sessions.emplace_back(session.shared_from_this());
     session_async_send_cmd(PipelineRequest::CONNECT, session, "", move(started_handler));
+    _unguard;
 }
 
 void Pipeline::session_destroyed(Session& session) {
+    _guard;
     if (!destroyed) {
         for (auto it = sessions.begin(); it != sessions.end(); it++) {
             if (it->get() == &session) {
@@ -123,9 +144,12 @@ void Pipeline::session_destroyed(Session& session) {
                                 " send command to close session_id: " + to_string(session.get_session_id()));
         session_async_send_cmd(PipelineRequest::CLOSE, session, "", [](boost::system::error_code) {});
     }
+    _unguard;
 }
 
 bool Pipeline::is_in_pipeline(Session& session) {
+    _guard;
+
     auto it = sessions.begin();
     while (it != sessions.end()) {
         if (it->get() == &session) {
@@ -135,13 +159,16 @@ bool Pipeline::is_in_pipeline(Session& session) {
     }
 
     return false;
+    _unguard;
 }
 
 void Pipeline::out_async_recv() {
+    _guard;
     out_read_buf.begin_read(__FILE__, __LINE__);
     auto self = shared_from_this();
     out_socket.async_read_some(
       out_read_buf.prepare(RECV_BUF_LENGTH), [this, self](const boost::system::error_code error, size_t length) {
+          _guard;
           out_read_buf.end_read();
           if (error) {
               output_debug_info_ec(error);
@@ -211,10 +238,15 @@ void Pipeline::out_async_recv() {
 
               out_async_recv();
           }
+          _unguard;
       });
+
+    _unguard;
 }
 
 void Pipeline::destroy() {
+    _guard;
+
     if (destroyed) {
         return;
     }
@@ -232,4 +264,6 @@ void Pipeline::destroy() {
     }
     sessions.clear();
     shutdown_ssl_socket(this, out_socket);
+
+    _unguard;
 }

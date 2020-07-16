@@ -74,19 +74,24 @@ const static int default_dns_udp_recv_buf   = 512 * 4;
 const static int default_dns_udp_socket_buf = -1;
 
 void Config::load(const string& filename) {
+    _guard;
     ptree tree;
     read_json(filename, tree);
     populate(tree);
+    _unguard;
 }
 
 void Config::populate(const string& JSON) {
+    _guard;
     istringstream s(JSON);
     ptree tree;
     read_json(s, tree);
     populate(tree);
+    _unguard;
 }
 
 void Config::populate(const ptree& tree) {
+    _guard;
     // read the log_level first
     log_level = static_cast<Log::Level>(tree.get("log_level", default_log_level));
     if (Log::level == Log::INVALID) {
@@ -268,9 +273,13 @@ void Config::populate(const ptree& tree) {
     const auto hash_str = get_remote_addr() + ":" + to_string(get_remote_port());
     compare_hash        = get_hashCode(hash_str);
     _log_with_date_time_ALL("[config] has loaded [" + hash_str + "] in hashCode: " + to_string(compare_hash));
+
+    _unguard;
 }
 
 void Config::load_dns(const boost::property_tree::ptree& tree) {
+    _guard;
+
     if (!dns.enabled) {
         return;
     }
@@ -316,9 +325,11 @@ void Config::load_dns(const boost::property_tree::ptree& tree) {
             dns.up_gfw_dns_server.emplace_back("8.8.8.8");
         }
     }
+    _unguard;
 }
 
 bool Config::try_prepare_pipeline_proxy_icmp(bool is_ipv4) {
+    _guard;
     if (experimental.pipeline_proxy_icmp) {
         // set this icmp false first
         experimental.pipeline_proxy_icmp = false;
@@ -353,9 +364,11 @@ bool Config::try_prepare_pipeline_proxy_icmp(bool is_ipv4) {
     }
 
     return false;
+    _unguard;
 }
 
 bool Config::sip003() {
+    _guard;
     char* JSON = getenv("SS_PLUGIN_OPTIONS");
     if (JSON == nullptr) {
         return false;
@@ -379,10 +392,11 @@ bool Config::sip003() {
             break;
     }
     return true;
+    _unguard;
 }
 
 void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, string& plain_http_response) {
-
+    _guard;
     auto* native_context = ssl_context.native_handle();
     ssl_context.set_options(
       context::default_workarounds | context::no_sslv2 | context::no_sslv3 | context::single_dh_use);
@@ -402,12 +416,14 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, string&
               native_context,
               [](SSL*, const unsigned char** out, unsigned char* outlen, const unsigned char* in, unsigned int inlen,
                 void* config) -> int {
+                  _guard;
                   if (SSL_select_next_proto((unsigned char**)out, outlen,
                         (unsigned char*)(((Config*)config)->ssl.alpn.c_str()),
                         (unsigned int)((Config*)config)->ssl.alpn.length(), in, inlen) != OPENSSL_NPN_NEGOTIATED) {
                       return SSL_TLSEXT_ERR_NOACK;
                   }
                   return SSL_TLSEXT_ERR_OK;
+                  _unguard;
               },
               this);
         }
@@ -577,9 +593,12 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, string&
         _log_with_date_time("SSL KeyLog is not supported", Log::WARN);
 #endif // ENABLE_SSL_KEYLOG
     }
+
+    _unguard;
 }
 
 void Config::prepare_ssl_reuse(SSLSocket& socket) const {
+    _guard;
     auto* ssl_handle = socket.native_handle();
     if (!ssl.sni.empty()) {
         SSL_set_tlsext_host_name(ssl_handle, ssl.sni.c_str());
@@ -590,9 +609,12 @@ void Config::prepare_ssl_reuse(SSLSocket& socket) const {
             SSL_set_session(ssl_handle, session);
         }
     }
+    _unguard;
 }
 
 string Config::SHA224(const string& message) {
+    _guard;
+
     uint8_t digest[EVP_MAX_MD_SIZE];
     char mdString[MAX_PASSWORD_LENGTH + 1];
     unsigned int digest_len = 0;
@@ -623,4 +645,6 @@ string Config::SHA224(const string& message) {
     gsl::at(mdString, digest_len << 1) = '\0';
     EVP_MD_CTX_free(ctx);
     return string((const char*)mdString);
+
+    _unguard;
 }

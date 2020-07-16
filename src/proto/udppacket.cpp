@@ -1,7 +1,7 @@
 /*
  * This file is part of the Trojan Plus project.
  * Trojan is an unidentifiable mechanism that helps you bypass GFW.
- * Trojan Plus is derived from original trojan project and writing 
+ * Trojan Plus is derived from original trojan project and writing
  * for more experimental features.
  * Copyright (C) 2017-2020  The Trojan Authors.
  * Copyright (C) 2020 The Trojan Plus Group Authors.
@@ -27,7 +27,9 @@
 using namespace std;
 using namespace boost::asio::ip;
 
-bool UDPPacket::parse(const string_view &data, size_t &udp_packet_len) {
+bool UDPPacket::parse(const string_view& data, size_t& udp_packet_len) {
+    _guard;
+
     if (data.length() <= 0) {
         return false;
     }
@@ -40,21 +42,31 @@ bool UDPPacket::parse(const string_view &data, size_t &udp_packet_len) {
     if (data.length() < address_len + 4 + length || data.substr(address_len + 2, 2) != "\r\n") {
         return false;
     }
-    payload = data.substr(address_len + 4, length);
+    payload        = data.substr(address_len + 4, length);
     udp_packet_len = address_len + 4 + length;
     return true;
+
+    _unguard;
 }
 
-boost::asio::streambuf& UDPPacket::generate(boost::asio::streambuf& buf, const udp::endpoint &endpoint, const string_view &payload) {
+boost::asio::streambuf& UDPPacket::generate(
+  boost::asio::streambuf& buf, const udp::endpoint& endpoint, const string_view& payload) {
+    _guard;
+
     SOCKS5Address::generate(buf, endpoint);
     streambuf_append(buf, char(uint8_t(payload.length() >> one_byte_shift_8_bits)));
     streambuf_append(buf, char(uint8_t(payload.length() & one_byte_mask_0xFF)));
     streambuf_append(buf, "\r\n");
     streambuf_append(buf, payload);
     return buf;
+
+    _unguard;
 }
 
-boost::asio::streambuf& UDPPacket::generate(boost::asio::streambuf& buf, const string &domainname, uint16_t port, const string_view &payload) {
+boost::asio::streambuf& UDPPacket::generate(
+  boost::asio::streambuf& buf, const string& domainname, uint16_t port, const string_view& payload) {
+    _guard;
+
     streambuf_append(buf, '\x03');
     streambuf_append(buf, char(uint8_t(domainname.length())));
     streambuf_append(buf, domainname);
@@ -65,4 +77,6 @@ boost::asio::streambuf& UDPPacket::generate(boost::asio::streambuf& buf, const s
     streambuf_append(buf, "\r\n");
     streambuf_append(buf, payload);
     return buf;
+
+    _unguard;
 }

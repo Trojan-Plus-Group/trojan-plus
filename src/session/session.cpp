@@ -44,6 +44,8 @@ Session::~Session() {
 int Session::get_udp_timer_timeout_val() const { return get_config().get_udp_timeout(); }
 
 void Session::udp_timer_async_wait(int timeout /*=-1*/) {
+    _guard;
+
     if (!is_udp_forward_session()) {
         return;
     }
@@ -75,6 +77,7 @@ void Session::udp_timer_async_wait(int timeout /*=-1*/) {
     udp_gc_timer.expires_after(chrono::seconds(timeout));
     auto self = shared_from_this();
     udp_gc_timer.async_wait([this, self, timeout](const boost::system::error_code error) {
+        _guard;
         if (!error) {
             auto curr = time(nullptr);
             if (curr - udp_gc_timer_checker < timeout) {
@@ -87,10 +90,14 @@ void Session::udp_timer_async_wait(int timeout /*=-1*/) {
             _log_with_date_time("session_id: " + to_string(get_session_id()) + " UDP session timeout");
             destroy();
         }
+        _unguard;
     });
+
+    _unguard;
 }
 
 void Session::udp_timer_cancel() {
+    _guard;
     if (udp_gc_timer_checker == 0) {
         return;
     }
@@ -100,4 +107,5 @@ void Session::udp_timer_cancel() {
     if (ec) {
         output_debug_info_ec(ec);
     }
+    _unguard;
 }

@@ -249,6 +249,7 @@ class ReadDataCache {
 
   public:
     inline void push_data(const std::string_view& data) {
+        _guard;
         if (is_waiting) {
             is_waiting = false;
             read_handler(data, 1);
@@ -256,9 +257,11 @@ class ReadDataCache {
             push_ack_count++;
             streambuf_append(data_queue, data);
         }
+        _unguard;
     }
 
     inline void async_read(ReadHandler&& handler) {
+        _guard;
         if (data_queue.size() == 0) {
             is_waiting   = true;
             read_handler = std::move(handler);
@@ -267,6 +270,7 @@ class ReadDataCache {
             data_queue.consume(data_queue.size());
             push_ack_count = 0;
         }
+        _unguard;
     }
 
     [[nodiscard]] inline bool has_queued_data() const { return data_queue.size() > 0; }
@@ -277,7 +281,8 @@ class SendingDataAllocator {
     std::list<std::shared_ptr<boost::asio::streambuf>> free_bufs;
 
   public:
-    std::shared_ptr<boost::asio::streambuf> allocate(const std::string_view& data) {
+    inline std::shared_ptr<boost::asio::streambuf> allocate(const std::string_view& data) {
+        _guard;
         auto buf = std::shared_ptr<boost::asio::streambuf>(nullptr);
         if (free_bufs.empty()) {
             buf = std::make_shared<boost::asio::streambuf>();
@@ -289,9 +294,11 @@ class SendingDataAllocator {
 
         streambuf_append(*buf, data);
         return buf;
+        _unguard;
     }
 
     void free(const std::shared_ptr<boost::asio::streambuf>& buf) {
+        _guard;
         bool found = false;
         for (const auto& it : allocated) {
             if (it.get() == buf.get()) {
@@ -306,6 +313,7 @@ class SendingDataAllocator {
 
         buf->consume(buf->size());
         free_bufs.push_back(buf);
+        _unguard;
     }
 };
 
@@ -333,12 +341,14 @@ class ReadBufWithGuard {
     inline operator boost::asio::streambuf&() { return read_buf; }
 
     inline void begin_read(const char* __file__, int __line__) {
+        _guard;
         if (read_buf_guard) {
             throw std::logic_error(
               "!! guard_read_buf failed! Cannot enter this function before _guard_read_buf_end  !! " +
               std::string(__file__) + ":" + std::to_string(__line__));
         }
         read_buf_guard = true;
+        _unguard;
     }
 
     inline void end_read() { read_buf_guard = false; }
@@ -422,9 +432,11 @@ void android_protect_socket(int fd);
 template <typename ThisT, typename EndPoint>
 void connect_out_socket(ThisT this_ptr, std::string addr, std::string port, boost::asio::ip::tcp::resolver& resolver,
   boost::asio::ip::tcp::socket& out_socket, EndPoint in_endpoint, std::function<void()>&& connected_handler) {
+    _guard;
     resolver.async_resolve(addr, port,
       [=, &out_socket](
         const boost::system::error_code error, const boost::asio::ip::tcp::resolver::results_type& results) {
+          _guard;
           if (error || results.empty()) {
               _log_with_endpoint(in_endpoint,
                 "cannot resolve remote server hostname " + addr + ":" + port + " reason: " + error.message(),
@@ -473,6 +485,7 @@ void connect_out_socket(ThisT this_ptr, std::string addr, std::string port, boos
           }
 
           out_socket.async_connect(*iterator, [=](const boost::system::error_code error) {
+              _guard;
               if (timeout_timer) {
                   timeout_timer->cancel();
               }
@@ -486,18 +499,24 @@ void connect_out_socket(ThisT this_ptr, std::string addr, std::string port, boos
               }
 
               connected_handler();
+
+              _unguard;
           });
+
+          _unguard;
       });
+    _unguard;
 }
 
 template <typename ThisT, typename EndPoint>
 void connect_remote_server_ssl(ThisT this_ptr, std::string addr, std::string port,
   boost::asio::ip::tcp::resolver& resolver, SSLSocket& out_socket, EndPoint in_endpoint,
   std::function<void()>&& connected_handler) {
-
+    _guard;
     connect_out_socket(this_ptr, addr, port, resolver, out_socket.next_layer(), in_endpoint, [=, &out_socket]() {
         out_socket.async_handshake(
           boost::asio::ssl::stream_base::client, [=, &out_socket](const boost::system::error_code error) {
+              _guard;
               if (error) {
                   _log_with_endpoint(in_endpoint,
                     "SSL handshake failed with " + addr + ':' + port + " reason: " + error.message(), Log::ERROR);
@@ -514,16 +533,23 @@ void connect_remote_server_ssl(ThisT this_ptr, std::string addr, std::string por
                   }
               }
               connected_handler();
+
+              _unguard;
           });
     });
+
+    _unguard;
 }
 
 template <typename ThisPtr> void shutdown_ssl_socket(ThisPtr this_ptr, SSLSocket& socket) {
+    _guard;
+
     if (socket.next_layer().is_open()) {
         auto self = this_ptr->shared_from_this();
         auto ssl_shutdown_timer =
           std::make_shared<boost::asio::steady_timer>(this_ptr->get_service()->get_io_context());
         auto ssl_shutdown_cb = [self, ssl_shutdown_timer, &socket](const boost::system::error_code error) {
+            _guard;
             if (error == boost::asio::error::operation_aborted) {
                 return;
             }
@@ -532,6 +558,7 @@ template <typename ThisPtr> void shutdown_ssl_socket(ThisPtr this_ptr, SSLSocket
             socket.next_layer().cancel(ec);
             socket.next_layer().shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
             socket.next_layer().close(ec);
+            _unguard;
         };
         boost::system::error_code ec;
         socket.next_layer().cancel(ec);
@@ -540,9 +567,11 @@ template <typename ThisPtr> void shutdown_ssl_socket(ThisPtr this_ptr, SSLSocket
           std::chrono::seconds(this_ptr->get_config().get_ssl().ssl_shutdown_wait_time));
         ssl_shutdown_timer.get()->async_wait(ssl_shutdown_cb);
     }
+    _unguard;
 }
 
 template <class T> bool clear_weak_ptr_list(std::list<std::weak_ptr<T>>& l) {
+    _guard;
     bool changed = false;
     auto it      = l.begin();
     while (it != l.end()) {
@@ -555,14 +584,17 @@ template <class T> bool clear_weak_ptr_list(std::list<std::weak_ptr<T>>& l) {
     }
 
     return changed;
+    _unguard;
 }
 
 template <class T> bool safe_atov(const std::string& str, T& val) {
+    _guard;
     if (str.empty()) {
         return false;
     }
     std::stringstream ss(str);
     return !((ss >> val).fail() || !(ss >> std::ws).eof());
+    _unguard;
 }
 
 std::pair<std::string, uint16_t> recv_target_endpoint(int _native_fd);

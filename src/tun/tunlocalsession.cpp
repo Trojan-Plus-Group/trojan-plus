@@ -29,12 +29,16 @@ using namespace boost::asio::ip;
 
 TUNLocalSession::TUNLocalSession(Service* _service, bool is_udp)
     : TUNSession(_service, is_udp), m_resolver(_service->get_io_context()), m_tcp_socket(_service->get_io_context()) {
+
+    _guard;
+
     if (!is_udp) {
         m_sending_data_cache.set_is_connected_func([this]() { return !m_destroyed && m_connected; });
         m_sending_data_cache.set_async_writer([this](const boost::asio::streambuf& data, SentHandler&& handler) {
             auto self = shared_from_this();
             boost::asio::async_write(
               m_tcp_socket, data.data(), [this, self, handler](const boost::system::error_code error, size_t length) {
+                  _guard;
                   udp_timer_async_wait();
                   if (error) {
                       output_debug_info_ec(error);
@@ -43,21 +47,28 @@ TUNLocalSession::TUNLocalSession(Service* _service, bool is_udp)
 
                   get_stat().inc_sent_len(length);
                   handler(error);
+                  _unguard;
               });
         });
     }
+
+    _unguard;
 }
 
 void TUNLocalSession::start() {
+    _guard;
+
     if (is_udp_forward_session()) {
         auto remote_addr = get_config().get_tun().redirect_local ? get_redirect_local_remote_addr() : m_remote_addr_udp;
         m_udp_forwarder  = make_shared<UDPLocalForwarder>(
           get_service(), m_local_addr_udp, remote_addr,
           [this](const udp::endpoint&, const string_view& data) {
+              _guard;
               if (m_write_to_lwip(this, (string_view*)&data) < 0) {
                   output_debug_info();
                   destroy();
               }
+              _unguard;
           },
           false);
 
@@ -82,10 +93,14 @@ void TUNLocalSession::start() {
         auto self = shared_from_this();
         connect_out_socket(this, remote_addr, to_string(m_remote_addr.port()), m_resolver, m_tcp_socket,
           m_local_addr_udp, [this, self]() {
+              _guard;
+
               m_connected = true;
 
               if (m_send_buf.size() != 0) {
                   out_async_send_impl(streambuf_to_string_view(m_send_buf), [this, self](boost::system::error_code ec) {
+                      _guard;
+
                       if (ec) {
                           output_debug_info_ec(ec);
                           destroy();
@@ -98,35 +113,53 @@ void TUNLocalSession::start() {
                           m_wait_connected_handler.clear();
                       }
                       out_async_read();
+
+                      _unguard;
                   });
               } else {
                   out_async_read();
               }
+
+              _unguard;
           });
     }
+
+    _unguard;
 }
 
 void TUNLocalSession::recv_buf_consume(uint16_t _length) {
-    assert(!is_udp_forward_session());
+    _guard;
+
+    _assert(!is_udp_forward_session());
     m_recv_buf.consume(_length);
 
     if (m_recv_buf.size() == 0) {
         out_async_read();
     }
+
+    _unguard;
 }
 
 bool TUNLocalSession::recv_buf_ack_sent(uint16_t _length) {
-    assert(!is_udp_forward_session());
+    _guard;
+
+    _assert(!is_udp_forward_session());
     m_recv_buf_ack_length -= _length;
     return false;
+
+    _unguard;
 }
 
 void TUNLocalSession::out_async_read() {
+    _guard;
+
     if (!is_udp_forward_session()) {
         m_recv_buf.begin_read(__FILE__, __LINE__);
         auto self = shared_from_this();
         m_tcp_socket.async_read_some(m_recv_buf.prepare(Session::MAX_BUF_LENGTH),
           [this, self](const boost::system::error_code error, size_t length) {
+              _guard;
+
               m_recv_buf.end_read();
               if (error) {
                   output_debug_info_ec(error);
@@ -142,11 +175,17 @@ void TUNLocalSession::out_async_read() {
                   output_debug_info();
                   destroy();
               }
+
+              _unguard;
           });
     }
+
+    _unguard;
 }
 
 void TUNLocalSession::out_async_send_impl(const std::string_view& data_to_send, SentHandler&& _handler) {
+    _guard;
+
     if (is_udp_forward_session()) {
         if (m_udp_forwarder->process(m_local_addr_udp, data_to_send)) {
             _handler(boost::system::error_code());
@@ -157,9 +196,13 @@ void TUNLocalSession::out_async_send_impl(const std::string_view& data_to_send, 
         m_sending_data_cache.push_data(
           [&](boost::asio::streambuf& buf) { streambuf_append(buf, data_to_send); }, move(_handler));
     }
+
+    _unguard;
 }
 
 void TUNLocalSession::out_async_send(const uint8_t* _data, size_t _length, SentHandler&& _handler) {
+    _guard;
+
     if (!m_connected) {
         if (m_send_buf.size() < numeric_limits<uint16_t>::max()) {
             streambuf_append(m_send_buf, _data, _length);
@@ -171,9 +214,13 @@ void TUNLocalSession::out_async_send(const uint8_t* _data, size_t _length, SentH
     } else {
         out_async_send_impl(string_view((const char*)_data, _length), move(_handler));
     }
+
+    _unguard;
 }
 
 void TUNLocalSession::destroy(bool /*= false*/) {
+    _guard;
+
     if (m_destroyed) {
         return;
     }
@@ -203,10 +250,14 @@ void TUNLocalSession::destroy(bool /*= false*/) {
         m_close_cb(this);
         m_close_cb = nullptr;
     }
+    _unguard;
 }
 
 bool TUNLocalSession::try_to_process_udp(const boost::asio::ip::udp::endpoint& _local,
   const boost::asio::ip::udp::endpoint& _remote, const uint8_t* payload, size_t payload_length) {
+
+    _guard;
+
     if (is_udp_forward_session()) {
         if (_local == m_local_addr_udp && _remote == m_remote_addr_udp) {
             return m_udp_forwarder->process(_local, string_view((const char*)payload, payload_length));
@@ -214,4 +265,6 @@ bool TUNLocalSession::try_to_process_udp(const boost::asio::ip::udp::endpoint& _
     }
 
     return false;
+
+    _unguard;
 }

@@ -79,6 +79,11 @@ if(ANDROID)
     endif()
 endif()
 
+option(USE_GUARD_BACKSTACK "Build with try catch all functions" OFF)
+if(USE_GUARD_BACKSTACK)
+    add_definitions(-DUSE_GUARD_BACKSTACK=1)
+endif()
+
 # force 1.73 boost compiling warning note
 add_definitions(-DBOOST_BIND_GLOBAL_PLACEHOLDERS=1)
 

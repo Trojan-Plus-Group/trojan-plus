@@ -2,7 +2,7 @@
 /*
  * This file is part of the Trojan Plus project.
  * Trojan is an unidentifiable mechanism that helps you bypass GFW.
- * Trojan Plus is derived from original trojan project and writing 
+ * Trojan Plus is derived from original trojan project and writing
  * for more experimental features.
  * Copyright (C) 2020 The Trojan Plus Group Authors.
  *
@@ -27,38 +27,46 @@ using namespace std;
 PipelineComponent::SessionIdType PipelineComponent::s_session_id_counter = 0;
 set<PipelineComponent::SessionIdType> PipelineComponent::s_session_used_ids;
 
-PipelineComponent::PipelineComponent(const Config& _config): 
-    m_session_id(0),
-    m_is_use_pipeline(false),
-    m_is_async_writing(false),
-    m_write_close_future(false),
-    pipeline_ack_counter(0),
-    pipeline_wait_for_ack(false),
-    pipeline_first_call_ack(true){
+PipelineComponent::PipelineComponent(const Config& _config)
+    : m_session_id(0),
+      m_is_use_pipeline(false),
+      m_is_async_writing(false),
+      m_write_close_future(false),
+      pipeline_ack_counter(0),
+      pipeline_wait_for_ack(false),
+      pipeline_first_call_ack(true) {
+    _guard;
     pipeline_ack_counter = static_cast<int>(_config.get_experimental().pipeline_ack_window);
+    _unguard;
 }
 
-void PipelineComponent::allocate_session_id(){
-    if(s_session_used_ids.size() >= numeric_limits<SessionIdType>::max()){
+void PipelineComponent::allocate_session_id() {
+    _guard;
+    if (s_session_used_ids.size() >= numeric_limits<SessionIdType>::max()) {
         throw logic_error("session id is over !! pipeline reached the session id limits !!");
     }
 
-    do{
-        m_session_id = s_session_id_counter++;        
-    }while(s_session_used_ids.find(m_session_id) != s_session_used_ids.end());
+    do {
+        m_session_id = s_session_id_counter++;
+    } while (s_session_used_ids.find(m_session_id) != s_session_used_ids.end());
 
     s_session_used_ids.insert(m_session_id);
+    _unguard;
 }
 
-void PipelineComponent::free_session_id(){
+void PipelineComponent::free_session_id() {
+    _guard;
     s_session_used_ids.erase(m_session_id);
     m_session_id = 0;
+    _unguard;
 }
 
-void PipelineComponent::pipeline_in_recv(const string_view &data) {
+void PipelineComponent::pipeline_in_recv(const string_view& data) {
+    _guard;
     if (!m_is_use_pipeline) {
         throw logic_error("cannot call pipeline_in_recv without pipeline!");
     }
 
     pipeline_data_cache.push_data(data);
+    _unguard;
 }

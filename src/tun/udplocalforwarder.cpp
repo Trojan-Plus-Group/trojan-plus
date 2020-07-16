@@ -36,11 +36,14 @@ UDPLocalForwarder::UDPLocalForwarder(Service* service, udp::endpoint local_src, 
       m_udp_socket(service->get_io_context()),
       m_is_dns(is_dns) {
 
+    _guard;
     set_udp_forward_session(true);
+    _unguard;
 }
 
 UDPLocalForwarder::~UDPLocalForwarder() {}
 void UDPLocalForwarder::start() {
+    _guard;
     auto protocol = m_remote_dst.protocol();
     boost::system::error_code ec;
     m_udp_socket.open(protocol, ec);
@@ -70,17 +73,23 @@ void UDPLocalForwarder::start() {
       Log::INFO);
 
     async_read();
+
+    _unguard;
 }
 
 bool UDPLocalForwarder::process(const udp::endpoint& endpoint, const string_view& data) {
+    _guard;
     if (endpoint != m_local_src) {
         return false;
     }
 
     return write_to(data);
+
+    _unguard;
 }
 
 bool UDPLocalForwarder::write_to(const std::string_view& data) {
+    _guard;
     if (is_destroyed()) {
         return false;
     }
@@ -100,9 +109,11 @@ bool UDPLocalForwarder::write_to(const std::string_view& data) {
 
     m_stat.inc_sent_len(data.length());
     return true;
+    _unguard;
 }
 
 void UDPLocalForwarder::async_read() {
+    _guard;
     udp_timer_async_wait();
 
     const auto prepare_size =
@@ -114,6 +125,7 @@ void UDPLocalForwarder::async_read() {
     auto self = shared_from_this();
     m_udp_socket.async_receive_from(
       m_read_buf.prepare(prepare_size), m_remote_dst, [this, self](boost::system::error_code ec, size_t length) {
+          _guard;
           m_read_buf.end_read();
 
           if (ec) {
@@ -126,10 +138,14 @@ void UDPLocalForwarder::async_read() {
 
               async_read();
           }
+          _unguard;
       });
+    _unguard;
 }
 
 void UDPLocalForwarder::destroy(bool) {
+    _guard;
+
     if (m_destroyed) {
         return;
     }
@@ -152,4 +168,6 @@ void UDPLocalForwarder::destroy(bool) {
         m_destroy_cb();
         m_destroy_cb = nullptr;
     }
+
+    _unguard;
 }

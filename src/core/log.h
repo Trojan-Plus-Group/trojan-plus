@@ -153,4 +153,39 @@ extern std::unique_ptr<char> __debug_str_buf;
         }                                                                                                              \
     } while (false)
 
+#define _assert(exp)                                                                                                   \
+    do {                                                                                                               \
+        if (!(exp)) {                                                                                                  \
+            throw std::runtime_error(std::string(__debug_str_buf.get(),                                                \
+              snprintf(__debug_str_buf.get(), __max_debug_str_buf_size, "_assert(" #exp ") : %s:%d-<%s>",              \
+                (const char*)__FILE__, __LINE__, (const char*)__FUNCTION__)));                                         \
+        }                                                                                                              \
+    } while (false)
+
+#ifdef USE_GUARD_BACKSTACK
+
+#define _guard try {
+#define _unguard                                                                                                       \
+    }                                                                                                                  \
+    catch (const std::exception& ex) {                                                                                 \
+        std::ostringstream bt;                                                                                         \
+        bt << ex.what();                                                                                               \
+        bt << "\n";                                                                                                    \
+        bt << (const char*)__FILE__;                                                                                   \
+        bt << ":" << __LINE__;                                                                                         \
+        bt << "-" << (const char*)__FUNCTION__;                                                                        \
+        throw std::runtime_error(bt.str());                                                                            \
+    }
+
+#else
+
+#define _guard                                                                                                         \
+    do {                                                                                                               \
+    } while (false)
+#define _unguard                                                                                                       \
+    do {                                                                                                               \
+    } while (false)
+
+#endif // USE_GUARD_BACKSTACK
+
 #endif // _LOG_H_

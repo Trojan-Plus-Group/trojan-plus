@@ -1,7 +1,7 @@
 /*
  * This file is part of the Trojan Plus project.
  * Trojan is an unidentifiable mechanism that helps you bypass GFW.
- * Trojan Plus is derived from original trojan project and writing 
+ * Trojan Plus is derived from original trojan project and writing
  * for more experimental features.
  * Copyright (C) 2017-2020  The Trojan Authors.
  * Copyright (C) 2020 The Trojan Plus Group Authors.
@@ -28,8 +28,9 @@
 using namespace std;
 using namespace boost::asio::ip;
 
+bool SOCKS5Address::parse(const string_view& data, size_t& address_len) {
+    _guard;
 
-bool SOCKS5Address::parse(const string_view &data, size_t &address_len) {
     if (data.length() == 0 || (data[0] != IPv4 && data[0] != DOMAINNAME && data[0] != IPv6)) {
         return false;
     }
@@ -37,11 +38,9 @@ bool SOCKS5Address::parse(const string_view &data, size_t &address_len) {
     switch (address_type) {
         case IPv4: {
             if (data.length() > 4 + 2) {
-                address = to_string(uint8_t(data[1])) + '.' +
-                          to_string(uint8_t(data[2])) + '.' +
-                          to_string(uint8_t(data[3])) + '.' +
-                          to_string(uint8_t(data[4]));
-                port = (uint8_t(data[5]) << one_byte_shift_8_bits) | uint8_t(data[6]);
+                address = to_string(uint8_t(data[1])) + '.' + to_string(uint8_t(data[2])) + '.' +
+                          to_string(uint8_t(data[3])) + '.' + to_string(uint8_t(data[4]));
+                port        = (uint8_t(data[5]) << one_byte_shift_8_bits) | uint8_t(data[6]);
                 address_len = 1 + 4 + 2;
                 return true;
             }
@@ -54,9 +53,9 @@ bool SOCKS5Address::parse(const string_view &data, size_t &address_len) {
                 break;
             }
             if (data.length() > (unsigned int)(1 + domain_len + 2)) {
-                address = data.substr(2, domain_len);
-                port = (uint8_t(data[domain_len + 2]) << one_byte_shift_8_bits) | uint8_t(data[domain_len + 3]);
-                address_len =  1 + 1 + domain_len + 2;
+                address     = data.substr(2, domain_len);
+                port        = (uint8_t(data[domain_len + 2]) << one_byte_shift_8_bits) | uint8_t(data[domain_len + 3]);
+                address_len = 1 + 1 + domain_len + 2;
                 return true;
             }
             break;
@@ -64,13 +63,12 @@ bool SOCKS5Address::parse(const string_view &data, size_t &address_len) {
         case IPv6: {
             if (data.length() > 16 + 2) {
                 char t[40];
-                sprintf(t, "%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x",
-                        uint8_t(data[1]), uint8_t(data[2]), uint8_t(data[3]), uint8_t(data[4]),
-                        uint8_t(data[5]), uint8_t(data[6]), uint8_t(data[7]), uint8_t(data[8]),
-                        uint8_t(data[9]), uint8_t(data[10]), uint8_t(data[11]), uint8_t(data[12]),
-                        uint8_t(data[13]), uint8_t(data[14]), uint8_t(data[15]), uint8_t(data[16]));
-                address = t;
-                port = (uint8_t(data[17]) << one_byte_shift_8_bits) | uint8_t(data[18]);
+                sprintf(t, "%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x", uint8_t(data[1]),
+                  uint8_t(data[2]), uint8_t(data[3]), uint8_t(data[4]), uint8_t(data[5]), uint8_t(data[6]),
+                  uint8_t(data[7]), uint8_t(data[8]), uint8_t(data[9]), uint8_t(data[10]), uint8_t(data[11]),
+                  uint8_t(data[12]), uint8_t(data[13]), uint8_t(data[14]), uint8_t(data[15]), uint8_t(data[16]));
+                address     = t;
+                port        = (uint8_t(data[17]) << one_byte_shift_8_bits) | uint8_t(data[18]);
                 address_len = 1 + 16 + 2;
                 return true;
             }
@@ -78,11 +76,13 @@ bool SOCKS5Address::parse(const string_view &data, size_t &address_len) {
         }
     }
     return false;
+
+    _unguard;
 }
 
 static const std::string unspecified_address("\x01\x00\x00\x00\x00\x00\x00", 7);
 
-void SOCKS5Address::generate(boost::asio::streambuf& buf, const udp::endpoint &endpoint) {
+void SOCKS5Address::generate(boost::asio::streambuf& buf, const udp::endpoint& endpoint) {
     if (endpoint.address().is_unspecified()) {
         streambuf_append(buf, unspecified_address);
         return;

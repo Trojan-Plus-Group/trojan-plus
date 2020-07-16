@@ -34,6 +34,8 @@ using namespace boost::asio::ip;
 lwip_tcp_client::lwip_tcp_client(struct tcp_pcb* _pcb, shared_ptr<TUNSession> _session, CloseCallback&& _close_cb)
     : m_pcb(_pcb), m_closed(false), m_aborted(false), m_tun_session(move(_session)), m_close_cb(move(_close_cb)) {
 
+    _guard;
+
     // special for reverse local to remote
     m_remote_addr =
       tcp::endpoint(make_address_v4((address_v4::uint_type)ntoh32(_pcb->local_ip.u_addr.ip4.addr)), _pcb->local_port);
@@ -59,9 +61,13 @@ lwip_tcp_client::lwip_tcp_client(struct tcp_pcb* _pcb, shared_ptr<TUNSession> _s
     tcp_sent(m_pcb, static_client_sent_func);
 
     client_log("accepted");
+
+    _unguard;
 }
 
 void lwip_tcp_client::client_log(const char* fmt, ...) {
+    _guard;
+
     const auto logout_level = Log::INFO;
 
     if (Log::level <= logout_level) {
@@ -78,18 +84,25 @@ void lwip_tcp_client::client_log(const char* fmt, ...) {
 
         _log_with_date_time(buf, logout_level);
     }
+
+    _unguard;
 }
 
 void lwip_tcp_client::client_err_func(err_t err) {
+    _guard;
+
     client_log("client_err_func (%d)", (int)err);
 
-    // do NOT call close_client with tcp_close/tcp_abort, otherwise it will assert to free double
+    // do NOT call close_client with tcp_close/tcp_abort, otherwise it will _assert to free double
     // this client_err_func will be called by lwip and then lwip system will be free pcb
     close_session();
     release_client(false);
+
+    _unguard;
 }
 
 err_t lwip_tcp_client::client_recv_func(struct tcp_pcb*, struct pbuf* p, err_t err) {
+    _guard;
 
     if (m_aborted) {
         return ERR_ABRT;
@@ -107,14 +120,14 @@ err_t lwip_tcp_client::client_recv_func(struct tcp_pcb*, struct pbuf* p, err_t e
             return ERR_ABRT;
         }
 
-        assert(p->tot_len > 0);
+        _assert(p->tot_len > 0);
         if (p->tot_len > sizeof(send_buf)) {
             return ERR_MEM;
         }
 
         // copy data to buffer
         auto length = pbuf_copy_partial(p, (void*)send_buf, p->tot_len, 0);
-        assert(length == p->tot_len);
+        _assert(length == p->tot_len);
         pbuf_free(p);
         m_sending_len += length;
         m_tun_session->out_async_send((const uint8_t*)send_buf, length, [this, length](boost::system::error_code ec) {
@@ -131,9 +144,12 @@ err_t lwip_tcp_client::client_recv_func(struct tcp_pcb*, struct pbuf* p, err_t e
     }
 
     return ERR_OK;
+
+    _unguard;
 }
 
 err_t lwip_tcp_client::client_sent_func(struct tcp_pcb*, u16_t len) {
+    _guard;
 
     if (m_aborted) {
         return ERR_ABRT;
@@ -164,9 +180,13 @@ err_t lwip_tcp_client::client_sent_func(struct tcp_pcb*, u16_t len) {
     }
 
     return ERR_OK;
+
+    _unguard;
 }
 
 int lwip_tcp_client::client_socks_recv_send_out() {
+    _guard;
+
     if (m_aborted) {
         return -1;
     }
@@ -215,9 +235,13 @@ int lwip_tcp_client::client_socks_recv_send_out() {
     m_output_len += wrote_size;
     m_tun_session->recv_buf_consume((uint16_t)wrote_size);
     return 0;
+
+    _unguard;
 }
 
 void lwip_tcp_client::close_session() {
+    _guard;
+
     if (m_closed || m_aborted) {
         return;
     }
@@ -236,9 +260,13 @@ void lwip_tcp_client::close_session() {
 
     client_log("close_session (output: %u, recved: %u), (sending: %u, sent: %u)", m_output_len, m_recved_len,
       m_sending_len, m_sent_len);
+
+    _unguard;
 }
 
 void lwip_tcp_client::close_client(bool _abort, bool _owner_call /*= false*/) {
+    _guard;
+
     if (m_closed || m_aborted) {
         return;
     }
@@ -262,9 +290,13 @@ void lwip_tcp_client::close_client(bool _abort, bool _owner_call /*= false*/) {
     }
 
     release_client(_owner_call);
+
+    _unguard;
 }
 
 void lwip_tcp_client::release_client(bool _owner_call /*=false*/) {
+    _guard;
+
     if (m_pcb != nullptr) {
         tcp_arg(m_pcb, nullptr);
         m_pcb = nullptr;
@@ -274,4 +306,6 @@ void lwip_tcp_client::release_client(bool _owner_call /*=false*/) {
             m_close_cb(this);
         }
     }
+
+    _unguard;
 }

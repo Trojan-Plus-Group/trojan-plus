@@ -29,6 +29,8 @@
 using namespace std;
 
 int PipelineRequest::parse(const string_view& data) {
+    _guard;
+
     /*
         +-------------------+-------------------------+
         | 1 byte as command | diff options by command |
@@ -115,10 +117,13 @@ int PipelineRequest::parse(const string_view& data) {
     }
 
     return (int)packet_data.length();
+
+    _unguard;
 }
 
 boost::asio::streambuf& PipelineRequest::generate(boost::asio::streambuf& buf, enum Command cmd,
   PipelineComponent::SessionIdType session_id, const std::string_view& data, size_t ack_count /* = 0*/) {
+    _guard;
 
     // if(session_id > MAX_SESSION_ID_LENGTH){
     //     throw logic_error("PipelineRequest::generate session_id " + to_string(session_id) + " >
@@ -156,4 +161,6 @@ boost::asio::streambuf& PipelineRequest::generate(boost::asio::streambuf& buf, e
     }
 
     return buf;
+
+    _unguard;
 }

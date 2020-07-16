@@ -1,7 +1,7 @@
 /*
  * This file is part of the Trojan Plus project.
  * Trojan is an unidentifiable mechanism that helps you bypass GFW.
- * Trojan Plus is derived from original trojan project and writing 
+ * Trojan Plus is derived from original trojan project and writing
  * for more experimental features.
  * Copyright (C) 2017-2020  The Trojan Authors.
  * Copyright (C) 2020 The Trojan Plus Group Authors.
@@ -24,17 +24,19 @@
 #include "core/utils.h"
 using namespace std;
 
-int TrojanRequest::parse(const std::string_view &data){
+int TrojanRequest::parse(const std::string_view& data) {
+    _guard;
+
     size_t first = data.find("\r\n");
     if (first == string::npos) {
         return -1;
     }
     password = data.substr(0, first);
-    payload = data.substr(first + 2);
+    payload  = data.substr(first + 2);
     if (payload.length() == 0 || (payload[0] != CONNECT && payload[0] != UDP_ASSOCIATE)) {
         return -1;
     }
-    command = static_cast<Command>(payload[0]);
+    command            = static_cast<Command>(payload[0]);
     size_t address_len = 0;
     bool is_addr_valid = address.parse(payload.substr(1), address_len);
     if (!is_addr_valid || payload.length() < address_len + 3 || payload.substr(address_len + 1, 2) != "\r\n") {
@@ -42,9 +44,13 @@ int TrojanRequest::parse(const std::string_view &data){
     }
     payload = payload.substr(address_len + 3);
     return (int)data.length();
+
+    _unguard;
 }
 
-string TrojanRequest::generate(const string &password, const string &domainname, uint16_t port, bool tcp) {
+string TrojanRequest::generate(const string& password, const string& domainname, uint16_t port, bool tcp) {
+    _guard;
+
     string ret = password + "\r\n";
     if (tcp) {
         ret += '\x01';
@@ -58,4 +64,6 @@ string TrojanRequest::generate(const string &password, const string &domainname,
     ret += char(uint8_t(port & one_byte_mask_0xFF));
     ret += "\r\n";
     return ret;
+
+    _unguard;
 }

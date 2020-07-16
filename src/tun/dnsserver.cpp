@@ -51,6 +51,8 @@ DNSServer::SocketQueryer::~SocketQueryer() {
 }
 
 bool DNSServer::SocketQueryer::open(DataQueryHandler&& handler, int port) {
+    _guard;
+
     boost::system::error_code ec;
 
     auto udp_bind_endpoint = udp::endpoint(make_address_v4("0.0.0.0"), port);
@@ -70,9 +72,13 @@ bool DNSServer::SocketQueryer::open(DataQueryHandler&& handler, int port) {
     data_handler = move(handler);
     async_read_udp();
     return true;
+
+    _unguard;
 }
 
 void DNSServer::SocketQueryer::async_read_udp() {
+    _guard;
+
     if (!socket.is_open()) {
         return;
     }
@@ -93,12 +99,18 @@ void DNSServer::SocketQueryer::async_read_udp() {
           data_handler(recv_endpoint, buf);
           async_read_udp();
       });
+
+    _unguard;
 }
 
 bool DNSServer::SocketQueryer::send(const boost::asio::ip::udp::endpoint& to, const std::string_view& data) {
+    _guard;
+
     boost::system::error_code ec;
     socket.send_to(boost::asio::buffer(data), to, 0, ec);
     return (!ec);
+
+    _unguard;
 }
 
 DNSServer::DNSServer(Service* _service) : m_service(_service) { m_data_queryer = make_shared<SocketQueryer>(_service); }
@@ -109,6 +121,8 @@ DNSServer::DNSServer(Service* _service, std::shared_ptr<IDataQueryer> queryer)
 DNSServer::~DNSServer() { close_file_lock(s_dns_file_lock); }
 
 bool DNSServer::start() {
+    _guard;
+
     return m_data_queryer->open(
       [this](const boost::asio::ip::udp::endpoint& recv_endpoint, boost::asio::streambuf& data) {
           m_udp_recv_endpoint     = recv_endpoint;
@@ -123,19 +137,29 @@ bool DNSServer::start() {
           }
       },
       m_service->get_config().get_dns().port);
+
+    _unguard;
 }
 
 bool DNSServer::is_interest_dns_msg(const dns_header& dns_hdr) {
+    _guard;
+
     return dns_hdr.QR() == 0 && dns_hdr.RCODE() == 0 && dns_hdr.ANCOUNT() == 0 && dns_hdr.NSCOUNT() == 0 &&
            dns_hdr.QDCOUNT() > 0;
+
+    _unguard;
 }
 
 bool DNSServer::is_interest_dns_msg(const trojan::dns_question& qt) {
+    _guard;
     return qt.get_QCLASS() == dns_header::QCLASS_INTERNET &&
            (qt.get_QTYPE() == dns_header::QTYPE_A_RECORD || qt.get_QTYPE() == dns_header::QTYPE_AAAA_RECORD);
+    _unguard;
 }
 
 bool DNSServer::try_to_find_existed(const boost::asio::ip::udp::endpoint& local_src, const std::string_view& data) {
+    _guard;
+
     clear_weak_ptr_list(m_proxy_forwarders);
     clear_weak_ptr_list(m_forwarders);
 
@@ -152,9 +176,13 @@ bool DNSServer::try_to_find_existed(const boost::asio::ip::udp::endpoint& local_
     }
 
     return false;
+
+    _unguard;
 }
 bool DNSServer::find_in_dns_cache(
   const udp::endpoint& local_src, const dns_header& header, const dns_question& question) {
+    _guard;
+
     if (m_service->get_config().get_dns().enable_cached) {
         auto curr_time = time(nullptr);
 
@@ -183,9 +211,13 @@ bool DNSServer::find_in_dns_cache(
     }
 
     return false;
+
+    _unguard;
 }
 
 void DNSServer::store_in_dns_cache(const string_view& data, bool proxyed) {
+    _guard;
+
     if (m_service->get_config().get_dns().enable_cached) {
         string read_data(data);
         istringstream is(read_data);
@@ -219,19 +251,31 @@ void DNSServer::store_in_dns_cache(const string_view& data, bool proxyed) {
             }
         }
     }
+
+    _unguard;
 }
 
 void DNSServer::send_to_local(const udp::endpoint& local_src, const string_view& data) {
+    _guard;
+
     _log_with_endpoint_ALL(local_src, "[dns] <-- " + to_string(data.length()));
     m_data_queryer->send(local_src, data);
+
+    _unguard;
 }
 
 void DNSServer::recv_up_stream_data(const udp::endpoint& local_src, const string_view& data, bool proxyed) {
+    _guard;
+
     send_to_local(local_src, data);
     store_in_dns_cache(data, proxyed);
+
+    _unguard;
 }
 
 bool DNSServer::is_remote_domain(const std::string& domain) const {
+    _guard;
+
     const auto& config = m_service->get_config();
     if (domain == config.get_remote_addr()) {
         return true;
@@ -246,9 +290,13 @@ bool DNSServer::is_remote_domain(const std::string& domain) const {
     }
 
     return false;
+
+    _unguard;
 }
 
 void DNSServer::in_recved(istream& is, const dns_header& header, const string_view& former_data) {
+    _guard;
+
     bool proxy = false;
     dns_question qt;
     is >> qt;
@@ -284,11 +332,13 @@ void DNSServer::in_recved(istream& is, const dns_header& header, const string_vi
 
         auto data = m_service->get_sending_data_allocator().allocate(former_data);
         m_service->start_session(forwarder, [this, forwarder, data](boost::system::error_code ec) {
+            _guard;
             if (!ec) {
                 m_proxy_forwarders.emplace_back(forwarder);
                 forwarder->start_udp(streambuf_to_string_view(*data));
             }
             m_service->get_sending_data_allocator().free(data);
+            _unguard;
         });
 
     } else {
@@ -309,9 +359,11 @@ void DNSServer::in_recved(istream& is, const dns_header& header, const string_vi
             m_forwarders.emplace_back(forwarder);
         }
     }
+    _unguard;
 }
 
 bool DNSServer::is_ip_in_gfwlist(uint32_t ip) const {
+    _guard;
     for (const auto& dns : m_dns_cache) {
         if (dns.is_proxyed() && binary_search(dns.get_ips().cbegin(), dns.get_ips().cend(), ip)) {
             return true;
@@ -319,4 +371,5 @@ bool DNSServer::is_ip_in_gfwlist(uint32_t ip) const {
     }
 
     return false;
+    _unguard;
 }

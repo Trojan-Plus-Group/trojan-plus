@@ -39,14 +39,20 @@ TUNProxySession::TUNProxySession(Service* _service, bool _is_udp)
       m_out_socket(_service->get_io_context(), _service->get_ssl_context()),
       m_out_resolver(_service->get_io_context()) {
 
+    _guard;
+
     get_pipeline_component().allocate_session_id();
 
     m_sending_data_cache.set_is_connected_func([this]() { return !is_destroyed() && m_connected; });
     m_sending_data_cache.set_async_writer([this](const boost::asio::streambuf& data, SentHandler&& handler) {
+        _guard;
         auto self = shared_from_this();
         boost::asio::async_write(
           m_out_socket, data.data(), [this, self, handler](const boost::system::error_code error, size_t length) {
+              _guard;
+
               udp_timer_async_wait();
+
               if (error) {
                   output_debug_info_ec(error);
                   destroy();
@@ -55,16 +61,24 @@ TUNProxySession::TUNProxySession(Service* _service, bool _is_udp)
               get_stat().inc_sent_len(length);
 
               handler(error);
+
+              _unguard;
           });
+
+        _unguard;
     });
+
+    _unguard;
 }
 
 TUNProxySession::~TUNProxySession() { get_pipeline_component().free_session_id(); }
 
 void TUNProxySession::start() {
+    _guard;
     udp_timer_async_wait();
     auto self = shared_from_this();
     auto cb   = [this, self]() {
+        _guard;
         m_connected = true;
 
         if (!get_service()->is_use_pipeline()) {
@@ -81,6 +95,7 @@ void TUNProxySession::start() {
             }
         }
         auto insert_pwd = [this]() {
+            _guard;
             if (is_udp_forward_session()) {
                 streambuf_append(
                   m_send_buf, TrojanRequest::generate(get_config().get_password().cbegin()->first,
@@ -96,6 +111,7 @@ void TUNProxySession::start() {
                 streambuf_append(m_send_buf, TrojanRequest::generate(get_config().get_password().cbegin()->first,
                                                remote_addr, m_remote_addr.port(), true));
             }
+            _unguard;
         };
 
         if (m_send_buf.size() > 0) {
@@ -109,6 +125,8 @@ void TUNProxySession::start() {
         }
 
         out_async_send_impl(streambuf_to_string_view(m_send_buf), [this](boost::system::error_code ec) {
+            _guard;
+
             if (ec) {
                 output_debug_info_ec(ec);
                 destroy();
@@ -121,8 +139,12 @@ void TUNProxySession::start() {
                 m_wait_connected_handler.clear();
             }
             out_async_read();
+
+            _unguard;
         });
         m_send_buf.consume(m_send_buf.size());
+
+        _unguard;
     };
 
     if (get_service()->is_use_pipeline()) {
@@ -138,9 +160,13 @@ void TUNProxySession::start() {
               to_string(get_service()->get_config().get_remote_port()), m_out_resolver, m_out_socket, m_local_addr, cb);
         }
     }
+
+    _unguard;
 }
 
 void TUNProxySession::destroy(bool pipeline_call) {
+
+    _guard;
     if (m_destroyed) {
         return;
     }
@@ -170,9 +196,11 @@ void TUNProxySession::destroy(bool pipeline_call) {
         m_close_cb(this);
         m_close_cb = nullptr;
     }
+    _unguard;
 }
 
 void TUNProxySession::recv_ack_cmd(size_t ack_count) {
+    _guard;
     Session::recv_ack_cmd(ack_count);
 
     while (ack_count-- > 0) {
@@ -183,9 +211,12 @@ void TUNProxySession::recv_ack_cmd(size_t ack_count) {
             break;
         }
     }
+    _unguard;
 }
 
 void TUNProxySession::out_async_send_impl(const std::string_view& data_to_send, SentHandler&& _handler) {
+    _guard;
+
     if (get_service()->is_use_pipeline()) {
         auto data_sending_len = data_to_send.length();
         auto self             = shared_from_this();
@@ -218,9 +249,11 @@ void TUNProxySession::out_async_send_impl(const std::string_view& data_to_send, 
         m_sending_data_cache.push_data(
           [&](boost::asio::streambuf& buf) { streambuf_append(buf, data_to_send); }, move(_handler));
     }
+
+    _unguard;
 }
 void TUNProxySession::out_async_send(const uint8_t* _data, size_t _length, SentHandler&& _handler) {
-
+    _guard;
     if (!m_connected) {
         if (m_send_buf.size() < numeric_limits<uint16_t>::max()) {
             if (is_udp_forward_session()) {
@@ -246,9 +279,13 @@ void TUNProxySession::out_async_send(const uint8_t* _data, size_t _length, SentH
             out_async_send_impl(string_view((const char*)_data, _length), move(_handler));
         }
     }
+
+    _unguard;
 }
 
 void TUNProxySession::try_out_async_read() {
+    _guard;
+
     if (is_destroyed()) {
         return;
     }
@@ -258,6 +295,7 @@ void TUNProxySession::try_out_async_read() {
         get_service()->session_async_send_to_pipeline(
           *this, PipelineRequest::ACK, "",
           [this, self](const boost::system::error_code error) {
+              _guard;
               if (error) {
                   output_debug_info_ec(error);
                   destroy();
@@ -265,15 +303,20 @@ void TUNProxySession::try_out_async_read() {
               }
 
               out_async_read();
+              _unguard;
           },
           m_read_ack_count);
         m_read_ack_count = 0;
     } else {
         out_async_read();
     }
+
+    _unguard;
 }
 bool TUNProxySession::recv_buf_ack_sent(uint16_t _length) {
-    assert(!is_udp_forward_session());
+    _guard;
+
+    _assert(!is_udp_forward_session());
     m_recv_buf_ack_length -= _length;
 
     if (get_service()->is_use_pipeline() && m_recv_buf_ack_length <= 0) {
@@ -287,17 +330,24 @@ bool TUNProxySession::recv_buf_ack_sent(uint16_t _length) {
     }
 
     return false;
+
+    _unguard;
 }
 
 void TUNProxySession::recv_buf_consume(uint16_t _length) {
-    assert(!is_udp_forward_session());
+    _guard;
+
+    _assert(!is_udp_forward_session());
     m_recv_buf.consume(_length);
     if (m_recv_buf.size() == 0) {
         try_out_async_read();
     }
+
+    _unguard;
 }
 
 size_t TUNProxySession::parse_udp_packet_data(const string_view& data) {
+    _guard;
 
     string_view parse_data(data);
     size_t parsed_size = 0;
@@ -332,12 +382,18 @@ size_t TUNProxySession::parse_udp_packet_data(const string_view& data) {
     }
 
     return parsed_size;
+
+    _unguard;
 }
 
 void TUNProxySession::out_async_read() {
+    _guard;
+
     if (get_service()->is_use_pipeline()) {
         get_pipeline_component().get_pipeline_data_cache().async_read(
           [this](const string_view& data, size_t ack_count) {
+              _guard;
+
               get_stat().inc_recv_len(data.length());
 
               if (is_udp_forward_session()) {
@@ -367,12 +423,16 @@ void TUNProxySession::out_async_read() {
                       destroy();
                   }
               }
+
+              _unguard;
           });
     } else {
         m_recv_buf.begin_read(__FILE__, __LINE__);
         auto self = shared_from_this();
         m_out_socket.async_read_some(m_recv_buf.prepare(Session::MAX_BUF_LENGTH),
           [this, self](const boost::system::error_code error, size_t length) {
+              _guard;
+
               m_recv_buf.end_read();
               if (error) {
                   output_debug_info_ec(error);
@@ -396,12 +456,17 @@ void TUNProxySession::out_async_read() {
                       destroy();
                   }
               }
+
+              _unguard;
           });
     }
+
+    _unguard;
 }
 
 bool TUNProxySession::try_to_process_udp(const boost::asio::ip::udp::endpoint& _local,
   const boost::asio::ip::udp::endpoint& _remote, const uint8_t* payload, size_t payload_length) {
+    _guard;
 
     if (is_udp_forward_session()) {
         if (_local == m_local_addr_udp && _remote == m_remote_addr_udp) {
@@ -411,4 +476,5 @@ bool TUNProxySession::try_to_process_udp(const boost::asio::ip::udp::endpoint& _
     }
 
     return false;
+    _unguard;
 }

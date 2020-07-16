@@ -202,6 +202,7 @@ class dns_question {
     _define_simple_getter_setter(uint16_t, QCLASS);
 
     [[nodiscard]] inline static uint16_t decode(std::istream& is) {
+        _guard;
         if (!is) {
             return 0;
         }
@@ -218,9 +219,11 @@ class dns_question {
         }
 
         return (uint16_t(high) << one_byte_shift_8_bits) + low;
+        _unguard;
     }
 
     [[nodiscard]] inline static uint32_t decode32(std::istream& is) {
+        _guard;
         if (!is) {
             return 0;
         }
@@ -228,25 +231,32 @@ class dns_question {
         auto low  = dns_question::decode(is);
 
         return is ? (((uint32_t)high) << two_bytes_shift_16_bits | low) : 0;
+        _unguard;
     }
 
     inline static void encode(std::ostream& os, uint16_t n) {
+        _guard;
         os << static_cast<uint8_t>(n >> one_byte_shift_8_bits);
         os << static_cast<uint8_t>(n & one_byte_mask_0xFF);
+        _unguard;
     }
     friend std::istream& operator>>(std::istream& is, dns_question& header) {
+        _guard;
         if (dns_header::read_label(is, header.QNAME)) {
             header.QTYPE  = decode(is);
             header.QCLASS = decode(is);
         }
         return is;
+        _unguard;
     }
 
     friend std::ostream& operator<<(std::ostream& os, const dns_question& header) {
+        _guard;
         dns_header::write_label(os, header.QNAME);
         encode(os, header.QTYPE);
         encode(os, header.QCLASS);
         return os;
+        _unguard;
     }
 
     static void test_case(const char* domain, uint16_t qtype, uint16_t qclass);
@@ -288,7 +298,7 @@ class dns_answer {
         std::string RD;
 
         uint32_t A;
-        char AAAA[16];
+        boost::asio::ip::address_v6::bytes_type AAAA;
 
         std::string A_str;
         std::string AAAA_str;

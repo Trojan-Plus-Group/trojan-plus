@@ -24,7 +24,6 @@
 
 #include <boost/asio/buffer.hpp>
 #include <boost/asio/ip/address_v4.hpp>
-#include <cassert>
 #include <functional>
 
 #include <misc/ipv4_proto.h>
@@ -93,7 +92,9 @@ TUNDev::TUNDev(Service* _service, const std::string& _tun_name, const std::strin
       m_quitting(false),
       m_boost_sd(_service->get_io_context()) {
 
-    assert(sm_tundev == nullptr);
+    _guard;
+
+    _assert(sm_tundev == nullptr);
     sm_tundev = this;
 
     if (m_tun_fd == -1) {
@@ -195,9 +196,13 @@ TUNDev::TUNDev(Service* _service, const std::string& _tun_name, const std::strin
     if (!m_dns_server->start()) {
         throw runtime_error("[tun] dns server start failed");
     }
+
+    _unguard;
 }
 
 TUNDev::~TUNDev() {
+    _guard;
+
     if (m_quitting) {
         return;
     }
@@ -241,17 +246,25 @@ TUNDev::~TUNDev() {
     }
 
     sm_tundev = nullptr;
+
+    _unguard;
 }
 
 err_t TUNDev::netif_init_func(struct netif* netif) const {
+    _guard;
+
     netif->name[0] = 'h';
     netif->name[1] = 'o';
     netif->mtu     = m_mtu;
     netif->output  = static_netif_output_func;
     return ERR_OK;
+
+    _unguard;
 }
 
 err_t TUNDev::netif_input_func(struct pbuf* p, struct netif* inp) {
+    _guard;
+
     uint8_t ip_version = 0;
     if (p->len > 0) {
         ip_version = (((uint8_t*)p->payload)[0] >> half_byte_shift_4_bits);
@@ -268,9 +281,13 @@ err_t TUNDev::netif_input_func(struct pbuf* p, struct netif* inp) {
 
     pbuf_free(p);
     return ERR_OK;
+
+    _unguard;
 }
 
 err_t TUNDev::netif_output_func(struct netif*, struct pbuf* p, const ip4_addr_t*) {
+    _guard;
+
     if (m_quitting) {
         return ERR_OK;
     }
@@ -296,9 +313,12 @@ err_t TUNDev::netif_output_func(struct netif*, struct pbuf* p, const ip4_addr_t*
     }
 
     return ERR_OK;
+    _unguard;
 }
 
 bool TUNDev::proxy_by_route(uint32_t ip) const {
+    _guard;
+
     auto route = m_service->get_config().get_route();
     if (route._proxy_ips_matcher.is_match(ip)) {
         return true;
@@ -322,10 +342,12 @@ bool TUNDev::proxy_by_route(uint32_t ip) const {
         default:
             throw logic_error("[dns] error proxy type: " + to_string((int)route.proxy_type));
     }
+
+    _unguard;
 }
 
 err_t TUNDev::listener_accept_func(struct tcp_pcb* newpcb, err_t err) {
-
+    _guard;
     if (err != ERR_OK) {
         return err;
     }
@@ -347,15 +369,18 @@ err_t TUNDev::listener_accept_func(struct tcp_pcb* newpcb, err_t err) {
         session = make_shared<TUNLocalSession>(m_service, false);
     }
     auto tcp_client = make_shared<lwip_tcp_client>(newpcb, session, [this](lwip_tcp_client* client) {
+        _guard;
         for (auto it = m_tcp_clients.begin(); it != m_tcp_clients.end(); it++) {
             if (it->get() == client) {
                 m_tcp_clients.erase(it);
                 break;
             }
         }
+        _unguard;
     });
 
     m_service->start_session(session, [this, session, tcp_client](boost::system::error_code ec) {
+        _guard;
         if (!ec) {
             session->start();
             m_tcp_clients.emplace_back(tcp_client);
@@ -363,13 +388,16 @@ err_t TUNDev::listener_accept_func(struct tcp_pcb* newpcb, err_t err) {
             session->destroy();
             tcp_client->close_client(true);
         }
+        _unguard;
     });
 
     // start_session callback immediately and destory the session
     return session->is_destroyed() ? ERR_ABRT : ERR_OK;
+    _unguard;
 }
 
 void TUNDev::input_netif_packet(const uint8_t* data, uint16_t packet_len) {
+    _guard;
     struct pbuf* p = pbuf_alloc(PBUF_RAW, packet_len, PBUF_POOL);
     if (p == nullptr) {
         _log_with_date_time("[tun] device read: pbuf_alloc failed", Log::ERROR);
@@ -389,9 +417,11 @@ void TUNDev::input_netif_packet(const uint8_t* data, uint16_t packet_len) {
         pbuf_free(p);
         return;
     }
+    _unguard;
 }
 
 void TUNDev::parse_packet() {
+    _guard;
     if (m_packet_parse_buff.empty()) {
         // need more byte for version
         return;
@@ -449,11 +479,14 @@ void TUNDev::parse_packet() {
     } else {
         m_packet_parse_buff.clear();
     }
+
+    _unguard;
 }
 
 int TUNDev::handle_write_upd_data(const boost::asio::ip::udp::endpoint& local_endpoint,
   const boost::asio::ip::udp::endpoint& remote_endpoint, std::string_view& data_str) {
 
+    _guard;
     auto* local_addr  = (struct sockaddr_in*)local_endpoint.data();
     auto* remote_addr = (struct sockaddr_in*)remote_endpoint.data();
 
@@ -514,14 +547,19 @@ int TUNDev::handle_write_upd_data(const boost::asio::ip::udp::endpoint& local_en
     }
 
     return 0;
+    _unguard;
 }
 
 int TUNDev::handle_write_upd_data(const TUNSession* _session, string_view& data_str) {
-    assert(_session->is_udp_forward_session());
+    _guard;
+    _assert(_session->is_udp_forward_session());
     return handle_write_upd_data(_session->get_udp_local_endpoint(), _session->get_udp_remote_endpoint(), data_str);
+    _unguard;
 }
 
 int TUNDev::try_to_process_udp_packet(uint8_t* data, int data_len) {
+    _guard;
+
     uint8_t ip_version = 0;
     if (data_len > 0) {
         ip_version = (data[0] >> half_byte_shift_4_bits) & half_byte_mask_0xF;
@@ -588,17 +626,21 @@ int TUNDev::try_to_process_udp_packet(uint8_t* data, int data_len) {
         }
         session->set_udp_connect(local_endpoint, remote_endpoint);
         session->set_write_to_lwip([this](const TUNSession* _se, string_view* _data) {
-            assert(_data != nullptr);
+            _guard;
+            _assert(_data != nullptr);
             return handle_write_upd_data(_se, *_data);
+            _unguard;
         });
 
         session->set_close_callback([this](TUNSession* _session) {
+            _guard;
             for (auto it = m_udp_clients.begin(); it != m_udp_clients.end(); it++) {
                 if (it->get() == _session) {
                     m_udp_clients.erase(it);
                     break;
                 }
             }
+            _unguard;
         });
 
         session->out_async_send(data, data_len, [](boost::system::error_code) {}); // send as buf
@@ -613,12 +655,16 @@ int TUNDev::try_to_process_udp_packet(uint8_t* data, int data_len) {
             session->start();
         } else {
             m_service->start_session(session, [session, local_endpoint, remote_endpoint](boost::system::error_code ec) {
+                _guard;
+
                 if (!ec) {
                     session->start();
                 } else {
                     output_debug_info_ec(ec);
                     session->destroy();
                 }
+
+                _unguard;
             });
         }
 
@@ -630,9 +676,13 @@ int TUNDev::try_to_process_udp_packet(uint8_t* data, int data_len) {
     }
 
     return 0;
+
+    _unguard;
 }
 
 void TUNDev::write_to_tun() {
+    _guard;
+
     if (m_quitting) {
         return;
     }
@@ -656,9 +706,13 @@ void TUNDev::write_to_tun() {
             m_write_fill_buf.consume(m_write_fill_buf.size());
         }
     }
+
+    _unguard;
 }
 
 void TUNDev::async_read() {
+    _guard;
+
     m_sd_read_buffer.consume(m_sd_read_buffer.size());
     m_boost_sd.async_read_some(m_sd_read_buffer.prepare(m_mtu), [this](boost::system::error_code ec, size_t data_len) {
         if (m_quitting) {
@@ -679,4 +733,6 @@ void TUNDev::async_read() {
 
     // sleep for test
     //::sleep(1);
+
+    _unguard;
 }

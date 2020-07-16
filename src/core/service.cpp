@@ -51,6 +51,7 @@ Service::Service(Config& config, bool test)
       pipeline_select_idx(0),
       config(config) {
 
+    _guard;
 #ifndef ENABLE_NAT
     if (config.get_run_type() == Config::NAT) {
         throw runtime_error("NAT is not supported");
@@ -154,18 +155,25 @@ Service::Service(Config& config, bool test)
         }
     }
 #endif // __ANDROID__
+
+    _unguard;
 }
 
 void Service::prepare_icmpd(Config& config, bool is_ipv4) {
+    _guard;
+
     if (config.try_prepare_pipeline_proxy_icmp(is_ipv4)) {
         _log_with_date_time("Pipeline will proxy ICMP message", Log::WARN);
         icmp_processor = make_shared<icmpd>(io_context);
         icmp_processor->set_service(this, config.get_run_type() == Config::NAT);
         icmp_processor->start_recv();
     }
+
+    _unguard;
 }
 
 void Service::run() {
+    _guard;
 
     string rt;
     if (config.get_run_type() == Config::SERVER) {
@@ -205,9 +213,13 @@ void Service::run() {
     }
     io_context.run();
     _log_with_date_time("trojan service stopped", Log::WARN);
+
+    _unguard;
 }
 
 void Service::stop() {
+    _guard;
+
     m_tundev     = nullptr;
     m_dns_server = nullptr;
     boost::system::error_code ec;
@@ -217,9 +229,12 @@ void Service::stop() {
         udp_socket.close(ec);
     }
     io_context.stop();
+    _unguard;
 }
 
 void Service::prepare_pipelines() {
+    _guard;
+
     if (config.get_run_type() != Config::SERVER && config.get_experimental().pipeline_num > 0) {
 
         bool changed = clear_weak_ptr_list(pipelines);
@@ -317,9 +332,13 @@ void Service::prepare_pipelines() {
             }
         }
     }
+
+    _unguard;
 }
 
 void Service::start_session(const shared_ptr<Session>& session, SentHandler&& started_handler) {
+    _guard;
+
     if (config.get_experimental().pipeline_num > 0 && config.get_run_type() != Config::SERVER) {
 
         prepare_pipelines();
@@ -366,10 +385,15 @@ void Service::start_session(const shared_ptr<Session>& session, SentHandler&& st
     } else {
         started_handler(boost::system::error_code());
     }
+
+    _unguard;
 }
 
 void Service::session_async_send_to_pipeline(Session& session, PipelineRequest::Command cmd,
   const std::string_view& data, SentHandler&& sent_handler, size_t ack_count /* = 0*/) {
+
+    _guard;
+
     if (config.get_experimental().pipeline_num > 0 && config.get_run_type() != Config::SERVER) {
 
         Pipeline* pipeline = nullptr;
@@ -396,10 +420,13 @@ void Service::session_async_send_to_pipeline(Session& session, PipelineRequest::
     } else {
         _log_with_date_time("can't send data via pipeline!", Log::FATAL);
     }
+
+    _unguard;
 }
 
 void Service::session_async_send_to_pipeline_icmp(
   const std::string_view& data, std::function<void(boost::system::error_code ec)>&& sent_handler) {
+    _guard;
     if (config.get_experimental().pipeline_num > 0 && config.get_run_type() != Config::SERVER) {
         Pipeline* pipeline = search_default_pipeline();
         if (pipeline == nullptr) {
@@ -411,9 +438,11 @@ void Service::session_async_send_to_pipeline_icmp(
     } else {
         _log_with_date_time("can't send data via pipeline!", Log::FATAL);
     }
+    _unguard;
 }
 
 void Service::session_destroy_in_pipeline(Session& session) {
+    _guard;
     auto it = pipelines.begin();
     while (it != pipelines.end()) {
         if (it->expired()) {
@@ -429,9 +458,11 @@ void Service::session_destroy_in_pipeline(Session& session) {
             ++it;
         }
     }
+    _unguard;
 }
 
 Pipeline* Service::search_default_pipeline() {
+    _guard;
     prepare_pipelines();
 
     if (pipelines.empty()) {
@@ -454,8 +485,10 @@ Pipeline* Service::search_default_pipeline() {
     }
 
     return pipeline;
+    _unguard;
 }
 void Service::async_accept() {
+    _guard;
 
     shared_ptr<SocketSession> session(nullptr);
 
@@ -480,6 +513,7 @@ void Service::async_accept() {
     }
 
     socket_acceptor.async_accept(session->accept_socket(), [this, session](const boost::system::error_code error) {
+        _guard;
         if (error == boost::asio::error::operation_aborted) {
             // got cancel signal, stop calling myself
             return;
@@ -500,11 +534,17 @@ void Service::async_accept() {
             }
         }
         async_accept();
+        _unguard;
     });
+
+    _unguard;
 }
 
 void Service::udp_async_read() {
+    _guard;
+
     auto cb = [this](const boost::system::error_code error, size_t length) {
+        _guard;
         if (error == boost::asio::error::operation_aborted) {
             // got cancel signal, stop calling myself
             return;
@@ -549,6 +589,7 @@ void Service::udp_async_read() {
             auto session = make_shared<UDPForwardSession>(
               this, config, ssl_context, udp_recv_endpoint, targetdst,
               [this](const udp::endpoint& endpoint, const string_view& data) {
+                  _guard;
                   if (config.get_run_type() == Config::NAT) {
                       throw logic_error("[udp] logic fatal error, cannot call in_write function for NAT type!");
                   }
@@ -562,16 +603,19 @@ void Service::udp_async_read() {
                   } else if (ec) {
                       throw runtime_error(ec.message());
                   }
+                  _unguard;
               },
               config.get_run_type() == Config::NAT, false);
 
             auto data = get_sending_data_allocator().allocate(udp_read_buf);
             start_session(session, [this, session, data](boost::system::error_code ec) {
+                _guard;
                 if (!ec) {
                     udp_sessions.emplace_back(session);
                     session->start_udp(streambuf_to_string_view(*data));
                 }
                 get_sending_data_allocator().free(data);
+                _unguard;
             });
 
         } else {
@@ -579,6 +623,8 @@ void Service::udp_async_read() {
         }
 
         udp_async_read();
+
+        _unguard;
     };
 
     udp_read_buf.consume_all();
@@ -587,9 +633,13 @@ void Service::udp_async_read() {
     } else {
         udp_socket.async_receive_from(udp_read_buf.prepare(config.get_udp_recv_buf()), udp_recv_endpoint, cb);
     }
+
+    _unguard;
 }
 
 void Service::reload_cert() {
+    _guard;
+
     if (config.get_run_type() == Config::SERVER) {
         _log_with_date_time("reloading certificate and private key. . . ", Log::WARN);
         ssl_context.use_certificate_chain_file(config.get_ssl().cert);
@@ -601,6 +651,7 @@ void Service::reload_cert() {
     } else {
         _log_with_date_time("cannot reload certificate and private key: wrong run_type", Log::ERROR);
     }
+    _unguard;
 }
 
 Service::~Service() = default;
