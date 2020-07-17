@@ -62,3 +62,4 @@ win32-build/
 /tests/LinuxFullTest/html
 *.output
 *.tmpjson
+tombstone*
