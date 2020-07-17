@@ -255,7 +255,7 @@ void lwip_tcp_client::close_session() {
 
     if (!m_tun_session->is_destroyed()) {
         output_debug_info();
-        m_tun_session->destroy(true);
+        m_tun_session->destroy(false);
     }
 
     client_log("close_session (output: %u, recved: %u), (sending: %u, sent: %u)", m_output_len, m_recved_len,
