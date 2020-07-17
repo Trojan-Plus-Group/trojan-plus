@@ -42,28 +42,23 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-if(CMAKE_BUILD_TYPE STREQUAL Release AND NOT MSVC AND NOT APPLE)
-    # reduce the sizeof binary, otherwise binary file will be very big
+if(CMAKE_BUILD_TYPE STREQUAL Release 
+    AND NOT MSVC 
+    AND NOT APPLE 
+    AND NOT ANDROID) # it will use POST_BUILD to strip
+
+    # reduce the size of binary, otherwise binary file will be very big unless strip it
     set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -s")
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -s")
-
-    if( ANDROID )
-        # I don't know why andorid's clang++ compiler will report "clang++: warning: argument unused during compilation: '-s' [-Wunused-command-line-argument]"
-        # so I add this to surpass warning
-        set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -Qunused-arguments")
-        set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -Qunused-arguments")
-    endif()
 endif()
 
 if(MSVC)
     add_definitions(-D_CRT_SECURE_NO_WARNINGS -D_WIN32_WINNT=0x0601)
-
     if(CMAKE_BUILD_TYPE STREQUAL Release)
         set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /MP")
     else()
         set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /MP")
     endif()
-
 else()
     add_definitions(-Wall -Wextra)
 endif()
@@ -77,6 +72,17 @@ if(ANDROID)
         set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -llog")
         set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -llog")
     endif()
+
+    # I don't know why andorid's clang++ compiler will report :
+    #   "clang++: warning: argument unused during compilation: '-llog' '-s' [-Wunused-command-line-argument]"
+    # so I add this to surpass warning
+    if(CMAKE_BUILD_TYPE STREQUAL Release)
+        set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -Qunused-arguments")
+        set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -Qunused-arguments")
+    else()
+        set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -Qunused-arguments")
+        set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -Qunused-arguments")
+    endif()    
 endif()
 
 option(USE_GUARD_BACKSTACK "Build with try catch all functions" OFF)
@@ -177,6 +183,11 @@ set(TROJAN_SOURCE_FILES
 
 if(ANDROID)
     add_library(trojan SHARED ${TROJAN_SOURCE_FILES})
+
+    add_custom_command(TARGET trojan POST_BUILD
+        COMMAND "/bin/cp" -f libtrojan.so "${LIB_OUTPUT_DIR}/libtrojan.so"
+        COMMAND "${ANDROID_TOOLCHAIN_PREFIX}strip" -s "${LIB_OUTPUT_DIR}/libtrojan.so"
+        COMMENT "Strip debug symbols done on final binary.")
 else()
     add_executable(trojan ${TROJAN_SOURCE_FILES})
 endif()
