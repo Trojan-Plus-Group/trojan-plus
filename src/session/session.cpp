@@ -24,21 +24,22 @@
 #include "core/service.h"
 
 using namespace std;
-size_t Session::s_total_session_count = 0;
 
+size_t Session::s_total_session_count = 0;
 Session::Session(Service* _service, const Config& _config)
     : service(_service),
       udp_gc_timer(_service->get_io_context()),
       pipeline_com(_config),
       is_udp_forward(false),
-      config(_config) {
+      config(_config),
+      session_name("Session") {
     s_total_session_count++;
 }
 
 Session::~Session() {
     s_total_session_count--;
-    _log_with_date_time_ALL(
-      "[mem] checking memory leak, current all session count is " + to_string(s_total_session_count));
+    _log_with_date_time_ALL((is_udp_forward_session() ? "[udp] ~" : "[tcp] ~") + string(session_name) +
+                            " called, current all sessions:  " + to_string(s_total_session_count));
 };
 
 int Session::get_udp_timer_timeout_val() const { return get_config().get_udp_timeout(); }

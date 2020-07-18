@@ -36,7 +36,7 @@ class icmpd;
 class Service;
 class ServerSession;
 class PipelineSession : public SocketSession {
-    typedef std::list<std::shared_ptr<ServerSession>> SessionsList;
+    using SessionsList = std::list<std::shared_ptr<ServerSession>>;
 
     enum Status { HANDSHAKE, STREAMING, DESTROY } status;
 
@@ -69,6 +69,7 @@ class PipelineSession : public SocketSession {
   public:
     PipelineSession(Service* _service, const Config& config, boost::asio::ssl::context& ssl_context,
       std::shared_ptr<Authenticator> auth, const std::string& plain_http_response);
+
     void destroy(bool pipeline_call = false) final;
 
     boost::asio::ip::tcp::socket& accept_socket() final;

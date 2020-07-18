@@ -49,17 +49,22 @@ class Session : public std::enable_shared_from_this<Session> {
     bool is_udp_forward;
     const Config& config;
     bytes_stat stat;
+    const char* session_name;
 
     static size_t s_total_session_count;
 
+  protected:
+    inline void set_session_name(const char* name) { session_name = name; }
+
   public:
     Session(Service* _service, const Config& _config);
-
-    virtual void start() = 0;
     virtual ~Session();
+
+    virtual void start()                             = 0;
     virtual void destroy(bool pipeline_call = false) = 0;
     virtual void recv_ack_cmd(size_t ack_count) { pipeline_com.recv_ack_cmd(ack_count); }
 
+    _define_getter_const(const char*, session_name);
     _define_getter(bytes_stat&, stat);
 
     virtual int get_udp_timer_timeout_val() const;

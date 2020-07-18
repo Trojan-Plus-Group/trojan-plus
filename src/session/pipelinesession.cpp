@@ -42,6 +42,9 @@ PipelineSession::PipelineSession(Service* _service, const Config& config, boost:
       plain_http_response(plain_http_response),
       gc_timer(_service->get_io_context()),
       ssl_context(ssl_context) {
+
+    set_session_name("PipelineSession");
+
     live_socket = make_shared<SSLSocket>(_service->get_io_context(), ssl_context);
     sending_data_cache.set_async_writer([this](const boost::asio::streambuf& data, SentHandler&& handler) {
         if (status == DESTROY) {

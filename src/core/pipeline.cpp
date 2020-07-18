@@ -60,6 +60,8 @@ Pipeline::Pipeline(Service* _service, const Config& config, boost::asio::ssl::co
     _unguard;
 }
 
+Pipeline::~Pipeline() { _log_with_date_time("~Pipeline called!"); }
+
 void Pipeline::start() {
     _guard;
 
@@ -263,6 +265,8 @@ void Pipeline::destroy() {
         session->destroy(true);
     }
     sessions.clear();
+
+    resolver.cancel();
     shutdown_ssl_socket(this, out_socket);
 
     _unguard;

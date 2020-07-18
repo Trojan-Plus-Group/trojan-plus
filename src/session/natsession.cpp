@@ -31,6 +31,7 @@ using namespace boost::asio::ssl;
 
 NATSession::NATSession(Service* _service, const Config& config, context& ssl_context)
     : ClientSession(_service, config, ssl_context) {
+    set_session_name("NATSession");
     set_status(CONNECT);
 }
 

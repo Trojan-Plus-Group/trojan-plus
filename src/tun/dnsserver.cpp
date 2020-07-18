@@ -118,7 +118,24 @@ DNSServer::DNSServer(Service* _service) : m_service(_service) { m_data_queryer =
 DNSServer::DNSServer(Service* _service, std::shared_ptr<IDataQueryer> queryer)
     : m_service(_service), m_data_queryer(move(queryer)) {}
 
-DNSServer::~DNSServer() { close_file_lock(s_dns_file_lock); }
+DNSServer::~DNSServer() {
+    _log_with_date_time("~DNSServer called");
+
+    clear_weak_ptr_list(m_proxy_forwarders);
+    clear_weak_ptr_list(m_forwarders);
+
+    for (auto& it : m_proxy_forwarders) {
+        it.lock()->destroy();
+    }
+    m_proxy_forwarders.clear();
+
+    for (auto& it : m_forwarders) {
+        it.lock()->destroy();
+    }
+    m_forwarders.clear();
+
+    close_file_lock(s_dns_file_lock);
+}
 
 bool DNSServer::start() {
     _guard;

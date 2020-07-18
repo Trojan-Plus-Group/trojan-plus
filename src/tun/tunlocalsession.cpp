@@ -32,6 +32,8 @@ TUNLocalSession::TUNLocalSession(Service* _service, bool is_udp)
 
     _guard;
 
+    set_session_name("TUNLocalSession");
+
     if (!is_udp) {
         m_sending_data_cache.set_is_connected_func([this]() { return !m_destroyed && m_connected; });
         m_sending_data_cache.set_async_writer([this](const boost::asio::streambuf& data, SentHandler&& handler) {
@@ -202,6 +204,11 @@ void TUNLocalSession::out_async_send_impl(const std::string_view& data_to_send, 
 
 void TUNLocalSession::out_async_send(const uint8_t* _data, size_t _length, SentHandler&& _handler) {
     _guard;
+
+    if (is_destroyed()) {
+        _handler(boost::asio::error::broken_pipe);
+        return;
+    }
 
     if (!m_connected) {
         if (m_send_buf.size() < numeric_limits<uint16_t>::max()) {

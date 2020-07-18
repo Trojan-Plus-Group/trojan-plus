@@ -46,6 +46,7 @@ UDPForwardSession::UDPForwardSession(Service* _service, const Config& config, co
       is_nat(nat),
       is_dns(dns) {
 
+    set_session_name("UDPForwardSession");
     udp_recv_endpoint = endpoint;
     out_udp_endpoint  = udp::endpoint(boost::asio::ip::make_address(targetdst.first), targetdst.second);
     set_in_endpoint(tcp::endpoint(endpoint.address(), endpoint.port()));

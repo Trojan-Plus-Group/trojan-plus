@@ -220,14 +220,22 @@ void Service::run() {
 void Service::stop() {
     _guard;
 
-    m_tundev     = nullptr;
-    m_dns_server = nullptr;
+    if (!pipelines.empty()) {
+        clear_weak_ptr_list(pipelines);
+        _log_with_date_time("[pipeline] destroy all " + to_string(pipelines.size()) + " pipelines");
+        for (auto& it : pipelines) {
+            it.lock()->destroy();
+        }
+        pipelines.clear();
+    }
+
     boost::system::error_code ec;
     socket_acceptor.cancel(ec);
     if (udp_socket.is_open()) {
         udp_socket.cancel(ec);
         udp_socket.close(ec);
     }
+
     io_context.stop();
     _unguard;
 }
@@ -378,7 +386,7 @@ void Service::start_session(const shared_ptr<Session>& session, SentHandler&& st
         }
 
         _log_with_date_time("pipeline " + to_string(pipeline->get_pipeline_id()) +
-                              " start session_id:" + to_string(session->get_session_id()),
+                              " start session_id: " + to_string(session->get_session_id()),
           Log::INFO);
         session->get_pipeline_component().set_use_pipeline();
         pipeline->session_start(*(session.get()), move(started_handler));
@@ -578,7 +586,7 @@ void Service::udp_async_read() {
 
         if (targetdst.second != 0) {
             clear_weak_ptr_list(udp_sessions);
-            for (auto s : udp_sessions) {
+            for (auto& s : udp_sessions) {
                 if (s.lock()->process(udp_recv_endpoint, udp_read_buf)) {
                     udp_async_read();
                     return;
@@ -654,4 +662,4 @@ void Service::reload_cert() {
     _unguard;
 }
 
-Service::~Service() = default;
+Service::~Service() { _log_with_date_time("~Service called"); };

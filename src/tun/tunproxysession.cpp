@@ -40,7 +40,7 @@ TUNProxySession::TUNProxySession(Service* _service, bool _is_udp)
       m_out_resolver(_service->get_io_context()) {
 
     _guard;
-
+    set_session_name("TUNProxySession");
     get_pipeline_component().allocate_session_id();
 
     m_sending_data_cache.set_is_connected_func([this]() { return !is_destroyed() && m_connected; });

@@ -40,7 +40,7 @@ class TUNProxySession : public TUNSession {
 
   public:
     TUNProxySession(Service* service, bool udp);
-    ~TUNProxySession();
+    ~TUNProxySession() override;
 
     void start() override;
     void destroy(bool pipeline_call = false) override;

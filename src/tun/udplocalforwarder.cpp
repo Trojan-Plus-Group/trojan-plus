@@ -37,11 +37,11 @@ UDPLocalForwarder::UDPLocalForwarder(Service* service, udp::endpoint local_src, 
       m_is_dns(is_dns) {
 
     _guard;
+    set_session_name("UDPLocalForwarder");
     set_udp_forward_session(true);
     _unguard;
 }
 
-UDPLocalForwarder::~UDPLocalForwarder() {}
 void UDPLocalForwarder::start() {
     _guard;
     auto protocol = m_remote_dst.protocol();

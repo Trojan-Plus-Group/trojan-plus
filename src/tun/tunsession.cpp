@@ -25,6 +25,7 @@
 using namespace boost::asio::ip;
 TUNSession::TUNSession(Service* _service, bool _is_udp) : Session(_service, _service->get_config()) {
     _guard;
+    set_session_name("TUNSession");
     set_udp_forward_session(_is_udp);
     _unguard;
 }

@@ -1,7 +1,7 @@
 /*
  * This file is part of the Trojan Plus project.
  * Trojan is an unidentifiable mechanism that helps you bypass GFW.
- * Trojan Plus is derived from original trojan project and writing 
+ * Trojan Plus is derived from original trojan project and writing
  * for more experimental features.
  * Copyright (C) 2017-2020  The Trojan Authors.
  * Copyright (C) 2020 The Trojan Plus Group Authors.
@@ -23,17 +23,17 @@
 #ifndef _NATSESSION_H_
 #define _NATSESSION_H_
 
-#include <boost/asio/ssl.hpp>
 #include "clientsession.h"
+#include <boost/asio/ssl.hpp>
 
 class NATSession : public ClientSession {
-protected:
+  protected:
     virtual std::pair<std::string, uint16_t> get_target_endpoint();
-    void in_recv(const std::string_view &data) override;
+    void in_recv(const std::string_view& data) override;
     void in_sent() override;
 
-public:
-    NATSession(Service* _service, const Config& config, boost::asio::ssl::context &ssl_context);
+  public:
+    NATSession(Service* _service, const Config& config, boost::asio::ssl::context& ssl_context);
     void start() override;
 };
 

@@ -67,7 +67,7 @@ class UDPForwardSession : public SocketSession {
       const boost::asio::ip::udp::endpoint& endpoint, const std::pair<std::string, uint16_t>& targetdst,
       UDPWriter in_write, bool nat, bool dns);
 
-    ~UDPForwardSession();
+    ~UDPForwardSession() override;
 
     boost::asio::ip::tcp::socket& accept_socket() override;
     void start() override;

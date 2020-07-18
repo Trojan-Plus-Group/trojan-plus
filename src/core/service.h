@@ -44,7 +44,7 @@ class Pipeline;
 class icmpd;
 class Service {
   private:
-    typedef std::list<std::weak_ptr<Pipeline>> PipelineList;
+    using PipelineList = std::list<std::weak_ptr<Pipeline>>;
 
     boost::asio::io_context io_context;
     boost::asio::ip::tcp::acceptor socket_acceptor;
@@ -68,6 +68,7 @@ class Service {
 
     std::shared_ptr<DNSServer> m_dns_server;
     std::shared_ptr<TUNDev> m_tundev;
+
     SendingDataAllocator m_sending_data_allocator;
 
     const Config& config;

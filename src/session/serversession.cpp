@@ -41,6 +41,8 @@ ServerSession::ServerSession(Service* _service, const Config& config, boost::asi
       auth(move(auth)),
       plain_http_response(plain_http_response),
       has_queried_out(false) {
+
+    set_session_name("ServerSession");
     in_socket = make_shared<SSLSocket>(_service->get_io_context(), ssl_context);
 }
 

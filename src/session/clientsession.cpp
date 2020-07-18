@@ -39,6 +39,7 @@ ClientSession::ClientSession(Service* _service, const Config& config, context& s
       in_socket(_service->get_io_context()),
       out_socket(_service->get_io_context(), ssl_context),
       udp_socket(_service->get_io_context()) {
+    set_session_name("ClientSession");
     get_pipeline_component().allocate_session_id();
 }
 

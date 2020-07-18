@@ -76,7 +76,8 @@ class ClientSession : public SocketSession {
 
   public:
     ClientSession(Service* _service, const Config& config, boost::asio::ssl::context& ssl_context);
-    ~ClientSession();
+    ~ClientSession() override;
+
     boost::asio::ip::tcp::socket& accept_socket() override;
     void start() override;
     void destroy(bool pipeline_call = false) override;

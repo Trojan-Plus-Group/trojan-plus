@@ -58,6 +58,7 @@ class Pipeline : public std::enable_shared_from_this<Pipeline> {
 
   public:
     Pipeline(Service* _service, const Config& config, boost::asio::ssl::context& ssl_context);
+    ~Pipeline();
     void start();
     void destroy();
 
