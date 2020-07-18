@@ -352,8 +352,9 @@ err_t TUNDev::listener_accept_func(struct tcp_pcb* newpcb, err_t err) {
         return err;
     }
 
+    auto proxy                     = proxy_by_route(ntoh32(newpcb->local_ip.u_addr.ip4.addr));
     shared_ptr<TUNSession> session = nullptr;
-    if (proxy_by_route(ntoh32(newpcb->local_ip.u_addr.ip4.addr))) {
+    if (proxy) {
 
         _log_with_date_time_ALL(
           "[tun] [tcp] proxy connect: " +
@@ -379,17 +380,26 @@ err_t TUNDev::listener_accept_func(struct tcp_pcb* newpcb, err_t err) {
         _unguard;
     });
 
-    m_service->start_session(session, [this, session, tcp_client](boost::system::error_code ec) {
-        _guard;
-        if (!ec) {
-            session->start();
+    if (!proxy) {
+        session->start();
+        if (!session->is_destroyed()) {
             m_tcp_clients.emplace_back(tcp_client);
-        } else {
-            session->destroy();
-            tcp_client->close_client(true);
         }
-        _unguard;
-    });
+    } else {
+        m_service->start_session(session, [this, session, tcp_client](boost::system::error_code ec) {
+            _guard;
+            if (!ec) {
+                session->start();
+                if (!session->is_destroyed()) {
+                    m_tcp_clients.emplace_back(tcp_client);
+                }
+            } else {
+                session->destroy();
+                tcp_client->close_client(true);
+            }
+            _unguard;
+        });
+    }
 
     // start_session callback immediately and destory the session
     return session->is_destroyed() ? ERR_ABRT : ERR_OK;
