@@ -120,6 +120,11 @@ DNSServer::DNSServer(Service* _service, std::shared_ptr<IDataQueryer> queryer)
 
 DNSServer::~DNSServer() {
     _log_with_date_time("~DNSServer called");
+    close_file_lock(s_dns_file_lock);
+}
+
+void DNSServer::destroy() {
+    _guard;
 
     clear_weak_ptr_list(m_proxy_forwarders);
     clear_weak_ptr_list(m_forwarders);
@@ -134,7 +139,7 @@ DNSServer::~DNSServer() {
     }
     m_forwarders.clear();
 
-    close_file_lock(s_dns_file_lock);
+    _unguard;
 }
 
 bool DNSServer::start() {

@@ -126,6 +126,7 @@ class DNSServer : public std::enable_shared_from_this<DNSServer> {
     DNSServer(Service* _service, std::shared_ptr<IDataQueryer> queryer);
     ~DNSServer();
 
+    void destroy();
     [[nodiscard]] bool start();
     [[nodiscard]] bool is_ip_in_gfwlist(uint32_t ip) const;
 

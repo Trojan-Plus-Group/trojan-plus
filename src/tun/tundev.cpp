@@ -201,6 +201,15 @@ TUNDev::TUNDev(Service* _service, const std::string& _tun_name, const std::strin
 }
 
 TUNDev::~TUNDev() {
+    _log_with_date_time("~TUNDev called");
+    if (m_tun_fd != -1 && !m_is_outside_tun_fd) {
+        m_boost_sd.close();
+    } else {
+        m_boost_sd.release();
+    }
+}
+
+void TUNDev::destroy() {
     _guard;
 
     if (m_quitting) {
@@ -238,12 +247,6 @@ TUNDev::~TUNDev() {
     tcp_remove(tcp_bound_pcbs);
     tcp_remove(tcp_active_pcbs);
     tcp_remove(tcp_tw_pcbs);
-
-    if (m_tun_fd != -1 && !m_is_outside_tun_fd) {
-        m_boost_sd.close();
-    } else {
-        m_boost_sd.release();
-    }
 
     sm_tundev = nullptr;
 

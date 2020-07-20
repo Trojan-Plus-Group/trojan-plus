@@ -220,6 +220,13 @@ void Service::run() {
 void Service::stop() {
     _guard;
 
+// don't destroy all components in order to speed up Android disconnection
+// this progress will be killed in Android
+#ifndef __ANDROID__
+
+    m_tundev->destroy();
+    m_dns_server->destroy();
+
     if (!pipelines.empty()) {
         clear_weak_ptr_list(pipelines);
         _log_with_date_time("[pipeline] destroy all " + to_string(pipelines.size()) + " pipelines");
@@ -235,6 +242,8 @@ void Service::stop() {
         udp_socket.cancel(ec);
         udp_socket.close(ec);
     }
+
+#endif
 
     io_context.stop();
     _unguard;

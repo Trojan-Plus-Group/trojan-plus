@@ -144,6 +144,7 @@ class TUNDev {
       uint16_t _mtu, int _outside_tun_fd = -1);
     ~TUNDev();
 
+    void destroy();
     [[nodiscard]] int get_tun_fd() const { return m_tun_fd; }
 };
 #endif //_TROJAN_TUNDEV_HPP
