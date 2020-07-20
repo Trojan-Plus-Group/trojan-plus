@@ -21,6 +21,7 @@
 import dns.resolver
 import traceback
 import sys
+import time
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from fulltest_utils import print_time_log
@@ -182,6 +183,8 @@ def lookup_domains(domain, ns, count, non_domain):
                         return False
                 else:
                     break
+
+            time.sleep(1)
 
     return True
 

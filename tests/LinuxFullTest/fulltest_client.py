@@ -36,7 +36,7 @@ RECV_DATA_TIMEOUT = 3
 UDP_SEND_PACKET_LENGTH = fulltest_udp_proto.UDP_SEND_PACKET_LENGTH
 UDP_BUFF_SIZE = fulltest_udp_proto.UDP_BUFF_SIZE
 
-UDP_RETRY_MAX_COUNT = 2
+UDP_RETRY_MAX_COUNT = 3
 
 request_url_prefix = "http://"
 compare_folder = "html"
@@ -94,6 +94,8 @@ def get_file_udp(file, length, port):
             print_time_log("get_file_udp [" + file + "] failed!")
             traceback.print_exc(file=sys.stdout)
 
+        time.sleep(1)
+
     return False
 
 
@@ -120,6 +122,8 @@ def post_file_udp(file, data, port):
         except:
             print_time_log("post_file_udp [" + file + "] failed!")
             traceback.print_exc(file=sys.stdout)
+
+        time.sleep(1)
 
     return 'please check traceback exceptions'
 
