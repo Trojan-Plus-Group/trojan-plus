@@ -1,4 +1,5 @@
 # Trojan Plus Project
+![](https://raw.githubusercontent.com/wiki/Trojan-Plus-Group/trojan-plus//trojan_plus_logo.png)
 
 ## Introduction
 
