@@ -1,7 +1,7 @@
 /*
  * This file is part of the Trojan Plus project.
  * Trojan is an unidentifiable mechanism that helps you bypass GFW.
- * Trojan Plus is derived from original trojan project and writing 
+ * Trojan Plus is derived from original trojan project and writing
  * for more experimental features.
  * Copyright (C) 2017-2020  The Trojan Authors.
  * Copyright (C) 2020 The Trojan Plus Group Authors.
@@ -23,8 +23,6 @@
 #include "version.h"
 using namespace std;
 
-const string Version::version("10.0.1");
+const string Version::version("10.0.2");
 
-string Version::get_version() {
-    return version;
-}
+string Version::get_version() { return version; }
