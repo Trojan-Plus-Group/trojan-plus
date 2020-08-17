@@ -182,6 +182,7 @@ int main(int argc, const char* argv[]) {
         Log::reset();
 
 #ifndef __ANDROID__
+        g_service.reset();
         exit(EXIT_SUCCESS);
 #endif
 
@@ -190,6 +191,7 @@ int main(int argc, const char* argv[]) {
         _log_with_date_time("exiting. . . ", Log::FATAL);
 
 #ifndef __ANDROID__
+        g_service.reset();
         exit(EXIT_FAILURE);
 #endif
     }

@@ -233,8 +233,13 @@ void Service::stop() {
 // this progress will be killed in Android
 #ifndef __ANDROID__
 
-    m_tundev->destroy();
-    m_dns_server->destroy();
+    if (m_tundev) {
+        m_tundev->destroy();
+    }
+
+    if (m_dns_server) {
+        m_dns_server->destroy();
+    }
 
     if (!pipelines.empty()) {
         clear_weak_ptr_list(pipelines);
