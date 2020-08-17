@@ -74,7 +74,9 @@ Service::Service(Config& config, bool test)
             if (config.get_run_type() == Config::NAT && config.get_tcp().use_tproxy) {
                 bool is_ipv4 = listen_endpoint.protocol().family() == boost::asio::ip::tcp::v4().family();
                 if (!prepare_transparent_socket((int)socket_acceptor.native_handle(), is_ipv4)) {
-                    _log_with_date_time("[tcp] setsockopt IP_TRANSPARENT ipv4 failed!", Log::FATAL);
+                    _log_with_date_time("[nat] [tcp] setsockopt IP_TRANSPARENT failed!", Log::FATAL);
+                } else {
+                    _log_with_date_time("[nat] [tcp] to process TPROXY tcp message", Log::WARN);
                 }
             }
 
