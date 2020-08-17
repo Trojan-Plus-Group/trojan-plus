@@ -773,21 +773,33 @@ static pair<string, uint16_t> get_addr(struct sockaddr_storage addr) {
     _unguard;
 }
 
-std::pair<std::string, uint16_t> recv_target_endpoint(int _fd) {
+std::pair<std::string, uint16_t> recv_target_endpoint(int _fd, bool use_tproxy) {
     _guard;
 
 #ifdef ENABLE_NAT
-    // Taken from https://github.com/shadowsocks/shadowsocks-libev/blob/v3.3.1/src/redir.c.
+    // Taken from
+    // https://github.com/shadowsocks/shadowsocks-libev/blob/31dd81649d4c7f40daab46afc73eb0f03c517aa3/src/redir.c#L111
     sockaddr_storage destaddr;
     memset(&destaddr, 0, sizeof(sockaddr_storage));
     socklen_t socklen = sizeof(destaddr);
-    int error         = getsockopt(_fd, SOL_IPV6, IP6T_SO_ORIGINAL_DST, &destaddr, &socklen);
-    if (error) {
-        error = getsockopt(_fd, SOL_IP, SO_ORIGINAL_DST, &destaddr, &socklen);
+
+    int error = 0;
+    if (use_tproxy) {
+        error = getsockname(_fd, (sockaddr*)&destaddr, &socklen);
+        _log_with_date_time("recv_target_endpoint + getsockname error " + to_string(error), Log::INFO);
+    } else {
+        error = getsockopt(_fd, SOL_IPV6, IP6T_SO_ORIGINAL_DST, &destaddr, &socklen);
         if (error) {
-            return make_pair("", 0);
+            error = getsockopt(_fd, SOL_IP, SO_ORIGINAL_DST, &destaddr, &socklen);
         }
+
+        _log_with_date_time("recv_target_endpoint + getsockopt error " + to_string(error), Log::INFO);
     }
+
+    if (error) {
+        return make_pair("", 0);
+    }
+
     char ipstr[INET6_ADDRSTRLEN];
     uint16_t port;
     if (destaddr.ss_family == AF_INET) {
@@ -862,6 +874,18 @@ pair<string, uint16_t> recv_tproxy_udp_msg(
     _unguard;
 }
 
+bool prepare_transparent_socket(int fd, bool is_ipv4){
+    int opt     = 1;
+    int sol     = is_ipv4 ? SOL_IP : SOL_IPV6;
+
+    if (setsockopt(fd, sol, IP_TRANSPARENT, &opt, sizeof(opt)) != 0) {
+        _log_with_date_time("setsockopt fd [" + to_string(fd) + "] IP_TRANSPARENT failed!", Log::FATAL);
+        return false;
+    }
+
+    return true;
+}
+
 bool prepare_nat_udp_bind(int fd, bool is_ipv4, bool recv_ttl) {
     _guard;
 
@@ -869,7 +893,7 @@ bool prepare_nat_udp_bind(int fd, bool is_ipv4, bool recv_ttl) {
     int sol     = is_ipv4 ? SOL_IP : SOL_IPV6;
     int ip_recv = is_ipv4 ? IP_RECVORIGDSTADDR : IPV6_RECVORIGDSTADDR;
 
-    if (setsockopt(fd, sol, IP_TRANSPARENT, &opt, sizeof(opt)) != 0) {
+    if (!prepare_transparent_socket(fd, is_ipv4)) {
         _log_with_date_time("[udp] setsockopt IP_TRANSPARENT failed!", Log::FATAL);
         return false;
     }
@@ -919,12 +943,16 @@ bool prepare_nat_udp_target_bind(
 
 #else
 
-std::pair<std::string, uint16_t> recv_target_endpoint(int _native_fd) {
+std::pair<std::string, uint16_t> recv_target_endpoint(int _native_fd, bool use_tproxy) {
     throw runtime_error("NAT is not supported in Windows");
 }
 
 std::pair<std::string, uint16_t> recv_tproxy_udp_msg(
   int fd, boost::asio::ip::udp::endpoint& target_endpoint, char* buf, int& buf_len, int& ttl) {
+    throw runtime_error("NAT is not supported in Windows");
+}
+
+bool prepare_transparent_socket(int fd, bool is_ipv4){
     throw runtime_error("NAT is not supported in Windows");
 }
 

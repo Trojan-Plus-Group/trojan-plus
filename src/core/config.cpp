@@ -170,6 +170,7 @@ void Config::populate(const ptree& tree) {
     tcp.keep_alive       = tree.get("tcp.keep_alive", true);
     tcp.reuse_port       = tree.get("tcp.reuse_port", false);
     tcp.fast_open        = tree.get("tcp.fast_open", false);
+    tcp.use_tproxy       = tree.get("tcp.use_tproxy", false);
     tcp.fast_open_qlen   = tree.get("tcp.fast_open_qlen", default_tcp_fast_open_qlen);
     tcp.connect_time_out = tree.get("tcp.connect_time_out", default_tcp_connect_time_out);
 
