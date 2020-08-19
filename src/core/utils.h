@@ -338,7 +338,7 @@ class ReadBufWithGuard {
 
     inline operator std::string_view() const { return streambuf_to_string_view(read_buf); }
 
-    inline operator boost::asio::streambuf&() { return read_buf; }
+    inline operator boost::asio::streambuf &() { return read_buf; }
 
     inline void begin_read(const char* __file__, int __line__) {
         _guard;
@@ -597,13 +597,14 @@ template <class T> bool safe_atov(const std::string& str, T& val) {
     _unguard;
 }
 
-std::pair<std::string, uint16_t> recv_target_endpoint(int _native_fd);
+std::pair<std::string, uint16_t> recv_target_endpoint(int _native_fd, bool use_tproxy);
 std::pair<std::string, uint16_t> recv_tproxy_udp_msg(
   int fd, boost::asio::ip::udp::endpoint& target_endpoint, char* buf, int& buf_len, int& ttl);
 bool set_udp_send_recv_buf(int fd, int buf_size);
 boost::asio::ip::udp::endpoint make_udp_endpoint_safe(
   const std::string& address, uint16_t port, boost::system::error_code& ec);
 
+bool prepare_transparent_socket(int fd, bool is_ipv4);
 bool prepare_nat_udp_bind(int fd, bool is_ipv4, bool recv_ttl);
 bool prepare_nat_udp_target_bind(
   int fd, bool is_ipv4, const boost::asio::ip::udp::endpoint& udp_target_endpoint, int buf_size);

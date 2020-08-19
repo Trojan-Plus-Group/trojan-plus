@@ -80,6 +80,7 @@ class Config {
         bool keep_alive;
         bool reuse_port;
         bool fast_open;
+        bool use_tproxy;
         int fast_open_qlen;
         int connect_time_out;
     };

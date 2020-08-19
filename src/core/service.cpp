@@ -71,6 +71,15 @@ Service::Service(Config& config, bool test)
             socket_acceptor.open(listen_endpoint.protocol());
             socket_acceptor.set_option(tcp::acceptor::reuse_address(true));
 
+            if (config.get_run_type() == Config::NAT && config.get_tcp().use_tproxy) {
+                bool is_ipv4 = listen_endpoint.protocol().family() == boost::asio::ip::tcp::v4().family();
+                if (!prepare_transparent_socket((int)socket_acceptor.native_handle(), is_ipv4)) {
+                    _log_with_date_time("[nat] [tcp] setsockopt IP_TRANSPARENT failed!", Log::FATAL);
+                } else {
+                    _log_with_date_time("[nat] [tcp] to process TPROXY tcp message", Log::WARN);
+                }
+            }
+
             if (config.get_tcp().reuse_port) {
 #ifdef ENABLE_REUSE_PORT
                 socket_acceptor.set_option(reuse_port(true));
@@ -224,8 +233,13 @@ void Service::stop() {
 // this progress will be killed in Android
 #ifndef __ANDROID__
 
-    m_tundev->destroy();
-    m_dns_server->destroy();
+    if (m_tundev) {
+        m_tundev->destroy();
+    }
+
+    if (m_dns_server) {
+        m_dns_server->destroy();
+    }
 
     if (!pipelines.empty()) {
         clear_weak_ptr_list(pipelines);
