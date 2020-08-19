@@ -813,7 +813,7 @@ std::pair<std::string, uint16_t> recv_target_endpoint(int _fd, bool use_tproxy) 
     }
     return make_pair(ipstr, port);
 #else  // ENABLE_NAT
-    return make_pair("", (uint16_t)_fd);
+    return make_pair(use_tproxy ? "" : "0", (uint16_t)_fd);
 #endif // ENABLE_NAT
 
     _unguard;
@@ -874,9 +874,9 @@ pair<string, uint16_t> recv_tproxy_udp_msg(
     _unguard;
 }
 
-bool prepare_transparent_socket(int fd, bool is_ipv4){
-    int opt     = 1;
-    int sol     = is_ipv4 ? SOL_IP : SOL_IPV6;
+bool prepare_transparent_socket(int fd, bool is_ipv4) {
+    int opt = 1;
+    int sol = is_ipv4 ? SOL_IP : SOL_IPV6;
 
     if (setsockopt(fd, sol, IP_TRANSPARENT, &opt, sizeof(opt)) != 0) {
         _log_with_date_time("setsockopt fd [" + to_string(fd) + "] IP_TRANSPARENT failed!", Log::FATAL);
@@ -952,9 +952,7 @@ std::pair<std::string, uint16_t> recv_tproxy_udp_msg(
     throw runtime_error("NAT is not supported in Windows");
 }
 
-bool prepare_transparent_socket(int fd, bool is_ipv4){
-    throw runtime_error("NAT is not supported in Windows");
-}
+bool prepare_transparent_socket(int fd, bool is_ipv4) { throw runtime_error("NAT is not supported in Windows"); }
 
 bool prepare_nat_udp_bind(int fd, bool is_ipv4, bool recv_ttl) {
     throw runtime_error("NAT is not supported in Windows");
