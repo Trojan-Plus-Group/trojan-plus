@@ -6,8 +6,8 @@
 It's compatible with [original trojan](https://github.com/trojan-gfw/trojan) with following **experimental features**:
 
 * [NAT for udp](https://github.com/Trojan-Plus-Group/trojan-plus/wiki/Configure#nat-config)
-* [Pipeline Mode to decrease latency](https://github.com/yuchting/trojan/wiki/Why-we-need-Pipeline-mode)
-* [Loadbalance for 2+ servers to increase bandwidth](https://github.com/yuchting/trojan/wiki/Why-we-need-load-balance-mode)
+* [Pipeline Mode to decrease latency](https://github.com/Trojan-Plus-Group/trojan-plus/wiki/Why-we-need-Pipeline-mode)
+* [Loadbalance for 2+ servers to increase bandwidth](https://github.com/Trojan-Plus-Group/trojan-plus/wiki/Why-we-need-load-balance-mode)
 * [Proxy ICMP message](https://github.com/Trojan-Plus-Group/trojan-plus/wiki/Can-we-proxy-ICMP-message-(To-transfer-ping))
 
 Trojan plus can be used as client or server to connect original trojan server or client, so if you just upgrade trojan plus binary with old config file, it can work all the same, we has optimized original trojan project a lot, especially in NAT mode.
