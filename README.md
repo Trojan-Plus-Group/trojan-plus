@@ -46,6 +46,14 @@ Here's a [config wiki](https://github.com/Trojan-Plus-Group/trojan-plus/wiki/Con
 * [mariadb](https://mariadb.com/kb/en/legal-documents-mariadb-license/)
 * [GSL](https://github.com/microsoft/GSL)
 
+## Mobile client
+
+There is a repo that developed for Trojan Plus especially in mobile devices:
+
+https://github.com/Trojan-Plus-Group/trojan-plus-app
+
+Usage or performance testing or even contribution are very welcome.
+
 ## License
 
 We follow original trojan's [GPLv3](LICENSE)
