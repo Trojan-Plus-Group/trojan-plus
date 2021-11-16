@@ -1,4 +1,4 @@
-/*
+﻿/*
  * This file is part of the trojan plus project.
  * Trojan is an unidentifiable mechanism that helps you bypass GFW.
  * Copyright (C) 2017-2020  The Trojan Plust Group Authors.
@@ -36,7 +36,8 @@ Pipeline::Pipeline(Service* _service, const Config& config, boost::asio::ssl::co
       out_socket(_service->get_io_context(), ssl_context),
       connected(false),
       resolver(_service->get_io_context()),
-      config(config) {
+      config(config),
+      timeout_timer(_service->get_io_context()) {
     _guard;
 
     pipeline_id = s_pipeline_id_counter++;
@@ -62,6 +63,50 @@ Pipeline::Pipeline(Service* _service, const Config& config, boost::asio::ssl::co
 
 Pipeline::~Pipeline() { _log_with_date_time("~Pipeline called!"); }
 
+void Pipeline::refresh_timeout_checker() { 
+    timeout_timer_checker = time(nullptr);
+}
+
+void Pipeline::start_timeout_timer() {
+    _guard;
+
+    boost::system::error_code ec;
+    if (timeout_timer_checker == 0) {
+        timeout_timer_checker = time(nullptr);
+    } else {
+        timeout_timer.cancel(ec);
+        if (ec) {
+            output_debug_info_ec(ec);
+            destroy();
+            return;
+        }
+    }
+
+    auto timeout = config.get_experimental().pipeline_timeout;
+
+    timeout_timer.expires_after(chrono::seconds(timeout));
+    auto self = shared_from_this();
+    timeout_timer.async_wait([this, self, timeout](const boost::system::error_code error) {
+        _guard;
+        if (!error) {
+            auto curr = time(nullptr);
+            if (curr - timeout_timer_checker < timeout) {
+                start_timeout_timer();
+                return;
+            }
+
+            _log_with_date_time("pipeline " + to_string(get_pipeline_id()) + " timeout and is goint to be destroied");
+            destroy();
+        }
+        else {
+            output_debug_info_ec(error);
+        }
+        _unguard;
+    });
+
+    _unguard;
+}
+
 void Pipeline::start() {
     _guard;
 
@@ -78,6 +123,8 @@ void Pipeline::start() {
 
           _log_with_date_time(
             "pipeline " + to_string(get_pipeline_id()) + " is going to connect remote server and send password...");
+
+          start_timeout_timer();
           out_async_recv();
           _unguard;
       });
@@ -106,6 +153,8 @@ void Pipeline::session_async_send_cmd(PipelineRequest::Command cmd, Session& ses
       },
       move(sent_handler));
 
+    refresh_timeout_checker();
+
     _unguard;
 }
 
@@ -122,6 +171,8 @@ void Pipeline::session_async_send_icmp(const std::string_view& send_data, SentHa
     sending_data_cache.push_data(
       [&](boost::asio::streambuf& buf) { PipelineRequest::generate(buf, PipelineRequest::ICMP, 0, send_data); },
       move(sent_handler));
+
+    refresh_timeout_checker();
 
     _unguard;
 }

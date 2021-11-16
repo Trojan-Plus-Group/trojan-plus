@@ -1,4 +1,4 @@
-/*
+﻿/*
  * This file is part of the Trojan Plus project.
  * Trojan is an unidentifiable mechanism that helps you bypass GFW.
  * Trojan Plus is derived from original trojan project and writing
@@ -97,6 +97,7 @@ class Config {
 
     using Experimental = struct {
         uint32_t pipeline_num;
+        uint32_t pipeline_timeout;
         uint32_t pipeline_ack_window;
         std::vector<std::string> pipeline_loadbalance_configs;
         std::vector<std::shared_ptr<Config>> _pipeline_loadbalance_configs;

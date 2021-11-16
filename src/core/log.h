@@ -97,6 +97,9 @@ extern std::unique_ptr<char> __debug_str_buf;
     {}
 #endif
 
+
+#ifndef NO_ANY_LOGS
+
 #define _log_with_date_time_ALL(...)                                                                                   \
     do {                                                                                                               \
         if (Log::level <= Log::ALL) {                                                                                  \
@@ -153,6 +156,25 @@ extern std::unique_ptr<char> __debug_str_buf;
         }                                                                                                              \
     } while (false)
 
+#else
+
+#define _log_with_date_time_ALL(...)   
+    {}
+#define _log_with_endpoint_ALL(...)                                                                                    \
+    {}
+#define _log_with_date_time(...)                                                                                       \
+    {}
+#define _log_with_endpoint(...)                                                                                        \
+    {}
+#define _log(...)                                                                                                      \
+    {}
+#define output_debug_info_ec(ec)                                                                                       \
+    {}
+#define output_debug_info()                                                                                            \
+    {}
+#endif // NO_ANY_LOGS
+
+
 #define _assert(exp)                                                                                                   \
     do {                                                                                                               \
         if (!(exp)) {                                                                                                  \
@@ -161,6 +183,7 @@ extern std::unique_ptr<char> __debug_str_buf;
                 (const char*)__FILE__, __LINE__, (const char*)__FUNCTION__)));                                         \
         }                                                                                                              \
     } while (false)
+
 
 #ifdef USE_GUARD_BACKSTACK
 
@@ -187,5 +210,6 @@ extern std::unique_ptr<char> __debug_str_buf;
     } while (false)
 
 #endif // USE_GUARD_BACKSTACK
+
 
 #endif // _LOG_H_
