@@ -233,6 +233,9 @@ void Pipeline::out_async_recv() {
               output_debug_info_ec(error);
               destroy();
           } else {
+              
+              refresh_timeout_checker();
+
               out_read_buf.commit(length);
               while (out_read_buf.size() != 0) {
                   PipelineRequest req;
