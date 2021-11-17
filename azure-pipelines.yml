@@ -19,6 +19,7 @@ stages:
       submodules: true
     - script: |
         set -euo pipefail
+        set -v
         cmake -DMYSQL_INCLUDE_DIR=/usr/local/include/mariadb -DMYSQL_LIBRARY=/usr/local/lib/mariadb/libmysqlclient.a -DDEFAULT_CONFIG=config.json -DFORCE_TCP_FASTOPEN=ON -DBoost_USE_STATIC_LIBS=ON .
         make -j$(nproc)
         strip -s trojan
@@ -33,6 +34,7 @@ stages:
       submodules: true
     - script: |
         set -euo pipefail
+        set -v
         brew install boost openssl@1.1
         cmake -DBoost_USE_STATIC_LIBS=ON -DOPENSSL_INCLUDE_DIR=/usr/local/opt/openssl@1.1/include -DOPENSSL_CRYPTO_LIBRARY=/usr/local/opt/openssl@1.1/lib/libcrypto.a -DOPENSSL_SSL_LIBRARY=/usr/local/opt/openssl@1.1/lib/libssl.a -DDEFAULT_CONFIG=config.json -DENABLE_MYSQL=OFF -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 .
         make -j$(nproc)
@@ -48,6 +50,7 @@ stages:
       submodules: true
     - bash: |
         set -euo pipefail
+        set -v
 
         OPENSSL_VERSION=1_1_1g
         curl -LO http://www.vremsoft.com/uploads/windows/OpenSSL/Win64OpenSSL-${OPENSSL_VERSION}.exe
@@ -116,6 +119,7 @@ stages:
       artifact: WindowsBinary
     - bash: |
         set -euo pipefail
+        set -v
         BINARY="$PIPELINE_WORKSPACE/WindowsBinary/trojan.exe"
         py -3 -m pip install PySocks psutil dnspython
         cd tests/LinuxFullTest/
@@ -131,6 +135,7 @@ stages:
       artifact: macOSBinary
     - script: |
         set -euo pipefail
+        set -v
         BINARY="$PIPELINE_WORKSPACE/macOSBinary/trojan"
         chmod +x "$BINARY"
         cd tests/LinuxFullTest/
@@ -175,6 +180,7 @@ stages:
       artifact: macOSBinary
     - script: |
         set -euo pipefail
+        set -v
         BINARY="$PIPELINE_WORKSPACE/macOSBinary/trojan"
         chmod +x "$BINARY"
         mkdir trojan
