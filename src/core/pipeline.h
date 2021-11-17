@@ -56,7 +56,7 @@ class Pipeline : public std::enable_shared_from_this<Pipeline> {
     const Config& config;
     void out_async_recv();
 
-    time_t timeout_timer_checker{};
+    time_t timeout_timer_checker;
     boost::asio::steady_timer timeout_timer;
     void start_timeout_timer();
     inline void refresh_timeout_checker();

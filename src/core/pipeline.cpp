@@ -37,6 +37,7 @@ Pipeline::Pipeline(Service* _service, const Config& config, boost::asio::ssl::co
       connected(false),
       resolver(_service->get_io_context()),
       config(config),
+      timeout_timer_checker(0),
       timeout_timer(_service->get_io_context()) {
     _guard;
 
@@ -70,22 +71,22 @@ void Pipeline::refresh_timeout_checker() {
 void Pipeline::start_timeout_timer() {
     _guard;
 
-    boost::system::error_code ec;
+    auto timeout = config.get_experimental().pipeline_timeout;
+
+    if(timeout == 0){
+        return;
+    }
+    
     if (timeout_timer_checker == 0) {
         timeout_timer_checker = time(nullptr);
     } else {
+        boost::system::error_code ec;
         timeout_timer.cancel(ec);
         if (ec) {
             output_debug_info_ec(ec);
             destroy();
             return;
         }
-    }
-
-    auto timeout = config.get_experimental().pipeline_timeout;
-
-    if(timeout == 0){
-        return;
     }
 
     timeout_timer.expires_after(chrono::seconds(timeout));
@@ -100,6 +101,7 @@ void Pipeline::start_timeout_timer() {
             }
 
             _log_with_date_time("pipeline " + to_string(get_pipeline_id()) + " got timeout to be destroyed", Log::INFO);
+            timeout_timer_checker = 0;
             destroy();
         }
         else {
@@ -312,6 +314,14 @@ void Pipeline::destroy() {
     _log_with_date_time("pipeline " + to_string(get_pipeline_id()) + " destroyed. close all " +
                           to_string(sessions.size()) + " sessions in this pipeline.",
       Log::INFO);
+
+    if(timeout_timer_checker != 0){
+        boost::system::error_code ec;
+        timeout_timer.cancel(ec);
+        if (ec) {
+            output_debug_info_ec(ec);
+        }
+    }
 
     sending_data_cache.destroy();
 
