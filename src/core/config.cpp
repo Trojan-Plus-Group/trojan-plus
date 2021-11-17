@@ -63,6 +63,7 @@ const static int default_tcp_connect_time_out = 10;
 const static uint16_t default_mysql_server_port = 3306;
 
 const static uint32_t default_experimental_pipeline_num        = 0;
+const static uint32_t default_experimental_pipeline_timeout    = 600;
 const static uint32_t default_experimental_pipeline_ack_window = 200;
 
 const static uint16_t default_tun_mtu = 1500;
@@ -183,6 +184,7 @@ void Config::populate(const ptree& tree) {
     mysql.cafile      = tree.get("mysql.cafile", string());
 
     experimental.pipeline_num = tree.get("experimental.pipeline_num", default_experimental_pipeline_num);
+    experimental.pipeline_timeout = tree.get("experimental.pipeline_timeout", default_experimental_pipeline_timeout);
     experimental.pipeline_ack_window =
       tree.get("experimental.pipeline_ack_window", default_experimental_pipeline_ack_window);
     experimental.pipeline_loadbalance_configs.clear();

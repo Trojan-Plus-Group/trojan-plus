@@ -90,6 +90,8 @@ void Session::udp_timer_async_wait(int timeout /*=-1*/) {
 
             _log_with_date_time("session_id: " + to_string(get_session_id()) + " UDP session timeout");
             destroy();
+        } else {
+            output_debug_info_ec(error);
         }
         _unguard;
     });
