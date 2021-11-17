@@ -84,18 +84,22 @@ void Pipeline::start_timeout_timer() {
 
     auto timeout = config.get_experimental().pipeline_timeout;
 
+    if(timeout == 0){
+        return;
+    }
+
     timeout_timer.expires_after(chrono::seconds(timeout));
     auto self = shared_from_this();
     timeout_timer.async_wait([this, self, timeout](const boost::system::error_code error) {
         _guard;
         if (!error) {
-            auto curr = time(nullptr);
-            if (curr - timeout_timer_checker < timeout) {
+            time_t curr = time(nullptr);
+            if (curr - timeout_timer_checker < (time_t)timeout) {
                 start_timeout_timer();
                 return;
             }
 
-            _log_with_date_time("pipeline " + to_string(get_pipeline_id()) + " timeout and is goint to be destroied");
+            _log_with_date_time("pipeline " + to_string(get_pipeline_id()) + " got timeout to be destroyed", Log::INFO);
             destroy();
         }
         else {
