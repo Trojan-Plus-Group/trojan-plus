@@ -124,7 +124,7 @@ void Pipeline::start() {
           out_socket_endpoint = out_socket.next_layer().remote_endpoint();
 
           string data(config.get_password().cbegin()->first);
-          data += "\r\n";
+          data += "\r\nPP";
           sending_data_cache.insert_data(move(data));
 
           _log_with_date_time(

@@ -121,15 +121,14 @@ void PipelineSession::move_socket_to_serversession(const std::string_view& data)
 void PipelineSession::in_recv(const string_view&) {
     if (status == HANDSHAKE) {
         string_view data = in_read_buf;
-        size_t npos      = data.find("\r\n");
+        size_t npos      = data.find("\r\nPP");
         if (npos == string::npos) {
             if (data.length() < Config::MAX_PASSWORD_LENGTH) {
                 in_async_read();
-                return;
             } else {
                 move_socket_to_serversession(data);
-                return;
             }
+            return;
         }
 
         if (data.substr(0, npos) != get_config().get_password().cbegin()->first) {
@@ -141,7 +140,7 @@ void PipelineSession::in_recv(const string_view&) {
 
         gc_timer.cancel();
         status = STREAMING;
-        in_read_buf.consume(npos + 2);
+        in_read_buf.consume(npos + 4);
         process_streaming_data();
     } else if (status == STREAMING) {
         process_streaming_data();
