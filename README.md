@@ -27,11 +27,13 @@ Trojan plus project's best running environment is Linux system in NAT mode (migh
   - or Visual Studio 2017(15.7)+ in Windows
   - or Clang 5+ (XCode 6+) in MacOS
 * [CMake](https://cmake.org/) >= 3.7.2
-* [Boost](http://www.boost.org/) >= 1.72.0 ( 1.73.0 recommend )
+* [Boost](http://www.boost.org/) >= 1.72.0 ( 1.90.0 recommend )
 * [OpenSSL](https://www.openssl.org/) >= 1.1.0 ( 1.1.1g recommend)
 * [libmysqlclient](https://downloads.mariadb.orgd)
 
 Here is a [compiling guide](https://github.com/Trojan-Plus-Group/trojan-plus/wiki/Compiling) to guide you compiling trojan plus in CentOS, you can copy and modify it for your system.
+
+For macOS users, please refer to the updated `docs/build.md` for specific instructions on dependency management (especially Boost).
 
 ### Configure
 

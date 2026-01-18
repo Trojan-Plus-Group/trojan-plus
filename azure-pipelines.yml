@@ -20,7 +20,7 @@ stages:
     - script: |
         set -euo pipefail
         set -v
-        cmake -DMYSQL_INCLUDE_DIR=/usr/local/include/mariadb -DMYSQL_LIBRARY=/usr/local/lib/mariadb/libmysqlclient.a -DDEFAULT_CONFIG=config.json -DFORCE_TCP_FASTOPEN=ON -DBoost_USE_STATIC_LIBS=ON .
+        cmake -DDEFAULT_CONFIG=config.json -DFORCE_TCP_FASTOPEN=ON -DBoost_USE_STATIC_LIBS=ON .
         make -j$(nproc)
         strip -s trojan
     - publish: $(System.DefaultWorkingDirectory)/trojan
@@ -35,9 +35,9 @@ stages:
     - script: |
         set -euo pipefail
         set -v
-        brew install boost openssl@1.1
-        cmake -DBoost_USE_STATIC_LIBS=ON -DOPENSSL_INCLUDE_DIR=/usr/local/opt/openssl@1.1/include -DOPENSSL_CRYPTO_LIBRARY=/usr/local/opt/openssl@1.1/lib/libcrypto.a -DOPENSSL_SSL_LIBRARY=/usr/local/opt/openssl@1.1/lib/libssl.a -DDEFAULT_CONFIG=config.json -DENABLE_MYSQL=OFF -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 .
-        make -j$(nproc)
+        brew install boost openssl
+        cmake -DBoost_USE_STATIC_LIBS=ON -DOPENSSL_ROOT_DIR=$(brew --prefix openssl) -DOPENSSL_USE_STATIC_LIBS=ON -DDEFAULT_CONFIG=config.json -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 .
+        make -j$(sysctl -n hw.ncpu)
         strip -SXTx trojan
     - publish: $(System.DefaultWorkingDirectory)/trojan
       artifact: macOSBinary
@@ -52,21 +52,20 @@ stages:
         set -euo pipefail
         set -v
 
-        OPENSSL_VERSION=1_1_1g
-        curl -LO http://www.vremsoft.com/uploads/windows/OpenSSL/Win64OpenSSL-${OPENSSL_VERSION}.exe
-        powershell ".\\Win64OpenSSL-${OPENSSL_VERSION}.exe /silent /sp- /suppressmsgboxes /DIR='C:\\Program Files\\OpenSSL-Win64'"
+        curl -L -o Win64OpenSSL.exe https://slproweb.com/download/Win64OpenSSL-1_1_1w.exe
+        powershell ".\\Win64OpenSSL.exe /silent /sp- /suppressmsgboxes /DIR='C:\\Program Files\\OpenSSL-Win64'"
 
-        BOOST_VERSION_DOT=1.73.0
-        BOOST_VERSION=1_73_0
+        BOOST_VERSION_DOT=1.87.0
+        BOOST_VERSION=1_87_0
         
-        curl -LO https://boostorg.jfrog.io/artifactory/main/release/${BOOST_VERSION_DOT}/source/boost_${BOOST_VERSION}.zip
+        curl -L -o boost_${BOOST_VERSION}.zip https://archives.boost.io/release/${BOOST_VERSION_DOT}/source/boost_${BOOST_VERSION}.zip
         unzip -q boost_${BOOST_VERSION}.zip
         cd boost_${BOOST_VERSION}
         ./bootstrap.bat
-        ./b2 --with-system --with-program_options variant=release link=static threading=multi runtime-link=shared
+        ./b2 --with-system --with-program_options variant=release link=static threading=multi runtime-link=shared address-model=64
         cd ..
 
-        cmake -DBoost_INCLUDE_DIR="$(pwd)/boost_${BOOST_VERSION}" -DBoost_USE_STATIC_LIBS=ON -DOPENSSL_ROOT_DIR='C:/Program Files/OpenSSL-Win64' -DOPENSSL_USE_STATIC_LIBS=ON -DENABLE_MYSQL=OFF .
+        cmake -DBoost_INCLUDE_DIR="$(pwd)/boost_${BOOST_VERSION}" -DBoost_USE_STATIC_LIBS=ON -DOPENSSL_ROOT_DIR='C:/Program Files/OpenSSL-Win64' -DOPENSSL_USE_STATIC_LIBS=ON .
         cmake --build . --config Release
     - publish: $(System.DefaultWorkingDirectory)/Release/trojan.exe
       artifact: WindowsBinary
@@ -80,6 +79,8 @@ stages:
       image: trojanplusgroup/trojan-test:latest
       options: --privileged
     steps:
+    - checkout: self
+      submodules: true
     - download: current
       artifact: LinuxBinary
     - script: |
@@ -115,6 +116,8 @@ stages:
     pool:
       vmImage: windows-latest
     steps:
+    - checkout: self
+      submodules: true
     - download: current
       artifact: WindowsBinary
     - bash: |
@@ -131,6 +134,8 @@ stages:
     pool:
       vmImage: macOS-latest
     steps:
+    - checkout: self
+      submodules: true
     - download: current
       artifact: macOSBinary
     - script: |
@@ -139,12 +144,8 @@ stages:
         BINARY="$PIPELINE_WORKSPACE/macOSBinary/trojan"
         chmod +x "$BINARY"
         cd tests/LinuxFullTest/
-        PYTHON=/usr/local/opt/python@3.8/bin/python3.8
-        if [ ! -f $PYTHON ]; then
-          brew install python@3.8
-        fi
-        $PYTHON -m pip install PySocks psutil dnspython
-        $PYTHON fulltest_main.py $BINARY -g -n -d 5333
+        python3 -m pip install PySocks psutil dnspython --break-system-packages
+        python3 fulltest_main.py $BINARY -g -n -d 5333
       env:
         PIPELINE_WORKSPACE: $(Pipeline.Workspace)
 

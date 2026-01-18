@@ -592,7 +592,7 @@ void Service::udp_async_read() {
             int ttl         = -1;
 
             targetdst = recv_tproxy_udp_msg((int)udp_socket.native_handle(), udp_recv_endpoint,
-              boost::asio::buffer_cast<char*>(udp_read_buf.prepare(config.get_udp_recv_buf())), read_length, ttl);
+              static_cast<char*>(boost::asio::buffer_sequence_begin(udp_read_buf.prepare(config.get_udp_recv_buf()))->data()), read_length, ttl);
 
             length = read_length < 0 ? 0 : read_length;
             udp_read_buf.commit(length);

@@ -80,13 +80,7 @@ void Pipeline::start_timeout_timer() {
     if (timeout_timer_checker == 0) {
         timeout_timer_checker = time(nullptr);
     } else {
-        boost::system::error_code ec;
-        timeout_timer.cancel(ec);
-        if (ec) {
-            output_debug_info_ec(ec);
-            destroy();
-            return;
-        }
+        timeout_timer.cancel();
     }
 
     timeout_timer.expires_after(chrono::seconds(timeout));
@@ -319,11 +313,7 @@ void Pipeline::destroy() {
       Log::INFO);
 
     if(timeout_timer_checker != 0){
-        boost::system::error_code ec;
-        timeout_timer.cancel(ec);
-        if (ec) {
-            output_debug_info_ec(ec);
-        }
+        timeout_timer.cancel();
     }
 
     sending_data_cache.destroy();
