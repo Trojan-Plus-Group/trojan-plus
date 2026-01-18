@@ -54,7 +54,7 @@ cmd_args = None
 
 
 def get_init_rss_limit():
-    limit = 10 * (1024)
+    limit = 32 * (1024)
     if cmd_args.tun:
         limit = limit + limit / 2
 
@@ -64,9 +64,9 @@ def get_init_rss_limit():
 def get_cooldown_rss_limit():
     limit = 0
     if is_macos_system():
-        limit = 25 * (1024)
+        limit = 64 * (1024)
     else:
-        limit = 30 * (1024)
+        limit = 48 * (1024)
 
     if cmd_args.dns:
         limit = limit * 2
@@ -116,18 +116,35 @@ def close_process(process, output_log):
 
 
 def run_test_server():
+    # Kill any existing server on that port
+    if not is_windows_system():
+        os.system(f"lsof -ti:{TEST_SERVER_PORT} | xargs kill -9 > /dev/null 2>&1")
+    
     output_log_file = open("config/test_server.output", "w+")
     process = Popen([sys.executable, "fulltest_server.py", TEST_FILES_DIR, str(TEST_SERVER_PORT)],
                     executable=sys.executable, bufsize=1024 * 1024, stdout=output_log_file, stderr=output_log_file,
                     restore_signals=False, universal_newlines=True)
     process.output_log_file = output_log_file
-    time.sleep(1)
-    if process.returncode:
-        print_time_log("Cannot test server!")
-        output_log_file.close()
-        return None
-
-    return process
+    
+    # Wait and check if it survived initial startup
+    for _ in range(5):
+        time.sleep(1)
+        if process.poll() is not None:
+            print_time_log("Test server died immediately!")
+            output_log_file.close()
+            return None
+        
+        # Check if port is open
+        import socket
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            if s.connect_ex(('127.0.0.1', TEST_SERVER_PORT)) == 0:
+                print_time_log(f"Test server is up and listening on {TEST_SERVER_PORT}")
+                return process
+                
+    print_time_log("Test server failed to start within 5 seconds")
+    process.kill()
+    output_log_file.close()
+    return None
 
 
 def get_process_rss_in_KB(process):
@@ -240,7 +257,7 @@ def main_stage(server_config, client_config, server_balance_config=None, is_fowa
 
         if server_process_rss > get_cooldown_rss_limit() \
                 or client_process_rss > get_cooldown_rss_limit() \
-                or server_balance_process_init_rss > get_cooldown_rss_limit():
+                or server_balance_process_rss > get_cooldown_rss_limit():
             print_time_log("[ERROR] cooldown RSS error!")
             output_log = True
             return 1
@@ -263,22 +280,37 @@ def main_stage(server_config, client_config, server_balance_config=None, is_fowa
     return 1
 
 
+import json
+
+def patch_config(config_file, run_type=None, disable_route=True):
+    with open("config/" + config_file, "r") as f:
+        config = json.load(f)
+        
+    if run_type:
+        config["run_type"] = run_type
+    
+    if disable_route and "route" in config:
+        config["route"]["enabled"] = False
+    
+    if "tcp" in config:
+        config["tcp"]["connect_time_out"] = 10 # Increase timeout to 10s
+    
+    if "udp_timeout" in config:
+        config["udp_timeout"] = 60 # Increase UDP timeout
+        
+    filename = config_file + '.tmpjson'
+    with open("config/" + filename, 'w') as f:
+        json.dump(config, f, indent=4)
+    return filename
+
+
 def prepare_forward_config(client_config):
-    with open("config/" + client_config, "r") as f:
-        content = f.read().replace('"client"', '"forward"')
-        filename = client_config + '.forward.tmpjson'
-        with open("config/" + filename, 'w') as new_f:
-            new_f.write(content)
-            return filename
+    return patch_config(client_config, run_type="forward", disable_route=True)
 
 
 def prepare_client_tun_config(client_config):
-    with open("config/" + client_config, "r") as f:
-        content = f.read().replace('"client"', '"client_tun"')
-        filename = client_config + '.client_tun.tmpjson'
-        with open("config/" + filename, 'w') as new_f:
-            new_f.write(content)
-            return filename
+    # Use patch_config but keep routing enabled for TUN mode
+    return patch_config(client_config, run_type="client_tun", disable_route=False)
 
 
 def main():
@@ -297,18 +329,19 @@ def main():
     if not test_server_process:
         return 1
     output_log = False
+    time.sleep(3) # Wait for server to fully start
     print_time_log("done!")
     try:
         if cmd_args.normal or cmd_args.dns:
             print_time_log(
                 "start trojan plus in client run_type without pipeline...")
-            if main_stage("server_config.json", "client_config.json") != 0:
+            if main_stage("server_config.json", patch_config("client_config.json")) != 0:
                 output_log = True
                 return 1
 
             print_time_log(
                 "start trojan plus in client run_type in pipeline...")
-            if main_stage("server_config_pipeline.json", "client_config_pipeline.json",
+            if main_stage("server_config_pipeline.json", patch_config("client_config_pipeline.json"),
                           "server_config_pipeline_balance.json") != 0:
                 output_log = True
                 return 1

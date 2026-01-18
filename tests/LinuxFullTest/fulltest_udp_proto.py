@@ -30,7 +30,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from fulltest_utils import print_time_log
 
-UDP_SEND_PACKET_LENGTH = 1472  # MTU - (IP header) - (UDP header)
+UDP_SEND_PACKET_LENGTH = 1200  # Reduced to avoid MTU issues with Pipeline encapsulation
 UDP_BUFF_SIZE = 1024 * 1024
 
 UDP_INDEX_HEADER_SIZE = 1
@@ -74,10 +74,8 @@ def send_udp_file_data(udp_socket, addr, content):
         else:
             raise Exception("udp sendto failed!")
 
-        # wait for a while, otherwise server will flood client in pipeline mode, avoid dropping udp packet
-        # in forward/nat mode, client only has one socket to recv
-        if index % 2 == 0:
-            time.sleep(0.01)
+        # wait for a while to avoid dropping udp packet in pipeline mode
+        time.sleep(0.01)
 
 
 def compose_udp_file_data(data_arr):

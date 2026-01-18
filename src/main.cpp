@@ -162,6 +162,7 @@ int main(int argc, const char* argv[]) {
 
             if (test) {
                 Log::log("The config file looks good.", Log::OFF);
+                g_service.reset();
                 exit(EXIT_SUCCESS);
             }
             signal_set sig(g_service->get_io_context());

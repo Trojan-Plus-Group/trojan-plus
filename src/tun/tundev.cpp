@@ -305,7 +305,7 @@ err_t TUNDev::netif_output_func(struct netif*, struct pbuf* p, const ip4_addr_t*
         } else {
             do {
                 if (p->len > 0) {
-                    auto* write_buff = boost::asio::buffer_cast<uint8_t*>(m_write_fill_buf.prepare(p->len));
+                    auto* write_buff = static_cast<uint8_t*>(boost::asio::buffer_sequence_begin(m_write_fill_buf.prepare(p->len))->data());
                     memcpy(write_buff, (uint8_t*)p->payload, p->len);
                     m_write_fill_buf.commit(p->len);
                 }
@@ -541,7 +541,7 @@ int TUNDev::handle_write_upd_data(const boost::asio::ip::udp::endpoint& local_en
 
     // compose packet
     auto packat_length = header_length + data_len;
-    auto* write_buf    = boost::asio::buffer_cast<uint8_t*>(m_write_fill_buf.prepare(packat_length));
+    auto* write_buf    = static_cast<uint8_t*>(boost::asio::buffer_sequence_begin(m_write_fill_buf.prepare(packat_length))->data());
 
     memcpy(write_buf, &ipv4_hdr, sizeof(ipv4_hdr));
     memcpy(write_buf + sizeof(ipv4_hdr), &udp_hdr, sizeof(udp_hdr));
@@ -735,7 +735,7 @@ void TUNDev::async_read() {
         if (!ec) {
             m_sd_read_buffer.commit(data_len);
 
-            const auto* data = boost::asio::buffer_cast<const char*>(m_sd_read_buffer.data());
+            const auto* data = static_cast<const char*>(boost::asio::buffer_sequence_begin(m_sd_read_buffer.data())->data());
             m_packet_parse_buff.append(data, data_len);
 
             parse_packet();

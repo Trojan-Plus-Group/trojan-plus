@@ -95,7 +95,7 @@ class TUNSession : public Session {
     [[nodiscard]] size_t recv_buf_size() const { return m_recv_buf.size(); }
 
     [[nodiscard]] const uint8_t* recv_buf() const {
-        return boost::asio::buffer_cast<const uint8_t*>(m_recv_buf.data());
+        return static_cast<const uint8_t*>(boost::asio::buffer_sequence_begin(m_recv_buf.data())->data());
     }
 
     virtual void recv_buf_consume(uint16_t _length)  = 0;
