@@ -59,8 +59,8 @@ size_t streambuf_append(
         return 0;
     }
 
-    auto* dest      = boost::asio::buffer_cast<uint8_t*>(target.prepare(n));
-    const auto* src = boost::asio::buffer_cast<const uint8_t*>(append_buf.data()) + start;
+    auto* dest      = static_cast<uint8_t*>(boost::asio::buffer_sequence_begin(target.prepare(n))->data());
+    const auto* src = static_cast<const uint8_t*>(boost::asio::buffer_sequence_begin(append_buf.data())->data()) + start;
     memcpy(dest, src, n);
     target.commit(n);
     return n;
@@ -102,7 +102,7 @@ size_t streambuf_append(boost::asio::streambuf& target, const uint8_t* append_da
 size_t streambuf_append(boost::asio::streambuf& target, char append_char) {
     _guard;
     const size_t char_length = sizeof(char);
-    auto cp = gsl::span<char>(boost::asio::buffer_cast<char*>(target.prepare(char_length)), char_length);
+    auto cp = gsl::span<char>(static_cast<char*>(boost::asio::buffer_sequence_begin(target.prepare(char_length))->data()), char_length);
     cp[0]   = append_char;
     target.commit(char_length);
     return char_length;
@@ -137,7 +137,7 @@ size_t streambuf_append(boost::asio::streambuf& target, const std::string& appen
 
 std::string_view streambuf_to_string_view(const boost::asio::streambuf& target) {
     _guard;
-    return std::string_view(boost::asio::buffer_cast<const char*>(target.data()), target.size());
+    return std::string_view(static_cast<const char*>(boost::asio::buffer_sequence_begin(target.data())->data()), target.size());
     _unguard;
 }
 

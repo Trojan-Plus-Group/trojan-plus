@@ -68,7 +68,7 @@ void Session::udp_timer_async_wait(int timeout /*=-1*/) {
     }
 
     boost::system::error_code ec;
-    udp_gc_timer.cancel(ec);
+    udp_gc_timer.cancel();
     if (ec) {
         output_debug_info_ec(ec);
         destroy();
@@ -106,7 +106,7 @@ void Session::udp_timer_cancel() {
     }
 
     boost::system::error_code ec;
-    udp_gc_timer.cancel(ec);
+    udp_gc_timer.cancel();
     if (ec) {
         output_debug_info_ec(ec);
     }

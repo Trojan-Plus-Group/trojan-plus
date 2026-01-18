@@ -54,7 +54,7 @@ cmd_args = None
 
 
 def get_init_rss_limit():
-    limit = 10 * (1024)
+    limit = 16 * (1024)
     if cmd_args.tun:
         limit = limit + limit / 2
 
@@ -64,7 +64,7 @@ def get_init_rss_limit():
 def get_cooldown_rss_limit():
     limit = 0
     if is_macos_system():
-        limit = 25 * (1024)
+        limit = 40 * (1024)
     else:
         limit = 30 * (1024)
 

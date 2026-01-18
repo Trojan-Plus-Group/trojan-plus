@@ -57,6 +57,7 @@ CTestTestfile.cmake
 build/
 crt/
 win32-build/
+html/
 
 #for fulltest
 /tests/LinuxFullTest/html
