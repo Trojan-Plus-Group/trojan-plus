@@ -63,7 +63,7 @@ In this page, we will look at the config file of trojan. Trojan uses [`JSON`](ht
 - `tcp`: `TCP` specific configurations
     - `no_delay`: whether to disable Nagle's algorithm
     - `keep_alive`: whether to enable TCP Keep Alive
-    - `reuse_port`: whether to enable TCP port reuse (kernel support required)
+    - `reuse_port`: whether to enable TCP port reuse (kernel support required). **Best Practice**: Enabling `reuse_port` (SO_REUSEPORT) allows multiple Trojan processes to listen on the same port. The Linux kernel (since 3.9) automatically distributes incoming connections across these processes using a 4-tuple hash, ensuring high performance and scalability on multi-core systems without lock contention. It is recommended to use a modern Linux kernel (4.5+ for enhanced balancing) for optimal results.
     - `fast_open`: whether to enable TCP Fast Open (kernel support required)
     - `fast_open_qlen`: the server's limit on the size of the queue of TFO requests that have not yet completed the three-way handshake
 
@@ -232,7 +232,7 @@ The NAT config is for transparent proxy. You'll need to [setup iptables rules](h
     - `prefer_ipv4`: whether to connect to the IPv4 address when there are both IPv6 and IPv4 addresses for a domain
     - `no_delay`: whether to disable Nagle's algorithm
     - `keep_alive`: whether to enable TCP Keep Alive
-    - `reuse_port`: whether to enable TCP port reuse (kernel support required)
+    - `reuse_port`: whether to enable TCP port reuse (kernel support required). **Best Practice**: Enabling `reuse_port` (SO_REUSEPORT) allows multiple Trojan processes to listen on the same port. The Linux kernel (since 3.9) automatically distributes incoming connections across these processes using a 4-tuple hash, ensuring high performance and scalability on multi-core systems without lock contention. It is recommended to use a modern Linux kernel (4.5+ for enhanced balancing) for optimal results.
     - `fast_open`: whether to enable TCP Fast Open (kernel support required)
     - `fast_open_qlen`: the server's limit on the size of the queue of TFO requests that have not yet completed the three-way handshake
 - `mysql`: see [Authenticator](authenticator)

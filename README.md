@@ -48,6 +48,14 @@ Here's a [config wiki](https://github.com/Trojan-Plus-Group/trojan-plus/wiki/Con
 * [mariadb](https://mariadb.com/kb/en/legal-documents-mariadb-license/)
 * [GSL](https://github.com/microsoft/GSL)
 
+## Performance Tips
+
+Trojan Plus is optimized for high-performance deployment. Based on our architectural design, here are the recommended practices:
+
+*   **Multi-Process over Multi-Threading**: We intentionally prefer the **Multi-Process** model using `SO_REUSEPORT` over a complex multi-threaded `io_context` pool. This approach leverages kernel-level load balancing (4-tuple hashing), ensures process isolation (stability), and maintains a lock-free execution path for high-throughput traffic. To utilize multi-core CPUs, simply run multiple instances of Trojan Plus with `"reuse_port": true`.
+*   **Kernel Choice**: A modern Linux kernel (4.5 or newer) is highly recommended for its enhanced BPF-based packet distribution, which provides the best load balancing efficiency.
+*   **Logging System**: The existing logging system is kept simple by design. Since logging is typically disabled or set to minimal levels in high-concurrency production environments, it does not pose a performance bottleneck, and thus complex asynchronous logging libraries are not integrated to keep dependencies minimal.
+
 ## Mobile client
 
 There is a repo that developed for Trojan Plus especially in mobile devices:

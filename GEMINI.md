@@ -87,6 +87,17 @@ The project includes both smoke tests and a more comprehensive "full test" suite
 *   **Project Philosophy**: As stated in the `README.md`, `trojan-plus` prioritizes adding effective features over maintaining project simplicity, which is a key difference from the original `trojan` project.
 *   **Configuration**: All runtime configuration is managed through JSON files. Documentation for the configuration options is available in `docs/config.md`.
 
+## Architectural Decisions (January 2026)
+
+### Concurrency Model: Multi-Process over Multi-Thread
+Trojan Plus prioritizes the **Multi-Process** model using `SO_REUSEPORT` for horizontal scaling on multi-core systems.
+*   **Rationale**: This model provides fault isolation and a lock-free execution path by leveraging kernel-level load balancing. It avoids the complexity and potential performance bottlenecks (lock contention) of a shared-memory multi-threaded `io_context` pool.
+*   **Scalability**: High performance is achieved by running multiple independent instances bound to the same port.
+
+### Logging Strategy: Simple and Minimal
+The project maintains a simple, synchronous logging system rather than integrating complex asynchronous libraries like `spdlog`.
+*   **Rationale**: Performance impact is negligible because logs are typically disabled or set to minimal levels in production environments. Keeping the current system maintains a minimal dependency footprint.
+
 ## Recent Changes and Fixes (January 2026)
 
 ### macOS CI Build Repair
