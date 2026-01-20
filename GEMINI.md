@@ -74,11 +74,29 @@ The project includes both smoke tests and a more comprehensive "full test" suite
     # After building, run from the build directory
     ctest
     ```
-*   **Full Tests**: A Python-based test suite located in `tests/LinuxFullTest/`. These are run in the CI pipeline as seen in `azure-pipelines.yml` and provide more in-depth testing of different modes.
+*   **Full Tests**: A Python-based test suite located in `tests/LinuxFullTest/`. These tests require Python 3 and dependencies like `PySocks`, `psutil`, and `dnspython`.
+
+    **Linux**:
     ```bash
-    # Example from CI pipeline
     cd tests/LinuxFullTest/
+    # Basic full test
     sudo python3.8 fulltest_main.py /path/to/build/trojan -g -d 5333
+    # TUN mode test (requires root and manual network setup as seen in CI)
+    sudo python3.8 fulltest_main.py /path/to/build/trojan -t -n -d 5333
+    ```
+
+    **macOS**:
+    ```bash
+    cd tests/LinuxFullTest/
+    python3 -m pip install PySocks psutil dnspython --break-system-packages
+    python3 fulltest_main.py /path/to/build/trojan -g -n -d 5333
+    ```
+
+    **Windows**:
+    ```bash
+    cd tests/LinuxFullTest/
+    py -3 -m pip install PySocks psutil dnspython
+    py -3 fulltest_main.py /path/to/build/trojan.exe -g -n -d 5333
     ```
 
 ## Development Conventions
@@ -106,4 +124,10 @@ Fixed a critical failure in the macOS CI pipeline caused by environmental change
 *   **OpenSSL Upgrade**: Switched from the deprecated `openssl@1.1` to the current `openssl` (v3.x). Updated `azure-pipelines.yml` to use `brew --prefix openssl` to dynamically locate the library paths, ensuring compatibility with OpenSSL 3.
 *   **Build Robustness**: Replaced the Linux-specific `nproc` command with the macOS-native `sysctl -n hw.ncpu` for parallel compilation in the CI script.
 *   **Verification**: The changes were verified with a successful local build on macOS using the updated configuration.
+
+### Mimalloc Integration (January 2026)
+Integrated Microsoft's **mimalloc** high-performance allocator into the custom memory allocator system.
+*   **Implementation**: Added `miallocator` wrapper in `src/mem/memallocator.cpp` to provide `mimalloc` backend when enabled.
+*   **CMake Configuration**: Introduced `-DENABLE_MIMALLOC=ON/OFF` option. The build system automatically detects `mimalloc` installations (including Homebrew paths on macOS).
+*   **Performance**: Improved memory allocation efficiency, complementing the project's performance-oriented architectural decisions.
 

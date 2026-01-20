@@ -203,10 +203,10 @@ void Config::populate(const ptree& tree) {
                 _log_with_date_time("Pipeline will use load balance config:", Log::WARN);
                 for (const auto& item : experimental.pipeline_loadbalance_configs) {
 
-                    auto other = make_shared<Config>();
+                    auto other = TP_MAKE_SHARED(Config);
                     other->load(item);
 
-                    auto ssl = make_shared<boost::asio::ssl::context>(context::sslv23);
+                    auto ssl = TP_MAKE_SHARED(boost::asio::ssl::context, context::sslv23);
                     other->prepare_ssl_context(*ssl, tmp);
 
                     experimental._pipeline_loadbalance_configs.emplace_back(other);

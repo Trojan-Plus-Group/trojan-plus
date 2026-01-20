@@ -1,3 +1,4 @@
+#include "mem/memallocator.h"
 /*
  * This file is part of the Trojan Plus project.
  * Trojan is an unidentifiable mechanism that helps you bypass GFW.
@@ -158,7 +159,7 @@ int main(int argc, const char* argv[]) {
             } else {
                 config.load(config_file);
             }
-            g_service = make_shared<Service>(config, test);
+            g_service = TP_MAKE_SHARED(Service, config, test);
 
             if (test) {
                 Log::log("The config file looks good.", Log::OFF);

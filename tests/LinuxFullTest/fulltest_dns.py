@@ -208,6 +208,8 @@ def start_query(ns, count, port):
     global query_port
     query_port = port
 
+    print_time_log(f'start dns test @{ns}:{query_port}')
+
     with ThreadPoolExecutor(max_workers=PARALLEL_REQUEST_COUNT) as executor:
         for _ in range(0, 2):
             print_time_log('start lookup ' +

@@ -35,7 +35,8 @@ using namespace std;
 using namespace boost::posix_time;
 using namespace boost::asio::ip;
 
-unique_ptr<char> __debug_str_buf(new char[__max_debug_str_buf_size]);
+#include "mem/memallocator.h"
+tp::tj_unique_ptr<char[]> __debug_str_buf(TP_NEW_ARR(char, __max_debug_str_buf_size));
 
 Log::Level Log::level(INVALID);
 FILE* Log::keylog(nullptr);

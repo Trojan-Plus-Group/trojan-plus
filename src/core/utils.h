@@ -22,6 +22,7 @@
 #ifndef _TROJAN_UTILS_H_
 #define _TROJAN_UTILS_H_
 
+#include "mem/memallocator.h"
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ip/udp.hpp>
@@ -285,7 +286,7 @@ class SendingDataAllocator {
         _guard;
         auto buf = std::shared_ptr<boost::asio::streambuf>(nullptr);
         if (free_bufs.empty()) {
-            buf = std::make_shared<boost::asio::streambuf>();
+            buf = TP_MAKE_SHARED(boost::asio::streambuf);
             allocated.push_back(buf);
         } else {
             buf = free_bufs.front();
@@ -472,7 +473,7 @@ void connect_out_socket(ThisT this_ptr, std::string addr, std::string port, boos
           if (this_ptr->get_config().get_tcp().connect_time_out > 0) {
               // out_socket.async_connect will be stuck forever when the host is not reachable
               // we must set a timeout timer
-              timeout_timer = std::make_shared<boost::asio::steady_timer>(this_ptr->get_service()->get_io_context());
+              timeout_timer = TP_MAKE_SHARED(boost::asio::steady_timer, this_ptr->get_service()->get_io_context());
               timeout_timer->expires_after(std::chrono::seconds(this_ptr->get_config().get_tcp().connect_time_out));
               timeout_timer->async_wait([=](const boost::system::error_code error) {
                   if (!error) {
@@ -547,7 +548,7 @@ template <typename ThisPtr> void shutdown_ssl_socket(ThisPtr this_ptr, SSLSocket
     if (socket.next_layer().is_open()) {
         auto self = this_ptr->shared_from_this();
         auto ssl_shutdown_timer =
-          std::make_shared<boost::asio::steady_timer>(this_ptr->get_service()->get_io_context());
+          TP_MAKE_SHARED(boost::asio::steady_timer, this_ptr->get_service()->get_io_context());
         auto ssl_shutdown_cb = [self, ssl_shutdown_timer, &socket](const boost::system::error_code error) {
             _guard;
             if (error == boost::asio::error::operation_aborted) {

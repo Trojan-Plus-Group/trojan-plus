@@ -10,12 +10,13 @@ Install these dependencies before you build (note that the test has some [additi
 - [Boost](http://www.boost.org/) >= 1.72.0
 - [OpenSSL](https://www.openssl.org/) >= 1.1.0
 - [libmysqlclient](https://dev.mysql.com/downloads/connector/c/)
+- [mimalloc](https://github.com/microsoft/mimalloc) (Optional, recommended for performance)
 
-For Debian users, run `sudo apt -y install build-essential cmake libboost-system-dev libboost-program-options-dev libssl-dev default-libmysqlclient-dev` to install all the necessary dependencies.
+For Debian users, run `sudo apt -y install build-essential cmake libboost-system-dev libboost-program-options-dev libssl-dev libmimalloc-dev` to install all the necessary dependencies.
 
-For macOS users using Homebrew, you can upgrade Boost with:
+For macOS users using Homebrew, you can install Boost and mimalloc with:
 ```bash
-brew install boost
+brew install boost mimalloc
 ```
 If you encounter compatibility issues with older Boost versions (e.g., `< 1.72.0`), ensure you are using the latest version provided by Homebrew.
 
@@ -48,9 +49,9 @@ to build, test, and install trojan. If everything goes well you'll be able to us
 The `cmake ..` command can be extended with the following options:
 
 - `-DDEFAULT_CONFIG=/path/to/default/config.json`: the default path trojan will look for config (defaults to `${CMAKE_INSTALL_FULL_SYSCONFDIR}/trojan/config.json`).
-- `ENABLE_MYSQL`
-    - `-DENABLE_MYSQL=ON`: build with MySQL support (default).
-    - `-DENABLE_MYSQL=OFF`: build without MySQL support.
+- `ENABLE_MIMALLOC`
+    - `-DENABLE_MIMALLOC=ON`: build with mimalloc support for improved performance (default if found).
+    - `-DENABLE_MIMALLOC=OFF`: build without mimalloc support.
 - `ENABLE_NAT` (Only on Linux)
     - `-DENABLE_NAT=ON`: build with NAT support (default).
     - `-DENABLE_NAT=OFF`: build without NAT support.

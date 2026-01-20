@@ -30,6 +30,7 @@
 #include "proto/trojanrequest.h"
 #include "proto/udppacket.h"
 #include "ssl/sslsession.h"
+#include "mem/memallocator.h"
 
 using namespace std;
 using namespace boost::asio::ip;
