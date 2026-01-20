@@ -1,8 +1,15 @@
 #!/bin/bash
 set -e
 
-# Define image name
+# This script pushes the locally built image to Docker Hub.
+# TARGET: https://hub.docker.com/r/trojanplusgroup/centos-build
 IMAGE_TAG="trojanplusgroup/centos-build:debian"
+
+# NOTE:
+# 1. This script does NOT build the image. Run ./scripts/build_docker.sh first.
+# 2. You MUST be logged in to Docker Hub with an account that has 
+#    write access to the 'trojanplusgroup' organization.
+#    Run 'docker login' before executing this script.
 
 # Check if Docker is running
 if ! docker info > /dev/null 2>&1; then
@@ -10,8 +17,7 @@ if ! docker info > /dev/null 2>&1; then
     exit 1
 fi
 
-echo "Building and pushing Docker image for linux/amd64..."
-# Using buildx to ensure correct architecture for remote repository
-docker buildx build --platform linux/amd64 -t $IMAGE_TAG -f scripts/Dockerfile --push .
+echo "Pushing image '$IMAGE_TAG' to Docker Hub..."
+docker push $IMAGE_TAG
 
-echo "Docker image '$IMAGE_TAG' pushed successfully for linux/amd64."
+echo "Docker image '$IMAGE_TAG' pushed successfully."
