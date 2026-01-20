@@ -1,3 +1,4 @@
+#include "mem/memallocator.h"
 /*
  * This file is part of the Trojan Plus project.
  * Trojan is an unidentifiable mechanism that helps you bypass GFW.
@@ -229,7 +230,7 @@ string icmpd::generate_time_exceeded_icmp(ipv4_header& ipv4_hdr, icmp_header& ic
 void icmpd::send_data_to_socket(const std::string& data, boost::asio::ip::address_v4 addr) {
     // cannot call the send_to function directly, it will throw "Operation not permitted" exception,
     // it must be wait for it has been sent successfully back
-    m_sending_data_cache.emplace_back(make_shared<IcmpSendingCache>(data, addr));
+    m_sending_data_cache.emplace_back(TP_MAKE_SHARED(IcmpSendingCache, data, addr));
     async_out_send();
 }
 
@@ -316,7 +317,7 @@ void icmpd::server_out_send(const std::string& data, std::weak_ptr<Session> pipe
         auto hash = dst.to_string() + to_string((int)icmp_header::echo_request) + to_string(icmp_hdr.identifier()) +
                     to_string(icmp_hdr.sequence_number());
 
-        add_transfer_table(move(hash), make_shared<IcmpSentData>(pipeline_session, src, dst));
+        add_transfer_table(move(hash), TP_MAKE_SHARED(IcmpSentData, pipeline_session, src, dst));
     }
 }
 

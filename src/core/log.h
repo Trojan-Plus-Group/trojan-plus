@@ -27,6 +27,8 @@
 #include <boost/asio/ip/udp.hpp>
 #include <cstdio>
 #include <string>
+#include <memory>
+#include "mem/memallocator.h"
 
 #ifdef ERROR // windows.h
 #undef ERROR
@@ -63,7 +65,7 @@ class Log {
 };
 
 const static size_t __max_debug_str_buf_size = 1024;
-extern std::unique_ptr<char> __debug_str_buf;
+extern tp::tj_unique_ptr<char[]> __debug_str_buf;
 
 #if 0
 #define _write_data_to_file_DEBUG(...)                                                                                 \

@@ -23,6 +23,7 @@
 #include "core/service.h"
 #include "proto/dns_header.h"
 #include "tun/udplocalforwarder.h"
+#include "mem/memallocator.h"
 #include <boost/asio/ip/udp.hpp>
 #include <sstream>
 
@@ -113,7 +114,7 @@ bool DNSServer::SocketQueryer::send(const boost::asio::ip::udp::endpoint& to, co
     _unguard;
 }
 
-DNSServer::DNSServer(Service* _service) : m_service(_service) { m_data_queryer = make_shared<SocketQueryer>(_service); }
+DNSServer::DNSServer(Service* _service) : m_service(_service) { m_data_queryer = TP_MAKE_SHARED(SocketQueryer, _service); }
 
 DNSServer::DNSServer(Service* _service, std::shared_ptr<IDataQueryer> queryer)
     : m_service(_service), m_data_queryer(move(queryer)) {}
@@ -347,7 +348,7 @@ void DNSServer::in_recved(istream& is, const dns_header& header, const string_vi
 
         auto up_stream_ns_svr = m_service->get_config().get_dns().up_gfw_dns_server.at(0);
         auto dst              = make_pair(up_stream_ns_svr, DEFAULT_UP_STREAM_NS_SVR_PORT);
-        auto forwarder        = make_shared<UDPForwardSession>(
+        auto forwarder        = TP_MAKE_SHARED(UDPForwardSession, 
           m_service, m_service->get_config(), m_service->get_ssl_context(), m_udp_recv_endpoint, dst,
           [this](const udp::endpoint& endpoint, const string_view& data) { recv_up_stream_data(endpoint, data, true); },
           false, true);
@@ -369,7 +370,7 @@ void DNSServer::in_recved(istream& is, const dns_header& header, const string_vi
 
         auto up_stream_ns_svr = m_service->get_config().get_dns().up_dns_server.at(0);
         auto dst              = udp::endpoint(make_address(up_stream_ns_svr), DEFAULT_UP_STREAM_NS_SVR_PORT);
-        auto forwarder        = make_shared<UDPLocalForwarder>(
+        auto forwarder        = TP_MAKE_SHARED(UDPLocalForwarder, 
           m_service, m_udp_recv_endpoint, dst,
           [this](
             const udp::endpoint& endpoint, const string_view& data) { recv_up_stream_data(endpoint, data, false); },

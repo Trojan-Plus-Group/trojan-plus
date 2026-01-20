@@ -146,6 +146,7 @@ set(TROJAN_SOURCE_FILES
     badvpn/lwip/src/core/ipv6/ip6_frag.c 
     badvpn/lwip/src/core/ipv6/nd6.c
 
+    src/mem/memallocator.cpp
     src/core/authenticator.cpp
     src/core/config.cpp
     src/core/log.cpp
@@ -275,6 +276,20 @@ if(NOT ANDROID)
         find_library(CoreFoundation CoreFoundation)
         find_library(Security Security)
         target_link_libraries(trojan ${CoreFoundation} ${Security})
+    endif()
+
+    option(ENABLE_MIMALLOC "Build with mimalloc support" ON)
+    if(ENABLE_MIMALLOC)
+        find_path(MIMALLOC_INCLUDE_DIR mimalloc.h PATHS /opt/homebrew/opt/mimalloc/include)
+        find_library(MIMALLOC_LIBRARY mimalloc PATHS /opt/homebrew/opt/mimalloc/lib)
+        if(MIMALLOC_INCLUDE_DIR AND MIMALLOC_LIBRARY)
+            include_directories(${MIMALLOC_INCLUDE_DIR})
+            target_link_libraries(trojan ${MIMALLOC_LIBRARY})
+            add_definitions(-DENABLE_MIMALLOC)
+            message(STATUS "mimalloc found: ${MIMALLOC_LIBRARY}")
+        else()
+            message(FATAL_ERROR "mimalloc not found")
+        endif()
     endif()
 
     if(WIN32)

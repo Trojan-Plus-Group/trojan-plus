@@ -23,6 +23,7 @@
 #include "core/service.h"
 #include "core/utils.h"
 #include "tun/udplocalforwarder.h"
+#include "mem/memallocator.h"
 
 using namespace std;
 using namespace boost::asio::ip;
@@ -62,7 +63,7 @@ void TUNLocalSession::start() {
 
     if (is_udp_forward_session()) {
         auto remote_addr = get_config().get_tun().redirect_local ? get_redirect_local_remote_addr() : m_remote_addr_udp;
-        m_udp_forwarder  = make_shared<UDPLocalForwarder>(
+        m_udp_forwarder  = TP_MAKE_SHARED(UDPLocalForwarder, 
           get_service(), m_local_addr_udp, remote_addr,
           [this](const udp::endpoint&, const string_view& data) {
               _guard;

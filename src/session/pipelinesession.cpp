@@ -1,3 +1,4 @@
+#include "mem/memallocator.h"
 /*
  * This file is part of the Trojan Plus project.
  * Trojan is an unidentifiable mechanism that helps you bypass GFW.
@@ -45,7 +46,7 @@ PipelineSession::PipelineSession(Service* _service, const Config& config, boost:
 
     set_session_name("PipelineSession");
 
-    live_socket = make_shared<SSLSocket>(_service->get_io_context(), ssl_context);
+    live_socket = TP_MAKE_SHARED(SSLSocket, _service->get_io_context(), ssl_context);
     sending_data_cache.set_async_writer([this](const boost::asio::streambuf& data, SentHandler&& handler) {
         if (status == DESTROY) {
             return;
@@ -112,7 +113,7 @@ void PipelineSession::in_async_read() {
 }
 void PipelineSession::move_socket_to_serversession(const std::string_view& data) {
     _log_with_endpoint(get_in_endpoint(), "PipelineSession error password, move data to ServerSession", Log::ERROR);
-    auto session = make_shared<ServerSession>(get_service(), get_config(), live_socket, auth, plain_http_response);
+    auto session = TP_MAKE_SHARED(ServerSession, get_service(), get_config(), live_socket, auth, plain_http_response);
     session->in_recv(data);
     live_socket.reset();
     destroy();
@@ -210,7 +211,7 @@ void PipelineSession::process_streaming_data() {
             });
 
             auto session =
-              make_shared<ServerSession>(get_service(), get_config(), ssl_context, auth, plain_http_response);
+              TP_MAKE_SHARED(ServerSession, get_service(), get_config(), ssl_context, auth, plain_http_response);
             session->set_pipeline_session(shared_from_this());
             session->get_pipeline_component().set_session_id(req.session_id);
             session->get_pipeline_component().set_use_pipeline();

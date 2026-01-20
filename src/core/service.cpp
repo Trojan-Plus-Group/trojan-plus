@@ -1,3 +1,4 @@
+#include "mem/memallocator.h"
 /*
  * This file is part of the Trojan Plus project.
  * Trojan is an unidentifiable mechanism that helps you bypass GFW.
@@ -29,6 +30,7 @@
 #include <stdexcept>
 #include <thread>
 
+#include "mem/memallocator.h"
 #include "session/clientsession.h"
 #include "session/forwardsession.h"
 #include "session/natsession.h"
@@ -60,7 +62,7 @@ Service::Service(Config& config, bool test)
 
     if (!test) {
         if (config.get_run_type() == Config::CLIENT_TUN || config.get_run_type() == Config::SERVERT_TUN) {
-            m_tundev = make_shared<TUNDev>(this, config.get_tun().tun_name, config.get_tun().net_ip,
+            m_tundev = TP_MAKE_SHARED(TUNDev, this, config.get_tun().tun_name, config.get_tun().net_ip,
               config.get_tun().net_mask, config.get_tun().mtu, config.get_tun().tun_fd);
         }
 
@@ -140,7 +142,7 @@ Service::Service(Config& config, bool test)
     if (config.get_run_type() == Config::SERVER) {
         if (config.get_mysql().enabled) {
 #ifdef ENABLE_MYSQL
-            auth = make_shared<Authenticator>(config);
+            auth = TP_MAKE_SHARED(Authenticator, config);
 #else  // ENABLE_MYSQL
             _log_with_date_time("MySQL is not supported", Log::WARN);
 #endif // ENABLE_MYSQL
@@ -153,7 +155,7 @@ Service::Service(Config& config, bool test)
             _log_with_date_time("[dns] dns server cannot run in type 'server' or 'forward'", Log::ERROR);
         } else {
             if (DNSServer::get_dns_lock()) {
-                m_dns_server = make_shared<DNSServer>(this);
+                m_dns_server = TP_MAKE_SHARED(DNSServer, this);
                 if (m_dns_server->start()) {
                     _log_with_date_time(
                       "[dns] start local dns server at 0.0.0.0:" + to_string(config.get_dns().port), Log::WARN);
@@ -173,7 +175,7 @@ void Service::prepare_icmpd(Config& config, bool is_ipv4) {
 
     if (config.try_prepare_pipeline_proxy_icmp(is_ipv4)) {
         _log_with_date_time("Pipeline will proxy ICMP message", Log::WARN);
-        icmp_processor = make_shared<icmpd>(io_context);
+        icmp_processor = TP_MAKE_SHARED(icmpd, io_context);
         icmp_processor->set_service(this, config.get_run_type() == Config::NAT);
         icmp_processor->start_recv();
     }
@@ -280,7 +282,7 @@ void Service::prepare_pipelines() {
         _log_with_date_time("[pipeline] current exist pipelines: " + to_string(curr_num), Log::INFO);
 
         for (; curr_num < config.get_experimental().pipeline_num; curr_num++) {
-            auto pipeline = make_shared<Pipeline>(this, config, ssl_context);
+            auto pipeline = TP_MAKE_SHARED(Pipeline, this, config, ssl_context);
             pipeline->start();
             pipelines.emplace_back(pipeline);
             changed = true;
@@ -308,7 +310,7 @@ void Service::prepare_pipelines() {
                 }
 
                 for (; curr_num < config.get_experimental().pipeline_num; curr_num++) {
-                    auto pipeline = make_shared<Pipeline>(this, *balance_config, *balance_ssl);
+                    auto pipeline = TP_MAKE_SHARED(Pipeline, this, *balance_config, *balance_ssl);
                     pipeline->start();
                     pipelines.emplace_back(pipeline);
                     changed = true;
@@ -526,20 +528,20 @@ void Service::async_accept() {
     if (config.get_run_type() == Config::SERVER) {
         if (config.get_experimental().pipeline_num > 0) {
             // start a pipeline mode in server run_type
-            auto pipeline = make_shared<PipelineSession>(this, config, ssl_context, auth, plain_http_response);
+            auto pipeline = TP_MAKE_SHARED(PipelineSession, this, config, ssl_context, auth, plain_http_response);
             pipeline->set_icmpd(icmp_processor);
 
             session = pipeline;
         } else {
-            session = make_shared<ServerSession>(this, config, ssl_context, auth, plain_http_response);
+            session = TP_MAKE_SHARED(ServerSession, this, config, ssl_context, auth, plain_http_response);
         }
     } else {
         if (config.get_run_type() == Config::FORWARD) {
-            session = make_shared<ForwardSession>(this, config, ssl_context);
+            session = TP_MAKE_SHARED(ForwardSession, this, config, ssl_context);
         } else if (config.get_run_type() == Config::NAT) {
-            session = make_shared<NATSession>(this, config, ssl_context);
+            session = TP_MAKE_SHARED(NATSession, this, config, ssl_context);
         } else {
-            session = make_shared<ClientSession>(this, config, ssl_context);
+            session = TP_MAKE_SHARED(ClientSession, this, config, ssl_context);
         }
     }
 
@@ -616,11 +618,10 @@ void Service::udp_async_read() {
                 }
             }
 
-            _log_with_endpoint(udp_recv_endpoint, "new UDP session");
-            auto session = make_shared<UDPForwardSession>(
-              this, config, ssl_context, udp_recv_endpoint, targetdst,
-              [this](const udp::endpoint& endpoint, const string_view& data) {
-                  _guard;
+                          _log_with_endpoint(udp_recv_endpoint, "new UDP session");
+                          auto session = TP_MAKE_SHARED(UDPForwardSession,
+                            this, config, ssl_context, udp_recv_endpoint, targetdst,
+                            [this](const udp::endpoint& endpoint, const string_view& data) {                  _guard;
                   if (config.get_run_type() == Config::NAT) {
                       throw logic_error("[udp] logic fatal error, cannot call in_write function for NAT type!");
                   }

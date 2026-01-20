@@ -1,3 +1,4 @@
+#include "mem/memallocator.h"
 /*
  * This file is part of the Trojan Plus project.
  * Trojan is an unidentifiable mechanism that helps you bypass GFW.
@@ -43,7 +44,7 @@ ServerSession::ServerSession(Service* _service, const Config& config, boost::asi
       has_queried_out(false) {
 
     set_session_name("ServerSession");
-    in_socket = make_shared<SSLSocket>(_service->get_io_context(), ssl_context);
+    in_socket = TP_MAKE_SHARED(SSLSocket, _service->get_io_context(), ssl_context);
 }
 
 ServerSession::ServerSession(Service* _service, const Config& config, shared_ptr<SSLSocket> socket,
@@ -487,7 +488,7 @@ void ServerSession::out_udp_sent() {
                 return;
             }
 
-            auto payload_tmp_buf = make_shared<string>(packet.payload);
+            auto payload_tmp_buf = TP_MAKE_SHARED(string, packet.payload);
             packet.payload       = *payload_tmp_buf;
 
             auto self = shared_from_this();

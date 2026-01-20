@@ -1,4 +1,3 @@
-
 /*
  * This file is part of the Trojan Plus project.
  * Trojan is an unidentifiable mechanism that helps you bypass GFW.
@@ -39,6 +38,7 @@
 #include "tun/tunlocalsession.h"
 #include "tun/tunproxysession.h"
 #include "tun/tunsession.h"
+#include "mem/memallocator.h"
 
 using namespace std;
 using namespace boost::asio::ip;
@@ -187,12 +187,12 @@ TUNDev::TUNDev(Service* _service, const std::string& _tun_name, const std::strin
     m_dns_server_endpoint.port(m_service->get_config().get_dns().port);
 
     m_dns_queryer =
-      make_shared<TUNDNSQueryer>([this](const boost::asio::ip::udp::endpoint& local, const std::string_view& data) {
+      TP_MAKE_SHARED(TUNDNSQueryer, [this](const boost::asio::ip::udp::endpoint& local, const std::string_view& data) {
           std::string_view data_str(data);
           return handle_write_upd_data(local, m_dns_server_endpoint, data_str) == 0;
       });
 
-    m_dns_server = make_shared<DNSServer>(m_service, m_dns_queryer);
+    m_dns_server = TP_MAKE_SHARED(DNSServer, m_service, m_dns_queryer);
     if (!m_dns_server->start()) {
         throw runtime_error("[tun] dns server start failed");
     }
@@ -363,16 +363,16 @@ err_t TUNDev::listener_accept_func(struct tcp_pcb* newpcb, err_t err) {
           "[tun] [tcp] proxy connect: " +
           make_address_v4((address_v4::uint_type)ntoh32(newpcb->local_ip.u_addr.ip4.addr)).to_string());
 
-        session = make_shared<TUNProxySession>(m_service, false);
+        session = TP_MAKE_SHARED(TUNProxySession, m_service, false);
     } else {
 
         _log_with_date_time_ALL(
           "[tun] [tcp] directly connect: " +
           make_address_v4((address_v4::uint_type)ntoh32(newpcb->local_ip.u_addr.ip4.addr)).to_string());
 
-        session = make_shared<TUNLocalSession>(m_service, false);
+        session = TP_MAKE_SHARED(TUNLocalSession, m_service, false);
     }
-    auto tcp_client = make_shared<lwip_tcp_client>(newpcb, session, [this](lwip_tcp_client* client) {
+    auto tcp_client = TP_MAKE_SHARED(lwip_tcp_client, newpcb, session, [this](lwip_tcp_client* client) {
         _guard;
         for (auto it = m_tcp_clients.begin(); it != m_tcp_clients.end(); it++) {
             if (it->get() == client) {
@@ -632,10 +632,10 @@ int TUNDev::try_to_process_udp_packet(uint8_t* data, int data_len) {
         bool proxy                     = proxy_by_route(ntoh32(ipv4_hdr.destination_address));
         if (proxy) {
             _log_with_date_time_ALL("[tun] [udp] proxy connect: " + remote_endpoint.address().to_string());
-            session = make_shared<TUNProxySession>(m_service, true);
+            session = TP_MAKE_SHARED(TUNProxySession, m_service, true);
         } else {
             _log_with_date_time_ALL("[tun] [udp] directly connect: " + remote_endpoint.address().to_string());
-            session = make_shared<TUNLocalSession>(m_service, true);
+            session = TP_MAKE_SHARED(TUNLocalSession, m_service, true);
         }
         session->set_udp_connect(local_endpoint, remote_endpoint);
         session->set_write_to_lwip([this](const TUNSession* _se, string_view* _data) {
