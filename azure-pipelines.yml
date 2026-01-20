@@ -13,7 +13,7 @@ stages:
     pool:
       vmImage: ubuntu-latest
     container:
-      image: trojanplusgroup/centos-build:latest
+      image: trojanplusgroup/centos-build:debian
     steps:
     - checkout: self
       submodules: true
@@ -73,7 +73,7 @@ stages:
         cmake --build . --config Release
         cd ../..
 
-        cmake -DBoost_INCLUDE_DIR="$(pwd)/boost_${BOOST_VERSION}" -DBoost_USE_STATIC_LIBS=ON -DOPENSSL_ROOT_DIR='C:/Program Files/OpenSSL-Win64' -DOPENSSL_USE_STATIC_LIBS=ON -DENABLE_MIMALLOC=ON -DMIMALLOC_INCLUDE_DIR="$(pwd)/mimalloc/include" -DMIMALLOC_LIBRARY="$(pwd)/mimalloc/build/Release/mimalloc-static.lib" .
+        cmake -DBoost_INCLUDE_DIR="$(pwd)/boost_${BOOST_VERSION}" -DBoost_USE_STATIC_LIBS=ON -DOPENSSL_ROOT_DIR='C:/Program Files/OpenSSL-Win64' -DOPENSSL_USE_STATIC_LIBS=ON -DENABLE_MIMALLOC=ON -DMIMALLOC_INCLUDE_DIR="mimalloc/include" -DMIMALLOC_LIBRARY="mimalloc/build/Release/mimalloc.lib" .
         cmake --build . --config Release
     - publish: $(System.DefaultWorkingDirectory)/Release/trojan.exe
       artifact: WindowsBinary
@@ -84,7 +84,7 @@ stages:
     pool:
       vmImage: ubuntu-latest
     container:
-      image: trojanplusgroup/centos-build:latest
+      image: trojanplusgroup/centos-build:debian
       options: --privileged
     steps:
     - checkout: self

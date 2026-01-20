@@ -1,29 +1,28 @@
-FROM alpine:3.20
+FROM debian:bookworm-slim
 
-# Add community repository for mimalloc
-RUN echo "http://dl-cdn.alpinelinux.org/alpine/v3.20/community" >> /etc/apk/repositories
+# Avoid interactive prompts during package installation
+ENV DEBIAN_FRONTEND=noninteractive
 
 # Install build and test dependencies
-# linux-headers is often required for Boost/system compilation
-RUN apk add --no-cache \
-        bash \
-        curl \
-        openssl \
-        build-base \
-        linux-headers \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
         cmake \
-        boost-dev \
-        openssl-dev \
-        mariadb-connector-c-dev \
-        mimalloc-dev \
+        libboost-all-dev \
+        libssl-dev \
+        libmariadb-dev \
+        libmimalloc-dev \
         git \
         python3 \
-        py3-pip \
-        lsof \
-        netcat-openbsd \
+        python3-pip \
         sudo \
         iproute2 \
         net-tools \
+        curl \
+        wget \
+        lsof \
+        netcat-openbsd \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
     && pip3 install --break-system-packages PySocks psutil dnspython
 
 # Set working directory
