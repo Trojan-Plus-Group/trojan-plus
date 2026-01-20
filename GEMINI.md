@@ -23,10 +23,11 @@ To build the project, the following dependencies are required:
 *   CMake (>= 3.7.2)
 *   Boost (>= 1.72.0)
 *   OpenSSL (>= 1.1.0)
+*   mimalloc (Optional, recommended for performance)
 *   (Optional) MySQL/MariaDB client library for database authentication.
 
 On Debian-based systems, these can be installed with:
-`sudo apt -y install build-essential cmake libboost-system-dev libboost-program-options-dev libssl-dev default-libmysqlclient-dev`
+`sudo apt -y install build-essential cmake libboost-system-dev libboost-program-options-dev libssl-dev libmimalloc-dev default-libmysqlclient-dev`
 
 ### Build Commands
 
@@ -126,16 +127,16 @@ Fixed a critical failure in the macOS CI pipeline caused by environmental change
 *   **Verification**: The changes were verified with a successful local build on macOS using the updated configuration.
 
 ### mimalloc Integration
-Integrated Microsoft's **mimalloc** high-performance allocator into the custom memory allocator system.
-*   **Implementation**: Added `miallocator` wrapper in `src/mem/memallocator.cpp` to provide `mimalloc` backend when enabled.
-*   **CMake Configuration**: Introduced `-DENABLE_MIMALLOC=ON/OFF` option. The build system automatically detects `mimalloc` installations (including Homebrew paths on macOS).
-*   **Performance**: Improved memory allocation efficiency, complementing the project's performance-oriented architectural decisions.
+Integrated Microsoft's **mimalloc** high-performance allocator into the custom memory allocator system to improve concurrency and memory efficiency.
+*   **Implementation**: Added `miallocator` wrapper in `src/mem/memallocator.cpp` to provide `mimalloc` backend. The `mem_allocator` class dynamically selects the allocator based on configuration.
+*   **CMake Configuration**: Introduced `-DENABLE_MIMALLOC=ON/OFF` option. The build system supports automatic detection on Linux (via `apt`/`apk`), macOS (via Homebrew), and manual path specification on Windows.
+*   **Performance**: Optimized for multi-threaded proxy workloads, complementing the project's performance-oriented architectural decisions.
 
 ### Dockerized Build and Test Environment
-Optimized the development workflow by introducing a lightweight, containerized environment.
-*   **Alpine Migration**: Replaced the large CentOS-based build image with a lightweight **Alpine 3.20** image, reducing size from ~1.6GB to ~170MB.
+Optimized the development and CI workflow by introducing a standardized, containerized environment.
+*   **Debian Migration**: Moved from a heavy CentOS-based image to a optimized **Debian 12 (Bookworm)** image. This ensures full compatibility with Azure Pipelines' Node.js agent (glibc-based) while maintaining a clean build environment.
 *   **Automation Scripts**:
-    *   `scripts/build_docker.sh`: Builds the local `trojan-builder` image.
-    *   `scripts/compile_and_test.sh`: Automates cleaning, CMake configuration (with mimalloc), compilation, and running the full test suite (excluding DNS) inside the container.
-*   **Dependency Management**: The image pre-installs all C++ build tools, Python testing dependencies (`PySocks`, `psutil`, `dnspython`), and system utilities (`bash`, `curl`, `openssl`, `lsof`, `nc`).
-*   **Artifact Distribution**: The optimized image is pushed to `trojanplusgroup/centos-build:latest` on Docker Hub to serve as the standard CI environment.
+    *   `scripts/build_docker.sh`: Builds the `trojan-builder` image (targets `linux/amd64` for CI compatibility).
+    *   `scripts/compile_and_test.sh`: Automates the full lifecycle (clean, configure with mimalloc, compile, and run smoke/full tests) inside the container.
+*   **Dependency Management**: The image includes all toolchains (GCC 12+, CMake 3.25+), Boost, OpenSSL 3, mimalloc, and Python testing dependencies (`PySocks`, `psutil`, `dnspython`).
+*   **Artifact Distribution**: The image is published as `trojanplusgroup/centos-build:debian` on Docker Hub, serving as the primary environment for Linux CI jobs.

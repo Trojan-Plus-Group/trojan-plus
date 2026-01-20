@@ -11,5 +11,5 @@ if ! docker info > /dev/null 2>&1; then
 fi
 
 echo "Building Docker image..."
-docker build -t $IMAGE_NAME -f scripts/Dockerfile .
+docker build --platform linux/amd64 -t $IMAGE_NAME -f scripts/Dockerfile .
 echo "Docker image '$IMAGE_NAME' built successfully."
