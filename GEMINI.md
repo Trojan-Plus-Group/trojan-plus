@@ -125,9 +125,17 @@ Fixed a critical failure in the macOS CI pipeline caused by environmental change
 *   **Build Robustness**: Replaced the Linux-specific `nproc` command with the macOS-native `sysctl -n hw.ncpu` for parallel compilation in the CI script.
 *   **Verification**: The changes were verified with a successful local build on macOS using the updated configuration.
 
-### Mimalloc Integration (January 2026)
+### mimalloc Integration
 Integrated Microsoft's **mimalloc** high-performance allocator into the custom memory allocator system.
 *   **Implementation**: Added `miallocator` wrapper in `src/mem/memallocator.cpp` to provide `mimalloc` backend when enabled.
 *   **CMake Configuration**: Introduced `-DENABLE_MIMALLOC=ON/OFF` option. The build system automatically detects `mimalloc` installations (including Homebrew paths on macOS).
 *   **Performance**: Improved memory allocation efficiency, complementing the project's performance-oriented architectural decisions.
 
+### Dockerized Build and Test Environment
+Optimized the development workflow by introducing a lightweight, containerized environment.
+*   **Alpine Migration**: Replaced the large CentOS-based build image with a lightweight **Alpine 3.20** image, reducing size from ~1.6GB to ~170MB.
+*   **Automation Scripts**:
+    *   `scripts/build_docker.sh`: Builds the local `trojan-builder` image.
+    *   `scripts/compile_and_test.sh`: Automates cleaning, CMake configuration (with mimalloc), compilation, and running the full test suite (excluding DNS) inside the container.
+*   **Dependency Management**: The image pre-installs all C++ build tools, Python testing dependencies (`PySocks`, `psutil`, `dnspython`), and system utilities (`bash`, `curl`, `openssl`, `lsof`, `nc`).
+*   **Artifact Distribution**: The optimized image is pushed to `trojanplusgroup/centos-build:latest` on Docker Hub to serve as the standard CI environment.

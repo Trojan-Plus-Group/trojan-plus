@@ -46,6 +46,31 @@ sudo make install
 
 to build, test, and install trojan. If everything goes well you'll be able to use trojan.
 
+## Docker Build Environment
+
+To ensure a consistent build environment and run tests easily, you can use the provided Docker scripts. These scripts use a lightweight Alpine Linux image with all necessary dependencies pre-installed (including mimalloc).
+
+### 1. Build the Docker Image
+First, build the local Docker image (`trojan-builder`):
+
+```bash
+./scripts/build_docker.sh
+```
+
+### 2. Compile and Test
+Run the compilation and full test suite inside the container:
+
+```bash
+./scripts/compile_and_test.sh
+```
+
+This script will:
+1.  Clean previous build artifacts.
+2.  Configure CMake with `-DENABLE_MIMALLOC=ON`.
+3.  Compile the project.
+4.  Run smoke tests (`ctest`).
+5.  Run the full Python integration test suite (excluding DNS tests).
+
 The `cmake ..` command can be extended with the following options:
 
 - `-DDEFAULT_CONFIG=/path/to/default/config.json`: the default path trojan will look for config (defaults to `${CMAKE_INSTALL_FULL_SYSCONFDIR}/trojan/config.json`).
