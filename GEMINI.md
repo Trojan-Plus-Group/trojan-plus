@@ -23,11 +23,10 @@ To build the project, the following dependencies are required:
 *   CMake (>= 3.7.2)
 *   Boost (>= 1.72.0)
 *   OpenSSL (>= 1.1.0)
-*   mimalloc (Optional, recommended for performance)
 *   (Optional) MySQL/MariaDB client library for database authentication.
 
 On Debian-based systems, these can be installed with:
-`sudo apt -y install build-essential cmake libboost-system-dev libboost-program-options-dev libssl-dev libmimalloc-dev default-libmysqlclient-dev`
+`sudo apt -y install build-essential cmake libboost-system-dev libboost-program-options-dev libssl-dev default-libmysqlclient-dev`
 
 ### Build Commands
 
@@ -128,8 +127,8 @@ Fixed a critical failure in the macOS CI pipeline caused by environmental change
 
 ### mimalloc Integration
 Integrated Microsoft's **mimalloc** high-performance allocator into the custom memory allocator system to improve concurrency and memory efficiency.
-*   **Implementation**: Added `miallocator` wrapper in `src/mem/memallocator.cpp` to provide `mimalloc` backend. The `mem_allocator` class dynamically selects the allocator based on configuration.
-*   **CMake Configuration**: Introduced `-DENABLE_MIMALLOC=ON/OFF` option. The build system supports automatic detection on Linux (via `apt`/`apk`), macOS (via Homebrew), and manual path specification on Windows.
+*   **Implementation**: Bundled `mimalloc` source code in the project to ensure consistent performance across platforms and simplify build requirements.
+*   **CMake Configuration**: The build system automatically compiles `mimalloc` from source and links it statically. Added `-DENABLE_MIMALLOC=ON/OFF` option.
 *   **Performance**: Optimized for multi-threaded proxy workloads, complementing the project's performance-oriented architectural decisions.
 
 ### Dockerized Build and Test Environment
