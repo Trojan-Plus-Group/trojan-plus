@@ -56,7 +56,14 @@ First, build the local Docker image (`trojan-builder`):
 ./scripts/build_docker.sh
 ```
 
-### 2. Compile and Test
+### 2. Push to Docker Hub (Maintainers only)
+To update the standardized build environment on Docker Hub for CI:
+
+```bash
+./scripts/push_to_docker_hub.sh
+```
+
+### 3. Compile and Test
 Run the compilation and full test suite inside the container:
 
 ```bash
