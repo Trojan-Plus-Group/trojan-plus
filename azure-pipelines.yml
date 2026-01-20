@@ -20,7 +20,7 @@ stages:
     - script: |
         set -euo pipefail
         set -v
-        cmake -DDEFAULT_CONFIG=config.json -DFORCE_TCP_FASTOPEN=ON -DBoost_USE_STATIC_LIBS=ON .
+        cmake -DDEFAULT_CONFIG=config.json -DFORCE_TCP_FASTOPEN=ON -DBoost_USE_STATIC_LIBS=ON -DENABLE_MIMALLOC=ON .
         make -j$(nproc)
         strip -s trojan
     - publish: $(System.DefaultWorkingDirectory)/trojan
@@ -35,8 +35,8 @@ stages:
     - script: |
         set -euo pipefail
         set -v
-        brew install boost openssl
-        cmake -DBoost_USE_STATIC_LIBS=ON -DOPENSSL_ROOT_DIR=$(brew --prefix openssl) -DOPENSSL_USE_STATIC_LIBS=ON -DDEFAULT_CONFIG=config.json -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 .
+        brew install boost openssl mimalloc
+        cmake -DBoost_USE_STATIC_LIBS=ON -DOPENSSL_ROOT_DIR=$(brew --prefix openssl) -DOPENSSL_USE_STATIC_LIBS=ON -DDEFAULT_CONFIG=config.json -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 -DENABLE_MIMALLOC=ON .
         make -j$(sysctl -n hw.ncpu)
         strip -SXTx trojan
     - publish: $(System.DefaultWorkingDirectory)/trojan
@@ -65,7 +65,15 @@ stages:
         ./b2 --with-system --with-program_options variant=release link=static threading=multi runtime-link=shared address-model=64
         cd ..
 
-        cmake -DBoost_INCLUDE_DIR="$(pwd)/boost_${BOOST_VERSION}" -DBoost_USE_STATIC_LIBS=ON -DOPENSSL_ROOT_DIR='C:/Program Files/OpenSSL-Win64' -DOPENSSL_USE_STATIC_LIBS=ON .
+        git clone https://github.com/microsoft/mimalloc.git
+        cd mimalloc
+        mkdir build
+        cd build
+        cmake -DMI_BUILD_SHARED=OFF -DMI_BUILD_STATIC=ON -DMI_BUILD_TESTS=OFF ..
+        cmake --build . --config Release
+        cd ../..
+
+        cmake -DBoost_INCLUDE_DIR="$(pwd)/boost_${BOOST_VERSION}" -DBoost_USE_STATIC_LIBS=ON -DOPENSSL_ROOT_DIR='C:/Program Files/OpenSSL-Win64' -DOPENSSL_USE_STATIC_LIBS=ON -DENABLE_MIMALLOC=ON -DMIMALLOC_INCLUDE_DIR="$(pwd)/mimalloc/include" -DMIMALLOC_LIBRARY="$(pwd)/mimalloc/build/Release/mimalloc-static.lib" .
         cmake --build . --config Release
     - publish: $(System.DefaultWorkingDirectory)/Release/trojan.exe
       artifact: WindowsBinary
@@ -76,7 +84,7 @@ stages:
     pool:
       vmImage: ubuntu-latest
     container:
-      image: trojanplusgroup/trojan-test:latest
+      image: trojanplusgroup/centos-build:latest
       options: --privileged
     steps:
     - checkout: self
@@ -91,7 +99,7 @@ stages:
         chmod +x "$BINARY"
 
         cd tests/LinuxFullTest/
-        sudo /usr/local/bin/python3.8 fulltest_main.py $BINARY -g -d 5333
+        sudo python3 fulltest_main.py $BINARY -g -d 5333
 
         ifconfig
         route -n
@@ -108,7 +116,7 @@ stages:
         ifconfig
         route -n
         
-        sudo /usr/local/bin/python3.8 fulltest_main.py $BINARY -t -n -d 5333
+        sudo python3 fulltest_main.py $BINARY -t -n -d 5333
       env:
         PIPELINE_WORKSPACE: $(Pipeline.Workspace)
 
