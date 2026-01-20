@@ -136,6 +136,7 @@ Optimized the development and CI workflow by introducing a standardized, contain
 *   **Debian Migration**: Moved from a heavy CentOS-based image to a optimized **Debian 12 (Bookworm)** image. This ensures full compatibility with Azure Pipelines' Node.js agent (glibc-based) while maintaining a clean build environment.
 *   **Automation Scripts**:
     *   `scripts/build_docker.sh`: Builds the `trojan-builder` image (targets `linux/amd64` for CI compatibility).
+    *   `scripts/push_to_docker_hub.sh`: Builds and pushes the `trojanplusgroup/centos-build:debian` image to Docker Hub with explicit `linux/amd64` platform support.
     *   `scripts/compile_and_test.sh`: Automates the full lifecycle (clean, configure with mimalloc, compile, and run smoke/full tests) inside the container.
 *   **Dependency Management**: The image includes all toolchains (GCC 12+, CMake 3.25+), Boost, OpenSSL 3, mimalloc, and Python testing dependencies (`PySocks`, `psutil`, `dnspython`).
 *   **Artifact Distribution**: The image is published as `trojanplusgroup/centos-build:debian` on Docker Hub, serving as the primary environment for Linux CI jobs.
