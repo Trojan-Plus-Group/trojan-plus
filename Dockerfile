@@ -8,7 +8,6 @@ RUN echo "http://dl-cdn.alpinelinux.org/alpine/v3.20/community" >> /etc/apk/repo
         boost-dev \
         openssl-dev \
         mariadb-connector-c-dev \
-        mimalloc-dev \
     && (cd trojan && cmake -DENABLE_MIMALLOC=ON . && make -j $(nproc) && strip -s trojan \
     && mv trojan /usr/local/bin) \
     && rm -rf trojan \
@@ -17,8 +16,7 @@ RUN echo "http://dl-cdn.alpinelinux.org/alpine/v3.20/community" >> /etc/apk/repo
         libstdc++ \
         boost-system \
         boost-program_options \
-        mariadb-connector-c \
-        mimalloc
+        mariadb-connector-c
 
 WORKDIR /config
 CMD ["trojan", "config.json"]
