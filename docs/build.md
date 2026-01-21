@@ -30,6 +30,11 @@ cd trojan/
 
 to clone the project and go into the directory.
 
+Then, initialize and update the git submodules (Required):
+```bash
+git submodule update --init --recursive
+```
+
 ## Build and Install
 
 Type in
