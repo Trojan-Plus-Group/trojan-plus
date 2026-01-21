@@ -114,7 +114,7 @@ class mem_allocator {
     struct memory_tag_stat {
         std::mutex alloc_stat_lock;
         std::vector<alloc_stat> alloc_stat_list;
-        std::unordered_map<code_location, int, pair_hash, pair_equal> code_pos_to_stat_index;
+        std::unordered_map<code_location, uint32_t, pair_hash, pair_equal> code_pos_to_stat_index;
     };
 
     memory_tag_stat tag_stat_;

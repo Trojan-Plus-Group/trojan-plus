@@ -30,7 +30,6 @@
 #include "session/pipelinesession.h"
 
 using namespace trojan;
-using namespace std;
 using namespace boost::asio::ip;
 
 FILE_LOCK_HANDLE icmpd::s_icmpd_file_lock = INVALID_LOCK_HANDLE;
@@ -42,23 +41,23 @@ bool icmpd::get_icmpd_lock() {
 icmpd::icmpd(boost::asio::io_context& io_context)
     : m_socket(io_context, icmp::v4()), m_service(nullptr), m_client_or_server(false), m_is_sending_cache(false) {
 #ifdef _WIN32
-    throw runtime_error("[icmp] cannot crate icmpd in windows!");
+    throw std::runtime_error("[icmp] cannot crate icmpd in windows!");
 #else
     int fd  = m_socket.native_handle();
     int opt = 1;
     if (setsockopt(fd, SOL_IP, IP_HDRINCL, &opt, sizeof(opt)) != 0) {
-        throw runtime_error("[icmp] setsockopt IP_HDRINCL failed!");
+        throw std::runtime_error("[icmp] setsockopt IP_HDRINCL failed!");
     }
 #endif //_WIN32
 }
 
 void icmpd::add_transfer_table(std::string&& hash, std::shared_ptr<IcmpSentData>&& data) {
     if (m_client_or_server) {
-        throw logic_error("[icmp] client don't need use add_transfer_table");
+        throw std::logic_error("[icmp] client don't need use add_transfer_table");
     }
 
     check_transfer_table_timeout();
-    m_transfer_table.emplace(make_pair(hash, data));
+    m_transfer_table.emplace(std::make_pair(hash, data));
 }
 
 icmpd::~icmpd() { close_file_lock(s_icmpd_file_lock); }
@@ -122,14 +121,14 @@ void icmpd::start_recv() {
 
             ipv4_header ipv4_hdr;
             icmp_header icmp_hdr;
-            string body;
+            std::string body;
 
             if (read_icmp(is, length, ipv4_hdr, icmp_hdr, body)) {
 
                 _log_with_date_time("[icmp] recv " + ipv4_hdr.source_address().to_string() + " -> " +
                                     ipv4_hdr.destination_address().to_string() + " ttl " +
-                                    to_string(ipv4_hdr.time_to_live()) + " icmp type " + to_string(icmp_hdr.type()) +
-                                    " length:" + to_string(length));
+                                    std::to_string(ipv4_hdr.time_to_live()) + " icmp type " + std::to_string(icmp_hdr.type()) +
+                                    " length:" + std::to_string(length));
 
                 if (m_client_or_server) {
                     if (icmp_hdr.type() == icmp_header::echo_request) { // only proxy echo_request for client
@@ -151,20 +150,20 @@ void icmpd::start_recv() {
                 } else {
                     std::shared_ptr<IcmpSentData> icmp_sent_data(nullptr);
                     if (icmp_hdr.type() == icmp_header::echo_reply) { // for ping
-                        auto hash = ipv4_hdr.source_address().to_string() + to_string((int)icmp_header::echo_request) +
-                                    to_string(icmp_hdr.identifier()) + to_string(icmp_hdr.sequence_number());
+                        auto hash = ipv4_hdr.source_address().to_string() + std::to_string((int)icmp_header::echo_request) +
+                                    std::to_string(icmp_hdr.identifier()) + std::to_string(icmp_hdr.sequence_number());
 
                         icmp_sent_data = find_icmp_sent_data(hash, true);
                     } else if (icmp_hdr.type() == icmp_header::time_exceeded) { // for traceroute
                         ipv4_header orig_ipv4_hdr;
                         icmp_header orig_icmp_hdr;
-                        string orig_body;
+                        std::string orig_body;
                         std::istringstream orig_is(body);
                         if (read_icmp(orig_is, body.length(), orig_ipv4_hdr, orig_icmp_hdr, orig_body)) {
                             auto hash = orig_ipv4_hdr.destination_address().to_string() +
-                                        to_string((int)icmp_header::echo_request) +
-                                        to_string(orig_icmp_hdr.identifier()) +
-                                        to_string(orig_icmp_hdr.sequence_number());
+                                        std::to_string((int)icmp_header::echo_request) +
+                                        std::to_string(orig_icmp_hdr.identifier()) +
+                                        std::to_string(orig_icmp_hdr.sequence_number());
 
                             icmp_sent_data = find_icmp_sent_data(hash, true);
                             if (icmp_sent_data) {
@@ -204,7 +203,7 @@ void icmpd::start_recv() {
     });
 }
 
-string icmpd::generate_time_exceeded_icmp(ipv4_header& ipv4_hdr, icmp_header& icmp_hdr) {
+std::string icmpd::generate_time_exceeded_icmp(ipv4_header& ipv4_hdr, icmp_header& icmp_hdr) {
     std::ostringstream os;
     os << ipv4_hdr << icmp_hdr;
 
@@ -228,7 +227,7 @@ string icmpd::generate_time_exceeded_icmp(ipv4_header& ipv4_hdr, icmp_header& ic
 }
 
 void icmpd::send_data_to_socket(const std::string& data, boost::asio::ip::address_v4 addr) {
-    // cannot call the send_to function directly, it will throw "Operation not permitted" exception,
+    // cannot call the send_to std::function directly, it will throw "Operation not permitted" std::exception,
     // it must be wait for it has been sent successfully back
     m_sending_data_cache.emplace_back(TP_MAKE_SHARED(IcmpSendingCache, data, addr));
     async_out_send();
@@ -250,7 +249,7 @@ void icmpd::async_out_send() {
           if (ec) {
               ipv4_header ipv4_hdr;
               icmp_header icmp_hdr;
-              string body;
+              std::string body;
 
               std::istream is(&(*data_copy));
               if (read_icmp(is, data_copy->size(), ipv4_hdr, icmp_hdr, body)) {
@@ -278,18 +277,18 @@ void icmpd::send_back_time_exceeded(ipv4_header& ipv4_hdr, icmp_header& icmp_hdr
 
 void icmpd::server_out_send(const std::string& data, std::weak_ptr<Session> pipeline_session) {
     if (m_client_or_server) {
-        throw logic_error("[icmp] client cannot call icmpd::server_out_send");
+        throw std::logic_error("[icmp] client cannot call icmpd::server_out_send");
     }
 
     std::istringstream is(data);
 
     ipv4_header ipv4_hdr;
     icmp_header icmp_hdr;
-    string body;
+    std::string body;
 
     if (read_icmp(is, data.length(), ipv4_hdr, icmp_hdr, body)) {
         if (icmp_hdr.type() != icmp_header::echo_request) {
-            throw logic_error("[icmp] can only proxy client ping message!");
+            throw std::logic_error("[icmp] can only proxy client ping message!");
         }
 
         if (ipv4_hdr.time_to_live() == 1) {
@@ -310,27 +309,27 @@ void icmpd::server_out_send(const std::string& data, std::weak_ptr<Session> pipe
         os << ipv4_hdr << icmp_hdr << body;
 
         _log_with_date_time("[icmp] server send out " + ipv4_hdr.source_address().to_string() + " -> " +
-                            ipv4_hdr.destination_address().to_string() + " length:" + to_string(data.length()));
+                            ipv4_hdr.destination_address().to_string() + " length:" + std::to_string(data.length()));
 
         send_data_to_socket(os.str(), dst);
 
-        auto hash = dst.to_string() + to_string((int)icmp_header::echo_request) + to_string(icmp_hdr.identifier()) +
-                    to_string(icmp_hdr.sequence_number());
+        auto hash = dst.to_string() + std::to_string((int)icmp_header::echo_request) + std::to_string(icmp_hdr.identifier()) +
+                    std::to_string(icmp_hdr.sequence_number());
 
-        add_transfer_table(move(hash), TP_MAKE_SHARED(IcmpSentData, pipeline_session, src, dst));
+        add_transfer_table(std::move(hash), TP_MAKE_SHARED(IcmpSentData, pipeline_session, src, dst));
     }
 }
 
 void icmpd::client_out_send(const std::string& data) {
     if (!m_client_or_server) {
-        throw logic_error("[icmp] server cannot call icmpd::client_out_send");
+        throw std::logic_error("[icmp] server cannot call icmpd::client_out_send");
     }
 
     std::istringstream is(data);
 
     ipv4_header ipv4_hdr;
     icmp_header icmp_hdr;
-    string body;
+    std::string body;
 
     if (read_icmp(is, data.length(), ipv4_hdr, icmp_hdr, body)) {
 
@@ -358,10 +357,10 @@ void icmpd::client_out_send(const std::string& data) {
         } else {
             auto dst = ipv4_hdr.destination_address();
             _log_with_date_time("[icmp] client send out " + ipv4_hdr.source_address().to_string() + " -> " +
-                                dst.to_string() + " length:" + to_string(data.length()));
+                                dst.to_string() + " length:" + std::to_string(data.length()));
 
-            // cout << "ip header: " << ipv4_hdr.to_string() << endl;
-            // cout << "icmp header: " << icmp_hdr.to_string() << endl;
+            // std::cout << "ip header: " << ipv4_hdr.to_string() << std::endl;
+            // std::cout << "icmp header: " << icmp_hdr.to_string() << std::endl;
 
             send_data_to_socket(data, dst);
         }

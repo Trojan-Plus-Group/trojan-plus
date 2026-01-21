@@ -33,7 +33,6 @@
 #include "core/version.h"
 #include "log.h"
 
-using namespace std;
 using namespace boost::asio::ip;
 
 size_t streambuf_append(boost::asio::streambuf& target, const boost::asio::streambuf& append_buf) {
@@ -160,7 +159,7 @@ unsigned short get_checksum(const std::string_view& str) {
     _unguard;
 }
 
-unsigned short get_checksum(const std::string& str) { return get_checksum(string_view(str)); }
+unsigned short get_checksum(const std::string& str) { return get_checksum(std::string_view(str)); }
 
 unsigned short get_checksum(const boost::asio::streambuf& buf) { return get_checksum(streambuf_to_string_view(buf)); }
 
@@ -177,7 +176,7 @@ int get_hashCode(const std::string& str) {
 
 void write_data_to_file(int id, const std::string& tag, const std::string_view& data) {
     _guard;
-    ofstream file(tag + "_" + to_string(id) + ".data", std::ofstream::out | std::ofstream::app);
+    std::ofstream file(tag + "_" + std::to_string(id) + ".data", std::ofstream::out | std::ofstream::app);
     file << data;
     file.close();
     _unguard;
@@ -279,8 +278,8 @@ void SendDataCache::async_send() {
         sending_handler->clear();
         sending_data->consume(sending_data->size());
 
-        // above "sending_handler[i](ec);" might call this async_send function back loop,
-        // so we must set is_async_sending as false after it
+        // above "sending_handler[i](ec);" might call this async_send std::function back loop,
+        // so we must std::set is_async_sending as false after it
         is_async_sending = false;
 
         if (!ec) {
@@ -563,9 +562,9 @@ bool IPv4Matcher::load_from_stream(std::istream& is, const std::string& filename
     }
 
     for (auto it : subnet) {
-        sort(it.second.begin(), it.second.end());
+        std::sort(it.second.begin(), it.second.end());
     }
-    sort(ips.begin(), ips.end());
+    std::sort(ips.begin(), ips.end());
 
     return true;
 
@@ -583,13 +582,13 @@ bool IPv4Matcher::load_from_file(const std::string& filename, size_t& loaded_cou
 
 bool IPv4Matcher::is_match(uint32_t ip) const {
     _guard;
-    if (!ips.empty() && binary_search(ips.cbegin(), ips.cend(), ip)) {
+    if (!ips.empty() && std::binary_search(ips.cbegin(), ips.cend(), ip)) {
         return true;
     }
 
     for (const auto& sub : subnet) {
         uint32_t net = ip & gsl::at(mask_values, sub.first);
-        if (binary_search(sub.second.cbegin(), sub.second.cend(), net)) {
+        if (std::binary_search(sub.second.cbegin(), sub.second.cend(), net)) {
             return true;
         }
     }
@@ -685,7 +684,7 @@ FILE_LOCK_HANDLE get_file_lock(const char* filename) {
 
     if (hFile == INVALID_LOCK_HANDLE) {
         _log_with_date_time(
-          "CreateFileA " + string(filename) + " failed, LastError : " + to_string(::GetLastError()), Log::ERROR);
+          "CreateFileA " + std::string(filename) + " failed, LastError : " + std::to_string(::GetLastError()), Log::ERROR);
     }
     return hFile;
 #endif
@@ -751,7 +750,7 @@ static int get_ttl(struct msghdr* msg) {
     _unguard;
 }
 
-static pair<string, uint16_t> get_addr(struct sockaddr_storage addr) {
+static std::pair<std::string, uint16_t> get_addr(struct sockaddr_storage addr) {
     _guard;
 
     const int buf_size = 256;
@@ -760,16 +759,16 @@ static pair<string, uint16_t> get_addr(struct sockaddr_storage addr) {
     if (addr.ss_family == AF_INET) {
         auto* sa = (sockaddr_in*)&addr;
         if (inet_ntop(AF_INET, &(sa->sin_addr), (char*)buf, buf_size) != nullptr) {
-            return make_pair(buf, ntohs(sa->sin_port));
+            return std::make_pair(buf, ntohs(sa->sin_port));
         }
     } else {
         auto* sa = (sockaddr_in6*)&addr;
         if (inet_ntop(AF_INET6, &(sa->sin6_addr), (char*)buf, buf_size) != nullptr) {
-            return make_pair(buf, ntohs(sa->sin6_port));
+            return std::make_pair(buf, ntohs(sa->sin6_port));
         }
     }
 
-    return make_pair("", 0);
+    return std::make_pair("", 0);
     _unguard;
 }
 
@@ -786,18 +785,18 @@ std::pair<std::string, uint16_t> recv_target_endpoint(int _fd, bool use_tproxy) 
     int error = 0;
     if (use_tproxy) {
         error = getsockname(_fd, (sockaddr*)&destaddr, &socklen);
-        _log_with_date_time("recv_target_endpoint + getsockname error " + to_string(error), Log::INFO);
+        _log_with_date_time("recv_target_endpoint + getsockname error " + std::to_string(error), Log::INFO);
     } else {
         error = getsockopt(_fd, SOL_IPV6, IP6T_SO_ORIGINAL_DST, &destaddr, &socklen);
         if (error) {
             error = getsockopt(_fd, SOL_IP, SO_ORIGINAL_DST, &destaddr, &socklen);
         }
 
-        _log_with_date_time("recv_target_endpoint + getsockopt error " + to_string(error), Log::INFO);
+        _log_with_date_time("recv_target_endpoint + getsockopt error " + std::to_string(error), Log::INFO);
     }
 
     if (error) {
-        return make_pair("", 0);
+        return std::make_pair("", 0);
     }
 
     char ipstr[INET6_ADDRSTRLEN];
@@ -811,9 +810,9 @@ std::pair<std::string, uint16_t> recv_target_endpoint(int _fd, bool use_tproxy) 
         inet_ntop(AF_INET6, &(sa->sin6_addr), ipstr, INET6_ADDRSTRLEN);
         port = ntohs(sa->sin6_port);
     }
-    return make_pair(ipstr, port);
+    return std::make_pair(ipstr, port);
 #else  // ENABLE_NAT
-    return make_pair(use_tproxy ? "" : "0", (uint16_t)_fd);
+    return std::make_pair(use_tproxy ? "" : "0", (uint16_t)_fd);
 #endif // ENABLE_NAT
 
     _unguard;
@@ -821,7 +820,7 @@ std::pair<std::string, uint16_t> recv_target_endpoint(int _fd, bool use_tproxy) 
 
 // copied from shadowsocks-libev udpreplay.c
 // it works if in NAT mode
-pair<string, uint16_t> recv_tproxy_udp_msg(
+std::pair<std::string, uint16_t> recv_tproxy_udp_msg(
   int fd, boost::asio::ip::udp::endpoint& target_endpoint, char* buf, int& buf_len, int& ttl) {
     _guard;
 
@@ -852,8 +851,8 @@ pair<string, uint16_t> recv_tproxy_udp_msg(
         _log_with_date_time("[udp] server_recvmsg failed!", Log::FATAL);
     } else {
         if (buf_len > packet_size) {
-            _log_with_date_time(string("[udp] UDP server_recv_recvmsg fragmentation, MTU at least be: ") +
-                                  to_string(buf_len + PACKET_HEADER_SIZE),
+            _log_with_date_time(std::string("[udp] UDP server_recv_recvmsg fragmentation, MTU at least be: ") +
+                                  std::to_string(buf_len + PACKET_HEADER_SIZE),
               Log::INFO);
         }
 
@@ -869,7 +868,7 @@ pair<string, uint16_t> recv_tproxy_udp_msg(
         }
     }
 
-    return make_pair("", 0);
+    return std::make_pair("", 0);
 
     _unguard;
 }
@@ -879,7 +878,7 @@ bool prepare_transparent_socket(int fd, bool is_ipv4) {
     int sol = is_ipv4 ? SOL_IP : SOL_IPV6;
 
     if (setsockopt(fd, sol, IP_TRANSPARENT, &opt, sizeof(opt)) != 0) {
-        _log_with_date_time("setsockopt fd [" + to_string(fd) + "] IP_TRANSPARENT failed!", Log::FATAL);
+        _log_with_date_time("setsockopt fd [" + std::to_string(fd) + "] IP_TRANSPARENT failed!", Log::FATAL);
         return false;
     }
 
@@ -944,23 +943,23 @@ bool prepare_nat_udp_target_bind(
 #else
 
 std::pair<std::string, uint16_t> recv_target_endpoint(int _native_fd, bool use_tproxy) {
-    throw runtime_error("NAT is not supported in Windows");
+    throw std::runtime_error("NAT is not supported in Windows");
 }
 
 std::pair<std::string, uint16_t> recv_tproxy_udp_msg(
   int fd, boost::asio::ip::udp::endpoint& target_endpoint, char* buf, int& buf_len, int& ttl) {
-    throw runtime_error("NAT is not supported in Windows");
+    throw std::runtime_error("NAT is not supported in Windows");
 }
 
-bool prepare_transparent_socket(int fd, bool is_ipv4) { throw runtime_error("NAT is not supported in Windows"); }
+bool prepare_transparent_socket(int fd, bool is_ipv4) { throw std::runtime_error("NAT is not supported in Windows"); }
 
 bool prepare_nat_udp_bind(int fd, bool is_ipv4, bool recv_ttl) {
-    throw runtime_error("NAT is not supported in Windows");
+    throw std::runtime_error("NAT is not supported in Windows");
 }
 
 bool prepare_nat_udp_target_bind(
   int fd, bool is_ipv4, const boost::asio::ip::udp::endpoint& udp_target_endpoint, int buf_size) {
-    throw runtime_error("NAT is not supported in Windows");
+    throw std::runtime_error("NAT is not supported in Windows");
 }
 
 #endif // _WIN32

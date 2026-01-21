@@ -25,7 +25,6 @@
 #include "session/clientsession.h"
 #include "tun/tunsession.h"
 
-using namespace std;
 using namespace boost::asio::ip;
 
 uint32_t Pipeline::s_pipeline_id_counter = 0;
@@ -83,7 +82,7 @@ void Pipeline::start_timeout_timer() {
         timeout_timer.cancel();
     }
 
-    timeout_timer.expires_after(chrono::seconds(timeout));
+    timeout_timer.expires_after(std::chrono::seconds(timeout));
     auto self = shared_from_this();
     timeout_timer.async_wait([this, self, timeout](const boost::system::error_code error) {
         _guard;
@@ -94,7 +93,7 @@ void Pipeline::start_timeout_timer() {
                 return;
             }
 
-            _log_with_date_time("pipeline " + to_string(get_pipeline_id()) + " got timeout to be destroyed", Log::INFO);
+            _log_with_date_time("pipeline " + std::to_string(get_pipeline_id()) + " got timeout to be destroyed", Log::INFO);
             timeout_timer_checker = 0;
             destroy();
         }
@@ -111,18 +110,18 @@ void Pipeline::start() {
     _guard;
 
     auto self = shared_from_this();
-    connect_remote_server_ssl(this, config.get_remote_addr(), to_string(config.get_remote_port()), resolver, out_socket,
+    connect_remote_server_ssl(this, config.get_remote_addr(), std::to_string(config.get_remote_port()), resolver, out_socket,
       tcp::endpoint(), [this, self]() {
           _guard;
           connected           = true;
           out_socket_endpoint = out_socket.next_layer().remote_endpoint();
 
-          string data(config.get_password().cbegin()->first);
+          std::string data(config.get_password().cbegin()->first);
           data += "\r\nPP";
-          sending_data_cache.insert_data(move(data));
+          sending_data_cache.insert_data(std::move(data));
 
           _log_with_date_time(
-            "pipeline " + to_string(get_pipeline_id()) + " is going to connect remote server and send password...");
+            "pipeline " + std::to_string(get_pipeline_id()) + " is going to connect remote server and send password...");
 
           start_timeout_timer();
           out_async_recv();
@@ -140,18 +139,18 @@ void Pipeline::session_async_send_cmd(PipelineRequest::Command cmd, Session& ses
         return;
     }
 
-    _log_with_date_time_ALL("pipeline " + to_string(get_pipeline_id()) +
-                            " session_id: " + to_string(session.get_session_id()) +
+    _log_with_date_time_ALL("pipeline " + std::to_string(get_pipeline_id()) +
+                            " session_id: " + std::to_string(session.get_session_id()) +
                             " --> send to server cmd: " + PipelineRequest::get_cmd_string(cmd) +
-                            (cmd == PipelineRequest::ACK ? (" ack count: " + to_string(ack_count))
-                                                         : (" data length:" + to_string(send_data.length()))) +
-                            " checksum: " + to_string(get_checksum(send_data)));
+                            (cmd == PipelineRequest::ACK ? (" ack count: " + std::to_string(ack_count))
+                                                         : (" data length:" + std::to_string(send_data.length()))) +
+                            " checksum: " + std::to_string(get_checksum(send_data)));
 
     sending_data_cache.push_data(
       [&](boost::asio::streambuf& buf) {
           PipelineRequest::generate(buf, cmd, session.get_session_id(), send_data, ack_count);
       },
-      move(sent_handler));
+      std::move(sent_handler));
 
     refresh_timeout_checker();
 
@@ -165,12 +164,12 @@ void Pipeline::session_async_send_icmp(const std::string_view& send_data, SentHa
         return;
     }
 
-    _log_with_date_time_ALL("pipeline " + to_string(get_pipeline_id()) +
-                            " --> send to server cmd: ICMP data length:" + to_string(send_data.length()));
+    _log_with_date_time_ALL("pipeline " + std::to_string(get_pipeline_id()) +
+                            " --> send to server cmd: ICMP data length:" + std::to_string(send_data.length()));
 
     sending_data_cache.push_data(
       [&](boost::asio::streambuf& buf) { PipelineRequest::generate(buf, PipelineRequest::ICMP, 0, send_data); },
-      move(sent_handler));
+      std::move(sent_handler));
 
     refresh_timeout_checker();
 
@@ -180,7 +179,7 @@ void Pipeline::session_async_send_icmp(const std::string_view& send_data, SentHa
 void Pipeline::session_start(Session& session, SentHandler&& started_handler) {
     _guard;
     sessions.emplace_back(session.shared_from_this());
-    session_async_send_cmd(PipelineRequest::CONNECT, session, "", move(started_handler));
+    session_async_send_cmd(PipelineRequest::CONNECT, session, "", std::move(started_handler));
     _unguard;
 }
 
@@ -193,8 +192,8 @@ void Pipeline::session_destroyed(Session& session) {
                 break;
             }
         }
-        _log_with_date_time_ALL("pipeline " + to_string(get_pipeline_id()) +
-                                " send command to close session_id: " + to_string(session.get_session_id()));
+        _log_with_date_time_ALL("pipeline " + std::to_string(get_pipeline_id()) +
+                                " send command to close session_id: " + std::to_string(session.get_session_id()));
         session_async_send_cmd(PipelineRequest::CLOSE, session, "", [](boost::system::error_code) {});
     }
     _unguard;
@@ -245,15 +244,15 @@ void Pipeline::out_async_recv() {
                   }
 
                   _log_with_date_time_ALL(
-                    "pipeline " + to_string(get_pipeline_id()) + " session_id: " + to_string(req.session_id) +
+                    "pipeline " + std::to_string(get_pipeline_id()) + " session_id: " + std::to_string(req.session_id) +
                     " <-- recv from server cmd: " + req.get_cmd_string() +
-                    (req.command == PipelineRequest::ACK ? (" ack count: " + to_string(req.ack_count))
-                                                         : (" data length: " + to_string(req.packet_data.length()))) +
-                    " checksum: " + to_string(get_checksum(req.packet_data)));
+                    (req.command == PipelineRequest::ACK ? (" ack count: " + std::to_string(req.ack_count))
+                                                         : (" data length: " + std::to_string(req.packet_data.length()))) +
+                    " checksum: " + std::to_string(get_checksum(req.packet_data)));
 
                   if (req.command == PipelineRequest::ICMP) {
                       if (icmp_processor) {
-                          icmp_processor->client_out_send(string(req.packet_data));
+                          icmp_processor->client_out_send(std::string(req.packet_data));
                       }
                   } else {
 
@@ -282,9 +281,9 @@ void Pipeline::out_async_recv() {
                       }
 
                       if (!found) {
-                          _log_with_date_time("pipeline " + to_string(get_pipeline_id()) +
-                                                " cannot find session_id:" + to_string(req.session_id) +
-                                                " current sessions:" + to_string(sessions.size()),
+                          _log_with_date_time("pipeline " + std::to_string(get_pipeline_id()) +
+                                                " cannot find session_id:" + std::to_string(req.session_id) +
+                                                " current sessions:" + std::to_string(sessions.size()),
                             Log::ERROR);
                       }
                   }
@@ -308,8 +307,8 @@ void Pipeline::destroy() {
     }
     destroyed = true;
 
-    _log_with_date_time("pipeline " + to_string(get_pipeline_id()) + " destroyed. close all " +
-                          to_string(sessions.size()) + " sessions in this pipeline.",
+    _log_with_date_time("pipeline " + std::to_string(get_pipeline_id()) + " destroyed. close all " +
+                          std::to_string(sessions.size()) + " sessions in this pipeline.",
       Log::INFO);
 
     if(timeout_timer_checker != 0){

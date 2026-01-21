@@ -21,7 +21,6 @@
  */
 
 #include "forwardsession.h"
-using namespace std;
 using namespace boost::asio::ssl;
 
 ForwardSession::ForwardSession(Service* _service, const Config& config, context& ssl_context)
@@ -29,6 +28,6 @@ ForwardSession::ForwardSession(Service* _service, const Config& config, context&
     set_session_name("ForwardSession");
 }
 
-pair<string, uint16_t> ForwardSession::get_target_endpoint() {
-    return make_pair(get_config().get_target_addr(), get_config().get_target_port());
+std::pair<std::string, uint16_t> ForwardSession::get_target_endpoint() {
+    return std::make_pair(get_config().get_target_addr(), get_config().get_target_port());
 }

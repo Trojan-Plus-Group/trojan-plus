@@ -27,7 +27,6 @@
 #include <boost/asio/ip/udp.hpp>
 #include <sstream>
 
-using namespace std;
 using namespace boost::asio::ip;
 using namespace trojan;
 
@@ -70,7 +69,7 @@ bool DNSServer::SocketQueryer::open(DataQueryHandler&& handler, int port) {
         return false;
     }
 
-    data_handler = move(handler);
+    data_handler = std::move(handler);
     async_read_udp();
     return true;
 
@@ -117,7 +116,7 @@ bool DNSServer::SocketQueryer::send(const boost::asio::ip::udp::endpoint& to, co
 DNSServer::DNSServer(Service* _service) : m_service(_service) { m_data_queryer = TP_MAKE_SHARED(SocketQueryer, _service); }
 
 DNSServer::DNSServer(Service* _service, std::shared_ptr<IDataQueryer> queryer)
-    : m_service(_service), m_data_queryer(move(queryer)) {}
+    : m_service(_service), m_data_queryer(std::move(queryer)) {}
 
 DNSServer::~DNSServer() {
     _log_with_date_time("~DNSServer called");
@@ -149,7 +148,7 @@ bool DNSServer::start() {
     return m_data_queryer->open(
       [this](const boost::asio::ip::udp::endpoint& recv_endpoint, boost::asio::streambuf& data) {
           m_udp_recv_endpoint     = recv_endpoint;
-          string_view former_data = streambuf_to_string_view(data);
+          std::string_view former_data = streambuf_to_string_view(data);
           std::istream is(&data);
 
           dns_header dns_hdr;
@@ -221,7 +220,7 @@ bool DNSServer::find_in_dns_cache(
         for (auto& c : m_dns_cache) {
             if (c.get_domain() == question.get_QNAME()) {
                 _log_with_endpoint_ALL(local_src, "[dns] find " + question.get_QNAME() + " in cache ttl: " +
-                                                    to_string(c.get_ttl() - (curr_time - c.get_cached_time())));
+                                                    std::to_string(c.get_ttl() - (curr_time - c.get_cached_time())));
 
                 std::string& raw_data = c.get_answer_data();
                 raw_data[0]           = header.ID() >> one_byte_shift_8_bits;
@@ -238,24 +237,24 @@ bool DNSServer::find_in_dns_cache(
     _unguard;
 }
 
-void DNSServer::store_in_dns_cache(const string_view& data, bool proxyed) {
+void DNSServer::store_in_dns_cache(const std::string_view& data, bool proxyed) {
     _guard;
 
     if (m_service->get_config().get_dns().enable_cached) {
-        string read_data(data);
-        istringstream is(read_data);
+        std::string read_data(data);
+        std::istringstream is(read_data);
 
         dns_answer answer;
         if (is >> answer) {
             if (!answer.get_questions().empty() && is_interest_dns_msg(answer.get_questions()[0])) {
 
                 const auto& domain = answer.get_questions()[0].get_QNAME();
-                uint32_t ttl       = numeric_limits<uint32_t>::max();
-                vector<uint32_t> A_list;
+                uint32_t ttl       = std::numeric_limits<uint32_t>::max();
+                std::vector<uint32_t> A_list;
                 const char* ip = nullptr;
                 for (const auto& an : answer.get_answers()) {
                     if (an.A != 0) {
-                        if (ttl > an.TTL) { // find min
+                        if (ttl > an.TTL) { // find std::min
                             ttl = an.TTL;
                         }
 
@@ -264,12 +263,12 @@ void DNSServer::store_in_dns_cache(const string_view& data, bool proxyed) {
                     }
                 }
 
-                if (ttl != numeric_limits<uint32_t>::max()) {
-                    sort(A_list.begin(), A_list.end());
+                if (ttl != std::numeric_limits<uint32_t>::max()) {
+                    std::sort(A_list.begin(), A_list.end());
                     m_dns_cache.emplace_back(DNSCache(domain, ttl, A_list, proxyed, data));
 
-                    _log_with_date_time_ALL("[dns] cache " + domain + " ip: " + string(ip == nullptr ? "" : ip) +
-                                            " in ttl: " + to_string(ttl));
+                    _log_with_date_time_ALL("[dns] cache " + domain + " ip: " + std::string(ip == nullptr ? "" : ip) +
+                                            " in ttl: " + std::to_string(ttl));
                 }
             }
         }
@@ -278,16 +277,16 @@ void DNSServer::store_in_dns_cache(const string_view& data, bool proxyed) {
     _unguard;
 }
 
-void DNSServer::send_to_local(const udp::endpoint& local_src, const string_view& data) {
+void DNSServer::send_to_local(const udp::endpoint& local_src, const std::string_view& data) {
     _guard;
 
-    _log_with_endpoint_ALL(local_src, "[dns] <-- " + to_string(data.length()));
+    _log_with_endpoint_ALL(local_src, "[dns] <-- " + std::to_string(data.length()));
     m_data_queryer->send(local_src, data);
 
     _unguard;
 }
 
-void DNSServer::recv_up_stream_data(const udp::endpoint& local_src, const string_view& data, bool proxyed) {
+void DNSServer::recv_up_stream_data(const udp::endpoint& local_src, const std::string_view& data, bool proxyed) {
     _guard;
 
     send_to_local(local_src, data);
@@ -317,7 +316,7 @@ bool DNSServer::is_remote_domain(const std::string& domain) const {
     _unguard;
 }
 
-void DNSServer::in_recved(istream& is, const dns_header& header, const string_view& former_data) {
+void DNSServer::in_recved(std::istream& is, const dns_header& header, const std::string_view& former_data) {
     _guard;
 
     bool proxy = false;
@@ -347,10 +346,10 @@ void DNSServer::in_recved(istream& is, const dns_header& header, const string_vi
         _log_with_date_time_ALL("[dns] lookup [" + qt.get_QNAME() + "] by proxy");
 
         auto up_stream_ns_svr = m_service->get_config().get_dns().up_gfw_dns_server.at(0);
-        auto dst              = make_pair(up_stream_ns_svr, DEFAULT_UP_STREAM_NS_SVR_PORT);
+        auto dst              = std::make_pair(up_stream_ns_svr, DEFAULT_UP_STREAM_NS_SVR_PORT);
         auto forwarder        = TP_MAKE_SHARED(UDPForwardSession, 
           m_service, m_service->get_config(), m_service->get_ssl_context(), m_udp_recv_endpoint, dst,
-          [this](const udp::endpoint& endpoint, const string_view& data) { recv_up_stream_data(endpoint, data, true); },
+          [this](const udp::endpoint& endpoint, const std::string_view& data) { recv_up_stream_data(endpoint, data, true); },
           false, true);
 
         auto data = m_service->get_sending_data_allocator().allocate(former_data);
@@ -373,7 +372,7 @@ void DNSServer::in_recved(istream& is, const dns_header& header, const string_vi
         auto forwarder        = TP_MAKE_SHARED(UDPLocalForwarder, 
           m_service, m_udp_recv_endpoint, dst,
           [this](
-            const udp::endpoint& endpoint, const string_view& data) { recv_up_stream_data(endpoint, data, false); },
+            const udp::endpoint& endpoint, const std::string_view& data) { recv_up_stream_data(endpoint, data, false); },
           true);
 
         forwarder->start();
@@ -388,7 +387,7 @@ void DNSServer::in_recved(istream& is, const dns_header& header, const string_vi
 bool DNSServer::is_ip_in_gfwlist(uint32_t ip) const {
     _guard;
     for (const auto& dns : m_dns_cache) {
-        if (dns.is_proxyed() && binary_search(dns.get_ips().cbegin(), dns.get_ips().cend(), ip)) {
+        if (dns.is_proxyed() && std::binary_search(dns.get_ips().cbegin(), dns.get_ips().cend(), ip)) {
             return true;
         }
     }

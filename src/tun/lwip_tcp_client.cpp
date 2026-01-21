@@ -28,11 +28,10 @@
 
 #include "core/log.h"
 
-using namespace std;
 using namespace boost::asio::ip;
 
-lwip_tcp_client::lwip_tcp_client(struct tcp_pcb* _pcb, shared_ptr<TUNSession> _session, CloseCallback&& _close_cb)
-    : m_pcb(_pcb), m_closed(false), m_aborted(false), m_tun_session(move(_session)), m_close_cb(move(_close_cb)) {
+lwip_tcp_client::lwip_tcp_client(struct tcp_pcb* _pcb, std::shared_ptr<TUNSession> _session, CloseCallback&& _close_cb)
+    : m_pcb(_pcb), m_closed(false), m_aborted(false), m_tun_session(std::move(_session)), m_close_cb(std::move(_close_cb)) {
 
     _guard;
 
@@ -204,7 +203,7 @@ int lwip_tcp_client::client_socks_recv_send_out() {
     size_t wrote_size     = 0;
     do {
 
-        auto to_write = min(recv_size, (size_t)tcp_sndbuf(m_pcb));
+        auto to_write = std::min(recv_size, (size_t)tcp_sndbuf(m_pcb));
         if (to_write == 0) {
             break;
         }

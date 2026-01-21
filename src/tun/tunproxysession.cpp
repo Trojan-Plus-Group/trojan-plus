@@ -31,7 +31,6 @@
 #include "proto/trojanrequest.h"
 #include "proto/udppacket.h"
 
-using namespace std;
 using namespace boost::asio::ip;
 
 TUNProxySession::TUNProxySession(Service* _service, bool _is_udp)
@@ -85,9 +84,9 @@ void TUNProxySession::start() {
             boost::system::error_code ec;
             auto endpoint = m_out_socket.next_layer().local_endpoint(ec);
             _log_with_endpoint(
-              endpoint, "TUNProxySession session_id: " + to_string(get_session_id()) + " started", Log::INFO);
+              endpoint, "TUNProxySession session_id: " + std::to_string(get_session_id()) + " started", Log::INFO);
         } else {
-            auto note_str = "TUNProxySession session_id: " + to_string(get_session_id()) + " started in pipeline";
+            auto note_str = "TUNProxySession session_id: " + std::to_string(get_session_id()) + " started in pipeline";
             if (is_udp_forward_session()) {
                 _log_with_endpoint(m_local_addr_udp, note_str, Log::INFO);
             } else {
@@ -153,11 +152,11 @@ void TUNProxySession::start() {
         get_service()->get_config().prepare_ssl_reuse(m_out_socket);
         if (is_udp_forward_session()) {
             connect_remote_server_ssl(this, get_service()->get_config().get_remote_addr(),
-              to_string(get_service()->get_config().get_remote_port()), m_out_resolver, m_out_socket, m_local_addr_udp,
+              std::to_string(get_service()->get_config().get_remote_port()), m_out_resolver, m_out_socket, m_local_addr_udp,
               cb);
         } else {
             connect_remote_server_ssl(this, get_service()->get_config().get_remote_addr(),
-              to_string(get_service()->get_config().get_remote_port()), m_out_resolver, m_out_socket, m_local_addr, cb);
+              std::to_string(get_service()->get_config().get_remote_port()), m_out_resolver, m_out_socket, m_local_addr, cb);
         }
     }
 
@@ -173,7 +172,7 @@ void TUNProxySession::destroy(bool pipeline_call) {
     m_destroyed = true;
 
     auto note_str =
-      "TUNProxySession session_id: " + to_string(get_session_id()) + " disconnected, " + get_stat().to_string();
+      "TUNProxySession session_id: " + std::to_string(get_session_id()) + " disconnected, " + get_stat().to_string();
 
     if (is_udp_forward_session()) {
         _log_with_endpoint(m_local_addr_udp, note_str, Log::INFO);
@@ -233,21 +232,21 @@ void TUNProxySession::out_async_send_impl(const std::string_view& data_to_send, 
                       if (!get_pipeline_component().pre_call_ack_func()) {
                           m_wait_ack_handler.emplace_back(_handler);
                           _log_with_endpoint_DEBUG(
-                            m_local_addr, "session_id: " + to_string(get_session_id()) +
+                            m_local_addr, "session_id: " + std::to_string(get_session_id()) +
                                             " cannot TUNProxySession::out_async_send ! Is waiting for ack");
                           return;
                       }
                       _log_with_endpoint_DEBUG(
-                        m_local_addr, "session_id: " + to_string(get_session_id()) +
+                        m_local_addr, "session_id: " + std::to_string(get_session_id()) +
                                         " permit to TUNProxySession::out_async_send ! ack:" +
-                                        to_string(get_pipeline_component().pipeline_ack_counter));
+                                        std::to_string(get_pipeline_component().pipeline_ack_counter));
                   }
               }
               _handler(error);
           });
     } else {
         m_sending_data_cache.push_data(
-          [&](boost::asio::streambuf& buf) { streambuf_append(buf, data_to_send); }, move(_handler));
+          [&](boost::asio::streambuf& buf) { streambuf_append(buf, data_to_send); }, std::move(_handler));
     }
 
     _unguard;
@@ -255,11 +254,11 @@ void TUNProxySession::out_async_send_impl(const std::string_view& data_to_send, 
 void TUNProxySession::out_async_send(const uint8_t* _data, size_t _length, SentHandler&& _handler) {
     _guard;
     if (!m_connected) {
-        if (m_send_buf.size() < numeric_limits<uint16_t>::max()) {
+        if (m_send_buf.size() < std::numeric_limits<uint16_t>::max()) {
             if (is_udp_forward_session()) {
                 UDPPacket::generate(m_send_buf,
                   get_config().get_tun().redirect_local ? get_redirect_local_remote_addr() : m_remote_addr_udp,
-                  string_view((const char*)_data, _length));
+                  std::string_view((const char*)_data, _length));
             } else {
                 streambuf_append(m_send_buf, _data, _length);
             }
@@ -273,10 +272,10 @@ void TUNProxySession::out_async_send(const uint8_t* _data, size_t _length, SentH
             m_send_buf.consume(m_send_buf.size());
             UDPPacket::generate(m_send_buf,
               get_config().get_tun().redirect_local ? get_redirect_local_remote_addr() : m_remote_addr_udp,
-              string_view((const char*)_data, _length));
-            out_async_send_impl(streambuf_to_string_view(m_send_buf), move(_handler));
+              std::string_view((const char*)_data, _length));
+            out_async_send_impl(streambuf_to_string_view(m_send_buf), std::move(_handler));
         } else {
-            out_async_send_impl(string_view((const char*)_data, _length), move(_handler));
+            out_async_send_impl(std::string_view((const char*)_data, _length), std::move(_handler));
         }
     }
 
@@ -346,10 +345,10 @@ void TUNProxySession::recv_buf_consume(uint16_t _length) {
     _unguard;
 }
 
-size_t TUNProxySession::parse_udp_packet_data(const string_view& data) {
+size_t TUNProxySession::parse_udp_packet_data(const std::string_view& data) {
     _guard;
 
-    string_view parse_data(data);
+    std::string_view parse_data(data);
     size_t parsed_size = 0;
     for (;;) {
         if (parse_data.empty()) {
@@ -360,7 +359,7 @@ size_t TUNProxySession::parse_udp_packet_data(const string_view& data) {
         UDPPacket packet;
         size_t packet_len = 0;
         if (!packet.parse(parse_data, packet_len)) {
-            if (parse_data.length() > numeric_limits<uint16_t>::max()) {
+            if (parse_data.length() > std::numeric_limits<uint16_t>::max()) {
                 _log_with_endpoint(get_udp_local_endpoint(), "[tun] error UDPPacket.parse! destroy it.", Log::ERROR);
                 destroy();
                 break;
@@ -391,7 +390,7 @@ void TUNProxySession::out_async_read() {
 
     if (get_service()->is_use_pipeline()) {
         get_pipeline_component().get_pipeline_data_cache().async_read(
-          [this](const string_view& data, size_t ack_count) {
+          [this](const std::string_view& data, size_t ack_count) {
               _guard;
 
               get_stat().inc_recv_len(data.length());

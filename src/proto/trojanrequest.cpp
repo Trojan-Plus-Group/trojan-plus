@@ -22,13 +22,12 @@
 
 #include "trojanrequest.h"
 #include "core/utils.h"
-using namespace std;
 
 int TrojanRequest::parse(const std::string_view& data) {
     _guard;
 
     size_t first = data.find("\r\n");
-    if (first == string::npos) {
+    if (first == std::string::npos) {
         return -1;
     }
     password = data.substr(0, first);
@@ -48,10 +47,10 @@ int TrojanRequest::parse(const std::string_view& data) {
     _unguard;
 }
 
-string TrojanRequest::generate(const string& password, const string& domainname, uint16_t port, bool tcp) {
+std::string TrojanRequest::generate(const std::string& password, const std::string& domainname, uint16_t port, bool tcp) {
     _guard;
 
-    string ret = password + "\r\n";
+    std::string ret = password + "\r\n";
     if (tcp) {
         ret += '\x01';
     } else {

@@ -26,9 +26,8 @@
 #include "pipelinerequest.h"
 #include "session/pipelinecomponent.h"
 
-using namespace std;
 
-int PipelineRequest::parse(const string_view& data) {
+int PipelineRequest::parse(const std::string_view& data) {
     _guard;
 
     /*
@@ -36,7 +35,7 @@ int PipelineRequest::parse(const string_view& data) {
         | 1 byte as command | diff options by command |
         +-------------------+-------------------------+
 
-    command list:
+    command std::list:
         +---------------------------+-----------------------+
         | CONNECT or ACK or DESTORY | 2 bytes as session id |
         +---------------------------+-----------------------+
@@ -126,8 +125,8 @@ boost::asio::streambuf& PipelineRequest::generate(boost::asio::streambuf& buf, e
     _guard;
 
     // if(session_id > MAX_SESSION_ID_LENGTH){
-    //     throw logic_error("PipelineRequest::generate session_id " + to_string(session_id) + " >
-    //     numeric_limits<uint16_t>::max() " + to_string(MAX_SESSION_ID_LENGTH));
+    //     throw std::logic_error("PipelineRequest::generate session_id " + std::to_string(session_id) + " >
+    //     std::numeric_limits<uint16_t>::max() " + std::to_string(MAX_SESSION_ID_LENGTH));
     // }
 
     streambuf_append(buf, char(uint8_t(cmd)));
@@ -135,8 +134,8 @@ boost::asio::streambuf& PipelineRequest::generate(boost::asio::streambuf& buf, e
     if (cmd == ICMP) {
         auto data_length = data.length();
         if (data_length >= MAX_ICMP_LENGTH) {
-            throw logic_error("PipelineRequest::generate data.length() " + to_string(data_length) +
-                              " > MAX_ICMP_LENGTH " + to_string(MAX_ICMP_LENGTH));
+            throw std::logic_error("PipelineRequest::generate data.length() " + std::to_string(data_length) +
+                              " > MAX_ICMP_LENGTH " + std::to_string(MAX_ICMP_LENGTH));
         }
 
         generate_uint16(buf, (uint16_t)data_length);
@@ -149,8 +148,8 @@ boost::asio::streambuf& PipelineRequest::generate(boost::asio::streambuf& buf, e
         if (cmd == DATA) {
             auto data_length = data.length();
             if (data_length >= MAX_DATA_LENGTH) {
-                throw logic_error("PipelineRequest::generate data.length() " + to_string(data_length) +
-                                  " > MAX_DATA_LENGTH " + to_string(MAX_DATA_LENGTH));
+                throw std::logic_error("PipelineRequest::generate data.length() " + std::to_string(data_length) +
+                                  " > MAX_DATA_LENGTH " + std::to_string(MAX_DATA_LENGTH));
             }
 
             generate_uint32(buf, (uint32_t)data_length);

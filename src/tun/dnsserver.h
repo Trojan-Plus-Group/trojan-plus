@@ -62,7 +62,7 @@ class DNSServer : public std::enable_shared_from_this<DNSServer> {
       public:
         DNSCache(
           std::string _domain, int _ttl, std::vector<uint32_t>& _ips, bool _proxyed, const std::string_view& data)
-            : domain(std::move(_domain)), ttl(_ttl), ips(move(_ips)), proxyed(_proxyed), answer_data(data) {}
+            : domain(std::move(_domain)), ttl(_ttl), ips(std::move(_ips)), proxyed(_proxyed), answer_data(data) {}
 
         [[nodiscard]] inline bool expired(time_t curr) const { return int(curr - cached_time) >= ttl; }
 

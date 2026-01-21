@@ -31,7 +31,6 @@
 #ifdef ENABLE_ANDROID_LOG
 #include <android/log.h>
 #endif // ENABLE_ANDROID_LOG
-using namespace std;
 using namespace boost::posix_time;
 using namespace boost::asio::ip;
 
@@ -43,7 +42,7 @@ FILE* Log::keylog(nullptr);
 FILE* Log::output_stream(stderr);
 Log::LogCallback Log::log_callback{};
 
-void Log::log(const string& message, Level level) {
+void Log::log(const std::string& message, Level level) {
     if (level >= Log::level) {
 #ifdef ENABLE_ANDROID_LOG
         int log_level;
@@ -78,11 +77,11 @@ void Log::log(const string& message, Level level) {
     }
 }
 
-void Log::log_with_date_time(const string& message, Level level) {
+void Log::log_with_date_time(const std::string& message, Level level) {
     static const char* level_strings[] = {"ALL", "INFO", "WARN", "ERROR", "FATAL", "OFF"};
 
-    static ostringstream time_stream;
-    static const locale loc(
+    static std::ostringstream time_stream;
+    static const std::locale loc(
       time_stream.getloc(), new time_facet("[%Y-%m-%d %H:%M:%S] ")); // have to use fu*k nacked new
     static bool set_time_stream = false;
     if (!set_time_stream) {
@@ -90,26 +89,26 @@ void Log::log_with_date_time(const string& message, Level level) {
         time_stream.imbue(loc);
     }
 
-    time_stream.str(string());
+    time_stream.str(std::string());
     time_stream << second_clock::local_time();
 
-    log(time_stream.str() + '[' + string(gsl::at(level_strings, level)) + "] " + message, level);
+    log(time_stream.str() + '[' + std::string(gsl::at(level_strings, level)) + "] " + message, level);
 }
 
-void Log::log_with_endpoint(const tcp::endpoint& endpoint, const string& message, Level level) {
+void Log::log_with_endpoint(const tcp::endpoint& endpoint, const std::string& message, Level level) {
     log_with_date_time(
-      string("[tcp] ") + endpoint.address().to_string() + ':' + to_string(endpoint.port()) + ' ' + message, level);
+      std::string("[tcp] ") + endpoint.address().to_string() + ':' + std::to_string(endpoint.port()) + ' ' + message, level);
 }
 
-void Log::log_with_endpoint(const udp::endpoint& endpoint, const string& message, Level level) {
+void Log::log_with_endpoint(const udp::endpoint& endpoint, const std::string& message, Level level) {
     log_with_date_time(
-      string("[udp] ") + endpoint.address().to_string() + ':' + to_string(endpoint.port()) + ' ' + message, level);
+      std::string("[udp] ") + endpoint.address().to_string() + ':' + std::to_string(endpoint.port()) + ' ' + message, level);
 }
 
-void Log::redirect(const string& filename) {
+void Log::redirect(const std::string& filename) {
     FILE* fp = fopen(filename.c_str(), "a");
     if (fp == nullptr) {
-        throw runtime_error(filename + ": " + strerror(errno));
+        throw std::runtime_error(filename + ": " + strerror(errno));
     }
     if (output_stream != stderr) {
         fclose(output_stream);
@@ -117,10 +116,10 @@ void Log::redirect(const string& filename) {
     output_stream = fp;
 }
 
-void Log::redirect_keylog(const string& filename) {
+void Log::redirect_keylog(const std::string& filename) {
     FILE* fp = fopen(filename.c_str(), "a");
     if (fp == nullptr) {
-        throw runtime_error(filename + ": " + strerror(errno));
+        throw std::runtime_error(filename + ": " + strerror(errno));
     }
     if (keylog != nullptr) {
         fclose(keylog);
@@ -128,7 +127,7 @@ void Log::redirect_keylog(const string& filename) {
     keylog = fp;
 }
 
-void Log::set_callback(LogCallback&& cb) { log_callback = move(cb); }
+void Log::set_callback(LogCallback&& cb) { log_callback = std::move(cb); }
 
 void Log::reset() {
     if (output_stream != stderr) {
