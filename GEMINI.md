@@ -20,8 +20,8 @@ The project is built using CMake and is intended to be cross-platform, with spec
 To build the project, the following dependencies are required:
 
 *   A C++17 compatible compiler (GCC 7+, Clang 5+, MSVC 2017+)
-*   CMake (>= 3.7.2)
-*   Boost (>= 1.72.0)
+*   CMake (>= 3.10.2)
+*   Boost (>= 1.72.0, 1.80.0+ recommended)
 *   OpenSSL (>= 1.1.0)
 *   (Optional) MySQL/MariaDB client library for database authentication.
 
@@ -128,6 +128,16 @@ Integrated Microsoft's **mimalloc** high-performance allocator into the custom m
 *   **Implementation**: Bundled `mimalloc` source code in the project to ensure consistent performance across platforms and simplify build requirements.
 *   **CMake Configuration**: The build system automatically compiles `mimalloc` from source and links it statically. Added `-DENABLE_MIMALLOC=ON/OFF` option.
 *   **Performance**: Optimized for multi-threaded proxy workloads, complementing the project's performance-oriented architectural decisions.
+
+### Code Quality and API Modernization (January 2026)
+*   **Namespace Cleanup**: Removed `using namespace std;` from all `.cpp` files in the `src/` directory to adhere to C++ best practices and prevent name collisions. Added explicit `std::` prefixes to all standard library symbols.
+*   **Security Fixes**: Replaced insecure `sprintf` calls with `snprintf` in core configuration logic to prevent potential buffer overflows.
+*   **Asio Modernization**: Migrated from deprecated `boost::asio::null_buffers()` to the modern `async_wait()` pattern for socket readiness notifications.
+*   **Build System Updates**: 
+    *   Increased minimum CMake version to `3.10.2`.
+    *   Explicitly set `CMP0167` policy to handle modern Boost discovery.
+    *   Added compiler pragmas to selectively suppress legacy macOS `SecKeychain` deprecation warnings, ensuring a clean build log on modern Darwin systems while maintaining backward compatibility.
+*   **Verification**: Verified the entire codebase with zero compilation warnings and passed the full integration test suite, including DNS forwarding mode.
 
 ### Dockerized Build and Test Environment
 Optimized the development and CI workflow by introducing a standardized, containerized environment.
