@@ -23,16 +23,15 @@
 #include "core/service.h"
 #include "session/session.h"
 
-using namespace std;
 using namespace boost::asio::ip;
 
 UDPLocalForwarder::UDPLocalForwarder(Service* service, udp::endpoint local_src, udp::endpoint remote_dst,
   UDPForwardSession::UDPWriter&& writer, bool is_dns)
     : Session(service, service->get_config()),
       m_service(service),
-      m_writer(move(writer)),
-      m_local_src(move(local_src)),
-      m_remote_dst(move(remote_dst)),
+      m_writer(std::move(writer)),
+      m_local_src(std::move(local_src)),
+      m_remote_dst(std::move(remote_dst)),
       m_udp_socket(service->get_io_context()),
       m_is_dns(is_dns) {
 
@@ -68,7 +67,7 @@ void UDPLocalForwarder::start() {
     udp_timer_async_wait();
 
     _log_with_endpoint(m_local_src,
-      "UDP local forwarder to [" + m_remote_dst.address().to_string() + ":" + to_string(m_remote_dst.port()) +
+      "UDP local forwarder to [" + m_remote_dst.address().to_string() + ":" + std::to_string(m_remote_dst.port()) +
         "] started",
       Log::INFO);
 
@@ -77,7 +76,7 @@ void UDPLocalForwarder::start() {
     _unguard;
 }
 
-bool UDPLocalForwarder::process(const udp::endpoint& endpoint, const string_view& data) {
+bool UDPLocalForwarder::process(const udp::endpoint& endpoint, const std::string_view& data) {
     _guard;
     if (endpoint != m_local_src) {
         return false;
@@ -96,7 +95,7 @@ bool UDPLocalForwarder::write_to(const std::string_view& data) {
 
     if (m_is_dns) {
         _log_with_endpoint_ALL(m_local_src, "[dns] --> [" + m_remote_dst.address().to_string() + ":" +
-                                              to_string(m_remote_dst.port()) + "] length: " + to_string(data.length()));
+                                              std::to_string(m_remote_dst.port()) + "] length: " + std::to_string(data.length()));
     }
 
     boost::system::error_code ec;
@@ -152,7 +151,7 @@ void UDPLocalForwarder::destroy(bool) {
     m_destroyed = true;
 
     _log_with_endpoint(m_local_src,
-      "UDP local forwarder to [" + m_remote_dst.address().to_string() + ":" + to_string(m_remote_dst.port()) +
+      "UDP local forwarder to [" + m_remote_dst.address().to_string() + ":" + std::to_string(m_remote_dst.port()) +
         "] disconnected, " + m_stat.to_string(),
       Log::INFO);
 

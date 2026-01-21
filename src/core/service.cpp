@@ -41,7 +41,6 @@
 #include "tun/dnsserver.h"
 #include "tun/tundev.h"
 
-using namespace std;
 using namespace boost::asio::ip;
 using namespace boost::asio::ssl;
 
@@ -56,7 +55,7 @@ Service::Service(Config& config, bool test)
     _guard;
 #ifndef ENABLE_NAT
     if (config.get_run_type() == Config::NAT) {
-        throw runtime_error("NAT is not supported");
+        throw std::runtime_error("NAT is not supported");
     }
 #endif // ENABLE_NAT
 
@@ -69,7 +68,7 @@ Service::Service(Config& config, bool test)
         if (config.get_run_type() != Config::CLIENT_TUN) {
             tcp::resolver resolver(io_context);
             tcp::endpoint listen_endpoint =
-              *resolver.resolve(config.get_local_addr(), to_string(config.get_local_port())).begin();
+              *resolver.resolve(config.get_local_addr(), std::to_string(config.get_local_port())).begin();
             socket_acceptor.open(listen_endpoint.protocol());
             socket_acceptor.set_option(tcp::acceptor::reuse_address(true));
 
@@ -158,7 +157,7 @@ Service::Service(Config& config, bool test)
                 m_dns_server = TP_MAKE_SHARED(DNSServer, this);
                 if (m_dns_server->start()) {
                     _log_with_date_time(
-                      "[dns] start local dns server at 0.0.0.0:" + to_string(config.get_dns().port), Log::WARN);
+                      "[dns] start local dns server at 0.0.0.0:" + std::to_string(config.get_dns().port), Log::WARN);
                 }
             } else {
                 _log_with_date_time("[dns] dns server has been created in other process.", Log::WARN);
@@ -186,7 +185,7 @@ void Service::prepare_icmpd(Config& config, bool is_ipv4) {
 void Service::run() {
     _guard;
 
-    string rt;
+    std::string rt;
     if (config.get_run_type() == Config::SERVER) {
         rt = "server";
     } else if (config.get_run_type() == Config::FORWARD) {
@@ -200,7 +199,7 @@ void Service::run() {
     } else if (config.get_run_type() == Config::SERVERT_TUN) {
         rt = "server tun";
     } else {
-        throw logic_error("unknow run type error");
+        throw std::logic_error("unknow run type error");
     }
 
     if (config.get_experimental().pipeline_num > 0) {
@@ -214,11 +213,11 @@ void Service::run() {
         }
         tcp::endpoint local_endpoint = socket_acceptor.local_endpoint();
 
-        _log_with_date_time(string("trojan plus service (") + rt + ") started at " +
-                              local_endpoint.address().to_string() + ':' + to_string(local_endpoint.port()),
+        _log_with_date_time(std::string("trojan plus service (") + rt + ") started at " +
+                              local_endpoint.address().to_string() + ':' + std::to_string(local_endpoint.port()),
           Log::FATAL);
     } else {
-        _log_with_date_time(string("trojan plus service (") + rt + ") started at [" + config.get_tun().tun_name + "] " +
+        _log_with_date_time(std::string("trojan plus service (") + rt + ") started at [" + config.get_tun().tun_name + "] " +
                               config.get_tun().net_ip + "/" + config.get_tun().net_mask,
           Log::FATAL);
     }
@@ -245,7 +244,7 @@ void Service::stop() {
 
     if (!pipelines.empty()) {
         clear_weak_ptr_list(pipelines);
-        _log_with_date_time("[pipeline] destroy all " + to_string(pipelines.size()) + " pipelines");
+        _log_with_date_time("[pipeline] destroy all " + std::to_string(pipelines.size()) + " pipelines");
         for (auto& it : pipelines) {
             it.lock()->destroy();
         }
@@ -279,7 +278,7 @@ void Service::prepare_pipelines() {
             }
         }
 
-        _log_with_date_time("[pipeline] current exist pipelines: " + to_string(curr_num), Log::INFO);
+        _log_with_date_time("[pipeline] current exist pipelines: " + std::to_string(curr_num), Log::INFO);
 
         for (; curr_num < config.get_experimental().pipeline_num; curr_num++) {
             auto pipeline = TP_MAKE_SHARED(Pipeline, this, config, ssl_context);
@@ -290,8 +289,8 @@ void Service::prepare_pipelines() {
             if (icmp_processor) {
                 pipeline->set_icmpd(icmp_processor);
             }
-            _log_with_date_time("[pipeline] start new pipeline, current: " + to_string(pipelines.size()) +
-                                  " max:" + to_string(config.get_experimental().pipeline_num),
+            _log_with_date_time("[pipeline] start new pipeline, current: " + std::to_string(pipelines.size()) +
+                                  " std::max:" + std::to_string(config.get_experimental().pipeline_num),
               Log::INFO);
         }
 
@@ -316,8 +315,8 @@ void Service::prepare_pipelines() {
                     changed = true;
 
                     _log_with_date_time("[pipeline] start a balance pipeline: " + config_file +
-                                          " current:" + to_string(pipelines.size()) +
-                                          " max:" + to_string(config.get_experimental().pipeline_num),
+                                          " current:" + std::to_string(pipelines.size()) +
+                                          " std::max:" + std::to_string(config.get_experimental().pipeline_num),
                       Log::INFO);
                 }
             }
@@ -359,7 +358,7 @@ void Service::prepare_pipelines() {
 
                 // auto it = pipelines.begin();
                 // while (it != pipelines.end()) {
-                //     _log_with_date_time("after arrage:" + to_string(it->lock()->config.remote_port));
+                //     _log_with_date_time("after arrage:" + std::to_string(it->lock()->config.remote_port));
                 //     ++it;
                 // }
             }
@@ -369,7 +368,7 @@ void Service::prepare_pipelines() {
     _unguard;
 }
 
-void Service::start_session(const shared_ptr<Session>& session, SentHandler&& started_handler) {
+void Service::start_session(const std::shared_ptr<Session>& session, SentHandler&& started_handler) {
     _guard;
 
     if (config.get_experimental().pipeline_num > 0 && config.get_run_type() != Config::SERVER) {
@@ -377,11 +376,11 @@ void Service::start_session(const shared_ptr<Session>& session, SentHandler&& st
         prepare_pipelines();
 
         if (pipelines.empty()) {
-            throw logic_error("pipeline is empty after preparing!");
+            throw std::logic_error("pipeline is empty after preparing!");
         }
 
         auto it       = pipelines.begin();
-        auto pipeline = shared_ptr<Pipeline>(nullptr);
+        auto pipeline = std::shared_ptr<Pipeline>(nullptr);
 
         if (pipeline_select_idx >= pipelines.size()) {
             pipeline_select_idx = 0;
@@ -407,14 +406,14 @@ void Service::start_session(const shared_ptr<Session>& session, SentHandler&& st
         }
 
         if (!pipeline) {
-            throw logic_error("pipeline fatal logic!");
+            throw std::logic_error("pipeline fatal logic!");
         }
 
-        _log_with_date_time("pipeline " + to_string(pipeline->get_pipeline_id()) +
-                              " start session_id: " + to_string(session->get_session_id()),
+        _log_with_date_time("pipeline " + std::to_string(pipeline->get_pipeline_id()) +
+                              " start session_id: " + std::to_string(session->get_session_id()),
           Log::INFO);
         session->get_pipeline_component().set_use_pipeline();
-        pipeline->session_start(*(session.get()), move(started_handler));
+        pipeline->session_start(*(session.get()), std::move(started_handler));
     } else {
         started_handler(boost::system::error_code());
     }
@@ -448,7 +447,7 @@ void Service::session_async_send_to_pipeline(Session& session, PipelineRequest::
             _log_with_date_time("pipeline is broken, destory session", Log::WARN);
             sent_handler(boost::asio::error::broken_pipe);
         } else {
-            pipeline->session_async_send_cmd(cmd, session, data, move(sent_handler), ack_count);
+            pipeline->session_async_send_cmd(cmd, session, data, std::move(sent_handler), ack_count);
         }
     } else {
         _log_with_date_time("can't send data via pipeline!", Log::FATAL);
@@ -466,7 +465,7 @@ void Service::session_async_send_to_pipeline_icmp(
             _log_with_date_time("pipeline is broken, destory session", Log::WARN);
             sent_handler(boost::asio::error::broken_pipe);
         } else {
-            pipeline->session_async_send_icmp(data, move(sent_handler));
+            pipeline->session_async_send_icmp(data, std::move(sent_handler));
         }
     } else {
         _log_with_date_time("can't send data via pipeline!", Log::FATAL);
@@ -483,8 +482,8 @@ void Service::session_destroy_in_pipeline(Session& session) {
         } else {
             auto p = it->lock();
             if (p->is_in_pipeline(session)) {
-                _log_with_date_time("pipeline " + to_string(p->get_pipeline_id()) +
-                                    " destroy session_id:" + to_string(session.get_session_id()));
+                _log_with_date_time("pipeline " + std::to_string(p->get_pipeline_id()) +
+                                    " destroy session_id:" + std::to_string(session.get_session_id()));
                 p->session_destroyed(session);
                 break;
             }
@@ -499,7 +498,7 @@ Pipeline* Service::search_default_pipeline() {
     prepare_pipelines();
 
     if (pipelines.empty()) {
-        throw logic_error("pipeline is empty after preparing!");
+        throw std::logic_error("pipeline is empty after preparing!");
     }
 
     Pipeline* pipeline = nullptr;
@@ -523,7 +522,7 @@ Pipeline* Service::search_default_pipeline() {
 void Service::async_accept() {
     _guard;
 
-    shared_ptr<SocketSession> session(nullptr);
+    std::shared_ptr<SocketSession> session(nullptr);
 
     if (config.get_run_type() == Config::SERVER) {
         if (config.get_experimental().pipeline_num > 0) {
@@ -584,10 +583,10 @@ void Service::udp_async_read() {
         }
         if (error) {
             stop();
-            throw runtime_error(error.message());
+            throw std::runtime_error(error.message());
         }
 
-        pair<string, uint16_t> targetdst;
+        std::pair<std::string, uint16_t> targetdst;
 
         if (config.get_run_type() == Config::NAT) {
             int read_length = (int)length;
@@ -599,14 +598,14 @@ void Service::udp_async_read() {
             length = read_length < 0 ? 0 : read_length;
             udp_read_buf.commit(length);
 
-            // in the first design, if we want to proxy icmp, we need to transfer TTL of udp to server and set TTL when
+            // in the first design, if we want to proxy icmp, we need to transfer TTL of udp to server and std::set TTL when
             // server sends upd out but now in most of traceroute programs just use icmp to trigger remote server back
             // instead of udp, so we don't need pass TTL to server any more we just keep this codes of retreiving TTL if
             // it will be used for some future features.
-            _log_with_date_time("[udp] get ttl:" + to_string(ttl));
+            _log_with_date_time("[udp] get ttl:" + std::to_string(ttl));
         } else {
             udp_read_buf.commit(length);
-            targetdst = make_pair(config.get_target_addr(), config.get_target_port());
+            targetdst = std::make_pair(config.get_target_addr(), config.get_target_port());
         }
 
         if (targetdst.second != 0) {
@@ -621,9 +620,9 @@ void Service::udp_async_read() {
                           _log_with_endpoint(udp_recv_endpoint, "new UDP session");
                           auto session = TP_MAKE_SHARED(UDPForwardSession,
                             this, config, ssl_context, udp_recv_endpoint, targetdst,
-                            [this](const udp::endpoint& endpoint, const string_view& data) {                  _guard;
+                            [this](const udp::endpoint& endpoint, const std::string_view& data) {                  _guard;
                   if (config.get_run_type() == Config::NAT) {
-                      throw logic_error("[udp] logic fatal error, cannot call in_write function for NAT type!");
+                      throw std::logic_error("[udp] logic fatal error, cannot call in_write std::function for NAT type!");
                   }
 
                   boost::system::error_code ec;
@@ -633,7 +632,7 @@ void Service::udp_async_read() {
                       _log_with_endpoint(
                         udp_recv_endpoint, "[udp] dropped a packet due to firewall policy or rate limit");
                   } else if (ec) {
-                      throw runtime_error(ec.message());
+                      throw std::runtime_error(ec.message());
                   }
                   _unguard;
               },

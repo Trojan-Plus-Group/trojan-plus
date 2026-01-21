@@ -23,13 +23,12 @@
 #include "authenticator.h"
 #include <cstdlib>
 #include <stdexcept>
-using namespace std;
 
 #ifdef ENABLE_MYSQL
 
 Authenticator::Authenticator(const Config &config) {
     mysql_init(&con);
-    Log::log_with_date_time("connecting to MySQL server " + config.get_mysql().server_addr + ':' + to_string(config.get_mysql().server_port), Log::INFO);
+    Log::log_with_date_time("connecting to MySQL server " + config.get_mysql().server_addr + ':' + std::to_string(config.get_mysql().server_port), Log::INFO);
     if (!config.get_mysql().cafile.empty()) {
         mysql_ssl_set(&con, nullptr, nullptr, config.get_mysql().cafile.c_str(), nullptr, nullptr);
     }
@@ -38,14 +37,14 @@ Authenticator::Authenticator(const Config &config) {
                                  config.get_mysql().password.c_str(),
                                  config.get_mysql().database.c_str(),
                                  config.get_mysql().server_port, nullptr, 0) == nullptr) {
-        throw runtime_error(mysql_error(&con));
+        throw std::runtime_error(mysql_error(&con));
     }
     bool reconnect = true;
     mysql_options(&con, MYSQL_OPT_RECONNECT, &reconnect);
     _log_with_date_time("connected to MySQL server", Log::INFO);
 }
 
-bool Authenticator::auth(const string &password) {
+bool Authenticator::auth(const std::string &password) {
     if (!is_valid_password(password)) {
         return false;
     }
@@ -76,16 +75,16 @@ bool Authenticator::auth(const string &password) {
     return true;
 }
 
-void Authenticator::record(const string &password, uint64_t download, uint64_t upload) {
+void Authenticator::record(const std::string &password, uint64_t download, uint64_t upload) {
     if (!is_valid_password(password)) {
         return;
     }
-    if (mysql_query(&con, ("UPDATE users SET download = download + " + to_string(download) + ", upload = upload + " + to_string(upload) + " WHERE password = '" + password + '\'').c_str())) {
+    if (mysql_query(&con, ("UPDATE users SET download = download + " + std::to_string(download) + ", upload = upload + " + std::to_string(upload) + " WHERE password = '" + password + '\'').c_str())) {
         _log_with_date_time(mysql_error(&con), Log::ERROR);
     }
 }
 
-bool Authenticator::is_valid_password(const string &password) {
+bool Authenticator::is_valid_password(const std::string &password) {
     if (password.size() != PASSWORD_LENGTH) {
         return false;
     }
@@ -104,9 +103,9 @@ Authenticator::~Authenticator() {
 #else // ENABLE_MYSQL
 
 Authenticator::Authenticator(const Config&) {}
-bool Authenticator::auth(const string&) { return true; }
-void Authenticator::record(const string&, uint64_t, uint64_t) {}
-bool Authenticator::is_valid_password(const string&) { return true; }
+bool Authenticator::auth(const std::string&) { return true; }
+void Authenticator::record(const std::string&, uint64_t, uint64_t) {}
+bool Authenticator::is_valid_password(const std::string&) { return true; }
 Authenticator::~Authenticator() {}
 
 #endif // ENABLE_MYSQL

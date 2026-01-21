@@ -23,9 +23,8 @@
 #include "pipelinecomponent.h"
 #include "core/service.h"
 
-using namespace std;
 PipelineComponent::SessionIdType PipelineComponent::s_session_id_counter = 0;
-set<PipelineComponent::SessionIdType> PipelineComponent::s_session_used_ids;
+std::set<PipelineComponent::SessionIdType> PipelineComponent::s_session_used_ids;
 
 PipelineComponent::PipelineComponent(const Config& _config)
     : m_session_id(0),
@@ -42,8 +41,8 @@ PipelineComponent::PipelineComponent(const Config& _config)
 
 void PipelineComponent::allocate_session_id() {
     _guard;
-    if (s_session_used_ids.size() >= numeric_limits<SessionIdType>::max()) {
-        throw logic_error("session id is over !! pipeline reached the session id limits !!");
+    if (s_session_used_ids.size() >= std::numeric_limits<SessionIdType>::max()) {
+        throw std::logic_error("session id is over !! pipeline reached the session id limits !!");
     }
 
     do {
@@ -61,10 +60,10 @@ void PipelineComponent::free_session_id() {
     _unguard;
 }
 
-void PipelineComponent::pipeline_in_recv(const string_view& data) {
+void PipelineComponent::pipeline_in_recv(const std::string_view& data) {
     _guard;
     if (!m_is_use_pipeline) {
-        throw logic_error("cannot call pipeline_in_recv without pipeline!");
+        throw std::logic_error("cannot call pipeline_in_recv without pipeline!");
     }
 
     pipeline_data_cache.push_data(data);

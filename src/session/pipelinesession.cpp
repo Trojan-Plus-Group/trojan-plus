@@ -31,15 +31,14 @@
 #include "proto/trojanrequest.h"
 #include "serversession.h"
 
-using namespace std;
 using namespace boost::asio::ip;
 using namespace boost::asio::ssl;
 
 PipelineSession::PipelineSession(Service* _service, const Config& config, boost::asio::ssl::context& ssl_context,
-  shared_ptr<Authenticator> auth, const std::string& plain_http_response)
+  std::shared_ptr<Authenticator> auth, const std::string& plain_http_response)
     : SocketSession(_service, config),
       status(HANDSHAKE),
-      auth(move(auth)),
+      auth(std::move(auth)),
       plain_http_response(plain_http_response),
       gc_timer(_service->get_io_context()),
       ssl_context(ssl_context) {
@@ -112,18 +111,18 @@ void PipelineSession::in_async_read() {
       });
 }
 void PipelineSession::move_socket_to_serversession(const std::string_view& data) {
-    _log_with_endpoint(get_in_endpoint(), "PipelineSession error password, move data to ServerSession", Log::ERROR);
+    _log_with_endpoint(get_in_endpoint(), "PipelineSession error password, std::move data to ServerSession", Log::ERROR);
     auto session = TP_MAKE_SHARED(ServerSession, get_service(), get_config(), live_socket, auth, plain_http_response);
     session->in_recv(data);
     live_socket.reset();
     destroy();
 }
 
-void PipelineSession::in_recv(const string_view&) {
+void PipelineSession::in_recv(const std::string_view&) {
     if (status == HANDSHAKE) {
-        string_view data = in_read_buf;
+        std::string_view data = in_read_buf;
         size_t npos      = data.find("\r\nPP");
-        if (npos == string::npos) {
+        if (npos == std::string::npos) {
             if (data.length() < Config::MAX_PASSWORD_LENGTH) {
                 in_async_read();
             } else {
@@ -152,22 +151,22 @@ void PipelineSession::in_send(PipelineRequest::Command cmd, ServerSession& sessi
   const std::string_view& session_data, SentHandler&& sent_handler, size_t ack_count) {
     auto found = find_and_process_session(session.get_session_id(), [&](SessionsList::iterator&) {
         _log_with_endpoint_ALL(
-          get_in_endpoint(), "PipelineSession session_id: " + to_string(session.get_session_id()) +
+          get_in_endpoint(), "PipelineSession session_id: " + std::to_string(session.get_session_id()) +
                                " <-- send cmd: " + PipelineRequest::get_cmd_string(cmd) +
-                               (cmd == PipelineRequest::ACK ? (" ack count: " + to_string(ack_count))
-                                                            : (" length:" + to_string(session_data.length()))) +
-                               " checksum: " + to_string(get_checksum(session_data)));
+                               (cmd == PipelineRequest::ACK ? (" ack count: " + std::to_string(ack_count))
+                                                            : (" length:" + std::to_string(session_data.length()))) +
+                               " checksum: " + std::to_string(get_checksum(session_data)));
 
         sending_data_cache.push_data(
           [&](boost::asio::streambuf& buf) {
               PipelineRequest::generate(buf, cmd, session.get_session_id(), session_data, ack_count);
           },
-          move(sent_handler));
+          std::move(sent_handler));
     });
 
     if (!found) {
         _log_with_endpoint(get_in_endpoint(),
-          "PipelineSession can't find the session " + to_string(session.get_session_id()) + " to sent", Log::WARN);
+          "PipelineSession can't find the session " + std::to_string(session.get_session_id()) + " to sent", Log::WARN);
         session.destroy(true);
     }
 }
@@ -199,10 +198,10 @@ void PipelineSession::process_streaming_data() {
         }
 
         _log_with_endpoint_ALL(get_in_endpoint(),
-          "PipelineSession session_id: " + to_string(req.session_id) + " --> recv cmd: " + req.get_cmd_string() +
-            (req.command == PipelineRequest::ACK ? (" ack count: " + to_string(req.ack_count))
-                                                 : (" length:" + to_string(req.packet_data.length()))) +
-            " checksum: " + to_string(get_checksum(req.packet_data)));
+          "PipelineSession session_id: " + std::to_string(req.session_id) + " --> recv cmd: " + req.get_cmd_string() +
+            (req.command == PipelineRequest::ACK ? (" ack count: " + std::to_string(req.ack_count))
+                                                 : (" length:" + std::to_string(req.packet_data.length()))) +
+            " checksum: " + std::to_string(get_checksum(req.packet_data)));
 
         if (req.command == PipelineRequest::CONNECT) {
             find_and_process_session(req.session_id, [this](SessionsList::iterator& it) {
@@ -218,8 +217,8 @@ void PipelineSession::process_streaming_data() {
             session->set_in_endpoint(get_in_endpoint());
             session->start();
             sessions.emplace_back(session);
-            _log_with_endpoint_ALL(get_in_endpoint(), "PipelineSession starts a session " + to_string(req.session_id) +
-                                                        ", now remain " + to_string(sessions.size()));
+            _log_with_endpoint_ALL(get_in_endpoint(), "PipelineSession starts a session " + std::to_string(req.session_id) +
+                                                        ", now remain " + std::to_string(sessions.size()));
         } else if (req.command == PipelineRequest::DATA) {
             auto found = find_and_process_session(req.session_id, [&](SessionsList::iterator& it) {
                 it->get()->get_pipeline_component().pipeline_in_recv(req.packet_data);
@@ -227,7 +226,7 @@ void PipelineSession::process_streaming_data() {
 
             if (!found) {
                 _log_with_endpoint(get_in_endpoint(),
-                  "PipelineSession cann't find a session " + to_string(req.session_id) + " to process", Log::WARN);
+                  "PipelineSession cann't find a session " + std::to_string(req.session_id) + " to process", Log::WARN);
             }
         } else if (req.command == PipelineRequest::CLOSE) {
             auto found = find_and_process_session(req.session_id, [this](SessionsList::iterator& it) {
@@ -241,7 +240,7 @@ void PipelineSession::process_streaming_data() {
 
             if (!found) {
                 _log_with_endpoint(get_in_endpoint(),
-                  "PipelineSession cann't find a session " + to_string(req.session_id) + " to destroy", Log::WARN);
+                  "PipelineSession cann't find a session " + std::to_string(req.session_id) + " to destroy", Log::WARN);
             }
         } else if (req.command == PipelineRequest::ACK) {
             size_t ack_count = req.ack_count;
@@ -255,11 +254,11 @@ void PipelineSession::process_streaming_data() {
 
             if (!found) {
                 _log_with_endpoint(get_in_endpoint(),
-                  "PipelineSession cann't find a session " + to_string(req.session_id) + " to ACK", Log::WARN);
+                  "PipelineSession cann't find a session " + std::to_string(req.session_id) + " to ACK", Log::WARN);
             }
         } else if (req.command == PipelineRequest::ICMP) {
             if (icmp_processor) {
-                icmp_processor->server_out_send(string(req.packet_data), shared_from_this());
+                icmp_processor->server_out_send(std::string(req.packet_data), shared_from_this());
             }
         } else {
             _log_with_endpoint(get_in_endpoint(), "PipelineSession error command", Log::ERROR);
@@ -274,23 +273,23 @@ void PipelineSession::process_streaming_data() {
 }
 
 void PipelineSession::session_write_ack(ServerSession& session, SentHandler&& sent_handler, size_t ack_count) {
-    in_send(PipelineRequest::ACK, session, "", move(sent_handler), ack_count);
+    in_send(PipelineRequest::ACK, session, "", std::move(sent_handler), ack_count);
 }
 
 void PipelineSession::session_write_data(
   ServerSession& session, const std::string_view& session_data, SentHandler&& sent_handler) {
-    in_send(PipelineRequest::DATA, session, session_data, move(sent_handler));
+    in_send(PipelineRequest::DATA, session, session_data, std::move(sent_handler));
 }
 
 void PipelineSession::session_write_icmp(const std::string_view& data, SentHandler&& sent_handler) {
-    _log_with_endpoint_ALL(get_in_endpoint(), "PipelineSession <-- send cmd: ICMP length:" + to_string(data.length()));
+    _log_with_endpoint_ALL(get_in_endpoint(), "PipelineSession <-- send cmd: ICMP length:" + std::to_string(data.length()));
     sending_data_cache.push_data(
       [&](boost::asio::streambuf& buf) { PipelineRequest::generate(buf, PipelineRequest::ICMP, 0, data); },
-      move(sent_handler));
+      std::move(sent_handler));
 }
 
 void PipelineSession::timer_async_wait() {
-    gc_timer.expires_after(chrono::seconds(3));
+    gc_timer.expires_after(std::chrono::seconds(3));
     auto self = shared_from_this();
     gc_timer.async_wait([this, self](const boost::system::error_code error) {
         if (!error) {
@@ -306,8 +305,8 @@ void PipelineSession::remove_session_after_destroy(ServerSession& session) {
             in_send(PipelineRequest::CLOSE, session, "", [](const boost::system::error_code) {});
             sessions.erase(it);
             _log_with_endpoint_ALL(get_in_endpoint(), "PipelineSession remove session " +
-                                                        to_string(session.get_session_id()) + ", now remain " +
-                                                        to_string(sessions.size()));
+                                                        std::to_string(session.get_session_id()) + ", now remain " +
+                                                        std::to_string(sessions.size()));
         });
     }
 }
@@ -320,7 +319,7 @@ void PipelineSession::destroy(bool /*pipeline_call = false*/) {
     gc_timer.cancel();
 
     _log_with_endpoint(
-      get_in_endpoint(), "PipelineSession remove all sessions: " + to_string(sessions.size()), Log::INFO);
+      get_in_endpoint(), "PipelineSession remove all sessions: " + std::to_string(sessions.size()), Log::INFO);
 
     sending_data_cache.destroy();
 

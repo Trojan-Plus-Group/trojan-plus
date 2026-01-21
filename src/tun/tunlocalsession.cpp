@@ -25,7 +25,6 @@
 #include "tun/udplocalforwarder.h"
 #include "mem/memallocator.h"
 
-using namespace std;
 using namespace boost::asio::ip;
 
 TUNLocalSession::TUNLocalSession(Service* _service, bool is_udp)
@@ -65,9 +64,9 @@ void TUNLocalSession::start() {
         auto remote_addr = get_config().get_tun().redirect_local ? get_redirect_local_remote_addr() : m_remote_addr_udp;
         m_udp_forwarder  = TP_MAKE_SHARED(UDPLocalForwarder, 
           get_service(), m_local_addr_udp, remote_addr,
-          [this](const udp::endpoint&, const string_view& data) {
+          [this](const udp::endpoint&, const std::string_view& data) {
               _guard;
-              if (m_write_to_lwip(this, (string_view*)&data) < 0) {
+              if (m_write_to_lwip(this, (std::string_view*)&data) < 0) {
                   output_debug_info();
                   destroy();
               }
@@ -94,7 +93,7 @@ void TUNLocalSession::start() {
         auto remote_addr =
           get_config().get_tun().redirect_local ? LOCALHOST_IP_ADDRESS : m_remote_addr.address().to_string();
         auto self = shared_from_this();
-        connect_out_socket(this, remote_addr, to_string(m_remote_addr.port()), m_resolver, m_tcp_socket,
+        connect_out_socket(this, remote_addr, std::to_string(m_remote_addr.port()), m_resolver, m_tcp_socket,
           m_local_addr_udp, [this, self]() {
               _guard;
 
@@ -197,7 +196,7 @@ void TUNLocalSession::out_async_send_impl(const std::string_view& data_to_send, 
         }
     } else {
         m_sending_data_cache.push_data(
-          [&](boost::asio::streambuf& buf) { streambuf_append(buf, data_to_send); }, move(_handler));
+          [&](boost::asio::streambuf& buf) { streambuf_append(buf, data_to_send); }, std::move(_handler));
     }
 
     _unguard;
@@ -212,7 +211,7 @@ void TUNLocalSession::out_async_send(const uint8_t* _data, size_t _length, SentH
     }
 
     if (!m_connected) {
-        if (m_send_buf.size() < numeric_limits<uint16_t>::max()) {
+        if (m_send_buf.size() < std::numeric_limits<uint16_t>::max()) {
             streambuf_append(m_send_buf, _data, _length);
             m_wait_connected_handler.emplace_back(_handler);
         } else {
@@ -220,7 +219,7 @@ void TUNLocalSession::out_async_send(const uint8_t* _data, size_t _length, SentH
             destroy();
         }
     } else {
-        out_async_send_impl(string_view((const char*)_data, _length), move(_handler));
+        out_async_send_impl(std::string_view((const char*)_data, _length), std::move(_handler));
     }
 
     _unguard;
@@ -268,7 +267,7 @@ bool TUNLocalSession::try_to_process_udp(const boost::asio::ip::udp::endpoint& _
 
     if (is_udp_forward_session()) {
         if (_local == m_local_addr_udp && _remote == m_remote_addr_udp) {
-            return m_udp_forwarder->process(_local, string_view((const char*)payload, payload_length));
+            return m_udp_forwarder->process(_local, std::string_view((const char*)payload, payload_length));
         }
     }
 

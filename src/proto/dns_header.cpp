@@ -21,7 +21,6 @@
 
 #include "proto/dns_header.h"
 
-using namespace std;
 
 namespace trojan {
 
@@ -103,7 +102,7 @@ std::istream& dns_header::read_label(std::istream& is, std::string& name) {
         return is;
     }
 
-    char buf[numeric_limits<uint8_t>::max()];
+    char buf[std::numeric_limits<uint8_t>::max()];
     is.read((char*)buf, sign);
 
     if (!name.empty()) {
@@ -118,7 +117,7 @@ std::istream& dns_header::read_label(std::istream& is, std::string& name) {
     _unguard;
 }
 
-ostream& dns_header::write_label(ostream& os, const string& name) {
+std::ostream& dns_header::write_label(std::ostream& os, const std::string& name) {
     _guard;
 
     const char* data      = name.c_str();
@@ -150,7 +149,7 @@ ostream& dns_header::write_label(ostream& os, const string& name) {
 }
 
 void dns_question::test_case(const char* domain, uint16_t qtype, uint16_t qclass) {
-    ostringstream os;
+    std::ostringstream os;
     dns_question question;
     question.set_QNAME(domain);
     question.set_QTYPE(qtype);
@@ -158,7 +157,7 @@ void dns_question::test_case(const char* domain, uint16_t qtype, uint16_t qclass
 
     os << question;
 
-    istringstream is(os.str());
+    std::istringstream is(os.str());
     dns_question question1;
     is >> question1;
 
@@ -174,7 +173,7 @@ void dns_question::test_cases() {
 
     test_case("", 0, 0);
     test_case("", 1, 1);
-    test_case("", numeric_limits<uint16_t>::max(), numeric_limits<uint16_t>::max());
+    test_case("", std::numeric_limits<uint16_t>::max(), std::numeric_limits<uint16_t>::max());
 
     test_case("ab", 0, 0);
     test_case("ab", 1, 1);
@@ -182,7 +181,7 @@ void dns_question::test_cases() {
 
     test_case("ab", 0, 0);
     test_case("ab", 1, 1);
-    test_case("ab", numeric_limits<uint16_t>::max(), numeric_limits<uint16_t>::max());
+    test_case("ab", std::numeric_limits<uint16_t>::max(), std::numeric_limits<uint16_t>::max());
 
     test_case("ab.cd", 0, 0);
     test_case("ab.cd", 1, 1);
@@ -190,7 +189,7 @@ void dns_question::test_cases() {
 
     test_case("ab.cd", 0, 0);
     test_case("ab.cd", 1, 1);
-    test_case("ab.cd", numeric_limits<uint16_t>::max(), numeric_limits<uint16_t>::max());
+    test_case("ab.cd", std::numeric_limits<uint16_t>::max(), std::numeric_limits<uint16_t>::max());
 
     test_case("ab.cd.com", 0, 0);
     test_case("ab.cd.com", 1, 1);
@@ -198,16 +197,16 @@ void dns_question::test_cases() {
 
     test_case("ab.cd.com", 0, 0);
     test_case("ab.cd.com", 1, 1);
-    test_case("ab.cd.com", numeric_limits<uint16_t>::max(), numeric_limits<uint16_t>::max());
+    test_case("ab.cd.com", std::numeric_limits<uint16_t>::max(), std::numeric_limits<uint16_t>::max());
 
     test_case("ab.cd12.com", 0, 0);
     test_case("ab.c33d.com", 1, 1);
-    test_case("ab.22cd.com", numeric_limits<uint16_t>::max(), numeric_limits<uint16_t>::max());
+    test_case("ab.22cd.com", std::numeric_limits<uint16_t>::max(), std::numeric_limits<uint16_t>::max());
 
-    string test_data("\x6c\xad\x01\x20\x00\x01\x00\x00\x00\x00\x00\x01\x03\x77\x77\x77\x05\x62\x61\x69\x64\x75\x03\x63"
+    std::string test_data("\x6c\xad\x01\x20\x00\x01\x00\x00\x00\x00\x00\x01\x03\x77\x77\x77\x05\x62\x61\x69\x64\x75\x03\x63"
                      "\x6f\x6d\x00\x00\x1c\x00\x01",
       31);
-    istringstream is(test_data);
+    std::istringstream is(test_data);
 
     dns_header header;
     is >> header;
@@ -223,7 +222,7 @@ void dns_question::test_cases() {
     _test_case_assert(qt.get_QCLASS(), dns_header::QCLASS_INTERNET);
 }
 
-istream& dns_answer::read_answer(istream& is, answer& an) {
+std::istream& dns_answer::read_answer(std::istream& is, answer& an) {
     _guard;
 
     if (!dns_header::read_label(is, an.NAME)) {
@@ -261,7 +260,7 @@ istream& dns_answer::read_answer(istream& is, answer& an) {
     _unguard;
 }
 
-istream& operator>>(istream& is, dns_answer& answer) {
+std::istream& operator>>(std::istream& is, dns_answer& answer) {
     _guard;
     is >> std::noskipws;
     is >> answer.header;
@@ -307,13 +306,13 @@ istream& operator>>(istream& is, dns_answer& answer) {
 
 void dns_answer::test_cases() {
     {
-        string test_data(
+        std::string test_data(
           "\x73\x47\x81\x80\x00\x01\x00\x03\x00\x00\x00\x01\x03\x77\x77\x77\x05\x62\x61\x69\x64\x75\x03\x63\x6f\x6d\x00"
           "\x00\x01\x00\x01\xc0\x0c\x00\x05\x00\x01\x00\x00\x02\x20\x00\x0f\x03\x77\x77\x77\x01\x61\x06\x73\x68\x69\x66"
           "\x65\x6e\xc0\x16\xc0\x2b\x00\x01\x00\x01\x00\x00\x00\x29\x00\x04\xb4\x65\x31\x0c\xc0\x2b\x00\x01\x00\x01\x00"
           "\x00\x00\x29\x00\x04\xb4\x65\x31\x0b\x00\x00\x29\x02\x00\x00\x00\x00\x00\x00\x00",
           135);
-        istringstream is(test_data);
+        std::istringstream is(test_data);
 
         dns_answer answer;
         is >> std::noskipws >> answer;
@@ -345,14 +344,14 @@ void dns_answer::test_cases() {
     }
 
     {
-        string test_data(
+        std::string test_data(
           "\x6c\xad\x81\x80\x00\x01\x00\x01\x00\x01\x00\x01\x03\x77\x77\x77\x05\x62\x61\x69\x64\x75\x03\x63\x6f\x6d\x00"
           "\x00\x1c\x00\x01\xc0\x0c\x00\x05\x00\x01\x00\x00\x00\x41\x00\x0f\x03\x77\x77\x77\x01\x61\x06\x73\x68\x69\x66"
           "\x65\x6e\xc0\x16\xc0\x2f\x00\x06\x00\x01\x00\x00\x01\x1d\x00\x2d\x03\x6e\x73\x31\xc0\x2f\x10\x62\x61\x69\x64"
           "\x75\x5f\x64\x6e\x73\x5f\x6d\x61\x73\x74\x65\x72\xc0\x10\x77\x94\xcb\x07\x00\x00\x00\x05\x00\x00\x00\x05\x00"
           "\x27\x8d\x00\x00\x00\x0e\x10\x00\x00\x29\x02\x00\x00\x00\x00\x00\x00\x00",
           126);
-        istringstream is(test_data);
+        std::istringstream is(test_data);
 
         dns_answer answer;
         is >> std::noskipws >> answer;

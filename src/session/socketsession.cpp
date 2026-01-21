@@ -22,7 +22,6 @@
 #include "socketsession.h"
 #include "core/service.h"
 
-using namespace std;
 SocketSession::SocketSession(Service* _service, const Config& config)
     : Session(_service, config), resolver(_service->get_io_context()) {
     set_session_name("SocketSession");

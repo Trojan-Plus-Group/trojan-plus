@@ -25,10 +25,9 @@
 
 #include "core/utils.h"
 
-using namespace std;
 using namespace boost::asio::ip;
 
-bool SOCKS5Address::parse(const string_view& data, size_t& address_len) {
+bool SOCKS5Address::parse(const std::string_view& data, size_t& address_len) {
     _guard;
 
     if (data.length() == 0 || (data[0] != IPv4 && data[0] != DOMAINNAME && data[0] != IPv6)) {
@@ -38,8 +37,8 @@ bool SOCKS5Address::parse(const string_view& data, size_t& address_len) {
     switch (address_type) {
         case IPv4: {
             if (data.length() > 4 + 2) {
-                address = to_string(uint8_t(data[1])) + '.' + to_string(uint8_t(data[2])) + '.' +
-                          to_string(uint8_t(data[3])) + '.' + to_string(uint8_t(data[4]));
+                address = std::to_string(uint8_t(data[1])) + '.' + std::to_string(uint8_t(data[2])) + '.' +
+                          std::to_string(uint8_t(data[3])) + '.' + std::to_string(uint8_t(data[4]));
                 port        = (uint8_t(data[5]) << one_byte_shift_8_bits) | uint8_t(data[6]);
                 address_len = 1 + 4 + 2;
                 return true;

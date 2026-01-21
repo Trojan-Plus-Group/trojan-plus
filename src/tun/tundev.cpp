@@ -40,7 +40,6 @@
 #include "tun/tunsession.h"
 #include "mem/memallocator.h"
 
-using namespace std;
 using namespace boost::asio::ip;
 
 static void tcp_remove(struct tcp_pcb* pcb_list) {
@@ -61,7 +60,7 @@ class TUNDNSQueryer : public DNSServer::IDataQueryer {
     boost::asio::streambuf buf;
 
   public:
-    TUNDNSQueryer(DNSSendHanlder&& sender) : send_handler(move(sender)) {}
+    TUNDNSQueryer(DNSSendHanlder&& sender) : send_handler(std::move(sender)) {}
 
     void recved(const boost::asio::ip::udp::endpoint& from, const std::string_view& data) {
         buf.consume(buf.size());
@@ -71,7 +70,7 @@ class TUNDNSQueryer : public DNSServer::IDataQueryer {
     }
 
     bool open(DNSServer::DataQueryHandler&& handler, int) override {
-        data_handler = move(handler);
+        data_handler = std::move(handler);
         return true;
     }
     bool send(const boost::asio::ip::udp::endpoint& to, const std::string_view& data) override {
@@ -102,7 +101,7 @@ TUNDev::TUNDev(Service* _service, const std::string& _tun_name, const std::strin
         // open TUN device, check detail information:
         // https://www.kernel.org/doc/Documentation/networking/tuntap.txt
         if ((m_tun_fd = open("/dev/net/tun", O_RDWR)) < 0) {
-            throw runtime_error("[tun] error opening device");
+            throw std::runtime_error("[tun] error opening device");
         }
 
         struct ifreq ifr {};
@@ -110,12 +109,12 @@ TUNDev::TUNDev(Service* _service, const std::string& _tun_name, const std::strin
         snprintf(ifr.ifr_name, IFNAMSIZ, "%s", _tun_name.c_str());
 
         if (ioctl(m_tun_fd, TUNSETIFF, (void*)&ifr) < 0) {
-            throw runtime_error("[tun] error configuring device");
+            throw std::runtime_error("[tun] error configuring device");
         }
 
-        _log_with_date_time("[tun] /dev/net/tun ifr.ifr_mtu: " + to_string(ifr.ifr_mtu), Log::WARN);
+        _log_with_date_time("[tun] /dev/net/tun ifr.ifr_mtu: " + std::to_string(ifr.ifr_mtu), Log::WARN);
 #else
-        throw logic_error("[tun] cannot enable tun run type in NON-linux system ! " + _tun_name);
+        throw std::logic_error("[tun] cannot enable tun run type in NON-linux system ! " + _tun_name);
 #endif //__linux__
     }
 
@@ -137,19 +136,19 @@ TUNDev::TUNDev(Service* _service, const std::string& _tun_name, const std::strin
     // init netif
     if (netif_add(&m_netif, &addr, &netmask, &gw, nullptr, (netif_init_fn)static_netif_init_func,
           (netif_input_fn)static_netif_input_func) == nullptr) {
-        throw runtime_error("[tun] netif_add failed");
+        throw std::runtime_error("[tun] netif_add failed");
     }
 
-    // set netif up
+    // std::set netif up
     netif_set_up(&m_netif);
 
-    // set netif link up, otherwise ip route will refuse to route
+    // std::set netif link up, otherwise ip route will refuse to route
     netif_set_link_up(&m_netif);
 
-    // set netif pretend TCP
+    // std::set netif pretend TCP
     netif_set_pretend_tcp(&m_netif, 1);
 
-    // set netif default
+    // std::set netif default
     netif_set_default(&m_netif);
 
     m_netif_configured = true;
@@ -157,13 +156,13 @@ TUNDev::TUNDev(Service* _service, const std::string& _tun_name, const std::strin
     // init listener
     struct tcp_pcb* l = tcp_new_ip_type(IPADDR_TYPE_V4);
     if (l == nullptr) {
-        throw runtime_error("[tun] tcp_new_ip_type failed");
+        throw std::runtime_error("[tun] tcp_new_ip_type failed");
     }
 
     // bind listener
     if (tcp_bind_to_netif(l, "ho0") != ERR_OK) {
         tcp_close(l);
-        throw runtime_error("[tun] tcp_bind_to_netif failed");
+        throw std::runtime_error("[tun] tcp_bind_to_netif failed");
     }
 
     tcp_bind_netif(l, &m_netif);
@@ -172,7 +171,7 @@ TUNDev::TUNDev(Service* _service, const std::string& _tun_name, const std::strin
     m_tcp_listener = tcp_listen(l);
     if (m_tcp_listener == nullptr) {
         tcp_close(l);
-        throw runtime_error("[tun] tcp_listen failed");
+        throw std::runtime_error("[tun] tcp_listen failed");
     }
 
     tcp_arg(m_tcp_listener, this);
@@ -194,7 +193,7 @@ TUNDev::TUNDev(Service* _service, const std::string& _tun_name, const std::strin
 
     m_dns_server = TP_MAKE_SHARED(DNSServer, m_service, m_dns_queryer);
     if (!m_dns_server->start()) {
-        throw runtime_error("[tun] dns server start failed");
+        throw std::runtime_error("[tun] dns server start failed");
     }
 
     _unguard;
@@ -218,8 +217,8 @@ void TUNDev::destroy() {
 
     m_quitting = true;
 
-    _log_with_date_time("[tun] destoryed, clear all tcp_clients: " + to_string(m_tcp_clients.size()) +
-                          " udp_clients: " + to_string(m_udp_clients.size()),
+    _log_with_date_time("[tun] destoryed, clear all tcp_clients: " + std::to_string(m_tcp_clients.size()) +
+                          " udp_clients: " + std::to_string(m_udp_clients.size()),
       Log::INFO);
 
     for (auto& it : m_tcp_clients) {
@@ -278,7 +277,7 @@ err_t TUNDev::netif_input_func(struct pbuf* p, struct netif* inp) {
             return ip_input(p, inp);
         } break;
         case IPV6: {
-            // throw runtime_error("haven't supported ipv6");
+            // throw std::runtime_error("haven't supported ipv6");
         } break;
     }
 
@@ -343,7 +342,7 @@ bool TUNDev::proxy_by_route(uint32_t ip) const {
         case Config::route_cn_mainland:
             return route._cn_mainland_ips_matcher.is_match(ip);
         default:
-            throw logic_error("[dns] error proxy type: " + to_string((int)route.proxy_type));
+            throw std::logic_error("[dns] error proxy type: " + std::to_string((int)route.proxy_type));
     }
 
     _unguard;
@@ -356,7 +355,7 @@ err_t TUNDev::listener_accept_func(struct tcp_pcb* newpcb, err_t err) {
     }
 
     auto proxy                     = proxy_by_route(ntoh32(newpcb->local_ip.u_addr.ip4.addr));
-    shared_ptr<TUNSession> session = nullptr;
+    std::shared_ptr<TUNSession> session = nullptr;
     if (proxy) {
 
         _log_with_date_time_ALL(
@@ -456,9 +455,9 @@ void TUNDev::parse_packet() {
             memcpy(&ipv4_hdr, data, sizeof(ipv4_hdr));
             total_length = ntoh16(ipv4_hdr.total_length);
 
-            //_log_with_date_time("parse_packet length:" + to_string(data_len) + " ipv4 protocol: "
+            //_log_with_date_time("parse_packet length:" + std::to_string(data_len) + " ipv4 protocol: "
             //+
-            // to_string((int)ipv4_hdr.protocol) + " total_length: " + to_string(total_length));
+            // std::to_string((int)ipv4_hdr.protocol) + " total_length: " + std::to_string(total_length));
 
         } else {
             if (data_len < sizeof(struct ipv6_header)) {
@@ -468,9 +467,9 @@ void TUNDev::parse_packet() {
             memcpy(&ipv6_hdr, data, sizeof(ipv6_hdr));
             total_length = ntoh16(ipv6_hdr.payload_length) + sizeof(ipv6_hdr);
 
-            //_log_with_date_time("parse_packet length:" + to_string(data_len) + " ipv6 next header:
+            //_log_with_date_time("parse_packet length:" + std::to_string(data_len) + " ipv6 next header:
             //" +
-            // to_string((int)ipv6_hdr.next_header) + " total_length: " + to_string(total_length));
+            // std::to_string((int)ipv6_hdr.next_header) + " total_length: " + std::to_string(total_length));
         }
 
         if (total_length <= data_len) {
@@ -510,7 +509,7 @@ int TUNDev::handle_write_upd_data(const boost::asio::ip::udp::endpoint& local_en
 
     const auto* data   = (const uint8_t*)data_str.data();
     auto header_length = (uint16_t)(sizeof(struct ipv4_header) + sizeof(struct udp_header));
-    auto max_len       = min(numeric_limits<uint16_t>::max(), m_mtu);
+    auto max_len       = std::min(std::numeric_limits<uint16_t>::max(), m_mtu);
     max_len            = max_len - header_length;
     if (data_len > max_len) {
         data_len = max_len;
@@ -550,7 +549,7 @@ int TUNDev::handle_write_upd_data(const boost::asio::ip::udp::endpoint& local_en
     m_write_fill_buf.commit(packat_length);
 
     _log_with_endpoint_ALL(local_endpoint, "<- " + remote_endpoint.address().to_string() + ":" +
-                                             to_string(remote_endpoint.port()) + " length:" + to_string(data_len));
+                                             std::to_string(remote_endpoint.port()) + " length:" + std::to_string(data_len));
 
     write_to_tun();
 
@@ -563,7 +562,7 @@ int TUNDev::handle_write_upd_data(const boost::asio::ip::udp::endpoint& local_en
     _unguard;
 }
 
-int TUNDev::handle_write_upd_data(const TUNSession* _session, string_view& data_str) {
+int TUNDev::handle_write_upd_data(const TUNSession* _session, std::string_view& data_str) {
     _guard;
     _assert(_session->is_udp_forward_session());
     return handle_write_upd_data(_session->get_udp_local_endpoint(), _session->get_udp_remote_endpoint(), data_str);
@@ -614,11 +613,11 @@ int TUNDev::try_to_process_udp_packet(uint8_t* data, int data_len) {
           make_address_v4((address_v4::uint_type)ntoh32(ipv4_hdr.destination_address)), ntoh16(udp_hdr.dest_port));
 
         _log_with_endpoint_ALL(local_endpoint, " -> " + remote_endpoint.address().to_string() + ":" +
-                                                 to_string(remote_endpoint.port()) +
-                                                 " [tun] length:" + to_string(data_len));
+                                                 std::to_string(remote_endpoint.port()) +
+                                                 " [tun] length:" + std::to_string(data_len));
 
         if (m_dns_server_endpoint == remote_endpoint) {
-            m_dns_queryer->recved(local_endpoint, string_view((const char*)data, data_len));
+            m_dns_queryer->recved(local_endpoint, std::string_view((const char*)data, data_len));
             return 1;
         }
 
@@ -628,7 +627,7 @@ int TUNDev::try_to_process_udp_packet(uint8_t* data, int data_len) {
             }
         }
 
-        shared_ptr<TUNSession> session = nullptr;
+        std::shared_ptr<TUNSession> session = nullptr;
         bool proxy                     = proxy_by_route(ntoh32(ipv4_hdr.destination_address));
         if (proxy) {
             _log_with_date_time_ALL("[tun] [udp] proxy connect: " + remote_endpoint.address().to_string());
@@ -638,7 +637,7 @@ int TUNDev::try_to_process_udp_packet(uint8_t* data, int data_len) {
             session = TP_MAKE_SHARED(TUNLocalSession, m_service, true);
         }
         session->set_udp_connect(local_endpoint, remote_endpoint);
-        session->set_write_to_lwip([this](const TUNSession* _se, string_view* _data) {
+        session->set_write_to_lwip([this](const TUNSession* _se, std::string_view* _data) {
             _guard;
             _assert(_data != nullptr);
             return handle_write_upd_data(_se, *_data);
@@ -661,7 +660,7 @@ int TUNDev::try_to_process_udp_packet(uint8_t* data, int data_len) {
 
         _log_with_endpoint(local_endpoint,
           "TUNDev start to connected " + remote_endpoint.address().to_string() + ":" +
-            to_string(remote_endpoint.port()),
+            std::to_string(remote_endpoint.port()),
           Log::INFO);
 
         if (!proxy) {

@@ -24,10 +24,9 @@
 
 #include "core/utils.h"
 
-using namespace std;
 using namespace boost::asio::ip;
 
-bool UDPPacket::parse(const string_view& data, size_t& udp_packet_len) {
+bool UDPPacket::parse(const std::string_view& data, size_t& udp_packet_len) {
     _guard;
 
     if (data.length() <= 0) {
@@ -50,7 +49,7 @@ bool UDPPacket::parse(const string_view& data, size_t& udp_packet_len) {
 }
 
 boost::asio::streambuf& UDPPacket::generate(
-  boost::asio::streambuf& buf, const udp::endpoint& endpoint, const string_view& payload) {
+  boost::asio::streambuf& buf, const udp::endpoint& endpoint, const std::string_view& payload) {
     _guard;
 
     SOCKS5Address::generate(buf, endpoint);
@@ -64,7 +63,7 @@ boost::asio::streambuf& UDPPacket::generate(
 }
 
 boost::asio::streambuf& UDPPacket::generate(
-  boost::asio::streambuf& buf, const string& domainname, uint16_t port, const string_view& payload) {
+  boost::asio::streambuf& buf, const std::string& domainname, uint16_t port, const std::string_view& payload) {
     _guard;
 
     streambuf_append(buf, '\x03');
