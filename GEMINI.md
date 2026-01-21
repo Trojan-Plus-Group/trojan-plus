@@ -37,6 +37,9 @@ The standard build process uses CMake:
 mkdir build
 cd build
 
+# Initialize and update git submodules (Required)
+git submodule update --init --recursive
+
 # Configure the project
 cmake ..
 
