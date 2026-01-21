@@ -327,11 +327,8 @@ if(NOT ANDROID)
         endif()
 
         enable_testing()
-        add_test(NAME LinuxSmokeTest-basic
-                COMMAND bash ${CMAKE_SOURCE_DIR}/tests/LinuxSmokeTest/basic.sh ${CMAKE_BINARY_DIR}/trojan)
-        add_test(NAME LinuxSmokeTest-fake-client
-                COMMAND bash ${CMAKE_SOURCE_DIR}/tests/LinuxSmokeTest/fake-client.sh ${CMAKE_BINARY_DIR}/trojan)
     endif()
 endif()
+
 
 

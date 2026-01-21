@@ -70,13 +70,8 @@ Configuration examples can be found in the `examples/` directory. The main `run_
 
 ## Testing
 
-The project includes both smoke tests and a more comprehensive "full test" suite.
+The project includes a comprehensive "full test" suite.
 
-*   **Smoke Tests**: These are integrated with CMake's CTest framework.
-    ```bash
-    # After building, run from the build directory
-    ctest
-    ```
 *   **Full Tests**: A Python-based test suite located in `tests/LinuxFullTest/`. These tests require Python 3 and dependencies like `PySocks`, `psutil`, and `dnspython`.
 
     **Linux**:
@@ -140,6 +135,6 @@ Optimized the development and CI workflow by introducing a standardized, contain
 *   **Automation Scripts**:
     *   `scripts/build_docker.sh`: Builds the `trojanplusgroup/centos-build:debian` image locally (explicitly targets `linux/amd64`).
     *   `scripts/push_to_docker_hub.sh`: Pushes the locally built image to Docker Hub. Requires `docker login` with `trojanplusgroup` authority.
-    *   `scripts/compile_and_test.sh`: Automates the full lifecycle (clean, configure with mimalloc, compile, and run smoke/full tests) inside the container.
+    *   `scripts/compile_and_test.sh`: Automates the full lifecycle (clean, configure with mimalloc, compile, and run full tests) inside the container.
 *   **Dependency Management**: The image includes all toolchains (GCC 12+, CMake 3.25+), Boost, OpenSSL 3, mimalloc, and Python testing dependencies (`PySocks`, `psutil`, `dnspython`).
 *   **Artifact Distribution**: The image is published as `trojanplusgroup/centos-build:debian` on Docker Hub, serving as the primary environment for Linux CI jobs.
