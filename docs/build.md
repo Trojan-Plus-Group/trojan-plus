@@ -4,7 +4,7 @@ We'll only cover the build process on Linux since we will be providing Windows a
 
 ## Dependencies
 
-Install these dependencies before you build (note that the test has some [additional dependencies](https://github.com/trojan-gfw/trojan/blob/master/tests/LinuxSmokeTest/README.md)):
+Install these dependencies before you build:
 
 - [CMake](https://cmake.org/) >= 3.7.2
 - [Boost](http://www.boost.org/) >= 1.72.0
@@ -24,7 +24,7 @@ If you encounter compatibility issues with older Boost versions (e.g., `< 1.72.0
 Type in
 
 ```bash
-git clone https://github.com/trojan-gfw/trojan.git
+git clone https://github.com/Trojan-Plus-Group/trojan-plus.git
 cd trojan/
 ```
 
@@ -44,7 +44,6 @@ mkdir build
 cd build/
 cmake ..
 make
-ctest
 sudo make install
 ```
 
@@ -79,8 +78,7 @@ This script will:
 1.  Clean previous build artifacts.
 2.  Configure CMake with `-DENABLE_MIMALLOC=ON`.
 3.  Compile the project.
-4.  Run smoke tests (`ctest`).
-5.  Run the full Python integration test suite (excluding DNS tests).
+4.  Run the full Python integration test suite (excluding DNS tests).
 
 The `cmake ..` command can be extended with the following options:
 
