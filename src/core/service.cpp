@@ -660,7 +660,9 @@ void Service::udp_async_read() {
 
     udp_read_buf.consume_all();
     if (config.get_run_type() == Config::NAT) {
-        udp_socket.async_receive_from(boost::asio::null_buffers(), udp_recv_endpoint, cb);
+        udp_socket.async_wait(boost::asio::ip::udp::socket::wait_read, [cb](const boost::system::error_code error) {
+            cb(error, 0);
+        });
     } else {
         udp_socket.async_receive_from(udp_read_buf.prepare(config.get_udp_recv_buf()), udp_recv_endpoint, cb);
     }

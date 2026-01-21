@@ -478,6 +478,8 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, std::st
                 }
 #endif // _WIN32
 #ifdef __APPLE__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
 
                 SecKeychainRef systemRoots = nullptr;
                 auto status =
@@ -540,6 +542,7 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, std::st
                     }
                     CFRelease(systemRoots);
                 }
+#pragma clang diagnostic pop
 #endif // __APPLE__
             } else {
                 ssl_context.load_verify_file(ssl.cert);
@@ -642,7 +645,7 @@ std::string Config::SHA224(const std::string& message) {
     }
 
     for (unsigned int i = 0; i < digest_len; ++i) {
-        sprintf((mdString + (i << 1)), "%02x", (unsigned int)digest[i]);
+        snprintf((mdString + (i << 1)), 3, "%02x", (unsigned int)digest[i]);
     }
     gsl::at(mdString, digest_len << 1) = '\0';
     EVP_MD_CTX_free(ctx);
