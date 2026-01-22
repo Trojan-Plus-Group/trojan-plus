@@ -48,7 +48,7 @@ TUNProxySession::TUNProxySession(Service* _service, bool _is_udp)
         _guard;
         auto self = shared_from_this();
         boost::asio::async_write(
-          m_out_socket, data.data(), [this, self, handler](const boost::system::error_code error, size_t length) {
+          m_out_socket, data.data(), tp::bind_mem_alloc([this, self, handler](const boost::system::error_code error, size_t length) {
               _guard;
 
               udp_timer_async_wait();
@@ -63,7 +63,7 @@ TUNProxySession::TUNProxySession(Service* _service, bool _is_udp)
               handler(error);
 
               _unguard;
-          });
+          }));
 
         _unguard;
     });
@@ -221,7 +221,7 @@ void TUNProxySession::out_async_send_impl(const std::string_view& data_to_send, 
         auto data_sending_len = data_to_send.length();
         auto self             = shared_from_this();
         get_service()->session_async_send_to_pipeline(*this, PipelineRequest::DATA, data_to_send,
-          [this, self, _handler, data_sending_len](const boost::system::error_code error) {
+          tp::bind_mem_alloc([this, self, _handler, data_sending_len](const boost::system::error_code error) {
               udp_timer_async_wait();
               if (error) {
                   output_debug_info_ec(error);
@@ -244,7 +244,7 @@ void TUNProxySession::out_async_send_impl(const std::string_view& data_to_send, 
                   }
               }
               _handler(error);
-          });
+          }));
     } else {
         m_sending_data_cache.push_data(
           [&](tp::streambuf& buf) { streambuf_append(buf, data_to_send); }, std::move(_handler));
@@ -294,7 +294,7 @@ void TUNProxySession::try_out_async_read() {
         auto self = shared_from_this();
         get_service()->session_async_send_to_pipeline(
           *this, PipelineRequest::ACK, "",
-          [this, self](const boost::system::error_code error) {
+          tp::bind_mem_alloc([this, self](const boost::system::error_code error) {
               _guard;
               if (error) {
                   output_debug_info_ec(error);
@@ -304,7 +304,7 @@ void TUNProxySession::try_out_async_read() {
 
               out_async_read();
               _unguard;
-          },
+          }),
           m_read_ack_count);
         m_read_ack_count = 0;
     } else {
@@ -430,7 +430,7 @@ void TUNProxySession::out_async_read() {
         m_recv_buf.begin_read(__FILE__, __LINE__);
         auto self = shared_from_this();
         m_out_socket.async_read_some(m_recv_buf.prepare(Session::MAX_BUF_LENGTH),
-          [this, self](const boost::system::error_code error, size_t length) {
+          tp::bind_mem_alloc([this, self](const boost::system::error_code error, size_t length) {
               _guard;
 
               m_recv_buf.end_read();
@@ -458,7 +458,7 @@ void TUNProxySession::out_async_read() {
               }
 
               _unguard;
-          });
+          }));
     }
 
     _unguard;

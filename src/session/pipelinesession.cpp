@@ -51,14 +51,14 @@ PipelineSession::PipelineSession(Service* _service, const Config& config, boost:
 
         auto self = shared_from_this();
         boost::asio::async_write(
-          *live_socket, data.data(), [this, self, handler](const boost::system::error_code ec, size_t) {
+          *live_socket, data.data(), tp::bind_mem_alloc([this, self, handler](const boost::system::error_code ec, size_t) {
               if (ec) {
                   output_debug_info_ec(ec);
                   destroy();
                   return;
               }
               handler(ec);
-          });
+          }));
     });
 }
 
@@ -74,15 +74,15 @@ void PipelineSession::start() {
         return;
     }
     auto self = shared_from_this();
-    live_socket->async_handshake(stream_base::server, [this, self](const boost::system::error_code error) {
+    live_socket->async_handshake(stream_base::server, tp::bind_mem_alloc([this, self](const boost::system::error_code error) {
         if (error) {
             _log_with_endpoint(get_in_endpoint(), tp::string("SSL handshake failed: ") + error.message().c_str(), Log::ERROR);
             if (error.message() == "http request" && plain_http_response.empty()) {
                 boost::asio::async_write(accept_socket(), boost::asio::buffer(plain_http_response),
-                  [this, self](const boost::system::error_code ec, size_t) {
+                  tp::bind_mem_alloc([this, self](const boost::system::error_code ec, size_t) {
                       output_debug_info_ec(ec);
                       destroy();
-                  });
+                  }));
                 return;
             }
             output_debug_info();
@@ -90,14 +90,14 @@ void PipelineSession::start() {
             return;
         }
         in_async_read();
-    });
+    }));
 }
 
 void PipelineSession::in_async_read() {
     in_read_buf.begin_read(__FILE__, __LINE__);
     auto self = shared_from_this();
     live_socket->async_read_some(in_read_buf.prepare(Pipeline::RECV_BUF_LENGTH),
-      [this, self](const boost::system::error_code error, size_t length) {
+      tp::bind_mem_alloc([this, self](const boost::system::error_code error, size_t length) {
           in_read_buf.end_read();
           if (error) {
               output_debug_info_ec(error);
@@ -106,7 +106,7 @@ void PipelineSession::in_async_read() {
           }
           in_read_buf.commit(length);
           in_recv(in_read_buf);
-      });
+      }));
 }
 void PipelineSession::move_socket_to_serversession(const std::string_view& data) {
     _log_with_endpoint(get_in_endpoint(), "PipelineSession error password, std::move data to ServerSession", Log::ERROR);
@@ -289,12 +289,12 @@ void PipelineSession::session_write_icmp(const std::string_view& data, SentHandl
 void PipelineSession::timer_async_wait() {
     gc_timer.expires_after(std::chrono::seconds(3));
     auto self = shared_from_this();
-    gc_timer.async_wait([this, self](const boost::system::error_code error) {
+    gc_timer.async_wait(tp::bind_mem_alloc([this, self](const boost::system::error_code error) {
         if (!error) {
             _log_with_endpoint(get_in_endpoint(), "PipelineSession wait for password timeout");
             destroy();
         }
-    });
+    }));
 }
 
 void PipelineSession::remove_session_after_destroy(ServerSession& session) {

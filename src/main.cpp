@@ -39,7 +39,7 @@ namespace po = boost::program_options;
 #endif // DEFAULT_CONFIG
 
 void signal_async_wait(signal_set& sig, Service& service, bool& restart) {
-    sig.async_wait([&](const boost::system::error_code error, int signum) {
+    sig.async_wait(tp::bind_mem_alloc([&](const boost::system::error_code error, int signum) {
         if (error) {
             return;
         }
@@ -63,7 +63,7 @@ void signal_async_wait(signal_set& sig, Service& service, bool& restart) {
                 break;
 #endif // _WIN32
         }
-    });
+    }));
 }
 
 // global service to avoid calling Service::~Service for Android,

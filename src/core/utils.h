@@ -434,7 +434,7 @@ void connect_out_socket(ThisT this_ptr, tp::string addr, tp::string port, boost:
   boost::asio::ip::tcp::socket& out_socket, EndPoint in_endpoint, std::function<void()>&& connected_handler) {
     _guard;
     resolver.async_resolve(addr, port,
-      [=, &out_socket](
+      tp::bind_mem_alloc([=, &out_socket](
         const boost::system::error_code error, const boost::asio::ip::tcp::resolver::results_type& results) {
           _guard;
           if (error || results.empty()) {
@@ -474,17 +474,17 @@ void connect_out_socket(ThisT this_ptr, tp::string addr, tp::string port, boost:
               // we must set a timeout timer
               timeout_timer = TP_MAKE_SHARED(boost::asio::steady_timer, this_ptr->get_service()->get_io_context());
               timeout_timer->expires_after(std::chrono::seconds(this_ptr->get_config().get_tcp().connect_time_out));
-              timeout_timer->async_wait([=](const boost::system::error_code error) {
+              timeout_timer->async_wait(tp::bind_mem_alloc([=](const boost::system::error_code error) {
                   if (!error) {
                       _log_with_endpoint(in_endpoint,
                         "cannot establish connection to remote server " + addr + ':' + port + " reason: timeout",
                         Log::ERROR);
                       this_ptr->destroy();
                   }
-              });
+              }));
           }
 
-          out_socket.async_connect(*iterator, [=](const boost::system::error_code error) {
+          out_socket.async_connect(*iterator, tp::bind_mem_alloc([=](const boost::system::error_code error) {
               _guard;
               if (timeout_timer) {
                   timeout_timer->cancel();
@@ -501,10 +501,10 @@ void connect_out_socket(ThisT this_ptr, tp::string addr, tp::string port, boost:
               connected_handler();
 
               _unguard;
-          });
+          })); // tp::bind_mem_alloc
 
           _unguard;
-      });
+      })); // tp::bind_mem_alloc
     _unguard;
 }
 
@@ -515,7 +515,7 @@ void connect_remote_server_ssl(ThisT this_ptr, tp::string addr, tp::string port,
     _guard;
     connect_out_socket(this_ptr, addr, port, resolver, out_socket.next_layer(), in_endpoint, [=, &out_socket]() {
         out_socket.async_handshake(
-          boost::asio::ssl::stream_base::client, [=, &out_socket](const boost::system::error_code error) {
+          boost::asio::ssl::stream_base::client, tp::bind_mem_alloc([=, &out_socket](const boost::system::error_code error) {
               _guard;
               if (error) {
                   _log_with_endpoint(in_endpoint,
@@ -535,7 +535,7 @@ void connect_remote_server_ssl(ThisT this_ptr, tp::string addr, tp::string port,
               connected_handler();
 
               _unguard;
-          });
+          })); // tp::bind_mem_alloc
     });
 
     _unguard;
@@ -562,10 +562,10 @@ template <typename ThisPtr> void shutdown_ssl_socket(ThisPtr this_ptr, SSLSocket
         };
         boost::system::error_code ec;
         socket.next_layer().cancel(ec);
-        socket.async_shutdown(ssl_shutdown_cb);
+        socket.async_shutdown(tp::bind_mem_alloc(ssl_shutdown_cb));
         ssl_shutdown_timer.get()->expires_after(
           std::chrono::seconds(this_ptr->get_config().get_ssl().ssl_shutdown_wait_time));
-        ssl_shutdown_timer.get()->async_wait(ssl_shutdown_cb);
+        ssl_shutdown_timer.get()->async_wait(tp::bind_mem_alloc(ssl_shutdown_cb));
     }
     _unguard;
 }

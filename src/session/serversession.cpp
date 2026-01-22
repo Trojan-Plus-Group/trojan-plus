@@ -78,16 +78,16 @@ void ServerSession::start() {
             return;
         }
         auto self = shared_from_this();
-        in_socket->async_handshake(stream_base::server, [this, self](const boost::system::error_code error) {
+        in_socket->async_handshake(stream_base::server, tp::bind_mem_alloc([this, self](const boost::system::error_code error) {
             if (error) {
                 _log_with_endpoint(get_in_endpoint(), tp::string("SSL handshake failed: ") + error.message().c_str(), Log::ERROR);
                 if (error.message() == "http request" && plain_http_response.empty()) {
                     get_stat().inc_recv_len(plain_http_response.length());
                     boost::asio::async_write(accept_socket(), boost::asio::buffer(plain_http_response),
-                      [this, self](const boost::system::error_code, size_t) {
+                      tp::bind_mem_alloc([this, self](const boost::system::error_code, size_t) {
                           output_debug_info();
                           destroy();
-                      });
+                      }));
                     return;
                 }
                 output_debug_info();
@@ -95,7 +95,7 @@ void ServerSession::start() {
                 return;
             }
             in_async_read();
-        });
+        }));
     } else {
         in_async_read();
     }
@@ -110,7 +110,7 @@ void ServerSession::in_async_read() {
         in_read_buf.consume_all();
         auto self = shared_from_this();
         in_socket->async_read_some(
-          in_read_buf.prepare(MAX_BUF_LENGTH), [this, self](const boost::system::error_code error, size_t length) {
+          in_read_buf.prepare(MAX_BUF_LENGTH), tp::bind_mem_alloc([this, self](const boost::system::error_code error, size_t length) {
               in_read_buf.end_read();
               if (error) {
                   output_debug_info_ec(error);
@@ -119,7 +119,7 @@ void ServerSession::in_async_read() {
               }
               in_read_buf.commit(length);
               in_recv(in_read_buf);
-          });
+          }));
     }
 }
 
@@ -131,14 +131,14 @@ void ServerSession::in_async_write(const std::string_view& data) {
     if (get_pipeline_component().is_using_pipeline()) {
         if (!pipeline_session.expired()) {
             (dynamic_cast<PipelineSession*>(pipeline_session.lock().get()))
-              ->session_write_data(*this, data, [this, self](const boost::system::error_code ec) {
+              ->session_write_data(*this, data, tp::bind_mem_alloc([this, self](const boost::system::error_code ec) {
                   if (ec) {
                       output_debug_info_ec(ec);
                       destroy();
                       return;
                   }
                   in_sent();
-              });
+              }));
         } else {
             output_debug_info();
             destroy();
@@ -146,7 +146,7 @@ void ServerSession::in_async_write(const std::string_view& data) {
     } else {
         auto data_copy = get_service()->get_sending_data_allocator().allocate(data);
         boost::asio::async_write(
-          *in_socket, data_copy->data(), [this, self, data_copy](const boost::system::error_code error, size_t) {
+          *in_socket, data_copy->data(), tp::bind_mem_alloc([this, self, data_copy](const boost::system::error_code error, size_t) {
               get_service()->get_sending_data_allocator().free(data_copy);
               if (error) {
                   output_debug_info_ec(error);
@@ -154,7 +154,7 @@ void ServerSession::in_async_write(const std::string_view& data) {
                   return;
               }
               in_sent();
-          });
+          }));
     }
 }
 
@@ -174,7 +174,7 @@ void ServerSession::out_async_read() {
     out_read_buf.consume_all();
     auto self = shared_from_this();
     out_socket.async_read_some(
-      out_read_buf.prepare(MAX_BUF_LENGTH), [this, self](const boost::system::error_code error, size_t length) {
+      out_read_buf.prepare(MAX_BUF_LENGTH), tp::bind_mem_alloc([this, self](const boost::system::error_code error, size_t length) {
           out_read_buf.end_read();
           if (error) {
               output_debug_info_ec(error);
@@ -183,7 +183,7 @@ void ServerSession::out_async_read() {
           }
           out_read_buf.commit(length);
           out_recv(out_read_buf);
-      });
+      }));
 }
 
 void ServerSession::out_async_write(const std::string_view& data, size_t ack_count) {
@@ -198,7 +198,7 @@ void ServerSession::out_async_write(const std::string_view& data, size_t ack_cou
     auto self      = shared_from_this();
     auto data_copy = get_service()->get_sending_data_allocator().allocate(data);
     boost::asio::async_write(
-      out_socket, data_copy->data(), [this, self, data_copy, ack_count](const boost::system::error_code error, size_t) {
+      out_socket, data_copy->data(), tp::bind_mem_alloc([this, self, data_copy, ack_count](const boost::system::error_code error, size_t) {
           get_service()->get_sending_data_allocator().free(data_copy);
           if (error) {
               output_debug_info_ec(error);
@@ -220,19 +220,19 @@ void ServerSession::out_async_write(const std::string_view& data, size_t ack_cou
               (dynamic_cast<PipelineSession*>(pipeline_session.lock().get()))
                 ->session_write_ack(
                   *this,
-                  [this, self](const boost::system::error_code ec) {
+                  tp::bind_mem_alloc([this, self](const boost::system::error_code ec) {
                       if (ec) {
                           output_debug_info_ec(ec);
                           destroy();
                           return;
                       }
                       out_sent();
-                  },
+                  }),
                   ack_count);
           } else {
               out_sent();
           }
-      });
+      }));
 }
 
 void ServerSession::out_udp_async_read() {
@@ -240,7 +240,7 @@ void ServerSession::out_udp_async_read() {
     udp_read_buf.consume_all();
     auto self = shared_from_this();
     udp_socket.async_receive_from(udp_read_buf.prepare(get_config().get_udp_recv_buf()), out_udp_endpoint,
-      [this, self](const boost::system::error_code error, size_t length) {
+      tp::bind_mem_alloc([this, self](const boost::system::error_code error, size_t length) {
           udp_read_buf.end_read();
           if (error) {
               output_debug_info_ec(error);
@@ -249,14 +249,14 @@ void ServerSession::out_udp_async_read() {
           }
           udp_read_buf.commit(length);
           out_udp_recv(udp_read_buf, out_udp_endpoint);
-      });
+      }));
 }
 
 void ServerSession::out_udp_async_write(const std::string_view& data, const udp::endpoint& endpoint) {
     auto self      = shared_from_this();
     auto data_copy = get_service()->get_sending_data_allocator().allocate(data);
     udp_socket.async_send_to(
-      data_copy->data(), endpoint, [this, self, data_copy](const boost::system::error_code error, size_t) {
+      data_copy->data(), endpoint, tp::bind_mem_alloc([this, self, data_copy](const boost::system::error_code error, size_t) {
           get_service()->get_sending_data_allocator().free(data_copy);
           if (error) {
               output_debug_info_ec(error);
@@ -264,7 +264,7 @@ void ServerSession::out_udp_async_write(const std::string_view& data, const udp:
               return;
           }
           out_udp_sent();
-      });
+      }));
 }
 
 void ServerSession::in_recv(const std::string_view& data, size_t ack_count) {
@@ -482,7 +482,7 @@ void ServerSession::out_udp_sent() {
 
             auto self = shared_from_this();
             udp_resolver.async_resolve(packet.address.address, tp::to_string(packet.address.port),
-              [this, self, cb, payload_tmp_buf, packet, packet_len](
+              tp::bind_mem_alloc([this, self, cb, payload_tmp_buf, packet, packet_len](
                 const boost::system::error_code error, const udp::resolver::results_type& results) {
                   if (error || results.empty()) {
                       _log_with_endpoint(udp_associate_endpoint,
@@ -513,7 +513,7 @@ void ServerSession::out_udp_sent() {
                     Log::ALL);
 
                   cb(packet, packet_len, dst_endpoint);
-              });
+              }));
         } else {
 
             boost::system::error_code ec;

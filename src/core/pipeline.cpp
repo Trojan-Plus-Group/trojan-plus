@@ -47,7 +47,7 @@ Pipeline::Pipeline(Service* _service, const Config& config, boost::asio::ssl::co
     sending_data_cache.set_async_writer([this](const tp::streambuf& data, SentHandler&& handler) {
         auto self = shared_from_this();
         boost::asio::async_write(
-          out_socket, data.data(), [this, self, handler](const boost::system::error_code error, size_t) {
+          out_socket, data.data(), tp::bind_mem_alloc([this, self, handler](const boost::system::error_code error, size_t) {
               _guard;
               if (error) {
                   output_debug_info_ec(error);
@@ -56,7 +56,7 @@ Pipeline::Pipeline(Service* _service, const Config& config, boost::asio::ssl::co
 
               handler(error);
               _unguard;
-          });
+          }));
     });
 
     _unguard;
@@ -85,7 +85,7 @@ void Pipeline::start_timeout_timer() {
 
     timeout_timer.expires_after(std::chrono::seconds(timeout));
     auto self = shared_from_this();
-    timeout_timer.async_wait([this, self, timeout](const boost::system::error_code error) {
+    timeout_timer.async_wait(tp::bind_mem_alloc([this, self, timeout](const boost::system::error_code error) {
         _guard;
         if (!error) {
             time_t curr = time(nullptr);
@@ -102,7 +102,7 @@ void Pipeline::start_timeout_timer() {
             output_debug_info_ec(error);
         }
         _unguard;
-    });
+    }));
 
     _unguard;
 }
@@ -220,7 +220,7 @@ void Pipeline::out_async_recv() {
     out_read_buf.begin_read(__FILE__, __LINE__);
     auto self = shared_from_this();
     out_socket.async_read_some(
-      out_read_buf.prepare(RECV_BUF_LENGTH), [this, self](const boost::system::error_code error, size_t length) {
+      out_read_buf.prepare(RECV_BUF_LENGTH), tp::bind_mem_alloc([this, self](const boost::system::error_code error, size_t length) {
           _guard;
           out_read_buf.end_read();
           if (error) {
@@ -295,7 +295,7 @@ void Pipeline::out_async_recv() {
               out_async_recv();
           }
           _unguard;
-      });
+      }));
 
     _unguard;
 }

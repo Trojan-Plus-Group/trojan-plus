@@ -726,7 +726,7 @@ void TUNDev::async_read() {
     _guard;
 
     m_sd_read_buffer.consume(m_sd_read_buffer.size());
-    m_boost_sd.async_read_some(m_sd_read_buffer.prepare(m_mtu), [this](boost::system::error_code ec, size_t data_len) {
+    m_boost_sd.async_read_some(m_sd_read_buffer.prepare(m_mtu), tp::bind_mem_alloc([this](boost::system::error_code ec, size_t data_len) {
         if (m_quitting) {
             return;
         }
@@ -741,7 +741,7 @@ void TUNDev::async_read() {
         }
 
         async_read();
-    });
+    }));
 
     // sleep for test
     //::sleep(1);

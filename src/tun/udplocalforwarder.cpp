@@ -124,7 +124,7 @@ void UDPLocalForwarder::async_read() {
 
     auto self = shared_from_this();
     m_udp_socket.async_receive_from(
-      m_read_buf.prepare(prepare_size), m_remote_dst, [this, self](boost::system::error_code ec, size_t length) {
+      m_read_buf.prepare(prepare_size), m_remote_dst, tp::bind_mem_alloc([this, self](boost::system::error_code ec, size_t length) {
           _guard;
           m_read_buf.end_read();
 
@@ -139,7 +139,7 @@ void UDPLocalForwarder::async_read() {
               async_read();
           }
           _unguard;
-      });
+      }));
     _unguard;
 }
 

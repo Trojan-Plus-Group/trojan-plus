@@ -113,7 +113,7 @@ bool icmpd::read_icmp(
 void icmpd::start_recv() {
     auto self = shared_from_this();
     m_buffer.consume(m_buffer.size());
-    m_socket.async_receive(m_buffer.prepare(ICMP_RECV_BUF_SIZE), [this, self](
+    m_socket.async_receive(m_buffer.prepare(ICMP_RECV_BUF_SIZE), tp::bind_mem_alloc([this, self](
                                                                    boost::system::error_code ec, size_t length) {
         if (!ec) {
             m_buffer.commit(length);
@@ -200,7 +200,7 @@ void icmpd::start_recv() {
         }
 
         start_recv();
-    });
+    }));
 }
 
 tp::string icmpd::generate_time_exceeded_icmp(ipv4_header& ipv4_hdr, icmp_header& icmp_hdr) {
@@ -245,7 +245,7 @@ void icmpd::async_out_send() {
 
     auto data_copy = m_service->get_sending_data_allocator().allocate(send->sending_data);
     m_socket.async_send_to(data_copy->data(), icmp::endpoint(send->destination, 0),
-      [this, self, data_copy](const boost::system::error_code ec, size_t) {
+      tp::bind_mem_alloc([this, self, data_copy](const boost::system::error_code ec, size_t) {
           if (ec) {
               ipv4_header ipv4_hdr;
               icmp_header icmp_hdr;
@@ -263,7 +263,7 @@ void icmpd::async_out_send() {
           m_service->get_sending_data_allocator().free(data_copy);
           m_is_sending_cache = false;
           async_out_send();
-      });
+      }));
 
     m_sending_data_cache.pop_front();
 }

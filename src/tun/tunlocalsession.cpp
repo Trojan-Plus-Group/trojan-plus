@@ -39,7 +39,7 @@ TUNLocalSession::TUNLocalSession(Service* _service, bool is_udp)
         m_sending_data_cache.set_async_writer([this](const tp::streambuf& data, SentHandler&& handler) {
             auto self = shared_from_this();
             boost::asio::async_write(
-              m_tcp_socket, data.data(), [this, self, handler](const boost::system::error_code error, size_t length) {
+              m_tcp_socket, data.data(), tp::bind_mem_alloc([this, self, handler](const boost::system::error_code error, size_t length) {
                   _guard;
                   udp_timer_async_wait();
                   if (error) {
@@ -50,7 +50,7 @@ TUNLocalSession::TUNLocalSession(Service* _service, bool is_udp)
                   get_stat().inc_sent_len(length);
                   handler(error);
                   _unguard;
-              });
+              }));
         });
     }
 
@@ -159,7 +159,7 @@ void TUNLocalSession::out_async_read() {
         m_recv_buf.begin_read(__FILE__, __LINE__);
         auto self = shared_from_this();
         m_tcp_socket.async_read_some(m_recv_buf.prepare(Session::MAX_BUF_LENGTH),
-          [this, self](const boost::system::error_code error, size_t length) {
+          tp::bind_mem_alloc([this, self](const boost::system::error_code error, size_t length) {
               _guard;
 
               m_recv_buf.end_read();
@@ -179,7 +179,7 @@ void TUNLocalSession::out_async_read() {
               }
 
               _unguard;
-          });
+          }));
     }
 
     _unguard;

@@ -88,7 +88,7 @@ void DNSServer::SocketQueryer::async_read_udp() {
     buf.begin_read(__FILE__, __LINE__);
     buf.consume_all();
     socket.async_receive_from(
-      buf.prepare(prepare_size), recv_endpoint, [self, this](const boost::system::error_code error, size_t length) {
+      buf.prepare(prepare_size), recv_endpoint, tp::bind_mem_alloc([self, this](const boost::system::error_code error, size_t length) {
           buf.end_read();
           if (error) {
               async_read_udp();
@@ -98,7 +98,7 @@ void DNSServer::SocketQueryer::async_read_udp() {
           buf.commit(length);
           data_handler(recv_endpoint, buf);
           async_read_udp();
-      });
+      }));
 
     _unguard;
 }
