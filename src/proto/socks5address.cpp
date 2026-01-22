@@ -24,6 +24,7 @@
 #include <cstdio>
 
 #include "core/utils.h"
+#include "mem/memallocator.h"
 
 using namespace boost::asio::ip;
 
@@ -37,8 +38,8 @@ bool SOCKS5Address::parse(const std::string_view& data, size_t& address_len) {
     switch (address_type) {
         case IPv4: {
             if (data.length() > 4 + 2) {
-                address = std::to_string(uint8_t(data[1])) + '.' + std::to_string(uint8_t(data[2])) + '.' +
-                          std::to_string(uint8_t(data[3])) + '.' + std::to_string(uint8_t(data[4]));
+                address = tp::to_string(uint8_t(data[1])) + '.' + tp::to_string(uint8_t(data[2])) + '.' +
+                          tp::to_string(uint8_t(data[3])) + '.' + tp::to_string(uint8_t(data[4]));
                 port        = (uint8_t(data[5]) << one_byte_shift_8_bits) | uint8_t(data[6]);
                 address_len = 1 + 4 + 2;
                 return true;
@@ -62,7 +63,7 @@ bool SOCKS5Address::parse(const std::string_view& data, size_t& address_len) {
         case IPv6: {
             if (data.length() > 16 + 2) {
                 char t[40];
-                sprintf(t, "%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x", uint8_t(data[1]),
+                snprintf(t, sizeof(t), "%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x", uint8_t(data[1]),
                   uint8_t(data[2]), uint8_t(data[3]), uint8_t(data[4]), uint8_t(data[5]), uint8_t(data[6]),
                   uint8_t(data[7]), uint8_t(data[8]), uint8_t(data[9]), uint8_t(data[10]), uint8_t(data[11]),
                   uint8_t(data[12]), uint8_t(data[13]), uint8_t(data[14]), uint8_t(data[15]), uint8_t(data[16]));
@@ -79,9 +80,9 @@ bool SOCKS5Address::parse(const std::string_view& data, size_t& address_len) {
     _unguard;
 }
 
-static const std::string unspecified_address("\x01\x00\x00\x00\x00\x00\x00", 7);
+static const tp::string unspecified_address("\x01\x00\x00\x00\x00\x00\x00", 7);
 
-void SOCKS5Address::generate(boost::asio::streambuf& buf, const udp::endpoint& endpoint) {
+void SOCKS5Address::generate(tp::streambuf& buf, const udp::endpoint& endpoint) {
     if (endpoint.address().is_unspecified()) {
         streambuf_append(buf, unspecified_address);
         return;

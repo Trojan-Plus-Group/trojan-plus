@@ -18,8 +18,9 @@
  */
 
 #include "sslsession.h"
+#include "mem/memallocator.h"
 
-std::list<SSL_SESSION*>SSLSession::sessions;
+tp::list<SSL_SESSION*>SSLSession::sessions;
 
 int SSLSession::new_session_cb(SSL*, SSL_SESSION *session) {
     sessions.push_front(session);

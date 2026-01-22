@@ -129,14 +129,14 @@ using reuse_port = boost::asio::detail::socket_option::boolean<SOL_SOCKET, SO_RE
     do {                                                                                                               \
         hdr.func((val_type)(val));                                                                                     \
         if ((val_type)(val) != hdr.func()) {                                                                           \
-            throw std::runtime_error("Error: " #func " is not same!!!");                                               \
+            throw std::runtime_error((tp::string("Error: ") + tp::string(#func) + tp::string(" is not same!!!")).c_str());                                               \
         }                                                                                                              \
     } while (false)
 
 #define _test_case_call_assert(hdr, func, val, val_type)                                                               \
     do {                                                                                                               \
         if ((val_type)(val) != hdr.func()) {                                                                           \
-            throw std::runtime_error("Error: " #func " final value is not correct!!");                                 \
+            throw std::runtime_error((tp::string("Error: ") + tp::string(#func) + tp::string(" final value is not correct!!")).c_str());                                 \
         }                                                                                                              \
     } while (false)
 
@@ -144,14 +144,14 @@ using reuse_port = boost::asio::detail::socket_option::boolean<SOL_SOCKET, SO_RE
     do {                                                                                                               \
         if ((exp) != (exp1)) {                                                                                         \
             throw std::runtime_error(                                                                                  \
-              "test_cases failed, [" #exp "==" + std::to_string(exp) + "] is not equal [" #exp1 "]");                  \
+              (tp::string("test_cases failed, [") + tp::string(#exp) + tp::string("==") + tp::to_string(exp) + tp::string("] is not equal [") + tp::string(#exp1) + tp::string("]")).c_str());                  \
         }                                                                                                              \
     } while (false)
 
 #define _test_case_assert_str(exp, exp1)                                                                               \
     do {                                                                                                               \
         if ((exp) != (exp1)) {                                                                                         \
-            throw std::runtime_error("test_cases failed, [" #exp "==" + (exp) + "] is not equal [" #exp1 "]");         \
+            throw std::runtime_error((tp::string("test_cases failed, [") + tp::string(#exp) + tp::string("==") + tp::string(exp) + tp::string("] is not equal [") + tp::string(#exp1) + tp::string("]")).c_str());         \
         }                                                                                                              \
     } while (false)
 
@@ -164,38 +164,38 @@ const static int half_byte_mask_0xF    = 0xF;
 const static int one_byte_mask_0xFF    = 0xFF;
 const static int two_bytes_mask_0xFFFF = 0xFFFF;
 
-size_t streambuf_append(boost::asio::streambuf& target, const boost::asio::streambuf& append_buf);
+size_t streambuf_append(tp::streambuf& target, const tp::streambuf& append_buf);
 size_t streambuf_append(
-  boost::asio::streambuf& target, const boost::asio::streambuf& append_buf, size_t start, size_t n);
-size_t streambuf_append(boost::asio::streambuf& target, const char* append_str);
-size_t streambuf_append(boost::asio::streambuf& target, const uint8_t* append_data, size_t append_length);
-size_t streambuf_append(boost::asio::streambuf& target, char append_char);
-size_t streambuf_append(boost::asio::streambuf& target, const std::string_view& append_data);
-size_t streambuf_append(boost::asio::streambuf& target, const std::string& append_data);
-std::string_view streambuf_to_string_view(const boost::asio::streambuf& target);
+  tp::streambuf& target, const tp::streambuf& append_buf, size_t start, size_t n);
+size_t streambuf_append(tp::streambuf& target, const char* append_str);
+size_t streambuf_append(tp::streambuf& target, const uint8_t* append_data, size_t append_length);
+size_t streambuf_append(tp::streambuf& target, char append_char);
+size_t streambuf_append(tp::streambuf& target, const std::string_view& append_data);
+size_t streambuf_append(tp::streambuf& target, const tp::string& append_data);
+std::string_view streambuf_to_string_view(const tp::streambuf& target);
 
-unsigned short get_checksum(const boost::asio::streambuf& buf);
+unsigned short get_checksum(const tp::streambuf& buf);
 unsigned short get_checksum(const std::string_view& str);
-unsigned short get_checksum(const std::string& str);
+unsigned short get_checksum(const tp::string& str);
 
-int get_hashCode(const std::string& str);
+int get_hashCode(const tp::string& str);
 
-void write_data_to_file(int id, const std::string& tag, const std::string_view& data);
+void write_data_to_file(int id, const tp::string& tag, const std::string_view& data);
 
 using SSLSocket = boost::asio::ssl::stream<boost::asio::ip::tcp::socket>;
 
 using SentHandler     = std::function<void(const boost::system::error_code ec)>;
-using AsyncWriter     = std::function<void(const boost::asio::streambuf& data, SentHandler&& handler)>;
+using AsyncWriter     = std::function<void(const tp::streambuf& data, SentHandler&& handler)>;
 using ConnectionFunc  = std::function<bool()>;
 using ReadHandler     = std::function<void(const std::string_view& data, size_t push_count)>;
-using PushDataHandler = std::function<void(boost::asio::streambuf& buf)>;
+using PushDataHandler = std::function<void(tp::streambuf& buf)>;
 
 // please don't return uint16_t for the performance, maybe byte align problem
 [[nodiscard]] static inline size_t parse_uint16(int start_pos, const std::string_view& data) {
     return size_t(uint8_t(data[0 + start_pos])) << one_byte_shift_8_bits | size_t(uint8_t(data[1 + start_pos]));
 }
 
-static inline void generate_uint16(boost::asio::streambuf& data, uint16_t value) {
+static inline void generate_uint16(tp::streambuf& data, uint16_t value) {
     streambuf_append(data, char(value >> one_byte_shift_8_bits & one_byte_mask_0xFF));
     streambuf_append(data, char(value & one_byte_mask_0xFF));
 }
@@ -206,7 +206,7 @@ static inline void generate_uint16(boost::asio::streambuf& data, uint16_t value)
            uint32_t(uint8_t(data[2 + start_pos])) << one_byte_shift_8_bits | uint32_t(uint8_t(data[3 + start_pos]));
 }
 
-static inline void generate_uint32(boost::asio::streambuf& data, uint32_t value) {
+static inline void generate_uint32(tp::streambuf& data, uint32_t value) {
     streambuf_append(data, char(value >> three_bytes_shift_24_bits));
     streambuf_append(data, char(value >> two_bytes_shift_16_bits & one_byte_mask_0xFF));
     streambuf_append(data, char(value >> one_byte_shift_8_bits & one_byte_mask_0xFF));
@@ -214,14 +214,14 @@ static inline void generate_uint32(boost::asio::streambuf& data, uint32_t value)
 }
 
 class SendDataCache {
-    std::vector<SentHandler> handler_queue;
-    boost::asio::streambuf data_queue;
+    tp::vector<SentHandler> handler_queue;
+    tp::streambuf data_queue;
 
-    std::vector<SentHandler> handler_queue_other;
-    boost::asio::streambuf data_queue_other;
+    tp::vector<SentHandler> handler_queue_other;
+    tp::streambuf data_queue_other;
 
-    std::vector<SentHandler>* current_recv_handler;
-    boost::asio::streambuf* current_recv_queue;
+    tp::vector<SentHandler>* current_recv_handler;
+    tp::streambuf* current_recv_queue;
 
     bool is_async_sending;
     AsyncWriter async_writer;
@@ -243,7 +243,7 @@ class SendDataCache {
 };
 
 class ReadDataCache {
-    boost::asio::streambuf data_queue;
+    tp::streambuf data_queue;
     ReadHandler read_handler;
     size_t push_ack_count{};
     bool is_waiting{false};
@@ -278,15 +278,15 @@ class ReadDataCache {
 };
 
 class SendingDataAllocator {
-    std::vector<std::shared_ptr<boost::asio::streambuf>> allocated;
-    std::list<std::shared_ptr<boost::asio::streambuf>> free_bufs;
+    tp::vector<std::shared_ptr<tp::streambuf>> allocated;
+    tp::list<std::shared_ptr<tp::streambuf>> free_bufs;
 
   public:
-    inline std::shared_ptr<boost::asio::streambuf> allocate(const std::string_view& data) {
+    inline std::shared_ptr<tp::streambuf> allocate(const std::string_view& data) {
         _guard;
-        auto buf = std::shared_ptr<boost::asio::streambuf>(nullptr);
+        auto buf = std::shared_ptr<tp::streambuf>(nullptr);
         if (free_bufs.empty()) {
-            buf = TP_MAKE_SHARED(boost::asio::streambuf);
+            buf = TP_MAKE_SHARED(tp::streambuf);
             allocated.push_back(buf);
         } else {
             buf = free_bufs.front();
@@ -298,7 +298,7 @@ class SendingDataAllocator {
         _unguard;
     }
 
-    void free(const std::shared_ptr<boost::asio::streambuf>& buf) {
+    void free(const std::shared_ptr<tp::streambuf>& buf) {
         _guard;
         bool found = false;
         for (const auto& it : allocated) {
@@ -309,7 +309,7 @@ class SendingDataAllocator {
         }
 
         if (!found) {
-            throw std::logic_error("cannot find the buf in SendingDataAllocator!");
+            throw std::logic_error(tp::string("cannot find the buf in SendingDataAllocator!").c_str());
         }
 
         buf->consume(buf->size());
@@ -319,7 +319,7 @@ class SendingDataAllocator {
 };
 
 class ReadBufWithGuard {
-    boost::asio::streambuf read_buf;
+    tp::streambuf read_buf;
     bool read_buf_guard = false;
 
   public:
@@ -331,22 +331,21 @@ class ReadBufWithGuard {
 
     inline void commit(size_t length) { read_buf.commit(length); }
 
-    [[nodiscard]] inline boost::asio::streambuf::const_buffers_type data() const { return read_buf.data(); }
+    [[nodiscard]] inline tp::streambuf::const_buffers_type data() const { return read_buf.data(); }
 
-    [[nodiscard]] inline boost::asio::streambuf::mutable_buffers_type prepare(size_t length) {
+    [[nodiscard]] inline tp::streambuf::mutable_buffers_type prepare(size_t length) {
         return read_buf.prepare(length);
     }
 
     inline operator std::string_view() const { return streambuf_to_string_view(read_buf); }
 
-    inline operator boost::asio::streambuf &() { return read_buf; }
+    inline operator tp::streambuf &() { return read_buf; }
 
     inline void begin_read(const char* __file__, int __line__) {
         _guard;
         if (read_buf_guard) {
-            throw std::logic_error(
-              "!! guard_read_buf failed! Cannot enter this function before _guard_read_buf_end  !! " +
-              std::string(__file__) + ":" + std::to_string(__line__));
+            throw std::logic_error((tp::string("!! guard_read_buf failed! Cannot enter this function before _guard_read_buf_end  !! ") +
+              tp::string(__file__) + ":" + tp::to_string(__line__)).c_str());
         }
         read_buf_guard = true;
         _unguard;
@@ -374,21 +373,21 @@ class bytes_stat {
     _define_getter_const(uint64_t, recv_len);
     _define_getter_const(uint64_t, sent_len);
 
-    [[nodiscard]] inline std::string to_string() const {
-        return std::to_string(get_recv_len()) + " bytes received, " + std::to_string(get_sent_len()) +
-               " bytes sent, lasted for " + std::to_string(time(nullptr) - start_time) + " seconds";
+    [[nodiscard]] inline tp::string to_string() const {
+        return tp::to_string(get_recv_len()) + " bytes received, " + tp::to_string(get_sent_len()) +
+               " bytes sent, lasted for " + tp::to_string(time(nullptr) - start_time) + " seconds";
     }
 };
 
 class DomainMatcher {
     class DomainLinkData {
       public:
-        std::string suffix;
+        tp::string suffix;
         bool is_top{true};
-        std::vector<DomainLinkData> prefix;
+        tp::vector<DomainLinkData> prefix;
 
         DomainLinkData() = default;
-        DomainLinkData(std::string _suffix) : suffix(std::move(_suffix)) {
+        DomainLinkData(tp::string _suffix) : suffix(std::move(_suffix)) {
             is_top = suffix == "com" || suffix == "org" || suffix == "net" || suffix == "int" || suffix == "edu" ||
                      suffix == "gov" || suffix == "mil";
         }
@@ -396,32 +395,32 @@ class DomainMatcher {
         friend bool operator<(const DomainLinkData& a, const DomainLinkData& b) { return a.suffix < b.suffix; }
     };
 
-    std::vector<DomainLinkData> domains;
+    tp::vector<DomainLinkData> domains;
 
-    void parse_line(const std::string& line);
-    static DomainLinkData* insert_domain_seg(std::vector<DomainLinkData>& list, const std::string& seg);
-    static const DomainLinkData* find_domain_seg(const std::vector<DomainLinkData>& list, const std::string& seg);
+    void parse_line(const tp::string& line);
+    static DomainLinkData* insert_domain_seg(tp::vector<DomainLinkData>& list, const tp::string& seg);
+    static const DomainLinkData* find_domain_seg(const tp::vector<DomainLinkData>& list, const tp::string& seg);
 
   public:
     bool load_from_stream(std::istream& is, size_t& loaded_count);
-    bool load_from_file(const std::string& filename, size_t& loaded_count);
-    [[nodiscard]] bool is_match(const std::string& domain) const;
+    bool load_from_file(const tp::string& filename, size_t& loaded_count);
+    [[nodiscard]] bool is_match(const tp::string& domain) const;
 
     static void test_cases();
 };
 
 class IPv4Matcher {
-    using IPList       = std::vector<uint32_t>;
-    using IPSubnetList = std::unordered_map<uint32_t, IPList>;
+    using IPList       = tp::vector<uint32_t>;
+    using IPSubnetList = tp::unordered_map<uint32_t, IPList>;
 
     IPSubnetList subnet;
     IPList ips;
 
-    static uint32_t get_ip_value(const std::string& ip_str);
+    static uint32_t get_ip_value(const tp::string& ip_str);
 
   public:
-    bool load_from_stream(std::istream& is, const std::string& filename, size_t& loaded_count);
-    bool load_from_file(const std::string& filename, size_t& loaded_count);
+    bool load_from_stream(std::istream& is, const tp::string& filename, size_t& loaded_count);
+    bool load_from_file(const tp::string& filename, size_t& loaded_count);
 
     [[nodiscard]] bool is_match(uint32_t ip) const;
 
@@ -431,7 +430,7 @@ class IPv4Matcher {
 void android_protect_socket(int fd);
 
 template <typename ThisT, typename EndPoint>
-void connect_out_socket(ThisT this_ptr, std::string addr, std::string port, boost::asio::ip::tcp::resolver& resolver,
+void connect_out_socket(ThisT this_ptr, tp::string addr, tp::string port, boost::asio::ip::tcp::resolver& resolver,
   boost::asio::ip::tcp::socket& out_socket, EndPoint in_endpoint, std::function<void()>&& connected_handler) {
     _guard;
     resolver.async_resolve(addr, port,
@@ -440,7 +439,7 @@ void connect_out_socket(ThisT this_ptr, std::string addr, std::string port, boos
           _guard;
           if (error || results.empty()) {
               _log_with_endpoint(in_endpoint,
-                "cannot resolve remote server hostname " + addr + ":" + port + " reason: " + error.message(),
+                tp::string("cannot resolve remote server hostname ") + addr + ":" + port + " reason: " + error.message().c_str(),
                 Log::ERROR);
               this_ptr->destroy();
               return;
@@ -493,7 +492,7 @@ void connect_out_socket(ThisT this_ptr, std::string addr, std::string port, boos
 
               if (error) {
                   _log_with_endpoint(in_endpoint,
-                    "cannot establish connection to remote server " + addr + ':' + port + " reason: " + error.message(),
+                    tp::string("cannot establish connection to remote server ") + addr + ':' + port + " reason: " + error.message().c_str(),
                     Log::ERROR);
                   this_ptr->destroy();
                   return;
@@ -510,7 +509,7 @@ void connect_out_socket(ThisT this_ptr, std::string addr, std::string port, boos
 }
 
 template <typename ThisT, typename EndPoint>
-void connect_remote_server_ssl(ThisT this_ptr, std::string addr, std::string port,
+void connect_remote_server_ssl(ThisT this_ptr, tp::string addr, tp::string port,
   boost::asio::ip::tcp::resolver& resolver, SSLSocket& out_socket, EndPoint in_endpoint,
   std::function<void()>&& connected_handler) {
     _guard;
@@ -520,7 +519,7 @@ void connect_remote_server_ssl(ThisT this_ptr, std::string addr, std::string por
               _guard;
               if (error) {
                   _log_with_endpoint(in_endpoint,
-                    "SSL handshake failed with " + addr + ':' + port + " reason: " + error.message(), Log::ERROR);
+                    tp::string("SSL handshake failed with ") + addr + ':' + port + " reason: " + error.message().c_str(), Log::ERROR);
                   this_ptr->destroy();
                   return;
               }
@@ -571,7 +570,7 @@ template <typename ThisPtr> void shutdown_ssl_socket(ThisPtr this_ptr, SSLSocket
     _unguard;
 }
 
-template <class T> bool clear_weak_ptr_list(std::list<std::weak_ptr<T>>& l) {
+template <class T> bool clear_weak_ptr_list(tp::list<std::weak_ptr<T>>& l) {
     _guard;
     bool changed = false;
     auto it      = l.begin();
@@ -588,22 +587,22 @@ template <class T> bool clear_weak_ptr_list(std::list<std::weak_ptr<T>>& l) {
     _unguard;
 }
 
-template <class T> bool safe_atov(const std::string& str, T& val) {
+template <class T> bool safe_atov(const tp::string& str, T& val) {
     _guard;
     if (str.empty()) {
         return false;
     }
-    std::stringstream ss(str);
+    tp::stringstream ss(str);
     return !((ss >> val).fail() || !(ss >> std::ws).eof());
     _unguard;
 }
 
-std::pair<std::string, uint16_t> recv_target_endpoint(int _native_fd, bool use_tproxy);
-std::pair<std::string, uint16_t> recv_tproxy_udp_msg(
+std::pair<tp::string, uint16_t> recv_target_endpoint(int _native_fd, bool use_tproxy);
+std::pair<tp::string, uint16_t> recv_tproxy_udp_msg(
   int fd, boost::asio::ip::udp::endpoint& target_endpoint, char* buf, int& buf_len, int& ttl);
 bool set_udp_send_recv_buf(int fd, int buf_size);
 boost::asio::ip::udp::endpoint make_udp_endpoint_safe(
-  const std::string& address, uint16_t port, boost::system::error_code& ec);
+  const tp::string& address, uint16_t port, boost::system::error_code& ec);
 
 bool prepare_transparent_socket(int fd, bool is_ipv4);
 bool prepare_nat_udp_bind(int fd, bool is_ipv4, bool recv_ttl);

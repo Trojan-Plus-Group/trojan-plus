@@ -22,6 +22,7 @@
 
 #include "session.h"
 #include "core/service.h"
+#include "mem/memallocator.h"
 
 
 size_t Session::s_total_session_count = 0;
@@ -37,8 +38,8 @@ Session::Session(Service* _service, const Config& _config)
 
 Session::~Session() {
     s_total_session_count--;
-    _log_with_date_time_ALL((is_udp_forward_session() ? "[udp] ~" : "[tcp] ~") + std::string(session_name) +
-                            " called, current all sessions:  " + std::to_string(s_total_session_count));
+    _log_with_date_time_ALL((is_udp_forward_session() ? tp::string("[udp] ~") : tp::string("[tcp] ~")) + tp::string(session_name) +
+                            " called, current all sessions:  " + tp::to_string(s_total_session_count));
 };
 
 int Session::get_udp_timer_timeout_val() const { return get_config().get_udp_timeout(); }
@@ -87,7 +88,7 @@ void Session::udp_timer_async_wait(int timeout /*=-1*/) {
                 return;
             }
 
-            _log_with_date_time("session_id: " + std::to_string(get_session_id()) + " UDP session timeout");
+            _log_with_date_time("session_id: " + tp::to_string(get_session_id()) + " UDP session timeout");
             destroy();
         } else {
             output_debug_info_ec(error);

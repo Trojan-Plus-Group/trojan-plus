@@ -29,6 +29,7 @@
 #include <lwip/opt.h>
 #include <lwip/tcp.h>
 
+#include "mem/memallocator.h"
 #include "core/service.h"
 #include "tun/tunsession.h"
 

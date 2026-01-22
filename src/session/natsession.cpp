@@ -24,6 +24,7 @@
 #include "core/utils.h"
 #include "proto/trojanrequest.h"
 #include "ssl/sslsession.h"
+#include "mem/memallocator.h"
 
 using namespace boost::asio::ip;
 using namespace boost::asio::ssl;
@@ -34,22 +35,22 @@ NATSession::NATSession(Service* _service, const Config& config, context& ssl_con
     set_status(CONNECT);
 }
 
-std::pair<std::string, uint16_t> NATSession::get_target_endpoint() {
+std::pair<tp::string, uint16_t> NATSession::get_target_endpoint() {
     return recv_target_endpoint((int)get_in_socket().native_handle(), get_config().get_tcp().use_tproxy);
 }
 
 void NATSession::start() {
     if (prepare_session()) {
         auto target_endpoint = get_target_endpoint();
-        std::string& target_addr  = target_endpoint.first;
+        tp::string& target_addr  = target_endpoint.first;
         uint16_t target_port = target_endpoint.second;
         if (target_port == 0) {
             destroy();
             return;
         }
         _log_with_endpoint(get_in_endpoint(),
-          "forwarding to " + target_addr + ':' + std::to_string(target_port) + " via " + get_config().get_remote_addr() +
-            ':' + std::to_string(get_config().get_remote_port()),
+          "forwarding to " + target_addr + ':' + tp::to_string(target_port) + " via " + get_config().get_remote_addr() +
+            ':' + tp::to_string(get_config().get_remote_port()),
           Log::INFO);
 
         get_out_write_buf().consume(get_out_write_buf().size());

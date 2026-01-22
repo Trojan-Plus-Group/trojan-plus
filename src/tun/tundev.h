@@ -44,6 +44,7 @@
 #include <boost/asio/posix/stream_descriptor.hpp>
 #include <boost/asio/streambuf.hpp>
 
+#include "mem/memallocator.h"
 #include "core/config.h"
 
 #ifndef _WIN32
@@ -107,8 +108,8 @@ class TUNDev {
     err_t listener_accept_func(struct tcp_pcb* newpcb, err_t err);
 
   private:
-    std::list<std::shared_ptr<lwip_tcp_client>> m_tcp_clients;
-    std::list<std::shared_ptr<TUNSession>> m_udp_clients;
+    tp::list<std::shared_ptr<lwip_tcp_client>> m_tcp_clients;
+    tp::list<std::shared_ptr<TUNSession>> m_udp_clients;
 
     Service* m_service;
     std::shared_ptr<DNSServer> m_dns_server;
@@ -119,13 +120,13 @@ class TUNDev {
     uint16_t m_mtu;
 
     bool m_quitting;
-    boost::asio::streambuf m_write_fill_buf;
-    boost::asio::streambuf m_writing_buf;
+    tp::streambuf m_write_fill_buf;
+    tp::streambuf m_writing_buf;
 
-    boost::asio::streambuf m_sd_read_buffer;
+    tp::streambuf m_sd_read_buffer;
     BoostStreamDescriptor m_boost_sd;
 
-    std::string m_packet_parse_buff;
+    tp::string m_packet_parse_buff;
 
     void async_read();
     void write_to_tun();
@@ -140,7 +141,7 @@ class TUNDev {
     [[nodiscard]] bool proxy_by_route(uint32_t ip) const;
 
   public:
-    TUNDev(Service* _service, const std::string& _tun_name, const std::string& _ipaddr, const std::string& _netmask,
+    TUNDev(Service* _service, const tp::string& _tun_name, const tp::string& _ipaddr, const tp::string& _netmask,
       uint16_t _mtu, int _outside_tun_fd = -1);
     ~TUNDev();
 

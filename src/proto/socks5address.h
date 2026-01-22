@@ -28,6 +28,7 @@
 #include <string_view>
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/streambuf.hpp>
+#include "mem/memallocator.h"
 
 class SOCKS5Address {
 public:
@@ -36,12 +37,12 @@ public:
         DOMAINNAME = 3,
         IPv6 = 4
     } address_type;
-    std::string address;
+    tp::string address;
     uint16_t port;
 
     [[nodiscard]]
     bool parse(const std::string_view &data, size_t &address_len);
-    static void generate(boost::asio::streambuf& buf, const boost::asio::ip::udp::endpoint &endpoint);
+    static void generate(tp::streambuf& buf, const boost::asio::ip::udp::endpoint &endpoint);
 };
 
 #endif // _SOCKS5ADDRESS_H_

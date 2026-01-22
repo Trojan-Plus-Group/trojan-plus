@@ -27,6 +27,7 @@
 #include "proto/trojanrequest.h"
 #include "proto/udppacket.h"
 #include "ssl/sslsession.h"
+#include "mem/memallocator.h"
 
 using namespace boost::asio::ip;
 using namespace boost::asio::ssl;
@@ -74,13 +75,13 @@ void ClientSession::recv_ack_cmd(size_t ack_count) {
 void ClientSession::in_async_read() {
     if (get_pipeline_component().is_using_pipeline() && status == FORWARD) {
         if (!get_pipeline_component().pre_call_ack_func()) {
-            _log_with_endpoint_DEBUG(get_in_endpoint(), "session_id: " + std::to_string(get_session_id()) +
+            _log_with_endpoint_DEBUG(get_in_endpoint(), "session_id: " + tp::to_string(get_session_id()) +
                                                           " Cannot ClientSession::in_async_read ! Is waiting for ack");
             return;
         }
         _log_with_endpoint_DEBUG(get_in_endpoint(),
-          "session_id: " + std::to_string(get_session_id()) +
-            " Permit to ClientSession::in_async_read! ack:" + std::to_string(get_pipeline_component().pipeline_ack_counter));
+          "session_id: " + tp::to_string(get_session_id()) +
+            " Permit to ClientSession::in_async_read! ack:" + tp::to_string(get_pipeline_component().pipeline_ack_counter));
     }
 
     in_read_buf.begin_read(__FILE__, __LINE__);
@@ -104,9 +105,9 @@ void ClientSession::in_async_read() {
 
 void ClientSession::in_async_write(const std::string_view& data, size_t ack_count) {
 
-    _log_with_date_time_DEBUG("ClientSession::in_async_write status: " + std::to_string((int)status) +
-                              " session_id: " + std::to_string(get_session_id()) + " length: " + std::to_string(data.length()) +
-                              " checksum: " + std::to_string(get_checksum(data)));
+    _log_with_date_time_DEBUG("ClientSession::in_async_write status: " + tp::to_string((int)status) +
+                              " session_id: " + tp::to_string(get_session_id()) + " length: " + tp::to_string(data.length()) +
+                              " checksum: " + tp::to_string(get_checksum(data)));
 
     _write_data_to_file_DEBUG(get_session_id(), "ClientSession_in_async_write", data);
 
@@ -178,9 +179,9 @@ void ClientSession::out_async_read() {
 
 void ClientSession::out_async_write(const std::string_view& data) {
 
-    _write_data_to_file_DEBUG("ClientSession::out_async_write status: " + std::to_string((int)status) +
-                              " session_id: " + std::to_string(get_session_id()) + " length: " + std::to_string(data.length()) +
-                              " checksum: " + std::to_string(get_checksum(data)));
+    _write_data_to_file_DEBUG("ClientSession::out_async_write status: " + tp::to_string((int)status) +
+                              " session_id: " + tp::to_string(get_session_id()) + " length: " + tp::to_string(data.length()) +
+                              " checksum: " + tp::to_string(get_checksum(data)));
 
     _write_data_to_file_DEBUG(get_session_id(), "ClientSession_out_async_write", data);
 
@@ -258,23 +259,23 @@ static inline bool socks5_is_invalid_quest_data(const std::string_view& data) {
     return data.length() < min_length || data[0] != socks_version || data[2] != 0;
 }
 
-static const std::string socks5_handshake_reply_failed("\x05\xff", 2);
-static const std::string socks5_handshake_reply_succ("\x05\x00", 2);
-static const std::string socks5_request_reply_failed("\x05\x07\x00\x01\x00\x00\x00\x00\x00\x00", 10);
-static const std::string socks5_request_reply_succ_tcp("\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00", 10);
-static const std::string socks5_request_reply_succ_udp_header("\x05\x00\x00", 3);
+static const tp::string socks5_handshake_reply_failed("\x05\xff", 2);
+static const tp::string socks5_handshake_reply_succ("\x05\x00", 2);
+static const tp::string socks5_request_reply_failed("\x05\x07\x00\x01\x00\x00\x00\x00\x00\x00", 10);
+static const tp::string socks5_request_reply_succ_tcp("\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00", 10);
+static const tp::string socks5_request_reply_succ_udp_header("\x05\x00\x00", 3);
 
 void ClientSession::in_recv(const std::string_view& data) {
-    _write_data_to_file_DEBUG("ClientSession::in_recv status: " + std::to_string((int)status) +
-                              " session_id: " + std::to_string(get_session_id()) + " length: " + std::to_string(data.length()) +
-                              " checksum: " + std::to_string(get_checksum(data)));
+    _write_data_to_file_DEBUG("ClientSession::in_recv status: " + tp::to_string((int)status) +
+                              " session_id: " + tp::to_string(get_session_id()) + " length: " + tp::to_string(data.length()) +
+                              " checksum: " + tp::to_string(get_checksum(data)));
     _write_data_to_file_DEBUG(get_session_id(), "ClientSession_in_recv", data);
 
     switch (status) {
         case HANDSHAKE: {
             if (socks5_is_invalid_handshake_data(data)) {
                 _log_with_endpoint(
-                  get_in_endpoint(), "session_id: " + std::to_string(get_session_id()) + " unknown protocol", Log::ERROR);
+                  get_in_endpoint(), "session_id: " + tp::to_string(get_session_id()) + " unknown protocol", Log::ERROR);
                 destroy();
                 return;
             }
@@ -287,7 +288,7 @@ void ClientSession::in_recv(const std::string_view& data) {
             }
             if (!has_method) {
                 _log_with_endpoint(get_in_endpoint(),
-                  "session_id: " + std::to_string(get_session_id()) + " unsupported auth method", Log::ERROR);
+                  "session_id: " + tp::to_string(get_session_id()) + " unsupported auth method", Log::ERROR);
                 in_async_write(socks5_handshake_reply_failed);
                 status = INVALID;
                 return;
@@ -298,7 +299,7 @@ void ClientSession::in_recv(const std::string_view& data) {
         case REQUEST: {
             if (socks5_is_invalid_quest_data(data)) {
                 _log_with_endpoint(
-                  get_in_endpoint(), "session_id: " + std::to_string(get_session_id()) + " bad request", Log::ERROR);
+                  get_in_endpoint(), "session_id: " + tp::to_string(get_session_id()) + " bad request", Log::ERROR);
                 destroy();
                 return;
             }
@@ -313,7 +314,7 @@ void ClientSession::in_recv(const std::string_view& data) {
             TrojanRequest req;
             if (req.parse(streambuf_to_string_view(out_write_buf)) == -1) {
                 _log_with_endpoint(
-                  get_in_endpoint(), "session_id: " + std::to_string(get_session_id()) + " unsupported command", Log::ERROR);
+                  get_in_endpoint(), "session_id: " + tp::to_string(get_session_id()) + " unsupported command", Log::ERROR);
                 in_async_write(socks5_request_reply_failed);
                 status = INVALID;
                 return;
@@ -324,8 +325,8 @@ void ClientSession::in_recv(const std::string_view& data) {
                 auto endpoint = make_udp_endpoint_safe(req.address.address, req.address.port, ec);
                 if (ec) {
                     _log_with_endpoint(endpoint,
-                      "session_id: " + std::to_string(get_session_id()) + " cannot make address " + req.address.address +
-                        ':' + std::to_string(req.address.port) + ec.message(),
+                      "session_id: " + tp::to_string(get_session_id()) + " cannot make address " + req.address.address +
+                        ':' + tp::to_string(req.address.port) + ec.message(),
                       Log::ERROR);
                     in_async_write(socks5_request_reply_failed);
                     status = INVALID;
@@ -348,10 +349,10 @@ void ClientSession::in_recv(const std::string_view& data) {
                 udp_socket.bind(endpoint);
 
                 _log_with_endpoint(get_in_endpoint(),
-                  "session_id: " + std::to_string(get_session_id()) + " requested UDP associate to " + req.address.address +
-                    ':' + std::to_string(req.address.port) + ", open UDP socket " +
+                  "session_id: " + tp::to_string(get_session_id()) + " requested UDP associate to " + req.address.address +
+                    ':' + tp::to_string(req.address.port) + ", open UDP socket " +
                     udp_socket.local_endpoint().address().to_string() + ':' +
-                    std::to_string(udp_socket.local_endpoint().port()) + " for relay",
+                    tp::to_string(udp_socket.local_endpoint().port()) + " for relay",
                   Log::INFO);
 
                 udp_send_buf.consume(udp_send_buf.size());
@@ -361,8 +362,8 @@ void ClientSession::in_recv(const std::string_view& data) {
                 in_async_write(streambuf_to_string_view(udp_send_buf));
             } else {
                 _log_with_endpoint(get_in_endpoint(),
-                  "session_id: " + std::to_string(get_session_id()) + " requested connection to " + req.address.address +
-                    ':' + std::to_string(req.address.port),
+                  "session_id: " + tp::to_string(get_session_id()) + " requested connection to " + req.address.address +
+                    ':' + tp::to_string(req.address.port),
                   Log::INFO);
                 in_async_write(socks5_request_reply_succ_tcp);
             }
@@ -382,7 +383,7 @@ void ClientSession::in_recv(const std::string_view& data) {
         }
         case UDP_FORWARD: {
             _log_with_endpoint(get_in_endpoint(),
-              "session_id: " + std::to_string(get_session_id()) + " unexpected data from TCP port", Log::ERROR);
+              "session_id: " + tp::to_string(get_session_id()) + " unexpected data from TCP port", Log::ERROR);
             destroy();
             break;
         }
@@ -440,14 +441,14 @@ void ClientSession::request_remote() {
     if (get_pipeline_component().is_using_pipeline()) {
         cb();
     } else {
-        connect_remote_server_ssl(this, get_config().get_remote_addr(), std::to_string(get_config().get_remote_port()),
+        connect_remote_server_ssl(this, get_config().get_remote_addr(), tp::to_string(get_config().get_remote_port()),
           get_resolver(), out_socket, get_in_endpoint(), cb);
     }
 }
 
 void ClientSession::out_recv(const std::string_view& data, size_t ack_count) {
-    _write_data_to_file_DEBUG("ClientSession::out_recv session_id: " + std::to_string(get_session_id()) +
-                              " length: " + std::to_string(data.length()) + " checksum: " + std::to_string(get_checksum(data)));
+    _write_data_to_file_DEBUG("ClientSession::out_recv session_id: " + tp::to_string(get_session_id()) +
+                              " length: " + tp::to_string(data.length()) + " checksum: " + tp::to_string(get_checksum(data)));
     _write_data_to_file_DEBUG(get_session_id(), "ClientSession_out_recv", data);
     if (status == FORWARD) {
         get_stat().inc_recv_len(data.length());
@@ -472,7 +473,7 @@ void ClientSession::udp_recv(const std::string_view& data, const udp::endpoint&)
     }
     if (data.length() < 3 || data[0] != 0 || data[1] != 0 || data[2] != 0) {
         _log_with_endpoint(
-          udp_recv_endpoint, "session_id: " + std::to_string(get_session_id()) + " bad UDP packet", Log::ERROR);
+          udp_recv_endpoint, "session_id: " + tp::to_string(get_session_id()) + " bad UDP packet", Log::ERROR);
         destroy();
         return;
     }
@@ -481,7 +482,7 @@ void ClientSession::udp_recv(const std::string_view& data, const udp::endpoint&)
     bool is_addr_valid = address.parse(data.substr(3), address_len);
     if (!is_addr_valid) {
         _log_with_endpoint(
-          udp_recv_endpoint, "session_id: " + std::to_string(get_session_id()) + " bad UDP packet", Log::ERROR);
+          udp_recv_endpoint, "session_id: " + tp::to_string(get_session_id()) + " bad UDP packet", Log::ERROR);
         destroy();
         return;
     }
@@ -490,9 +491,9 @@ void ClientSession::udp_recv(const std::string_view& data, const udp::endpoint&)
     size_t length = data.length() - 3 - address_len;
     get_stat().inc_sent_len(length);
 
-    _log_with_endpoint(udp_recv_endpoint, "session_id: " + std::to_string(get_session_id()) +
-                                            " sent a UDP packet of length " + std::to_string(length) + " bytes to " +
-                                            address.address + ':' + std::to_string(address.port));
+    _log_with_endpoint(udp_recv_endpoint, "session_id: " + tp::to_string(get_session_id()) +
+                                            " sent a UDP packet of length " + tp::to_string(length) + " bytes to " +
+                                            address.address + ':' + tp::to_string(address.port));
 
     if (status == CONNECT) {
         first_packet_recv = true;
@@ -528,7 +529,7 @@ void ClientSession::udp_sent() {
         if (!is_packet_valid) {
             if (udp_data_buf.size() > MAX_BUF_LENGTH) {
                 _log_with_endpoint(
-                  udp_recv_endpoint, "session_id: " + std::to_string(get_session_id()) + " UDP packet too long", Log::ERROR);
+                  udp_recv_endpoint, "session_id: " + tp::to_string(get_session_id()) + " UDP packet too long", Log::ERROR);
                 destroy();
                 return;
             }
@@ -537,15 +538,15 @@ void ClientSession::udp_sent() {
         }
 
         _log_with_endpoint(udp_recv_endpoint,
-          "session_id: " + std::to_string(get_session_id()) + " received a UDP packet of length " +
-            std::to_string(packet.length) + " bytes from " + packet.address.address + ':' + std::to_string(packet.address.port));
+          "session_id: " + tp::to_string(get_session_id()) + " received a UDP packet of length " +
+            tp::to_string(packet.length) + " bytes from " + packet.address.address + ':' + tp::to_string(packet.address.port));
 
         SOCKS5Address address;
         size_t address_len = 0;
         bool is_addr_valid = address.parse(parse_data, address_len);
         if (!is_addr_valid) {
             _log_with_endpoint(udp_recv_endpoint,
-              "session_id: " + std::to_string(get_session_id()) + " udp_sent: invalid UDP packet address", Log::ERROR);
+              "session_id: " + tp::to_string(get_session_id()) + " udp_sent: invalid UDP packet address", Log::ERROR);
             destroy();
             return;
         }
@@ -569,7 +570,7 @@ void ClientSession::destroy(bool pipeline_call /*= false*/) {
     status = DESTROY;
 
     _log_with_endpoint(get_in_endpoint(),
-      "session_id: " + std::to_string(get_session_id()) + " disconnected, " + get_stat().to_string(), Log::INFO);
+      "session_id: " + tp::to_string(get_session_id()) + " disconnected, " + get_stat().to_string(), Log::INFO);
 
     boost::system::error_code ec;
     get_resolver().cancel();

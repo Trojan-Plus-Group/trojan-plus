@@ -27,6 +27,7 @@
 #include <ostream>
 
 #include "core/utils.h"
+#include "mem/memallocator.h"
 
 // ICMP header for both IPv4 and IPv6.
 //
@@ -71,8 +72,8 @@ public:
     [[nodiscard]] uint8_t code() const { return rep_[1]; }
     [[nodiscard]] uint16_t checksum() const { return decode(2, 3); }
 
-    std::string to_string() const {
-        std::ostringstream os;
+    tp::string to_string() const {
+        tp::ostringstream os;
         os << "type: " << (int)type() << std::endl
            << "code: " << (int)code() << std::endl
            << "checksum: 0x" << std::hex << (int)checksum() << std::endl;
@@ -97,7 +98,7 @@ public:
         return os.write((const char *)header.rep_, HEADER_LENGTH);
     }
 
-    void assign_checksum(std::string body) {
+    void assign_checksum(tp::string body) {
         unsigned int sum = (type() << one_byte_shift_8_bits) + code() + identifier() + sequence_number();
 
         auto body_iter = body.begin();

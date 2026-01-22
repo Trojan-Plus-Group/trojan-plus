@@ -32,59 +32,39 @@
 #include "core/service.h"
 #include "core/version.h"
 #include "log.h"
+#include "mem/memallocator.h"
 
 using namespace boost::asio::ip;
 
-size_t streambuf_append(boost::asio::streambuf& target, const boost::asio::streambuf& append_buf) {
-    _guard;
-    if (append_buf.size() == 0) {
-        return 0;
-    }
-
+size_t streambuf_append(tp::streambuf& target, const tp::streambuf& append_buf) {
     auto copied = boost::asio::buffer_copy(target.prepare(append_buf.size()), append_buf.data());
     target.commit(copied);
     return copied;
-    _unguard;
 }
 
 size_t streambuf_append(
-  boost::asio::streambuf& target, const boost::asio::streambuf& append_buf, size_t start, size_t n) {
-    _guard;
-    if (start >= append_buf.size()) {
+  tp::streambuf& target, const tp::streambuf& append_buf, size_t start, size_t n) {
+    if (n == 0) {
         return 0;
     }
-
-    if ((start + n) > append_buf.size()) {
-        return 0;
-    }
-
     auto* dest      = static_cast<uint8_t*>(boost::asio::buffer_sequence_begin(target.prepare(n))->data());
     const auto* src = static_cast<const uint8_t*>(boost::asio::buffer_sequence_begin(append_buf.data())->data()) + start;
-    memcpy(dest, src, n);
+    std::memcpy(dest, src, n);
     target.commit(n);
     return n;
-
-    _unguard;
 }
 
-size_t streambuf_append(boost::asio::streambuf& target, const char* append_str) {
-    _guard;
-    if (append_str == nullptr) {
-        return 0;
-    }
-
-    auto length = strlen(append_str);
+size_t streambuf_append(tp::streambuf& target, const char* append_str) {
+    size_t length = std::strlen(append_str);
     if (length == 0) {
         return 0;
     }
-
     auto copied = boost::asio::buffer_copy(target.prepare(length), boost::asio::buffer(append_str, length));
     target.commit(copied);
     return copied;
-    _unguard;
 }
 
-size_t streambuf_append(boost::asio::streambuf& target, const uint8_t* append_data, size_t append_length) {
+size_t streambuf_append(tp::streambuf& target, const uint8_t* append_data, size_t append_length) {
     _guard;
 
     if (append_data == nullptr || append_length == 0) {
@@ -98,9 +78,9 @@ size_t streambuf_append(boost::asio::streambuf& target, const uint8_t* append_da
     _unguard;
 }
 
-size_t streambuf_append(boost::asio::streambuf& target, char append_char) {
+size_t streambuf_append(tp::streambuf& target, char append_char) {
+    size_t char_length = 1;
     _guard;
-    const size_t char_length = sizeof(char);
     auto cp = gsl::span<char>(static_cast<char*>(boost::asio::buffer_sequence_begin(target.prepare(char_length))->data()), char_length);
     cp[0]   = append_char;
     target.commit(char_length);
@@ -108,13 +88,11 @@ size_t streambuf_append(boost::asio::streambuf& target, char append_char) {
     _unguard;
 }
 
-size_t streambuf_append(boost::asio::streambuf& target, const std::string_view& append_data) {
+size_t streambuf_append(tp::streambuf& target, const std::string_view& append_data) {
     _guard;
-
-    if (append_data.empty()) {
+    if (append_data.length() == 0) {
         return 0;
     }
-
     auto copied = boost::asio::buffer_copy(
       target.prepare(append_data.length()), boost::asio::buffer(append_data.data(), append_data.length()));
     target.commit(copied);
@@ -122,20 +100,22 @@ size_t streambuf_append(boost::asio::streambuf& target, const std::string_view& 
     _unguard;
 }
 
-size_t streambuf_append(boost::asio::streambuf& target, const std::string& append_data) {
+size_t streambuf_append(tp::streambuf& target, const tp::string& append_data) {
     _guard;
-    if (append_data.empty()) {
+    if (append_data.length() == 0) {
         return 0;
     }
-
     auto copied = boost::asio::buffer_copy(target.prepare(append_data.length()), boost::asio::buffer(append_data));
     target.commit(copied);
     return copied;
     _unguard;
 }
 
-std::string_view streambuf_to_string_view(const boost::asio::streambuf& target) {
+std::string_view streambuf_to_string_view(const tp::streambuf& target) {
     _guard;
+    if (target.size() == 0) {
+        return std::string_view();
+    }
     return std::string_view(static_cast<const char*>(boost::asio::buffer_sequence_begin(target.data())->data()), target.size());
     _unguard;
 }
@@ -159,11 +139,11 @@ unsigned short get_checksum(const std::string_view& str) {
     _unguard;
 }
 
-unsigned short get_checksum(const std::string& str) { return get_checksum(std::string_view(str)); }
+unsigned short get_checksum(const tp::string& str) { return get_checksum(std::string_view(str)); }
 
-unsigned short get_checksum(const boost::asio::streambuf& buf) { return get_checksum(streambuf_to_string_view(buf)); }
+unsigned short get_checksum(const tp::streambuf& buf) { return get_checksum(streambuf_to_string_view(buf)); }
 
-int get_hashCode(const std::string& str) {
+int get_hashCode(const tp::string& str) {
     _guard;
     const int hash_code_magic_number = 31;
     int h                            = 0;
@@ -174,9 +154,9 @@ int get_hashCode(const std::string& str) {
     _unguard;
 }
 
-void write_data_to_file(int id, const std::string& tag, const std::string_view& data) {
+void write_data_to_file(int id, const tp::string& tag, const std::string_view& data) {
     _guard;
-    std::ofstream file(tag + "_" + std::to_string(id) + ".data", std::ofstream::out | std::ofstream::app);
+    tp::ofstream file((tag + "_" + tp::to_string(id) + ".data").c_str(), std::ofstream::out | std::ofstream::app);
     file << data;
     file.close();
     _unguard;
@@ -232,7 +212,7 @@ void SendDataCache::insert_data(const std::string_view& data) {
         return;
     }
 
-    boost::asio::streambuf copy_data_queue;
+    tp::streambuf copy_data_queue;
     streambuf_append(copy_data_queue, *current_recv_queue);
     current_recv_queue->consume(current_recv_queue->size());
 
@@ -291,7 +271,7 @@ void SendDataCache::async_send() {
 }
 
 DomainMatcher::DomainLinkData* DomainMatcher::insert_domain_seg(
-  std::vector<DomainLinkData>& list, const std::string& seg) {
+  tp::vector<DomainLinkData>& list, const tp::string& seg) {
     _guard;
     DomainLinkData* link = nullptr;
 
@@ -311,7 +291,7 @@ DomainMatcher::DomainLinkData* DomainMatcher::insert_domain_seg(
 }
 
 const DomainMatcher::DomainLinkData* DomainMatcher::find_domain_seg(
-  const std::vector<DomainLinkData>& list, const std::string& seg) {
+  const tp::vector<DomainLinkData>& list, const tp::string& seg) {
     _guard;
     const DomainLinkData* link = nullptr;
 
@@ -328,13 +308,13 @@ const DomainMatcher::DomainLinkData* DomainMatcher::find_domain_seg(
     _unguard;
 }
 
-void DomainMatcher::parse_line(const std::string& line) {
+void DomainMatcher::parse_line(const tp::string& line) {
     _guard;
     if (line.empty()) {
         return;
     }
 
-    std::string seg;
+    tp::string seg;
     DomainLinkData* link = nullptr;
 
     for (int r = (int)line.length() - 1; r >= 0; r--) {
@@ -363,7 +343,7 @@ bool DomainMatcher::load_from_stream(std::istream& is, size_t& loaded_count) {
     const size_t max_domain_length = 256;
     is >> std::noskipws;
 
-    std::string line;
+    tp::string line;
     line.reserve(max_domain_length);
     char a;
     while (is >> a) {
@@ -393,21 +373,21 @@ bool DomainMatcher::load_from_stream(std::istream& is, size_t& loaded_count) {
     return true;
     _unguard;
 }
-bool DomainMatcher::load_from_file(const std::string& filename, size_t& loaded_count) {
+bool DomainMatcher::load_from_file(const tp::string& filename, size_t& loaded_count) {
     _guard;
-    std::ifstream f(filename);
+    tp::ifstream f(filename.c_str());
     return load_from_stream(f, loaded_count);
     _unguard;
 }
 
-bool DomainMatcher::is_match(const std::string& domain) const {
+bool DomainMatcher::is_match(const tp::string& domain) const {
     _guard;
 
     if (domain.empty()) {
         return false;
     }
 
-    std::string seg;
+    tp::string seg;
     const DomainLinkData* link = nullptr;
 
     size_t domain_level = 1;
@@ -453,7 +433,7 @@ bool DomainMatcher::is_match(const std::string& domain) const {
 
 void DomainMatcher::test_cases() {
 
-    std::string gfw_list("singledomain-in-gfw\n \
+    tp::string gfw_list("singledomain-in-gfw\n \
 		google.com\n \
 		facebook.com\n \
 		twitter.com\n \
@@ -461,7 +441,7 @@ void DomainMatcher::test_cases() {
 		some.com.cn\n \
 		");
 
-    std::istringstream is(gfw_list);
+    tp::istringstream is(gfw_list);
 
     size_t count = 0;
     DomainMatcher matcher;
@@ -503,80 +483,64 @@ static const uint32_t mask_values[] = {
 };
 // clang-format on
 
-uint32_t IPv4Matcher::get_ip_value(const std::string& ip_str) {
+uint32_t IPv4Matcher::get_ip_value(const tp::string& ip_str) {
     _guard;
-
     boost::system::error_code ec;
-    auto addr = boost::asio::ip::make_address_v4(ip_str, ec);
-    return ec ? 0 : addr.to_uint();
-
+    auto addr = boost::asio::ip::make_address_v4(ip_str.c_str(), ec);
+    if (ec) {
+        return 0;
+    }
+    return addr.to_uint();
     _unguard;
 }
 
-bool IPv4Matcher::load_from_stream(std::istream& is, const std::string& filename, size_t& loaded_count) {
+bool IPv4Matcher::load_from_stream(std::istream& is, const tp::string& filename, size_t& loaded_count) {
     _guard;
+    loaded_count = 0;
+    if (!is) {
+        return false;
+    }
 
-    loaded_count                  = 0;
-    const uint32_t max_mask_value = std::numeric_limits<uint32_t>::digits;
-
-    for (std::string line; std::getline(is, line);) {
-        line.erase(std::remove(line.begin(), line.end(), ' '), line.end());
-        if (!line.empty()) {
-            size_t pos = line.find('/');
-            if (pos != std::string::npos) {
-                auto net      = line.substr(0, pos);
-                auto mask_str = line.substr(pos + 1);
-                uint32_t mask = 0;
-                auto addr     = get_ip_value(net);
-                if (addr == 0 || !safe_atov(mask_str, mask) || mask == 0 || mask > max_mask_value) {
-                    std::string error_msg("[tun] error load '");
-                    error_msg += (line);
-                    error_msg += "' from ";
-                    error_msg += filename;
-                    _log_with_date_time(error_msg, Log::ERROR);
-                    continue;
-                }
-                auto it = subnet.find(mask);
-                if (it == subnet.end()) {
-                    IPList l;
-                    l.emplace_back(addr);
-                    subnet.emplace(mask, l);
-                } else {
-                    it->second.emplace_back(addr);
-                }
-                loaded_count++;
-            } else {
-                auto addr = get_ip_value(line);
-                if (addr == 0) {
-                    std::string error_msg("[tun] error load '");
-                    error_msg += (line);
-                    error_msg += "' from ";
-                    error_msg += filename;
-                    _log_with_date_time(error_msg, Log::ERROR);
-                    continue;
-                }
-                ips.emplace_back(addr);
+    for (tp::string line; std::getline(is, line);) {
+        if (line.empty()) {
+            continue;
+        }
+        auto pos = line.find('/');
+        if (pos != std::string::npos) {
+            tp::string ip_str = line.substr(0, pos);
+            tp::string mask_str = line.substr(pos + 1);
+            uint32_t ip = get_ip_value(ip_str);
+            if (ip == 0) {
+                tp::string error_msg = tp::string("[tun] error load '") + filename + tp::string("' invalid ip: ") + line;
+                _log_with_date_time(error_msg, Log::ERROR);
+                continue;
+            }
+            int mask = std::atoi(mask_str.c_str());
+            if (mask < 0 || mask > 32) {
+                tp::string error_msg = tp::string("[tun] error load '") + filename + tp::string("' invalid mask: ") + line;
+                _log_with_date_time(error_msg, Log::ERROR);
+                continue;
+            }
+            uint32_t subnet_mask = 0xFFFFFFFF << (32 - mask);
+            subnet[ip & subnet_mask].emplace_back(subnet_mask);
+            loaded_count++;
+        } else {
+            uint32_t ip = get_ip_value(line);
+            if (ip != 0) {
+                ips.emplace_back(ip);
                 loaded_count++;
             }
         }
     }
-
-    for (auto it : subnet) {
-        std::sort(it.second.begin(), it.second.end());
-    }
     std::sort(ips.begin(), ips.end());
-
     return true;
-
     _unguard;
 }
 
-bool IPv4Matcher::load_from_file(const std::string& filename, size_t& loaded_count) {
+bool IPv4Matcher::load_from_file(const tp::string& filename, size_t& loaded_count) {
     _guard;
-
-    std::ifstream f(filename);
-    return load_from_stream(f, filename, loaded_count);
-
+    tp::ifstream ifs(filename.c_str());
+    return load_from_stream(ifs, filename, loaded_count);
     _unguard;
 }
 
@@ -646,7 +610,7 @@ bool set_udp_send_recv_buf(int fd, int buf_size) {
     _unguard;
 }
 
-udp::endpoint make_udp_endpoint_safe(const std::string& address, uint16_t port, boost::system::error_code& ec) {
+udp::endpoint make_udp_endpoint_safe(const tp::string& address, uint16_t port, boost::system::error_code& ec) {
     _guard;
     auto endpoint =
       udp::endpoint(make_address((address == "0" || address.length() == 0) ? "127.0.0.1" : address.c_str(), ec), port);
@@ -684,7 +648,7 @@ FILE_LOCK_HANDLE get_file_lock(const char* filename) {
 
     if (hFile == INVALID_LOCK_HANDLE) {
         _log_with_date_time(
-          "CreateFileA " + std::string(filename) + " failed, LastError : " + std::to_string(::GetLastError()), Log::ERROR);
+          "CreateFileA " + tp::string(filename) + " failed, LastError : " + tp::to_string(::GetLastError()), Log::ERROR);
     }
     return hFile;
 #endif
@@ -750,7 +714,7 @@ static int get_ttl(struct msghdr* msg) {
     _unguard;
 }
 
-static std::pair<std::string, uint16_t> get_addr(struct sockaddr_storage addr) {
+static tp::pair<tp::string, uint16_t> get_addr(struct sockaddr_storage addr) {
     _guard;
 
     const int buf_size = 256;
@@ -759,20 +723,20 @@ static std::pair<std::string, uint16_t> get_addr(struct sockaddr_storage addr) {
     if (addr.ss_family == AF_INET) {
         auto* sa = (sockaddr_in*)&addr;
         if (inet_ntop(AF_INET, &(sa->sin_addr), (char*)buf, buf_size) != nullptr) {
-            return std::make_pair(buf, ntohs(sa->sin_port));
+            return tp::make_pair(tp::string(buf), ntohs(sa->sin_port));
         }
     } else {
         auto* sa = (sockaddr_in6*)&addr;
         if (inet_ntop(AF_INET6, &(sa->sin6_addr), (char*)buf, buf_size) != nullptr) {
-            return std::make_pair(buf, ntohs(sa->sin6_port));
+            return tp::make_pair(tp::string(buf), ntohs(sa->sin6_port));
         }
     }
 
-    return std::make_pair("", 0);
+    return tp::make_pair(tp::string(""), 0);
     _unguard;
 }
 
-std::pair<std::string, uint16_t> recv_target_endpoint(int _fd, bool use_tproxy) {
+tp::pair<tp::string, uint16_t> recv_target_endpoint(int _fd, bool use_tproxy) {
     _guard;
 
 #ifdef ENABLE_NAT
@@ -785,18 +749,18 @@ std::pair<std::string, uint16_t> recv_target_endpoint(int _fd, bool use_tproxy) 
     int error = 0;
     if (use_tproxy) {
         error = getsockname(_fd, (sockaddr*)&destaddr, &socklen);
-        _log_with_date_time("recv_target_endpoint + getsockname error " + std::to_string(error), Log::INFO);
+        _log_with_date_time(tp::string("recv_target_endpoint + getsockname error ") + tp::to_string(error), Log::INFO);
     } else {
         error = getsockopt(_fd, SOL_IPV6, IP6T_SO_ORIGINAL_DST, &destaddr, &socklen);
         if (error) {
             error = getsockopt(_fd, SOL_IP, SO_ORIGINAL_DST, &destaddr, &socklen);
         }
 
-        _log_with_date_time("recv_target_endpoint + getsockopt error " + std::to_string(error), Log::INFO);
+        _log_with_date_time(tp::string("recv_target_endpoint + getsockopt error ") + tp::to_string(error), Log::INFO);
     }
 
     if (error) {
-        return std::make_pair("", 0);
+        return tp::make_pair(tp::string(""), 0);
     }
 
     char ipstr[INET6_ADDRSTRLEN];
@@ -810,9 +774,9 @@ std::pair<std::string, uint16_t> recv_target_endpoint(int _fd, bool use_tproxy) 
         inet_ntop(AF_INET6, &(sa->sin6_addr), ipstr, INET6_ADDRSTRLEN);
         port = ntohs(sa->sin6_port);
     }
-    return std::make_pair(ipstr, port);
+    return tp::make_pair(tp::string(ipstr), port);
 #else  // ENABLE_NAT
-    return std::make_pair(use_tproxy ? "" : "0", (uint16_t)_fd);
+    return tp::make_pair(use_tproxy ? tp::string("") : tp::string("0"), (uint16_t)_fd);
 #endif // ENABLE_NAT
 
     _unguard;
@@ -820,7 +784,7 @@ std::pair<std::string, uint16_t> recv_target_endpoint(int _fd, bool use_tproxy) 
 
 // copied from shadowsocks-libev udpreplay.c
 // it works if in NAT mode
-std::pair<std::string, uint16_t> recv_tproxy_udp_msg(
+tp::pair<tp::string, uint16_t> recv_tproxy_udp_msg(
   int fd, boost::asio::ip::udp::endpoint& target_endpoint, char* buf, int& buf_len, int& ttl) {
     _guard;
 
@@ -851,8 +815,8 @@ std::pair<std::string, uint16_t> recv_tproxy_udp_msg(
         _log_with_date_time("[udp] server_recvmsg failed!", Log::FATAL);
     } else {
         if (buf_len > packet_size) {
-            _log_with_date_time(std::string("[udp] UDP server_recv_recvmsg fragmentation, MTU at least be: ") +
-                                  std::to_string(buf_len + PACKET_HEADER_SIZE),
+            _log_with_date_time(tp::string("[udp] UDP server_recv_recvmsg fragmentation, MTU at least be: ") +
+                                  tp::to_string(buf_len + PACKET_HEADER_SIZE),
               Log::INFO);
         }
 
@@ -862,13 +826,13 @@ std::pair<std::string, uint16_t> recv_tproxy_udp_msg(
         } else {
             auto target_dst = get_addr(dst_addr);
             auto src_dst    = get_addr(src_addr);
-            target_endpoint.address(boost::asio::ip::make_address(src_dst.first));
+            target_endpoint.address(boost::asio::ip::make_address(src_dst.first.c_str()));
             target_endpoint.port(src_dst.second);
             return target_dst;
         }
     }
 
-    return std::make_pair("", 0);
+    return tp::make_pair(tp::string(""), 0);
 
     _unguard;
 }
@@ -878,7 +842,7 @@ bool prepare_transparent_socket(int fd, bool is_ipv4) {
     int sol = is_ipv4 ? SOL_IP : SOL_IPV6;
 
     if (setsockopt(fd, sol, IP_TRANSPARENT, &opt, sizeof(opt)) != 0) {
-        _log_with_date_time("setsockopt fd [" + std::to_string(fd) + "] IP_TRANSPARENT failed!", Log::FATAL);
+        _log_with_date_time("setsockopt fd [" + tp::to_string(fd) + "] IP_TRANSPARENT failed!", Log::FATAL);
         return false;
     }
 
@@ -942,24 +906,24 @@ bool prepare_nat_udp_target_bind(
 
 #else
 
-std::pair<std::string, uint16_t> recv_target_endpoint(int _native_fd, bool use_tproxy) {
-    throw std::runtime_error("NAT is not supported in Windows");
+tp::pair<tp::string, uint16_t> recv_target_endpoint(int _native_fd, bool use_tproxy) {
+    throw std::runtime_error(tp::string("NAT is not supported in Windows").c_str());
 }
 
-std::pair<std::string, uint16_t> recv_tproxy_udp_msg(
+tp::pair<tp::string, uint16_t> recv_tproxy_udp_msg(
   int fd, boost::asio::ip::udp::endpoint& target_endpoint, char* buf, int& buf_len, int& ttl) {
-    throw std::runtime_error("NAT is not supported in Windows");
+    throw std::runtime_error(tp::string("NAT is not supported in Windows").c_str());
 }
 
-bool prepare_transparent_socket(int fd, bool is_ipv4) { throw std::runtime_error("NAT is not supported in Windows"); }
+bool prepare_transparent_socket(int fd, bool is_ipv4) { throw std::runtime_error(tp::string("NAT is not supported in Windows").c_str()); }
 
 bool prepare_nat_udp_bind(int fd, bool is_ipv4, bool recv_ttl) {
-    throw std::runtime_error("NAT is not supported in Windows");
+    throw std::runtime_error(tp::string("NAT is not supported in Windows").c_str());
 }
 
 bool prepare_nat_udp_target_bind(
   int fd, bool is_ipv4, const boost::asio::ip::udp::endpoint& udp_target_endpoint, int buf_size) {
-    throw std::runtime_error("NAT is not supported in Windows");
+    throw std::runtime_error(tp::string("NAT is not supported in Windows").c_str());
 }
 
 #endif // _WIN32

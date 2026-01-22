@@ -22,6 +22,7 @@
 
 #ifndef _CLIENTSESSION_H_
 #define _CLIENTSESSION_H_
+#include "mem/memallocator.h"
 
 #include <boost/asio/ssl.hpp>
 #include <string_view>
@@ -43,15 +44,15 @@ class ClientSession : public SocketSession {
     boost::asio::ip::udp::socket udp_socket;
     boost::asio::ip::udp::endpoint udp_recv_endpoint;
 
-    boost::asio::streambuf udp_recv_buf;
-    boost::asio::streambuf udp_send_buf;
+    tp::streambuf udp_recv_buf;
+    tp::streambuf udp_send_buf;
 
     ReadBufWithGuard in_read_buf;
     ReadBufWithGuard out_read_buf;
     ReadBufWithGuard udp_read_buf;
 
-    boost::asio::streambuf out_write_buf;
-    boost::asio::streambuf udp_data_buf;
+    tp::streambuf out_write_buf;
+    tp::streambuf udp_data_buf;
 
   protected:
     void in_async_read();
@@ -72,7 +73,7 @@ class ClientSession : public SocketSession {
     void request_remote();
 
     _define_simple_getter_setter(Status, status) _define_simple_getter_setter(bool, first_packet_recv);
-    _define_getter(boost::asio::ip::tcp::socket&, in_socket) _define_getter(boost::asio::streambuf&, out_write_buf);
+    _define_getter(boost::asio::ip::tcp::socket&, in_socket) _define_getter(tp::streambuf&, out_write_buf);
 
   public:
     ClientSession(Service* _service, const Config& config, boost::asio::ssl::context& ssl_context);

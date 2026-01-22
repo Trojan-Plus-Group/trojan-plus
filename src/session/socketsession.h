@@ -33,6 +33,7 @@
 
 #include "core/config.h"
 #include "session.h"
+#include "mem/memallocator.h"
 
 class Service;
 class SocketSession : public Session {

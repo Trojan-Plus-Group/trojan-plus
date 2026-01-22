@@ -36,7 +36,7 @@
 #ifdef __APPLE__
 #include <Security/Security.h>
 #endif // __APPLE__
-
+#include "mem/memallocator.h"
 #include "core/icmpd.h"
 #include "core/utils.h"
 #include "session/session.h"
@@ -71,17 +71,17 @@ const static int default_dns_udp_timeout    = 5;
 const static int default_dns_udp_recv_buf   = 512 * 4;
 const static int default_dns_udp_socket_buf = -1;
 
-void Config::load(const std::string& filename) {
+void Config::load(const tp::string& filename) {
     _guard;
     ptree tree;
-    read_json(filename, tree);
+    read_json(filename.c_str(), tree);
     populate(tree);
     _unguard;
 }
 
-void Config::populate(const std::string& JSON) {
+void Config::populate(const tp::string& JSON) {
     _guard;
-    std::istringstream s(JSON);
+    tp::istringstream s(JSON);
     ptree tree;
     read_json(s, tree);
     populate(tree);
@@ -97,7 +97,7 @@ void Config::populate(const ptree& tree) {
         Log::level = log_level;
     }
 
-    std::string rt = tree.get("run_type", std::string("client"));
+    tp::string rt = tree.get("run_type", std::string("client")).c_str();
     if (rt == "server") {
         run_type = SERVER;
     } else if (rt == "forward") {
@@ -111,19 +111,19 @@ void Config::populate(const ptree& tree) {
     } else if (rt == "server_tun") {
         run_type = SERVERT_TUN;
     } else {
-        throw std::runtime_error("wrong run_type in config file");
+        throw std::runtime_error(tp::string("wrong run_type in config file").c_str());
     }
-    local_addr  = tree.get("local_addr", std::string());
+    local_addr  = tree.get("local_addr", std::string()).c_str();
     local_port  = tree.get("local_port", uint16_t());
-    remote_addr = tree.get("remote_addr", std::string());
+    remote_addr = tree.get("remote_addr", std::string()).c_str();
     remote_port = tree.get("remote_port", uint16_t());
-    target_addr = tree.get("target_addr", std::string());
+    target_addr = tree.get("target_addr", std::string()).c_str();
     target_port = tree.get("target_port", uint16_t());
-    std::map<std::string, std::string>().swap(password);
+    tp::map<tp::string, tp::string>().swap(password);
     if (tree.get_child_optional("password")) {
         for (const auto& item : tree.get_child("password")) {
             const auto& p       = item.second.get_value<std::string>();
-            password[SHA224(p)] = p;
+            password[SHA224(p.c_str())] = p.c_str();
         }
     }
 
@@ -134,34 +134,34 @@ void Config::populate(const ptree& tree) {
 
     ssl.verify               = tree.get("ssl.verify", true);
     ssl.verify_hostname      = tree.get("ssl.verify_hostname", true);
-    ssl.cert                 = tree.get("ssl.cert", std::string());
-    ssl.key                  = tree.get("ssl.key", std::string());
-    ssl.key_password         = tree.get("ssl.key_password", std::string());
-    ssl.cipher               = tree.get("ssl.cipher", std::string());
-    ssl.cipher_tls13         = tree.get("ssl.cipher_tls13", std::string());
+    ssl.cert                 = tree.get("ssl.cert", std::string()).c_str();
+    ssl.key                  = tree.get("ssl.key", std::string()).c_str();
+    ssl.key_password         = tree.get("ssl.key_password", std::string()).c_str();
+    ssl.cipher               = tree.get("ssl.cipher", std::string()).c_str();
+    ssl.cipher_tls13         = tree.get("ssl.cipher_tls13", std::string()).c_str();
     ssl.prefer_server_cipher = tree.get("ssl.prefer_server_cipher", true);
-    ssl.sni                  = tree.get("ssl.sni", std::string());
-    ssl.alpn                 = std::string();
+    ssl.sni                  = tree.get("ssl.sni", std::string()).c_str();
+    ssl.alpn                 = tp::string();
     if (tree.get_child_optional("ssl.alpn")) {
         for (const auto& item : tree.get_child("ssl.alpn")) {
             const auto& proto = item.second.get_value<std::string>();
             ssl.alpn += (char)((unsigned char)(proto.length()));
-            ssl.alpn += proto;
+            ssl.alpn += proto.c_str();
         }
     }
-    std::map<std::string, uint16_t>().swap(ssl.alpn_port_override);
+    tp::map<tp::string, uint16_t>().swap(ssl.alpn_port_override);
     if (tree.get_child_optional("ssl.alpn_port_override")) {
         for (const auto& item : tree.get_child("ssl.alpn_port_override")) {
-            ssl.alpn_port_override[item.first] = item.second.get_value<uint16_t>();
+            ssl.alpn_port_override[item.first.c_str()] = item.second.get_value<uint16_t>();
         }
     }
     ssl.reuse_session          = tree.get("ssl.reuse_session", true);
     ssl.session_ticket         = tree.get("ssl.session_ticket", false);
     ssl.session_timeout        = tree.get("ssl.session_timeout", default_ssl_session_timeout);
     ssl.ssl_shutdown_wait_time = tree.get("ssl.ssl_shutdown_wait_time", default_ssl_shutdown_wait_time);
-    ssl.plain_http_response    = tree.get("ssl.plain_http_response", std::string());
-    ssl.curves                 = tree.get("ssl.curves", std::string());
-    ssl.dhparam                = tree.get("ssl.dhparam", std::string());
+    ssl.plain_http_response    = tree.get("ssl.plain_http_response", std::string()).c_str();
+    ssl.curves                 = tree.get("ssl.curves", std::string()).c_str();
+    ssl.dhparam                = tree.get("ssl.dhparam", std::string()).c_str();
 
     tcp.prefer_ipv4      = tree.get("tcp.prefer_ipv4", false);
     tcp.no_delay         = tree.get("tcp.no_delay", true);
@@ -184,11 +184,11 @@ void Config::populate(const ptree& tree) {
         if (tree.get_child_optional("experimental.pipeline_loadbalance_configs")) {
             for (const auto& item : tree.get_child("experimental.pipeline_loadbalance_configs")) {
                 const auto& config = item.second.get_value<std::string>();
-                experimental.pipeline_loadbalance_configs.emplace_back(config);
+                experimental.pipeline_loadbalance_configs.emplace_back(config.c_str());
             }
 
             if (!experimental.pipeline_loadbalance_configs.empty()) {
-                std::string tmp;
+                tp::string tmp;
                 _log_with_date_time("Pipeline will use load balance config:", Log::WARN);
                 for (const auto& item : experimental.pipeline_loadbalance_configs) {
 
@@ -211,9 +211,9 @@ void Config::populate(const ptree& tree) {
         }
     }
 
-    tun.tun_name       = tree.get("tun.tun_name", std::string());
-    tun.net_ip         = tree.get("tun.net_ip", std::string());
-    tun.net_mask       = tree.get("tun.net_mask", std::string());
+    tun.tun_name       = tree.get("tun.tun_name", std::string()).c_str();
+    tun.net_ip         = tree.get("tun.net_ip", std::string()).c_str();
+    tun.net_mask       = tree.get("tun.net_mask", std::string()).c_str();
     tun.mtu            = tree.get("tun.mtu", default_tun_mtu);
     tun.tun_fd         = tree.get("tun.tun_fd", default_tun_fd);
     tun.redirect_local = tree.get("tun.redirect_local", false);
@@ -223,7 +223,7 @@ void Config::populate(const ptree& tree) {
     dns.udp_timeout      = tree.get("dns.dns_udp_timeout", default_dns_udp_timeout);
     dns.udp_recv_buf     = tree.get("dns.udp_recv_buf", default_dns_udp_recv_buf);
     dns.udp_socket_buf   = tree.get("dns.udp_socket_buf", default_dns_udp_socket_buf);
-    dns.gfwlist          = tree.get("dns.gfwlist", std::string());
+    dns.gfwlist          = tree.get("dns.gfwlist", std::string()).c_str();
     dns.enable_cached    = tree.get("dns.enable_cached", false);
     dns.enable_ping_test = tree.get("dns.enable_ping_test", false);
 
@@ -231,28 +231,28 @@ void Config::populate(const ptree& tree) {
 
     route.enabled              = tree.get("route.enabled", false);
     route.proxy_type           = (RouteType)tree.get("route.proxy_type", (int)RouteType::route_all);
-    route.cn_mainland_ips_file = tree.get("route.cn_mainland_ips_file", std::string());
-    route.white_ips            = tree.get("route.white_ips", std::string());
-    route.proxy_ips            = tree.get("route.proxy_ips", std::string());
+    route.cn_mainland_ips_file = tree.get("route.cn_mainland_ips_file", std::string()).c_str();
+    route.white_ips            = tree.get("route.white_ips", std::string()).c_str();
+    route.proxy_ips            = tree.get("route.proxy_ips", std::string()).c_str();
 
     if (route.enabled) {
         if (run_type == CLIENT_TUN) {
             size_t count = 0;
             route._cn_mainland_ips_matcher.load_from_file(route.cn_mainland_ips_file, count);
             _log_with_date_time(
-              "[route] load " + std::to_string(count) + " cn_mainland_ips from file " + route.cn_mainland_ips_file);
+              "[route] load " + tp::to_string(count) + " cn_mainland_ips from file " + route.cn_mainland_ips_file);
 
             route._white_ips_matcher.load_from_file(route.white_ips, count);
-            _log_with_date_time("[route] load " + std::to_string(count) + " white_ips from file " + route.white_ips);
+            _log_with_date_time("[route] load " + tp::to_string(count) + " white_ips from file " + route.white_ips);
 
             route._proxy_ips_matcher.load_from_file(route.proxy_ips, count);
-            _log_with_date_time("[route] load " + std::to_string(count) + " proxy_ips from file " + route.proxy_ips);
+            _log_with_date_time("[route] load " + tp::to_string(count) + " proxy_ips from file " + route.proxy_ips);
 
             if (route.proxy_type == RouteType::route_gfwlist && !dns.enabled) {
                 _log_with_date_time("[route] route_gfwlist need dns with gfw's list support!", Log::ERROR);
             }
 
-            _log_with_date_time("[route] type: " + std::to_string(route.proxy_type));
+            _log_with_date_time("[route] type: " + tp::to_string(route.proxy_type));
         } else {
             _log_with_date_time("[route] Now cannot enable route std::function without tun mode!", Log::ERROR);
         }
@@ -262,9 +262,9 @@ void Config::populate(const ptree& tree) {
         }
     }
 
-    const auto hash_str = get_remote_addr() + ":" + std::to_string(get_remote_port());
+    const auto hash_str = get_remote_addr() + ":" + tp::to_string(get_remote_port());
     compare_hash        = get_hashCode(hash_str);
-    _log_with_date_time_ALL("[config] has loaded [" + hash_str + "] in hashCode: " + std::to_string(compare_hash));
+    _log_with_date_time_ALL("[config] has loaded [" + hash_str + "] in hashCode: " + tp::to_string(compare_hash));
 
     _unguard;
 }
@@ -282,7 +282,7 @@ void Config::load_dns(const boost::property_tree::ptree& tree) {
                 dns.enabled = false;
                 _log_with_date_time("[dns] '" + dns.gfwlist + "' is empty!", Log::ERROR);
             } else {
-                _log_with_date_time("[dns] loaded " + std::to_string(count) + " domains from " + dns.gfwlist, Log::WARN);
+                _log_with_date_time("[dns] loaded " + tp::to_string(count) + " domains from " + dns.gfwlist, Log::WARN);
             }
         } else {
             dns.enabled = false;
@@ -296,7 +296,7 @@ void Config::load_dns(const boost::property_tree::ptree& tree) {
     if (dns.enabled) {
         if (tree.get_child_optional("dns.up_dns_server")) {
             for (const auto& item : tree.get_child("dns.up_dns_server")) {
-                dns.up_dns_server.emplace_back(item.second.get_value<std::string>());
+                dns.up_dns_server.emplace_back(item.second.get_value<std::string>().c_str());
             }
         }
 
@@ -308,7 +308,7 @@ void Config::load_dns(const boost::property_tree::ptree& tree) {
 
         if (tree.get_child_optional("dns.up_gfw_dns_server")) {
             for (const auto& item : tree.get_child("dns.up_gfw_dns_server")) {
-                dns.up_gfw_dns_server.emplace_back(item.second.get_value<std::string>());
+                dns.up_gfw_dns_server.emplace_back(item.second.get_value<std::string>().c_str());
             }
         }
 
@@ -375,7 +375,7 @@ bool Config::sip003() {
         case NAT:
         case CLIENT_TUN:
         case SERVERT_TUN:
-            throw std::runtime_error("SIP003 with wrong run_type");
+            throw std::runtime_error(tp::string("SIP003 with wrong run_type").c_str());
         case FORWARD:
             remote_addr = getenv("SS_REMOTE_HOST");
             remote_port = atoi(getenv("SS_REMOTE_PORT"));
@@ -387,7 +387,7 @@ bool Config::sip003() {
     _unguard;
 }
 
-void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, std::string& plain_http_response) {
+void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, tp::string& plain_http_response) {
     _guard;
     auto* native_context = ssl_context.native_handle();
     ssl_context.set_options(
@@ -396,10 +396,10 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, std::st
         SSL_CTX_set1_curves_list(native_context, ssl.curves.c_str());
     }
     if (run_type == Config::SERVER) {
-        ssl_context.use_certificate_chain_file(ssl.cert);
+        ssl_context.use_certificate_chain_file(ssl.cert.c_str());
         ssl_context.set_password_callback(
-          [this](size_t, context_base::password_purpose) { return this->ssl.key_password; });
-        ssl_context.use_private_key_file(ssl.key, context::pem);
+          [this](size_t, context_base::password_purpose) { return this->ssl.key_password.c_str(); });
+        ssl_context.use_private_key_file(ssl.key.c_str(), context::pem);
         if (ssl.prefer_server_cipher) {
             SSL_CTX_set_options(native_context, SSL_OP_CIPHER_SERVER_PREFERENCE);
         }
@@ -430,17 +430,17 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, std::st
         }
 
         if (!ssl.plain_http_response.empty()) {
-            std::ifstream ifs(ssl.plain_http_response, std::ios::binary);
+            tp::ifstream ifs(ssl.plain_http_response.c_str(), std::ios::binary);
             if (!ifs.is_open()) {
-                throw std::runtime_error(ssl.plain_http_response + ": " + strerror(errno));
+                throw std::runtime_error((ssl.plain_http_response + tp::string(": ") + strerror(errno)).c_str());
             }
-            plain_http_response = std::string(std::istreambuf_iterator<char>(ifs), std::istreambuf_iterator<char>());
+            plain_http_response = tp::string(std::istreambuf_iterator<char>(ifs), std::istreambuf_iterator<char>());
         }
         if (ssl.dhparam.empty()) {
             ssl_context.use_tmp_dh(
               boost::asio::const_buffer((const void*)SSLDefaults::g_dh2048_sz, SSLDefaults::g_dh2048_sz_size));
         } else {
-            ssl_context.use_tmp_dh_file(ssl.dhparam);
+            ssl_context.use_tmp_dh_file(ssl.dhparam.c_str());
         }
 
     } else {
@@ -517,7 +517,7 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, std::st
                                     }
                                     if (X509_STORE_add_cert(store, cert) == 0) {
                                         _log_with_date_time(
-                                          " X509_STORE_add_cert add cert failed, cert length: " + std::to_string(certLength),
+                                          " X509_STORE_add_cert add cert failed, cert length: " + tp::to_string(certLength),
                                           Log::WARN);
                                     }
                                     X509_free(cert);
@@ -535,13 +535,13 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, std::st
 #pragma clang diagnostic pop
 #endif // __APPLE__
             } else {
-                ssl_context.load_verify_file(ssl.cert);
+                ssl_context.load_verify_file(ssl.cert.c_str());
             }
             if (ssl.verify_hostname) {
 #if BOOST_VERSION >= 107300
-                ssl_context.set_verify_callback(host_name_verification(ssl.sni));
+                ssl_context.set_verify_callback(host_name_verification(ssl.sni.c_str()));
 #else
-                ssl_context.set_verify_callback(rfc2818_verification(ssl.sni));
+                ssl_context.set_verify_callback(rfc2818_verification(ssl.sni.c_str()));
 #endif
             }
             X509_VERIFY_PARAM* param = X509_VERIFY_PARAM_new();
@@ -607,7 +607,7 @@ void Config::prepare_ssl_reuse(SSLSocket& socket) const {
     _unguard;
 }
 
-std::string Config::SHA224(const std::string& message) {
+tp::string Config::SHA224(const tp::string& message) {
     _guard;
 
     uint8_t digest[EVP_MAX_MD_SIZE];
@@ -615,23 +615,23 @@ std::string Config::SHA224(const std::string& message) {
     unsigned int digest_len = 0;
     EVP_MD_CTX* ctx         = nullptr;
     if ((ctx = EVP_MD_CTX_new()) == nullptr) {
-        throw std::runtime_error("[sha224] could not create hash context");
+        throw std::runtime_error(tp::string("[sha224] could not create hash context").c_str());
     }
     if (EVP_DigestInit_ex(ctx, EVP_sha224(), nullptr) == 0) {
         EVP_MD_CTX_free(ctx);
-        throw std::runtime_error("[sha224] could not initialize hash context");
+        throw std::runtime_error(tp::string("[sha224] could not initialize hash context").c_str());
     }
     if (EVP_DigestUpdate(ctx, message.c_str(), message.length()) == 0) {
         EVP_MD_CTX_free(ctx);
-        throw std::runtime_error("[sha224] could not update hash");
+        throw std::runtime_error(tp::string("[sha224] could not update hash").c_str());
     }
     if (EVP_DigestFinal_ex(ctx, (unsigned char*)digest, &digest_len) == 0) {
         EVP_MD_CTX_free(ctx);
-        throw std::runtime_error("[sha224] could not output hash");
+        throw std::runtime_error(tp::string("[sha224] could not output hash").c_str());
     }
 
     if (digest_len * 2 >= MAX_PASSWORD_LENGTH) {
-        throw std::runtime_error("[sha224] password length is too large");
+        throw std::runtime_error(tp::string("[sha224] password length is too large").c_str());
     }
 
     for (unsigned int i = 0; i < digest_len; ++i) {
@@ -639,7 +639,7 @@ std::string Config::SHA224(const std::string& message) {
     }
     gsl::at(mdString, digest_len << 1) = '\0';
     EVP_MD_CTX_free(ctx);
-    return std::string((const char*)mdString);
+    return tp::string((const char*)mdString);
 
     _unguard;
 }

@@ -5,12 +5,22 @@
 #include <map>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 #include <string>
+#include <charconv>
 #include <sstream>
 #include <memory>
 #include <cstdlib>
 #include <new>
 #include <vector>
+#include <list>
+#include <deque>
+#include <set>
+#include <fstream>
+#include <queue>
+#include <stack>
+#include <cwchar>
+#include <boost/asio/streambuf.hpp>
 
 namespace tp{
 
@@ -302,3 +312,230 @@ inline std::enable_if_t<std::is_array_v<T>, tj_unique_ptr<T>> make_tj_unique(con
         ::new (tp::get_tj_mem_allocator().malloc_aligned(sizeof(T), alignof(T), __FILE__, __LINE__)) T(__VA_ARGS__), \
         [](T *ptr) { tp::get_tj_mem_allocator().delete_object(ptr); })
 
+
+namespace tp 
+{
+// tp allocator for std
+template <typename T>
+struct tp_std_allocator {
+     using value_type = T;
+     tp_std_allocator() = default;
+     template <typename U> tp_std_allocator(const tp_std_allocator<U>&) {}
+
+     T* allocate(std::size_t n) {
+         // 调用项目自定义的带统计的对齐分配
+         return static_cast<T*>(get_tj_mem_allocator().malloc_aligned(
+             n * sizeof(T), alignof(T), "tp_std_allocator", 0));
+     }
+
+     void deallocate(T* p, std::size_t) {
+         get_tj_mem_allocator().free_aligned(p);
+     }
+
+     // 支持与不同类型的 allocator 相互比较
+     template <typename U> bool operator==(const tp_std_allocator<U>&) const { return true; }
+     template <typename U> bool operator!=(const tp_std_allocator<U>&) const { return false; }
+};
+
+using streambuf = boost::asio::basic_streambuf<tp::tp_std_allocator<char>>;
+
+using string = std::basic_string<char, std::char_traits<char>, tp_std_allocator<char>>;
+using wstring = std::basic_string<wchar_t, std::char_traits<wchar_t>, tp_std_allocator<wchar_t>>;
+
+template <typename T>
+string to_string(T value) {
+    if constexpr (std::is_same_v<T, bool>) {
+        return value ? string("true") : string("false");
+    } else if constexpr (std::is_enum_v<T>) {
+        return to_string(static_cast<std::underlying_type_t<T>>(value));
+    } else {
+        char buf[24]; 
+        auto [ptr, ec] = std::to_chars(buf, buf + sizeof(buf), value);
+        if (ec == std::errc{}) {
+            return string(buf, static_cast<std::size_t>(ptr - buf));
+        }
+        return string("", 0);
+    }
+}
+
+inline string to_string(double value) {
+    char buf[64]; 
+    auto [ptr, ec] = std::to_chars(buf, buf + sizeof(buf), value);
+    if (ec == std::errc{}) {
+        return string(buf, static_cast<std::size_t>(ptr - buf));
+    }
+    return string("", 0);
+}
+
+template <typename T>
+using vector = ::std::vector<T, tp_std_allocator<T>>;
+
+template <typename T>
+using list = ::std::list<T, tp_std_allocator<T>>;
+
+template <typename K, typename V, typename Compare = ::std::less<K>>
+using map = ::std::map<K, V, Compare, tp_std_allocator<::std::pair<const K, V>>>;
+
+template <typename K, typename V, typename Compare = ::std::less<K>>
+using multimap = ::std::multimap<K, V, Compare, tp_std_allocator<::std::pair<const K, V>>>;
+
+template <typename K, typename Compare = ::std::less<K>>
+using set = ::std::set<K, Compare, tp_std_allocator<K>>;
+
+template <typename K, typename V, typename Hash = ::std::hash<K>, typename KeyEqual = ::std::equal_to<K>>
+using unordered_map = ::std::unordered_map<K, V, Hash, KeyEqual, tp_std_allocator<::std::pair<const K, V>>>;
+
+template <typename K, typename Hash = ::std::hash<K>, typename KeyEqual = ::std::equal_to<K>>
+using unordered_set = ::std::unordered_set<K, Hash, KeyEqual, tp_std_allocator<K>>;
+
+template <typename T>
+using deque = ::std::deque<T, tp_std_allocator<T>>;
+
+template <typename T1, typename T2>
+using pair = ::std::pair<T1, T2>;
+
+using ::std::make_pair;
+
+template <typename T, typename Container = tp::deque<T>>
+using queue = ::std::queue<T, Container>;
+
+template <typename T, typename Container = tp::deque<T>>
+using stack = ::std::stack<T, Container>;
+
+template <typename T, typename Container = tp::vector<T>, typename Compare = ::std::less<typename Container::value_type>>
+using priority_queue = ::std::priority_queue<T, Container, Compare>;
+
+using ifstream = ::std::ifstream;
+using ofstream = ::std::ofstream;
+using fstream = ::std::fstream;
+
+using stringbuf = ::std::basic_stringbuf<char, ::std::char_traits<char>, tp_std_allocator<char>>;
+using wstringbuf = ::std::basic_stringbuf<wchar_t, ::std::char_traits<wchar_t>, tp_std_allocator<wchar_t>>;
+
+using stringstream = ::std::basic_stringstream<char, ::std::char_traits<char>, tp_std_allocator<char>>;
+using wstringstream = ::std::basic_stringstream<wchar_t, ::std::char_traits<wchar_t>, tp_std_allocator<wchar_t>>;
+
+using ostringstream = ::std::basic_ostringstream<char, ::std::char_traits<char>, tp_std_allocator<char>>;
+using wostringstream = ::std::basic_ostringstream<wchar_t, ::std::char_traits<wchar_t>, tp_std_allocator<wchar_t>>;
+
+using istringstream = ::std::basic_istringstream<char, ::std::char_traits<char>, tp_std_allocator<char>>;
+using wistringstream = ::std::basic_istringstream<wchar_t, ::std::char_traits<wchar_t>, tp_std_allocator<wchar_t>>;
+
+
+
+#define STD_STRING(T) std::basic_string<T, std::char_traits<T>, std::allocator<T>>	
+#define TP_STRING(T) std::basic_string<T, std::char_traits<T>, tp_std_allocator<T>>
+
+template <typename T>
+bool operator<(const TP_STRING(T)& lhs, const STD_STRING(T)& rhs)
+{
+    return lhs.compare(0, lhs.length(), rhs.c_str(), rhs.length()) < 0;
+}
+
+template <typename T>
+bool operator<(const STD_STRING(T)& lhs, const TP_STRING(T)& rhs)
+{
+    return lhs.compare(0, lhs.length(), rhs.c_str(), rhs.length()) < 0;
+}
+template <typename T>
+bool operator<=(const TP_STRING(T)& lhs, const STD_STRING(T)& rhs)
+{
+    return lhs.compare(0, lhs.length(), rhs.c_str(), rhs.length()) <= 0;
+}
+template <typename T>
+bool operator<=(const STD_STRING(T)& lhs, const TP_STRING(T)& rhs)
+{
+    return lhs.compare(0, lhs.length(), rhs.c_str(), rhs.length()) <= 0;
+}
+template <typename T>
+bool operator>(const TP_STRING(T)& lhs, const STD_STRING(T)& rhs)
+{
+    return lhs.compare(0, lhs.length(), rhs.c_str(), rhs.length()) > 0;
+}
+template <typename T>
+bool operator>(const STD_STRING(T)& lhs, const TP_STRING(T)& rhs)
+{
+    return lhs.compare(0, lhs.length(), rhs.c_str(), rhs.length()) > 0;
+}
+template <typename T>
+bool operator>=(const TP_STRING(T)& lhs, const STD_STRING(T)& rhs)
+{
+    return lhs.compare(0, lhs.length(), rhs.c_str(), rhs.length()) >= 0;
+}
+template <typename T>
+bool operator>=(const STD_STRING(T)& lhs, const TP_STRING(T)& rhs)
+{
+    return lhs.compare(0, lhs.length(), rhs.c_str(), rhs.length()) >= 0;
+}
+template <typename T>
+bool operator==(const TP_STRING(T)& lhs, const STD_STRING(T)& rhs)
+{
+    return lhs.compare(0, lhs.length(), rhs.c_str(), rhs.length()) == 0;
+}
+template <typename T>
+bool operator==(const STD_STRING(T)& lhs, const TP_STRING(T)& rhs)
+{
+    return lhs.compare(0, lhs.length(), rhs.c_str(), rhs.length()) == 0;
+}
+template <typename T>
+bool operator!=(const TP_STRING(T)& lhs, const STD_STRING(T)& rhs)
+{
+    return lhs.compare(0, lhs.length(), rhs.c_str(), rhs.length()) != 0;
+}
+template <typename T>
+bool operator!=(const STD_STRING(T)& lhs, const TP_STRING(T)& rhs)
+{
+    return lhs.compare(0, lhs.length(), rhs.c_str(), rhs.length()) != 0;
+}
+template <typename T>
+TP_STRING(T) operator+=(const TP_STRING(T)& lhs, const STD_STRING(T)& rhs)
+{
+    return TP_STRING(T)(lhs) += rhs.c_str();
+}
+template <typename T>
+TP_STRING(T) operator+=(const STD_STRING(T)& lhs, const TP_STRING(T)& rhs)
+{
+    return TP_STRING(T)(lhs.c_str()) += rhs.c_str();
+}
+template <typename T>
+TP_STRING(T) operator+(const TP_STRING(T)& lhs, const STD_STRING(T)& rhs)
+{
+    return TP_STRING(T)(lhs) += rhs.c_str();
+}
+template <typename T>
+TP_STRING(T) operator+(const STD_STRING(T)& lhs, const TP_STRING(T)& rhs)
+{
+    return TP_STRING(T)(lhs.c_str()) += rhs.c_str();
+}
+template <typename T>
+TP_STRING(T) operator+(const T* lhs, const TP_STRING(T)& rhs)
+{
+    return TP_STRING(T)(lhs) += rhs;
+}
+
+#undef STD_STRING
+#undef TP_STRING
+
+}
+
+namespace std
+{
+	template<>
+	struct hash<tp::string>{
+		size_t operator()(const tp::string& str) const{
+			// FNV hash
+			size_t hash = std::conditional_t<
+				sizeof(size_t) == 4,
+				std::integral_constant<uint32_t, 0x811c9dc5>,
+				std::integral_constant<uint64_t, 0xcbf29ce484222325>>::value;
+			for(char ch : str){
+				hash ^= static_cast<unsigned char>(ch);
+				hash *= std::conditional_t<
+					sizeof(size_t) == 4,
+					std::integral_constant<uint32_t, 16777619u>,
+					std::integral_constant<uint64_t, 1099511628211ull>>::value;
+			}
+			return hash;
+		}
+	};
+}

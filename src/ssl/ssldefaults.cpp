@@ -18,6 +18,7 @@
  */
 
 #include "ssldefaults.h"
+#include "mem/memallocator.h"
 
 const char SSLDefaults::g_dh2048_sz[] =
     "-----BEGIN DH PARAMETERS-----\n"

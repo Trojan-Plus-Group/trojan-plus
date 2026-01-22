@@ -22,6 +22,7 @@
 
 #ifndef _UDPFORWARDSESSION_H_
 #define _UDPFORWARDSESSION_H_
+#include "mem/memallocator.h"
 
 #include <boost/asio/ssl.hpp>
 #include <boost/asio/steady_timer.hpp>
@@ -41,8 +42,8 @@ class UDPForwardSession : public SocketSession {
     UDPWriter in_write;
 
     ReadBufWithGuard out_read_buf;
-    boost::asio::streambuf out_write_buf;
-    boost::asio::streambuf udp_data_buf;
+    tp::streambuf out_write_buf;
+    tp::streambuf udp_data_buf;
 
     SSLSocket out_socket;
     boost::asio::ip::udp::socket udp_target_socket;
@@ -64,7 +65,7 @@ class UDPForwardSession : public SocketSession {
 
   public:
     UDPForwardSession(Service* _service, const Config& config, boost::asio::ssl::context& ssl_context,
-      const boost::asio::ip::udp::endpoint& endpoint, const std::pair<std::string, uint16_t>& targetdst,
+      const boost::asio::ip::udp::endpoint& endpoint, const std::pair<tp::string, uint16_t>& targetdst,
       UDPWriter in_write, bool nat, bool dns);
 
     ~UDPForwardSession() override;

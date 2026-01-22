@@ -1,8 +1,8 @@
-#include "mem/memallocator.h"
 
 #ifdef ENABLE_MIMALLOC
 #include <mimalloc.h>
 #endif
+#include "mem/memallocator.h"
 
 namespace tp {
 
@@ -224,7 +224,7 @@ std::string mem_allocator::show_stat(int top_count) {
                 }
             }
 
-            size_t count = top_count > size_rank.size() ? size_rank.size() : top_count;
+            size_t count = (top_count >= 0 && (size_t)top_count > size_rank.size()) ? size_rank.size() : (size_t)(std::max(0, top_count));
 
             if (size_rank.empty()) {
                 result << " Empty Traced";

@@ -22,12 +22,13 @@
 
 #ifndef _TROJANREQUEST_H_
 #define _TROJANREQUEST_H_
+#include "mem/memallocator.h"
 
 #include "socks5address.h"
 
 class TrojanRequest {
 public:
-    std::string password;
+    tp::string password;
     enum Command {
         CONNECT = 1,
         UDP_ASSOCIATE = 3
@@ -35,7 +36,7 @@ public:
     SOCKS5Address address;
     std::string_view payload;
     [[nodiscard]] int parse(const std::string_view &data);
-    static std::string generate(const std::string &password, const std::string &domainname, uint16_t port, bool tcp);
+    static tp::string generate(const tp::string &password, const tp::string &domainname, uint16_t port, bool tcp);
 };
 
 #endif // _TROJANREQUEST_H_

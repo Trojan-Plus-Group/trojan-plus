@@ -28,7 +28,7 @@
 #include <functional>
 #include <list>
 #include <memory>
-
+#include "mem/memallocator.h"
 #include "core/config.h"
 #include "core/icmpd.h"
 #include "proto/pipelinerequest.h"
@@ -49,7 +49,7 @@ class Pipeline : public std::enable_shared_from_this<Pipeline> {
     bool connected;
     ReadBufWithGuard out_read_buf;
     boost::asio::ip::tcp::resolver resolver;
-    std::list<std::shared_ptr<Session>> sessions;
+    tp::list<std::shared_ptr<Session>> sessions;
     uint32_t pipeline_id;
     std::shared_ptr<icmpd> icmp_processor;
     boost::asio::ip::tcp::endpoint out_socket_endpoint;

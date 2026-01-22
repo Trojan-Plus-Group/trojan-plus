@@ -20,6 +20,7 @@
  */
 
 #include "proto/dns_header.h"
+#include "mem/memallocator.h"
 
 
 namespace trojan {
@@ -73,7 +74,7 @@ void dns_header::test_cases() {
     _test_case_call_assert(hdr, ARCOUNT, 123, uint16_t);
 };
 
-std::istream& dns_header::read_label(std::istream& is, std::string& name) {
+std::istream& dns_header::read_label(std::istream& is, tp::string& name) {
     _guard;
 
     is >> std::noskipws;
@@ -117,7 +118,7 @@ std::istream& dns_header::read_label(std::istream& is, std::string& name) {
     _unguard;
 }
 
-std::ostream& dns_header::write_label(std::ostream& os, const std::string& name) {
+std::ostream& dns_header::write_label(std::ostream& os, const tp::string& name) {
     _guard;
 
     const char* data      = name.c_str();
@@ -149,7 +150,7 @@ std::ostream& dns_header::write_label(std::ostream& os, const std::string& name)
 }
 
 void dns_question::test_case(const char* domain, uint16_t qtype, uint16_t qclass) {
-    std::ostringstream os;
+    tp::ostringstream os;
     dns_question question;
     question.set_QNAME(domain);
     question.set_QTYPE(qtype);
@@ -157,7 +158,7 @@ void dns_question::test_case(const char* domain, uint16_t qtype, uint16_t qclass
 
     os << question;
 
-    std::istringstream is(os.str());
+    tp::istringstream is(os.str());
     dns_question question1;
     is >> question1;
 
@@ -203,10 +204,10 @@ void dns_question::test_cases() {
     test_case("ab.c33d.com", 1, 1);
     test_case("ab.22cd.com", std::numeric_limits<uint16_t>::max(), std::numeric_limits<uint16_t>::max());
 
-    std::string test_data("\x6c\xad\x01\x20\x00\x01\x00\x00\x00\x00\x00\x01\x03\x77\x77\x77\x05\x62\x61\x69\x64\x75\x03\x63"
+    tp::string test_data("\x6c\xad\x01\x20\x00\x01\x00\x00\x00\x00\x00\x01\x03\x77\x77\x77\x05\x62\x61\x69\x64\x75\x03\x63"
                      "\x6f\x6d\x00\x00\x1c\x00\x01",
       31);
-    std::istringstream is(test_data);
+    tp::istringstream is(test_data);
 
     dns_header header;
     is >> header;
@@ -306,13 +307,13 @@ std::istream& operator>>(std::istream& is, dns_answer& answer) {
 
 void dns_answer::test_cases() {
     {
-        std::string test_data(
+        tp::string test_data(
           "\x73\x47\x81\x80\x00\x01\x00\x03\x00\x00\x00\x01\x03\x77\x77\x77\x05\x62\x61\x69\x64\x75\x03\x63\x6f\x6d\x00"
           "\x00\x01\x00\x01\xc0\x0c\x00\x05\x00\x01\x00\x00\x02\x20\x00\x0f\x03\x77\x77\x77\x01\x61\x06\x73\x68\x69\x66"
           "\x65\x6e\xc0\x16\xc0\x2b\x00\x01\x00\x01\x00\x00\x00\x29\x00\x04\xb4\x65\x31\x0c\xc0\x2b\x00\x01\x00\x01\x00"
           "\x00\x00\x29\x00\x04\xb4\x65\x31\x0b\x00\x00\x29\x02\x00\x00\x00\x00\x00\x00\x00",
           135);
-        std::istringstream is(test_data);
+        tp::istringstream is(test_data);
 
         dns_answer answer;
         is >> std::noskipws >> answer;
@@ -344,14 +345,14 @@ void dns_answer::test_cases() {
     }
 
     {
-        std::string test_data(
+        tp::string test_data(
           "\x6c\xad\x81\x80\x00\x01\x00\x01\x00\x01\x00\x01\x03\x77\x77\x77\x05\x62\x61\x69\x64\x75\x03\x63\x6f\x6d\x00"
           "\x00\x1c\x00\x01\xc0\x0c\x00\x05\x00\x01\x00\x00\x00\x41\x00\x0f\x03\x77\x77\x77\x01\x61\x06\x73\x68\x69\x66"
           "\x65\x6e\xc0\x16\xc0\x2f\x00\x06\x00\x01\x00\x00\x01\x1d\x00\x2d\x03\x6e\x73\x31\xc0\x2f\x10\x62\x61\x69\x64"
           "\x75\x5f\x64\x6e\x73\x5f\x6d\x61\x73\x74\x65\x72\xc0\x10\x77\x94\xcb\x07\x00\x00\x00\x05\x00\x00\x00\x05\x00"
           "\x27\x8d\x00\x00\x00\x0e\x10\x00\x00\x29\x02\x00\x00\x00\x00\x00\x00\x00",
           126);
-        std::istringstream is(test_data);
+        tp::istringstream is(test_data);
 
         dns_answer answer;
         is >> std::noskipws >> answer;

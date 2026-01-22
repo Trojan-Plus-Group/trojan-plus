@@ -28,6 +28,7 @@
 #include <gsl/gsl>
 
 #include "core/utils.h"
+#include "mem/memallocator.h"
 
 // Packet header for IPv4.
 //

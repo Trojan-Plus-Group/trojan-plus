@@ -45,17 +45,17 @@ class Log {
         OFF     = 5,
         INVALID = -1,
     };
-    using LogCallback = std::function<void(const std::string&, Level)>;
+    using LogCallback = std::function<void(const tp::string&, Level)>;
     static Level level;
     static FILE* keylog;
-    static void log(const std::string& message, Level level = ALL);
-    static void log_with_date_time(const std::string& message, Level level = ALL);
+    static void log(const tp::string& message, Level level = ALL);
+    static void log_with_date_time(const tp::string& message, Level level = ALL);
     static void log_with_endpoint(
-      const boost::asio::ip::tcp::endpoint& endpoint, const std::string& message, Level level = ALL);
+      const boost::asio::ip::tcp::endpoint& endpoint, const tp::string& message, Level level = ALL);
     static void log_with_endpoint(
-      const boost::asio::ip::udp::endpoint& endpoint, const std::string& message, Level level = ALL);
-    static void redirect(const std::string& filename);
-    static void redirect_keylog(const std::string& filename);
+      const boost::asio::ip::udp::endpoint& endpoint, const tp::string& message, Level level = ALL);
+    static void redirect(const tp::string& filename);
+    static void redirect_keylog(const tp::string& filename);
     static void set_callback(LogCallback&& cb);
     static void reset();
 
@@ -105,7 +105,7 @@ extern tp::tj_unique_ptr<char[]> __debug_str_buf;
 #define _log_with_date_time_ALL(...)                                                                                   \
     do {                                                                                                               \
         if (Log::level <= Log::ALL) {                                                                                  \
-            Log::log_with_date_time(__VA_ARGS__, Log::ALL);                                                            \
+            Log::log_with_date_time(tp::string("") + __VA_ARGS__, Log::ALL);                                           \
         }                                                                                                              \
     } while (false)
 
@@ -119,7 +119,7 @@ extern tp::tj_unique_ptr<char[]> __debug_str_buf;
 #define _log_with_date_time(...)                                                                                       \
     do {                                                                                                               \
         if (Log::level != Log::OFF) {                                                                                  \
-            Log::log_with_date_time(__VA_ARGS__);                                                                      \
+            Log::log_with_date_time(tp::string("") + __VA_ARGS__);                                                     \
         }                                                                                                              \
     } while (false)
 
@@ -133,7 +133,7 @@ extern tp::tj_unique_ptr<char[]> __debug_str_buf;
 #define _log(...)                                                                                                      \
     do {                                                                                                               \
         if (Log::level != Log::OFF) {                                                                                  \
-            Log::log(__VA_ARGS__);                                                                                     \
+            Log::log(tp::string("") + __VA_ARGS__);                                                                    \
         }                                                                                                              \
     } while (false)
 
@@ -141,7 +141,7 @@ extern tp::tj_unique_ptr<char[]> __debug_str_buf;
     do {                                                                                                               \
         if (Log::level <= Log::INFO) {                                                                                 \
             Log::log_with_date_time(                                                                                   \
-              std::string(__debug_str_buf.get(),                                                                       \
+              tp::string(__debug_str_buf.get(),                                                                        \
                 snprintf(__debug_str_buf.get(), __max_debug_str_buf_size, "%s:%d-<%s> ec:%s", (const char*)__FILE__,   \
                   __LINE__, (const char*)__FUNCTION__, (ec.message().c_str()))),                                       \
               Log::INFO);                                                                                              \
@@ -151,7 +151,7 @@ extern tp::tj_unique_ptr<char[]> __debug_str_buf;
 #define output_debug_info()                                                                                            \
     do {                                                                                                               \
         if (Log::level <= Log::INFO) {                                                                                 \
-            Log::log_with_date_time(std::string(__debug_str_buf.get(),                                                 \
+            Log::log_with_date_time(tp::string(__debug_str_buf.get(),                                                  \
                                       snprintf(__debug_str_buf.get(), __max_debug_str_buf_size, "%s:%d-<%s>",          \
                                         (const char*)__FILE__, __LINE__, (const char*)__FUNCTION__)),                  \
               Log::INFO);                                                                                              \
@@ -180,9 +180,9 @@ extern tp::tj_unique_ptr<char[]> __debug_str_buf;
 #define _assert(exp)                                                                                                   \
     do {                                                                                                               \
         if (!(exp)) {                                                                                                  \
-            throw std::runtime_error(std::string(__debug_str_buf.get(),                                                \
+            throw std::runtime_error(tp::string(tp::string(__debug_str_buf.get(),                                         \
               snprintf(__debug_str_buf.get(), __max_debug_str_buf_size, "_assert(" #exp ") : %s:%d-<%s>",              \
-                (const char*)__FILE__, __LINE__, (const char*)__FUNCTION__)));                                         \
+                (const char*)__FILE__, __LINE__, (const char*)__FUNCTION__))).c_str());                                \
         }                                                                                                              \
     } while (false)
 
@@ -193,13 +193,13 @@ extern tp::tj_unique_ptr<char[]> __debug_str_buf;
 #define _unguard                                                                                                       \
     }                                                                                                                  \
     catch (const std::exception& ex) {                                                                                 \
-        std::ostringstream bt;                                                                                         \
+        tp::ostringstream bt;                                                                                          \
         bt << ex.what();                                                                                               \
         bt << "\n";                                                                                                    \
         bt << (const char*)__FILE__;                                                                                   \
         bt << ":" << __LINE__;                                                                                         \
         bt << "-" << (const char*)__FUNCTION__;                                                                        \
-        throw std::runtime_error(bt.str());                                                                            \
+        throw std::runtime_error(bt.str().c_str());                                                                    \
     }
 
 #else

@@ -22,6 +22,7 @@
 
 #include "trojanrequest.h"
 #include "core/utils.h"
+#include "mem/memallocator.h"
 
 int TrojanRequest::parse(const std::string_view& data) {
     _guard;
@@ -47,10 +48,10 @@ int TrojanRequest::parse(const std::string_view& data) {
     _unguard;
 }
 
-std::string TrojanRequest::generate(const std::string& password, const std::string& domainname, uint16_t port, bool tcp) {
+tp::string TrojanRequest::generate(const tp::string& password, const tp::string& domainname, uint16_t port, bool tcp) {
     _guard;
 
-    std::string ret = password + "\r\n";
+    tp::string ret = password + "\r\n";
     if (tcp) {
         ret += '\x01';
     } else {

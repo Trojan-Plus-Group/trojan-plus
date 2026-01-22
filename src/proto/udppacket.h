@@ -22,6 +22,7 @@
 
 #ifndef _UDPPACKET_H_
 #define _UDPPACKET_H_
+#include "mem/memallocator.h"
 
 #include <boost/asio/streambuf.hpp>
 #include "socks5address.h"
@@ -33,11 +34,11 @@ public:
     std::string_view payload;
     [[nodiscard]] bool parse(const std::string_view &data, size_t &udp_packet_len);
     
-    static boost::asio::streambuf& generate(boost::asio::streambuf& buf, 
+    static tp::streambuf& generate(tp::streambuf& buf, 
         const boost::asio::ip::udp::endpoint &endpoint, const std::string_view &payload);
 
-    static boost::asio::streambuf& generate(boost::asio::streambuf& buf, 
-        const std::string &domainname, uint16_t port, const std::string_view &payload);
+    static tp::streambuf& generate(tp::streambuf& buf, 
+        const tp::string &domainname, uint16_t port, const std::string_view &payload);
 };
 
 #endif // _UDPPACKET_H_

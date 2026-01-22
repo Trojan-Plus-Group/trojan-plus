@@ -21,6 +21,7 @@
 
 #include "socketsession.h"
 #include "core/service.h"
+#include "mem/memallocator.h"
 
 SocketSession::SocketSession(Service* _service, const Config& config)
     : Session(_service, config), resolver(_service->get_io_context()) {
