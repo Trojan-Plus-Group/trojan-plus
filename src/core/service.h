@@ -32,7 +32,6 @@
 #include <list>
 #include <string>
 
-#include "authenticator.h"
 #include "core/icmpd.h"
 #include "core/pipeline.h"
 #include "session/session.h"
@@ -49,7 +48,6 @@ class Service {
     boost::asio::io_context io_context;
     boost::asio::ip::tcp::acceptor socket_acceptor;
     boost::asio::ssl::context ssl_context;
-    std::shared_ptr<Authenticator> auth;
     std::string plain_http_response;
     boost::asio::ip::udp::socket udp_socket;
     std::list<std::weak_ptr<UDPForwardSession>> udp_sessions;

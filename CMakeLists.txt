@@ -151,7 +151,6 @@ set(TROJAN_SOURCE_FILES
     badvpn/lwip/src/core/ipv6/nd6.c
 
     src/mem/memallocator.cpp
-    src/core/authenticator.cpp
     src/core/config.cpp
     src/core/log.cpp
     src/core/service.cpp
@@ -251,19 +250,6 @@ if(FORCE_TCP_FASTOPEN)
 endif()
 
 if(NOT ANDROID)    
-    option(ENABLE_MYSQL "Build with MySQL support" OFF)
-    if(ENABLE_MYSQL)
-        find_package(MySQL REQUIRED)
-        include_directories(${MYSQL_INCLUDE_DIR})
-        target_link_libraries(trojan ${MYSQL_LIBRARIES})
-        add_definitions(-DENABLE_MYSQL)
-        if(APPLE)
-            target_link_libraries(trojan iconv)
-        else()
-            target_link_libraries(trojan dl)
-        endif()
-    endif()
-
     if(CMAKE_SYSTEM_NAME STREQUAL Linux)
         option(ENABLE_NAT "Build with NAT support" ON)
         if(ENABLE_NAT)

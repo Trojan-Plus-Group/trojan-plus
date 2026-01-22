@@ -26,7 +26,6 @@
 #include <boost/asio/ssl.hpp>
 #include <string_view>
 
-#include "core/authenticator.h"
 #include "core/pipeline.h"
 #include "core/utils.h"
 #include "pipelinesession.h"
@@ -52,8 +51,6 @@ class ServerSession : public SocketSession {
     boost::asio::ip::udp::resolver udp_resolver;
     boost::asio::ip::udp::endpoint udp_associate_endpoint;
 
-    std::shared_ptr<Authenticator> auth;
-    std::string auth_password;
     const std::string& plain_http_response;
 
     using PipelineSessionRef = std::weak_ptr<Session>;
@@ -76,10 +73,10 @@ class ServerSession : public SocketSession {
 
   public:
     ServerSession(Service* _service, const Config& config, boost::asio::ssl::context& ssl_context,
-      std::shared_ptr<Authenticator> auth, const std::string& plain_http_response);
+      const std::string& plain_http_response);
 
     ServerSession(Service* _service, const Config& config, std::shared_ptr<SSLSocket> socket,
-      std::shared_ptr<Authenticator> auth, const std::string& plain_http_response);
+      const std::string& plain_http_response);
 
     boost::asio::ip::tcp::socket& accept_socket() override;
     void start() override;

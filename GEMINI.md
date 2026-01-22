@@ -23,10 +23,9 @@ To build the project, the following dependencies are required:
 *   CMake (>= 3.10.2)
 *   Boost (>= 1.72.0, 1.80.0+ recommended)
 *   OpenSSL (>= 1.1.0)
-*   (Optional) MySQL/MariaDB client library for database authentication.
 
 On Debian-based systems, these can be installed with:
-`sudo apt -y install build-essential cmake libboost-system-dev libboost-program-options-dev libssl-dev default-libmysqlclient-dev`
+`sudo apt -y install build-essential cmake libboost-system-dev libboost-program-options-dev libssl-dev`
 
 ### Build Commands
 
@@ -87,7 +86,7 @@ The project includes a comprehensive "full test" suite.
     ```bash
     cd tests/LinuxFullTest/
     python3 -m pip install PySocks psutil dnspython --break-system-packages
-    python3 fulltest_main.py /path/to/build/trojan -g -n -d 5333
+    python3 fulltest_main.py /path/to/build/trojan -g -n
     ```
 
     **Windows**:

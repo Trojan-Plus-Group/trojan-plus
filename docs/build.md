@@ -9,7 +9,6 @@ Install these dependencies before you build:
 - [CMake](https://cmake.org/) >= 3.10.2
 - [Boost](http://www.boost.org/) >= 1.72.0 (1.80.0+ recommended for stable async_wait support)
 - [OpenSSL](https://www.openssl.org/) >= 1.1.0
-- [libmysqlclient](https://dev.mysql.com/downloads/connector/c/)
 
 For Debian users, run `sudo apt -y install build-essential cmake libboost-system-dev libboost-program-options-dev libssl-dev` to install all the necessary dependencies.
 
@@ -109,4 +108,4 @@ The `cmake ..` command can be extended with the following options:
 
 After installation, config examples will be installed to `${CMAKE_INSTALL_DOCDIR}/examples/` and a server config will be installed to `${CMAKE_INSTALL_FULL_SYSCONFDIR}/trojan/config.json`.
 
-[Homepage](.) | [Prev Page](authenticator) | [Next Page](usage)
+[Homepage](.) | [Prev Page](config) | [Next Page](usage)

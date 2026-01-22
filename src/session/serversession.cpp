@@ -32,13 +32,12 @@ using namespace boost::asio::ip;
 using namespace boost::asio::ssl;
 
 ServerSession::ServerSession(Service* _service, const Config& config, boost::asio::ssl::context& ssl_context,
-  std::shared_ptr<Authenticator> auth, const std::string& plain_http_response)
+  const std::string& plain_http_response)
     : SocketSession(_service, config),
       status(HANDSHAKE),
       out_socket(_service->get_io_context()),
       udp_socket(_service->get_io_context()),
       udp_resolver(_service->get_io_context()),
-      auth(std::move(auth)),
       plain_http_response(plain_http_response),
       has_queried_out(false) {
 
@@ -47,14 +46,13 @@ ServerSession::ServerSession(Service* _service, const Config& config, boost::asi
 }
 
 ServerSession::ServerSession(Service* _service, const Config& config, std::shared_ptr<SSLSocket> socket,
-  std::shared_ptr<Authenticator> auth, const std::string& plain_http_response)
+  const std::string& plain_http_response)
     : SocketSession(_service, config),
       status(HANDSHAKE),
       in_socket(std::move(socket)),
       out_socket(_service->get_io_context()),
       udp_socket(_service->get_io_context()),
       udp_resolver(_service->get_io_context()),
-      auth(std::move(auth)),
       plain_http_response(plain_http_response),
       has_queried_out(false) {
 
@@ -287,15 +285,7 @@ void ServerSession::in_recv(const std::string_view& data, size_t ack_count) {
         if (!use_alpn) {
             auto password_iterator = get_config().get_password().find(req.password);
             if (password_iterator == get_config().get_password().end()) {
-                if (auth && auth->auth(req.password)) {
-                    auth_password = req.password;
-                    _log_with_endpoint(get_in_endpoint(),
-                      "session_id: " + std::to_string(get_session_id()) + " authenticated by authenticator (" +
-                        req.password.substr(0, 7) + ')',
-                      Log::INFO);
-                } else {
-                    use_alpn = true;
-                }
+                use_alpn = true;
             } else {
                 _log_with_endpoint(get_in_endpoint(),
                   "session_id: " + std::to_string(get_session_id()) + " authenticated as " + password_iterator->second,
@@ -553,9 +543,6 @@ void ServerSession::destroy(bool pipeline_call /*= false*/) {
         " disconnected, " + get_stat().to_string(),
       Log::INFO);
 
-    if (auth && !auth_password.empty()) {
-        auth->record(auth_password, get_stat().get_recv_len(), get_stat().get_sent_len());
-    }
     boost::system::error_code ec;
     get_resolver().cancel();
     udp_resolver.cancel();
