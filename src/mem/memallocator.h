@@ -348,29 +348,54 @@ using streambuf = boost::asio::basic_streambuf<tp::tp_std_allocator<char>>;
 using string = std::basic_string<char, std::char_traits<char>, tp_std_allocator<char>>;
 using wstring = std::basic_string<wchar_t, std::char_traits<wchar_t>, tp_std_allocator<wchar_t>>;
 
+inline string to_string(double value);
+
 template <typename T>
 string to_string(T value) {
-    if constexpr (std::is_same_v<T, bool>) {
+    using U = std::decay_t<T>;
+
+    if constexpr (std::is_same_v<U, bool>) {
         return value ? string("true") : string("false");
-    } else if constexpr (std::is_enum_v<T>) {
-        return to_string(static_cast<std::underlying_type_t<T>>(value));
-    } else {
+    } 
+    else if constexpr (std::is_enum_v<U>) {
+        return tp::to_string(static_cast<std::underlying_type_t<U>>(value));
+    } 
+    else if constexpr (std::is_floating_point_v<U>) {
+        return tp::to_string(static_cast<double>(value));
+    }
+    else if constexpr (std::is_integral_v<U>) {
+#if defined(__APPLE__) && defined(__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__) && __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 101500
+        char buf[32];
+        int len = snprintf(buf, sizeof(buf), std::is_signed_v<U> ? "%lld" : "%llu", 
+                           (std::is_signed_v<U> ? (long long)value : (unsigned long long)value));
+        return (len > 0) ? string(buf, len) : string();
+#else
         char buf[24]; 
         auto [ptr, ec] = std::to_chars(buf, buf + sizeof(buf), value);
         if (ec == std::errc{}) {
             return string(buf, static_cast<std::size_t>(ptr - buf));
         }
-        return string("", 0);
+        return string();
+#endif
+    }
+    else {
+        return string();
     }
 }
 
 inline string to_string(double value) {
+#if defined(__APPLE__) && defined(__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__) && __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 130300
+    char buf[64];
+    int len = snprintf(buf, sizeof(buf), "%g", value);
+    return (len > 0) ? string(buf, len) : string();
+#else
     char buf[64]; 
     auto [ptr, ec] = std::to_chars(buf, buf + sizeof(buf), value);
     if (ec == std::errc{}) {
         return string(buf, static_cast<std::size_t>(ptr - buf));
     }
-    return string("", 0);
+    return string();
+#endif
 }
 
 template <typename T>
