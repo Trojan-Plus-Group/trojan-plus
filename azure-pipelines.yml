@@ -65,7 +65,7 @@ stages:
         ./b2 --with-system --with-program_options variant=release link=static threading=multi runtime-link=shared address-model=64
         cd ..
 
-        cmake -DBoost_INCLUDE_DIR="$(pwd)/boost_${BOOST_VERSION}" -DBoost_USE_STATIC_LIBS=ON -DOPENSSL_ROOT_DIR='C:/Program Files/OpenSSL-Win64' -DOPENSSL_USE_STATIC_LIBS=ON -DENABLE_MIMALLOC=ON .
+        cmake -DBOOST_ROOT="$(pwd)/boost_${BOOST_VERSION}" -DBoost_NO_BOOST_CMAKE=ON -DBoost_USE_STATIC_LIBS=ON -DOPENSSL_ROOT_DIR='C:/Program Files/OpenSSL-Win64' -DOPENSSL_USE_STATIC_LIBS=ON -DENABLE_MIMALLOC=ON .
         cmake --build . --config Release
     - publish: $(System.DefaultWorkingDirectory)/Release/trojan.exe
       artifact: WindowsBinary
