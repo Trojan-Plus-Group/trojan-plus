@@ -29,7 +29,7 @@
 #include <memory>
 #include <string>
 #include <vector>
-
+#include "mem/memallocator.h"
 #include "core/utils.h"
 #include "proto/dns_header.h"
 
@@ -39,7 +39,7 @@ class Service;
 class DNSServer : public std::enable_shared_from_this<DNSServer> {
   public:
     using DataQueryHandler =
-      std::function<void(const boost::asio::ip::udp::endpoint& src, boost::asio::streambuf& data)>;
+      std::function<void(const boost::asio::ip::udp::endpoint& src, tp::streambuf& data)>;
     class IDataQueryer : public std::enable_shared_from_this<IDataQueryer> {
       public:
         virtual ~IDataQueryer(){};
@@ -52,27 +52,27 @@ class DNSServer : public std::enable_shared_from_this<DNSServer> {
     enum { DEFAULT_UP_STREAM_NS_SVR_PORT = 53 };
 
     class DNSCache {
-        std::string domain;
+        tp::string domain;
         int ttl;
-        std::vector<uint32_t> ips;
+        tp::vector<uint32_t> ips;
         bool proxyed;
         time_t cached_time{time(nullptr)};
-        std::string answer_data;
+        tp::string answer_data;
 
       public:
         DNSCache(
-          std::string _domain, int _ttl, std::vector<uint32_t>& _ips, bool _proxyed, const std::string_view& data)
+          tp::string _domain, int _ttl, tp::vector<uint32_t>& _ips, bool _proxyed, const std::string_view& data)
             : domain(std::move(_domain)), ttl(_ttl), ips(std::move(_ips)), proxyed(_proxyed), answer_data(data) {}
 
         [[nodiscard]] inline bool expired(time_t curr) const { return int(curr - cached_time) >= ttl; }
 
-        _define_getter_const(const std::string&, domain);
+        _define_getter_const(const tp::string&, domain);
         _define_getter_const(int, ttl);
-        _define_getter_const(const std::vector<uint32_t>&, ips);
+        _define_getter_const(const tp::vector<uint32_t>&, ips);
         _define_getter_const(time_t, cached_time);
         _define_is_const(proxyed);
 
-        _define_getter(std::string&, answer_data);
+        _define_getter(tp::string&, answer_data);
     };
 
     class SocketQueryer : public IDataQueryer {
@@ -93,13 +93,13 @@ class DNSServer : public std::enable_shared_from_this<DNSServer> {
     };
 
     Service* m_service;
-    std::vector<DNSCache> m_dns_cache;
+    tp::vector<DNSCache> m_dns_cache;
 
     std::shared_ptr<IDataQueryer> m_data_queryer;
     boost::asio::ip::udp::endpoint m_udp_recv_endpoint;
 
-    std::list<std::weak_ptr<UDPForwardSession>> m_proxy_forwarders;
-    std::list<std::weak_ptr<UDPLocalForwarder>> m_forwarders;
+    tp::list<std::weak_ptr<UDPForwardSession>> m_proxy_forwarders;
+    tp::list<std::weak_ptr<UDPLocalForwarder>> m_forwarders;
 
     void in_recved(std::istream& is, const trojan::dns_header& header, const std::string_view& former_data);
     void async_read_udp();
@@ -113,7 +113,7 @@ class DNSServer : public std::enable_shared_from_this<DNSServer> {
     [[nodiscard]] bool try_to_find_existed(
       const boost::asio::ip::udp::endpoint& local_src, const std::string_view& data);
 
-    [[nodiscard]] bool is_remote_domain(const std::string& domain) const;
+    [[nodiscard]] bool is_remote_domain(const tp::string& domain) const;
 
     [[nodiscard]] static bool is_interest_dns_msg(const trojan::dns_header& hdr);
 

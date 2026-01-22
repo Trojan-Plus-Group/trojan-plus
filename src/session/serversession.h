@@ -22,6 +22,7 @@
 
 #ifndef _SERVERSESSION_H_
 #define _SERVERSESSION_H_
+#include "mem/memallocator.h"
 
 #include <boost/asio/ssl.hpp>
 #include <string_view>
@@ -45,13 +46,13 @@ class ServerSession : public SocketSession {
     boost::asio::ip::udp::socket udp_socket;
     boost::asio::ip::udp::endpoint out_udp_endpoint;
 
-    boost::asio::streambuf out_write_buf;
-    boost::asio::streambuf udp_data_buf;
+    tp::streambuf out_write_buf;
+    tp::streambuf udp_data_buf;
 
     boost::asio::ip::udp::resolver udp_resolver;
     boost::asio::ip::udp::endpoint udp_associate_endpoint;
 
-    const std::string& plain_http_response;
+    const tp::string& plain_http_response;
 
     using PipelineSessionRef = std::weak_ptr<Session>;
     PipelineSessionRef pipeline_session;
@@ -73,10 +74,10 @@ class ServerSession : public SocketSession {
 
   public:
     ServerSession(Service* _service, const Config& config, boost::asio::ssl::context& ssl_context,
-      const std::string& plain_http_response);
+      const tp::string& plain_http_response);
 
     ServerSession(Service* _service, const Config& config, std::shared_ptr<SSLSocket> socket,
-      const std::string& plain_http_response);
+      const tp::string& plain_http_response);
 
     boost::asio::ip::tcp::socket& accept_socket() override;
     void start() override;

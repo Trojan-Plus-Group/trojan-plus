@@ -1,4 +1,3 @@
-#include "mem/memallocator.h"
 /*
  * This file is part of the Trojan Plus project.
  * Trojan is an unidentifiable mechanism that helps you bypass GFW.
@@ -30,6 +29,7 @@
 
 #include "core/service.h"
 #include "core/version.h"
+#include "mem/memallocator.h"
 
 using namespace boost::asio;
 namespace po = boost::program_options;
@@ -43,7 +43,7 @@ void signal_async_wait(signal_set& sig, Service& service, bool& restart) {
         if (error) {
             return;
         }
-        _log_with_date_time("got signal: " + std::to_string(signum), Log::WARN);
+        _log_with_date_time("got signal: " + tp::to_string(signum), Log::WARN);
         switch (signum) {
             case SIGINT:
             case SIGTERM:
@@ -74,16 +74,16 @@ static std::shared_ptr<Service> g_service;
 int main(int argc, const char* argv[]) {
     try {
         Log::log("Trojan Plus v" + Version::get_version() + " starts.", Log::FATAL);
-        std::string config_file;
-        std::string log_file;
-        std::string keylog_file;
+        tp::string config_file;
+        tp::string log_file;
+        tp::string keylog_file;
         bool test;
         po::options_description desc("options");
         desc.add_options()("config,c",
-          po::value<std::string>(&config_file)->default_value(DEFAULT_CONFIG)->value_name("CONFIG"),
+          po::value<tp::string>(&config_file)->default_value(DEFAULT_CONFIG)->value_name("CONFIG"),
           "specify config file")("help,h", "print help message")("keylog,k",
-          po::value<std::string>(&keylog_file)->value_name("KEYLOG"), "specify keylog file location (OpenSSL >= 1.1.1)")(
-          "log,l", po::value<std::string>(&log_file)->value_name("LOG"), "specify log file location")(
+          po::value<tp::string>(&keylog_file)->value_name("KEYLOG"), "specify keylog file location (OpenSSL >= 1.1.1)")(
+          "log,l", po::value<tp::string>(&log_file)->value_name("LOG"), "specify log file location")(
           "test,t", po::bool_switch(&test), "test config file")("version,v", "print version and build info");
         po::positional_options_description pd;
         pd.add("config", 1);
@@ -91,12 +91,12 @@ int main(int argc, const char* argv[]) {
         po::store(po::command_line_parser(argc, argv).options(desc).positional(pd).run(), vm);
         po::notify(vm);
         if (vm.count("help")) {
-            Log::log(std::string("usage: ") + argv[0] + " [-htv] [-l LOG] [-k KEYLOG] [[-c] CONFIG]", Log::FATAL);
+            Log::log(tp::string("usage: ") + argv[0] + " [-htv] [-l LOG] [-k KEYLOG] [[-c] CONFIG]", Log::FATAL);
             std::cerr << desc;
             exit(EXIT_SUCCESS);
         }
         if (vm.count("version")) {
-            Log::log(std::string("Boost ") + BOOST_LIB_VERSION + ", " + OpenSSL_version(OPENSSL_VERSION), Log::FATAL);
+            Log::log(tp::string("Boost ") + BOOST_LIB_VERSION + ", " + OpenSSL_version(OPENSSL_VERSION), Log::FATAL);
 #ifdef TCP_FASTOPEN
             Log::log(" [Enabled] TCP_FASTOPEN Support", Log::FATAL);
 #else  // TCP_FASTOPEN
@@ -129,9 +129,9 @@ int main(int argc, const char* argv[]) {
 #endif // ENABLE_REUSE_PORT
             Log::log("OpenSSL Information", Log::FATAL);
             if (OpenSSL_version_num() != OPENSSL_VERSION_NUMBER) {
-                Log::log(std::string("\tCompile-time Version: ") + OPENSSL_VERSION_TEXT, Log::FATAL);
+                Log::log(tp::string("\tCompile-time Version: ") + OPENSSL_VERSION_TEXT, Log::FATAL);
             }
-            Log::log(std::string("\tBuild Flags: ") + OpenSSL_version(OPENSSL_CFLAGS), Log::FATAL);
+            Log::log(tp::string("\tBuild Flags: ") + OpenSSL_version(OPENSSL_CFLAGS), Log::FATAL);
             exit(EXIT_SUCCESS);
         }
         if (vm.count("log")) {
@@ -179,7 +179,7 @@ int main(int argc, const char* argv[]) {
 #endif
 
     } catch (const std::exception& e) {
-        _log_with_date_time(std::string("fatal: ") + e.what(), Log::FATAL);
+        _log_with_date_time(tp::string("fatal: ") + e.what(), Log::FATAL);
         _log_with_date_time("exiting. . . ", Log::FATAL);
 
 #ifndef __ANDROID__

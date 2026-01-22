@@ -21,6 +21,7 @@
 
 #include "tunsession.h"
 #include "core/service.h"
+#include "mem/memallocator.h"
 
 using namespace boost::asio::ip;
 TUNSession::TUNSession(Service* _service, bool _is_udp) : Session(_service, _service->get_config()) {

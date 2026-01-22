@@ -21,7 +21,8 @@
  */
 
 #include "version.h"
+#include "mem/memallocator.h"
 
-const std::string Version::version("10.0.4");
+const tp::string Version::version("10.0.4");
 
-std::string Version::get_version() { return version; }
+tp::string Version::get_version() { return version; }

@@ -36,7 +36,7 @@ TUNLocalSession::TUNLocalSession(Service* _service, bool is_udp)
 
     if (!is_udp) {
         m_sending_data_cache.set_is_connected_func([this]() { return !m_destroyed && m_connected; });
-        m_sending_data_cache.set_async_writer([this](const boost::asio::streambuf& data, SentHandler&& handler) {
+        m_sending_data_cache.set_async_writer([this](const tp::streambuf& data, SentHandler&& handler) {
             auto self = shared_from_this();
             boost::asio::async_write(
               m_tcp_socket, data.data(), [this, self, handler](const boost::system::error_code error, size_t length) {
@@ -93,7 +93,7 @@ void TUNLocalSession::start() {
         auto remote_addr =
           get_config().get_tun().redirect_local ? LOCALHOST_IP_ADDRESS : m_remote_addr.address().to_string();
         auto self = shared_from_this();
-        connect_out_socket(this, remote_addr, std::to_string(m_remote_addr.port()), m_resolver, m_tcp_socket,
+        connect_out_socket(this, remote_addr.c_str(), tp::to_string(m_remote_addr.port()), m_resolver, m_tcp_socket,
           m_local_addr_udp, [this, self]() {
               _guard;
 
@@ -196,7 +196,7 @@ void TUNLocalSession::out_async_send_impl(const std::string_view& data_to_send, 
         }
     } else {
         m_sending_data_cache.push_data(
-          [&](boost::asio::streambuf& buf) { streambuf_append(buf, data_to_send); }, std::move(_handler));
+          [&](tp::streambuf& buf) { streambuf_append(buf, data_to_send); }, std::move(_handler));
     }
 
     _unguard;

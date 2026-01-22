@@ -1,4 +1,4 @@
-﻿/*
+/*
  * This file is part of the Trojan Plus project.
  * Trojan is an unidentifiable mechanism that helps you bypass GFW.
  * Trojan Plus is derived from original trojan project and writing
@@ -30,6 +30,7 @@
 #include <cstdint>
 #include <map>
 #include <vector>
+#include "mem/memallocator.h"
 
 class Config {
 
@@ -57,22 +58,22 @@ class Config {
     using SSLConfig = struct {
         bool verify;
         bool verify_hostname;
-        std::string cert;
-        std::string key;
-        std::string key_password;
-        std::string cipher;
-        std::string cipher_tls13;
+        tp::string cert;
+        tp::string key;
+        tp::string key_password;
+        tp::string cipher;
+        tp::string cipher_tls13;
         bool prefer_server_cipher;
-        std::string sni;
-        std::string alpn;
-        std::map<std::string, uint16_t> alpn_port_override;
+        tp::string sni;
+        tp::string alpn;
+        tp::map<tp::string, uint16_t> alpn_port_override;
         bool reuse_session;
         bool session_ticket;
         long session_timeout;
         int ssl_shutdown_wait_time;
-        std::string plain_http_response;
-        std::string curves;
-        std::string dhparam;
+        tp::string plain_http_response;
+        tp::string curves;
+        tp::string dhparam;
     };
     using TCPConfig = struct {
         bool prefer_ipv4;
@@ -89,16 +90,16 @@ class Config {
         uint32_t pipeline_num;
         uint32_t pipeline_timeout;
         uint32_t pipeline_ack_window;
-        std::vector<std::string> pipeline_loadbalance_configs;
-        std::vector<std::shared_ptr<Config>> _pipeline_loadbalance_configs;
-        std::vector<std::shared_ptr<boost::asio::ssl::context>> _pipeline_loadbalance_context;
+        tp::vector<tp::string> pipeline_loadbalance_configs;
+        tp::vector<std::shared_ptr<Config>> _pipeline_loadbalance_configs;
+        tp::vector<std::shared_ptr<boost::asio::ssl::context>> _pipeline_loadbalance_context;
         bool pipeline_proxy_icmp;
     };
 
     using TUN = struct {
-        std::string tun_name;
-        std::string net_ip;
-        std::string net_mask;
+        tp::string tun_name;
+        tp::string net_ip;
+        tp::string net_mask;
         uint16_t mtu;
         int tun_fd;
         bool redirect_local; // redirect all ip to localhost for test
@@ -110,37 +111,37 @@ class Config {
         int udp_timeout;
         int udp_recv_buf;
         int udp_socket_buf;
-        std::string gfwlist;
+        tp::string gfwlist;
         bool enable_cached;
         bool enable_ping_test;
         DomainMatcher _gfwlist_matcher;
-        std::vector<std::string> up_dns_server;
-        std::vector<std::string> up_gfw_dns_server;
+        tp::vector<tp::string> up_dns_server;
+        tp::vector<tp::string> up_gfw_dns_server;
     };
 
     using ROUTE = struct {
         bool enabled;
         RouteType proxy_type;
 
-        std::string cn_mainland_ips_file;
+        tp::string cn_mainland_ips_file;
         IPv4Matcher _cn_mainland_ips_matcher;
 
-        std::string white_ips;
+        tp::string white_ips;
         IPv4Matcher _white_ips_matcher;
 
-        std::string proxy_ips;
+        tp::string proxy_ips;
         IPv4Matcher _proxy_ips_matcher;
     };
 
   private:
     RunType run_type;
-    std::string local_addr;
+    tp::string local_addr;
     uint16_t local_port;
-    std::string remote_addr;
+    tp::string remote_addr;
     uint16_t remote_port;
-    std::string target_addr;
+    tp::string target_addr;
     uint16_t target_port;
-    std::map<std::string, std::string> password;
+    tp::map<tp::string, tp::string> password;
     int udp_timeout;
     int udp_socket_buf;
     int udp_forward_socket_buf;
@@ -156,28 +157,28 @@ class Config {
     int compare_hash = 0;
 
     void populate(const boost::property_tree::ptree& tree);
-    void populate(const std::string& JSON);
+    void populate(const tp::string& JSON);
 
     void load_dns(const boost::property_tree::ptree& tree);
 
-    static std::string SHA224(const std::string& message);
+    static tp::string SHA224(const tp::string& message);
 
   public:
     [[nodiscard]] bool sip003();
-    void load(const std::string& filename);
-    void prepare_ssl_context(boost::asio::ssl::context& ssl_context, std::string& plain_http_response);
+    void load(const tp::string& filename);
+    void prepare_ssl_context(boost::asio::ssl::context& ssl_context, tp::string& plain_http_response);
     void prepare_ssl_reuse(SSLSocket& socket) const;
     [[nodiscard]] bool operator==(const Config& other) const { return compare_hash == other.compare_hash; }
     [[nodiscard]] bool try_prepare_pipeline_proxy_icmp(bool is_ipv4);
 
     _define_getter_const(RunType, run_type);
-    _define_getter_const(const std::string&, local_addr);
+    _define_getter_const(const tp::string&, local_addr);
     _define_getter_const(uint16_t, local_port);
-    _define_getter_const(const std::string&, remote_addr);
+    _define_getter_const(const tp::string&, remote_addr);
     _define_getter_const(uint16_t, remote_port);
-    _define_getter_const(const std::string&, target_addr);
+    _define_getter_const(const tp::string&, target_addr);
     _define_getter_const(uint16_t, target_port);
-    [[nodiscard]] const std::map<std::string, std::string>& get_password() const { return password; }
+    [[nodiscard]] const tp::map<tp::string, tp::string>& get_password() const { return password; }
     _define_getter_const(int, udp_timeout);
     _define_getter_const(int, udp_socket_buf);
     _define_getter_const(int, udp_forward_socket_buf);

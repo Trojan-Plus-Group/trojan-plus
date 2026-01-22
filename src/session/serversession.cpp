@@ -1,4 +1,3 @@
-#include "mem/memallocator.h"
 /*
  * This file is part of the Trojan Plus project.
  * Trojan is an unidentifiable mechanism that helps you bypass GFW.
@@ -27,12 +26,13 @@
 #include "core/utils.h"
 #include "proto/trojanrequest.h"
 #include "proto/udppacket.h"
+#include "mem/memallocator.h"
 
 using namespace boost::asio::ip;
 using namespace boost::asio::ssl;
 
 ServerSession::ServerSession(Service* _service, const Config& config, boost::asio::ssl::context& ssl_context,
-  const std::string& plain_http_response)
+  const tp::string& plain_http_response)
     : SocketSession(_service, config),
       status(HANDSHAKE),
       out_socket(_service->get_io_context()),
@@ -46,7 +46,7 @@ ServerSession::ServerSession(Service* _service, const Config& config, boost::asi
 }
 
 ServerSession::ServerSession(Service* _service, const Config& config, std::shared_ptr<SSLSocket> socket,
-  const std::string& plain_http_response)
+  const tp::string& plain_http_response)
     : SocketSession(_service, config),
       status(HANDSHAKE),
       in_socket(std::move(socket)),
@@ -80,7 +80,7 @@ void ServerSession::start() {
         auto self = shared_from_this();
         in_socket->async_handshake(stream_base::server, [this, self](const boost::system::error_code error) {
             if (error) {
-                _log_with_endpoint(get_in_endpoint(), "SSL handshake failed: " + error.message(), Log::ERROR);
+                _log_with_endpoint(get_in_endpoint(), tp::string("SSL handshake failed: ") + error.message().c_str(), Log::ERROR);
                 if (error.message() == "http request" && plain_http_response.empty()) {
                     get_stat().inc_recv_len(plain_http_response.length());
                     boost::asio::async_write(accept_socket(), boost::asio::buffer(plain_http_response),
@@ -124,8 +124,8 @@ void ServerSession::in_async_read() {
 }
 
 void ServerSession::in_async_write(const std::string_view& data) {
-    _log_with_date_time_DEBUG("ServerSession::in_async_write session_id: " + std::to_string(get_session_id()) +
-                              " length: " + std::to_string(data.length()) + " checksum: " + std::to_string(get_checksum(data)));
+    _log_with_date_time_DEBUG("ServerSession::in_async_write session_id: " + tp::to_string(get_session_id()) +
+                              " length: " + tp::to_string(data.length()) + " checksum: " + tp::to_string(get_checksum(data)));
     _write_data_to_file_DEBUG(get_session_id(), "ServerSession_in_async_write", data);
     auto self = shared_from_this();
     if (get_pipeline_component().is_using_pipeline()) {
@@ -161,13 +161,13 @@ void ServerSession::in_async_write(const std::string_view& data) {
 void ServerSession::out_async_read() {
     if (get_pipeline_component().is_using_pipeline()) {
         if (!get_pipeline_component().pre_call_ack_func()) {
-            _log_with_endpoint_DEBUG(get_in_endpoint(), "session_id: " + std::to_string(get_session_id()) +
+            _log_with_endpoint_DEBUG(get_in_endpoint(), "session_id: " + tp::to_string(get_session_id()) +
                                                           " cannot ServerSession::out_async_read ! Is waiting for ack");
             return;
         }
-        _log_with_endpoint_DEBUG(get_in_endpoint(), "session_id: " + std::to_string(get_session_id()) +
+        _log_with_endpoint_DEBUG(get_in_endpoint(), "session_id: " + tp::to_string(get_session_id()) +
                                                       " permit to ServerSession::out_async_read aysnc! ack:" +
-                                                      std::to_string(get_pipeline_component().pipeline_ack_counter));
+                                                      tp::to_string(get_pipeline_component().pipeline_ack_counter));
     }
 
     out_read_buf.begin_read(__FILE__, __LINE__);
@@ -187,8 +187,8 @@ void ServerSession::out_async_read() {
 }
 
 void ServerSession::out_async_write(const std::string_view& data, size_t ack_count) {
-    _log_with_date_time_DEBUG("ServerSession::out_async_write session_id: " + std::to_string(get_session_id()) +
-                              " length: " + std::to_string(data.length()) + " checksum: " + std::to_string(get_checksum(data)));
+    _log_with_date_time_DEBUG("ServerSession::out_async_write session_id: " + tp::to_string(get_session_id()) +
+                              " length: " + tp::to_string(data.length()) + " checksum: " + tp::to_string(get_checksum(data)));
     _write_data_to_file_DEBUG(get_session_id(), "ServerSession_out_async_write", data);
 
     if (get_pipeline_component().is_using_pipeline() && !pipeline_session.expired()) {
@@ -268,8 +268,8 @@ void ServerSession::out_udp_async_write(const std::string_view& data, const udp:
 }
 
 void ServerSession::in_recv(const std::string_view& data, size_t ack_count) {
-    _log_with_date_time_DEBUG("ServerSession::in_recv session_id: " + std::to_string(get_session_id()) +
-                              " length: " + std::to_string(data.length()) + " checksum: " + std::to_string(get_checksum(data)));
+    _log_with_date_time_DEBUG("ServerSession::in_recv session_id: " + tp::to_string(get_session_id()) +
+                              " length: " + tp::to_string(data.length()) + " checksum: " + tp::to_string(get_checksum(data)));
     _write_data_to_file_DEBUG(get_session_id(), "ServerSession_in_recv", data);
     if (status == HANDSHAKE) {
 
@@ -288,13 +288,13 @@ void ServerSession::in_recv(const std::string_view& data, size_t ack_count) {
                 use_alpn = true;
             } else {
                 _log_with_endpoint(get_in_endpoint(),
-                  "session_id: " + std::to_string(get_session_id()) + " authenticated as " + password_iterator->second,
+                  "session_id: " + tp::to_string(get_session_id()) + " authenticated as " + password_iterator->second,
                   Log::INFO);
             }
         }
 
-        std::string query_addr = use_alpn ? get_config().get_remote_addr() : req.address.address;
-        std::string query_port = std::to_string([&]() {
+        tp::string query_addr = use_alpn ? get_config().get_remote_addr() : req.address.address;
+        tp::string query_port = tp::to_string([&]() {
             if (!use_alpn) {
                 return req.address.port;
             }
@@ -304,7 +304,7 @@ void ServerSession::in_recv(const std::string_view& data, size_t ack_count) {
             if (alpn_out == nullptr) {
                 return get_config().get_remote_port();
             }
-            auto it = get_config().get_ssl().alpn_port_override.find(std::string((const char*)alpn_out, (size_t)alpn_len));
+            auto it = get_config().get_ssl().alpn_port_override.find(tp::string((const char*)alpn_out, (size_t)alpn_len));
             return it == get_config().get_ssl().alpn_port_override.end() ? get_config().get_remote_port() : it->second;
         }());
 
@@ -317,16 +317,16 @@ void ServerSession::in_recv(const std::string_view& data, size_t ack_count) {
                 udp_associate_endpoint = make_udp_endpoint_safe(req.address.address, req.address.port, ec);
                 if (ec) {
                     _log_with_endpoint(udp_associate_endpoint,
-                      "session_id: " + std::to_string(get_session_id()) + " cannot make address for UDP associate to " +
-                        req.address.address + ':' + std::to_string(req.address.port),
+                      "session_id: " + tp::to_string(get_session_id()) + " cannot make address for UDP associate to " +
+                        req.address.address + ':' + tp::to_string(req.address.port),
                       Log::ERROR);
                     destroy();
                     return;
                 }
 
                 _log_with_endpoint(udp_associate_endpoint,
-                  "session_id: " + std::to_string(get_session_id()) + " requested UDP associate to " + req.address.address +
-                    ':' + std::to_string(req.address.port) + " payload length: " + std::to_string(req.payload.length()),
+                  "session_id: " + tp::to_string(get_session_id()) + " requested UDP associate to " + req.address.address +
+                    ':' + tp::to_string(req.address.port) + " payload length: " + tp::to_string(req.payload.length()),
                   Log::INFO);
 
                 status = UDP_FORWARD;
@@ -337,8 +337,8 @@ void ServerSession::in_recv(const std::string_view& data, size_t ack_count) {
             }
 
             _log_with_endpoint(get_in_endpoint(),
-              "session_id: " + std::to_string(get_session_id()) + " requested connection to " + req.address.address + ':' +
-                std::to_string(req.address.port),
+              "session_id: " + tp::to_string(get_session_id()) + " requested connection to " + req.address.address + ':' +
+                tp::to_string(req.address.port),
               Log::INFO);
 
             streambuf_append(out_write_buf, req.payload);
@@ -379,8 +379,8 @@ void ServerSession::in_sent() {
 }
 
 void ServerSession::out_recv(const std::string_view& data) {
-    _log_with_date_time_DEBUG("ServerSession::out_recv session_id: " + std::to_string(get_session_id()) +
-                              " length: " + std::to_string(data.length()) + " checksum: " + std::to_string(get_checksum(data)));
+    _log_with_date_time_DEBUG("ServerSession::out_recv session_id: " + tp::to_string(get_session_id()) +
+                              " length: " + tp::to_string(data.length()) + " checksum: " + tp::to_string(get_checksum(data)));
     _write_data_to_file_DEBUG(get_session_id(), "ServerSession_out_recv", data);
     if (status == FORWARD) {
         get_stat().inc_recv_len(data.length());
@@ -399,8 +399,8 @@ void ServerSession::out_udp_recv(const std::string_view& data, const udp::endpoi
         udp_timer_async_wait();
         size_t length = data.length();
         _log_with_endpoint(udp_associate_endpoint,
-          "session_id: " + std::to_string(get_session_id()) + " received a UDP packet of length " + std::to_string(length) +
-            " bytes from " + endpoint.address().to_string() + ':' + std::to_string(endpoint.port()));
+          "session_id: " + tp::to_string(get_session_id()) + " received a UDP packet of length " + tp::to_string(length) +
+            " bytes from " + endpoint.address().to_string() + ':' + tp::to_string(endpoint.port()));
         get_stat().inc_recv_len(length);
         out_write_buf.consume(out_write_buf.size());
         in_async_write(streambuf_to_string_view(UDPPacket::generate(out_write_buf, endpoint, data)));
@@ -421,7 +421,7 @@ void ServerSession::out_udp_sent() {
         if (!is_packet_valid) {
             if (udp_data_buf.size() > MAX_BUF_LENGTH) {
                 _log_with_endpoint(udp_associate_endpoint,
-                  "session_id: " + std::to_string(get_session_id()) + " UDP packet too long", Log::ERROR);
+                  "session_id: " + tp::to_string(get_session_id()) + " UDP packet too long", Log::ERROR);
                 destroy();
                 return;
             }
@@ -448,19 +448,19 @@ void ServerSession::out_udp_sent() {
                 }
 
                 _log_with_endpoint(udp_associate_endpoint,
-                  "session_id: " + std::to_string(get_session_id()) + " open UDP socket " +
+                  "session_id: " + tp::to_string(get_session_id()) + " open UDP socket " +
                     udp_socket.local_endpoint().address().to_string() + ':' +
-                    std::to_string(udp_socket.local_endpoint().port()) + " for relay",
+                    tp::to_string(udp_socket.local_endpoint().port()) + " for relay",
                   Log::INFO);
 
                 out_udp_async_read();
             }
 
             get_stat().inc_sent_len(packet.length);
-            _log_with_endpoint(udp_associate_endpoint, "session_id: " + std::to_string(get_session_id()) +
-                                                         " sent a UDP packet of length " + std::to_string(packet.length) +
+            _log_with_endpoint(udp_associate_endpoint, "session_id: " + tp::to_string(get_session_id()) +
+                                                         " sent a UDP packet of length " + tp::to_string(packet.length) +
                                                          " bytes to " + packet.address.address + ':' +
-                                                         std::to_string(packet.address.port));
+                                                         tp::to_string(packet.address.port));
 
             out_udp_async_write(packet.payload, dst_endpoint);
 
@@ -477,17 +477,17 @@ void ServerSession::out_udp_sent() {
                 return;
             }
 
-            auto payload_tmp_buf = TP_MAKE_SHARED(std::string, packet.payload);
+            auto payload_tmp_buf = TP_MAKE_SHARED(tp::string, packet.payload);
             packet.payload       = *payload_tmp_buf;
 
             auto self = shared_from_this();
-            udp_resolver.async_resolve(packet.address.address, std::to_string(packet.address.port),
+            udp_resolver.async_resolve(packet.address.address, tp::to_string(packet.address.port),
               [this, self, cb, payload_tmp_buf, packet, packet_len](
                 const boost::system::error_code error, const udp::resolver::results_type& results) {
                   if (error || results.empty()) {
                       _log_with_endpoint(udp_associate_endpoint,
-                        "session_id: " + std::to_string(get_session_id()) + " cannot resolve remote server hostname " +
-                          packet.address.address + ": " + error.message(),
+                        tp::string("session_id: ") + tp::to_string(get_session_id()) + " cannot resolve remote server hostname " +
+                          packet.address.address + ": " + error.message().c_str(),
                         Log::ERROR);
                       destroy();
                       return;
@@ -508,7 +508,7 @@ void ServerSession::out_udp_sent() {
                     udp::endpoint(make_address(iterator->endpoint().address().to_string()), packet.address.port);
 
                   _log_with_endpoint(udp_associate_endpoint,
-                    "session_id: " + std::to_string(get_session_id()) + " " + packet.address.address + " is resolved to " +
+                    "session_id: " + tp::to_string(get_session_id()) + " " + packet.address.address + " is resolved to " +
                       dst_endpoint.address().to_string(),
                     Log::ALL);
 
@@ -520,8 +520,8 @@ void ServerSession::out_udp_sent() {
             auto dst_endpoint = make_udp_endpoint_safe(packet.address.address, packet.address.port, ec);
             if (ec) {
                 _log_with_endpoint(udp_associate_endpoint,
-                  "session_id: " + std::to_string(get_session_id()) + " cannot make address for UDP destination to " +
-                    packet.address.address + ':' + std::to_string(packet.address.port),
+                  "session_id: " + tp::to_string(get_session_id()) + " cannot make address for UDP destination to " +
+                    packet.address.address + ':' + tp::to_string(packet.address.port),
                   Log::ERROR);
                 destroy();
                 return;
@@ -539,7 +539,7 @@ void ServerSession::destroy(bool pipeline_call /*= false*/) {
     status = DESTROY;
 
     _log_with_endpoint(get_in_endpoint(),
-      (is_udp_forward_session() ? "[udp] session_id: " : "session_id: ") + std::to_string(get_session_id()) +
+      (is_udp_forward_session() ? "[udp] session_id: " : "session_id: ") + tp::to_string(get_session_id()) +
         " disconnected, " + get_stat().to_string(),
       Log::INFO);
 

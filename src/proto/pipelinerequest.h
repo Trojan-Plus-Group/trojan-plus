@@ -29,6 +29,7 @@
 
 #include "session/pipelinecomponent.h"
 #include "session/session.h"
+#include "mem/memallocator.h"
 
 class PipelineRequest {
   public:
@@ -69,7 +70,7 @@ class PipelineRequest {
         }
     }
 
-    static boost::asio::streambuf& generate(boost::asio::streambuf& buf, enum Command cmd,
+    static tp::streambuf& generate(tp::streambuf& buf, enum Command cmd,
       PipelineComponent::SessionIdType session_id, const std::string_view& data, size_t ack_count = 0);
 };
 

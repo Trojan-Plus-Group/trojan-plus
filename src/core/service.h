@@ -36,6 +36,7 @@
 #include "core/pipeline.h"
 #include "session/session.h"
 #include "session/udpforwardsession.h"
+#include "mem/memallocator.h"
 
 class TUNDev;
 class DNSServer;
@@ -43,14 +44,14 @@ class Pipeline;
 class icmpd;
 class Service {
   private:
-    using PipelineList = std::list<std::weak_ptr<Pipeline>>;
+    using PipelineList = tp::list<std::weak_ptr<Pipeline>>;
 
     boost::asio::io_context io_context;
     boost::asio::ip::tcp::acceptor socket_acceptor;
     boost::asio::ssl::context ssl_context;
-    std::string plain_http_response;
+    tp::string plain_http_response;
     boost::asio::ip::udp::socket udp_socket;
-    std::list<std::weak_ptr<UDPForwardSession>> udp_sessions;
+    tp::list<std::weak_ptr<UDPForwardSession>> udp_sessions;
     ReadBufWithGuard udp_read_buf;
     boost::asio::ip::udp::endpoint udp_recv_endpoint;
 

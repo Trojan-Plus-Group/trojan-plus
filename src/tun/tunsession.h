@@ -26,7 +26,7 @@
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/streambuf.hpp>
 #include <string>
-
+#include "mem/memallocator.h"
 #include "core/pipeline.h"
 #include "core/utils.h"
 #include "session/session.h"
@@ -57,10 +57,10 @@ class TUNSession : public Session {
     bool m_close_from_tundev_flag{false};
     bool m_connected{false};
 
-    boost::asio::streambuf m_send_buf;
+    tp::streambuf m_send_buf;
     WriteToLwipCallback m_write_to_lwip;
-    std::list<SentHandler> m_wait_ack_handler;
-    std::list<SentHandler> m_wait_connected_handler;
+    tp::list<SentHandler> m_wait_ack_handler;
+    tp::list<SentHandler> m_wait_connected_handler;
 
     [[nodiscard]] boost::asio::ip::udp::endpoint get_redirect_local_remote_addr(bool output_log = false) const;
 

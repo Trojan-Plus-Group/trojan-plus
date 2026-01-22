@@ -29,6 +29,7 @@
 #include <sstream>
 
 #include "core/utils.h"
+#include "mem/memallocator.h"
 
 namespace trojan {
 //
@@ -165,8 +166,8 @@ class dns_header {
         return os;
     }
 
-    static std::istream& read_label(std::istream& is, std::string& name);
-    static std::ostream& write_label(std::ostream& os, const std::string& name);
+    static std::istream& read_label(std::istream& is, tp::string& name);
+    static std::ostream& write_label(std::ostream& os, const tp::string& name);
 
     static void test_cases();
 };
@@ -192,12 +193,12 @@ class dns_question {
     };
 
   private:
-    std::string QNAME;
+    tp::string QNAME;
     uint16_t QTYPE;
     uint16_t QCLASS;
 
   public:
-    _define_simple_getter_setter(const std::string&, QNAME);
+    _define_simple_getter_setter(const tp::string&, QNAME);
     _define_simple_getter_setter(uint16_t, QTYPE);
     _define_simple_getter_setter(uint16_t, QCLASS);
 
@@ -291,33 +292,33 @@ class dns_answer {
     };
 
     using answer = struct {
-        std::string NAME;
+        tp::string NAME;
         uint16_t TYPE;
         uint16_t CLASS;
         uint32_t TTL;
-        std::string RD;
+        tp::string RD;
 
         uint32_t A;
         boost::asio::ip::address_v6::bytes_type AAAA;
 
-        std::string A_str;
-        std::string AAAA_str;
+        tp::string A_str;
+        tp::string AAAA_str;
     };
 
   private:
     dns_header header;
-    std::vector<dns_question> questions;
-    std::vector<answer> answers;
-    std::vector<answer> authorities;
-    std::vector<answer> additionals;
+    tp::vector<dns_question> questions;
+    tp::vector<answer> answers;
+    tp::vector<answer> authorities;
+    tp::vector<answer> additionals;
 
     static std::istream& read_answer(std::istream& is, answer& an);
 
   public:
-    _define_getter_const(const dns_header&, header) _define_getter_const(const std::vector<dns_question>&, questions);
-    _define_getter_const(const std::vector<answer>&, answers);
-    _define_getter_const(const std::vector<answer>&, authorities);
-    _define_getter_const(const std::vector<answer>&, additionals);
+    _define_getter_const(const dns_header&, header) _define_getter_const(const tp::vector<dns_question>&, questions);
+    _define_getter_const(const tp::vector<answer>&, answers);
+    _define_getter_const(const tp::vector<answer>&, authorities);
+    _define_getter_const(const tp::vector<answer>&, additionals);
 
     friend std::istream& operator>>(std::istream& is, dns_answer& answer);
     static void test_cases();

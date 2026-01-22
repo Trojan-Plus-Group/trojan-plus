@@ -22,13 +22,14 @@
 
 #ifndef _NATSESSION_H_
 #define _NATSESSION_H_
+#include "mem/memallocator.h"
 
 #include "clientsession.h"
 #include <boost/asio/ssl.hpp>
 
 class NATSession : public ClientSession {
   protected:
-    virtual std::pair<std::string, uint16_t> get_target_endpoint();
+    virtual std::pair<tp::string, uint16_t> get_target_endpoint();
     void in_recv(const std::string_view& data) override;
     void in_sent() override;
 

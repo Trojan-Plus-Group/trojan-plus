@@ -22,6 +22,7 @@
 
 #ifndef _FORWARDSESSION_H_
 #define _FORWARDSESSION_H_
+#include "mem/memallocator.h"
 
 #include "natsession.h"
 #include "session.h"
@@ -30,7 +31,7 @@
 class Service;
 class ForwardSession : public NATSession {
   protected:
-    std::pair<std::string, uint16_t> get_target_endpoint() override;
+    std::pair<tp::string, uint16_t> get_target_endpoint() override;
 
   public:
     ForwardSession(Service* _service, const Config& config, boost::asio::ssl::context& ssl_context);

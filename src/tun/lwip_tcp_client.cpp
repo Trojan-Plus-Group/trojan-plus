@@ -27,6 +27,7 @@
 #include <cstdarg>
 
 #include "core/log.h"
+#include "mem/memallocator.h"
 
 using namespace boost::asio::ip;
 

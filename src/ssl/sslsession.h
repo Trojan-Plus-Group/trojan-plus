@@ -19,13 +19,14 @@
 
 #ifndef _SSLSESSION_H_
 #define _SSLSESSION_H_
+#include "mem/memallocator.h"
 
 #include <list>
 #include <openssl/ssl.h>
 
 class SSLSession {
 private:
-    static std::list<SSL_SESSION*>sessions;
+    static tp::list<SSL_SESSION*>sessions;
     static int new_session_cb(SSL*, SSL_SESSION *session);
     static void remove_session_cb(SSL_CTX*, SSL_SESSION *session);
 public:

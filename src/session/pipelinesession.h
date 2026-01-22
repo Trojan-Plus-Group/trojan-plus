@@ -23,7 +23,7 @@
 #include <boost/asio/ssl.hpp>
 #include <list>
 #include <string_view>
-
+#include "mem/memallocator.h"
 #include "core/utils.h"
 #include "pipelinecomponent.h"
 #include "proto/pipelinerequest.h"
@@ -35,11 +35,11 @@ class icmpd;
 class Service;
 class ServerSession;
 class PipelineSession : public SocketSession {
-    using SessionsList = std::list<std::shared_ptr<ServerSession>>;
+    using SessionsList = tp::list<std::shared_ptr<ServerSession>>;
 
     enum Status { HANDSHAKE, STREAMING, DESTROY } status;
 
-    const std::string& plain_http_response;
+    const tp::string& plain_http_response;
 
     SessionsList sessions;
     std::shared_ptr<SSLSocket> live_socket;
@@ -65,7 +65,7 @@ class PipelineSession : public SocketSession {
 
   public:
     PipelineSession(Service* _service, const Config& config, boost::asio::ssl::context& ssl_context,
-      const std::string& plain_http_response);
+      const tp::string& plain_http_response);
 
     void destroy(bool pipeline_call = false) final;
 

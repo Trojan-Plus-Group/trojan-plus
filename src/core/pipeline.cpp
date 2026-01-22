@@ -1,4 +1,4 @@
-﻿/*
+/*
  * This file is part of the trojan plus project.
  * Trojan is an unidentifiable mechanism that helps you bypass GFW.
  * Copyright (C) 2017-2020  The Trojan Plust Group Authors.
@@ -24,6 +24,7 @@
 #include "proto/pipelinerequest.h"
 #include "session/clientsession.h"
 #include "tun/tunsession.h"
+#include "mem/memallocator.h"
 
 using namespace boost::asio::ip;
 
@@ -43,7 +44,7 @@ Pipeline::Pipeline(Service* _service, const Config& config, boost::asio::ssl::co
     pipeline_id = s_pipeline_id_counter++;
 
     sending_data_cache.set_is_connected_func([this]() { return is_connected() && !destroyed; });
-    sending_data_cache.set_async_writer([this](const boost::asio::streambuf& data, SentHandler&& handler) {
+    sending_data_cache.set_async_writer([this](const tp::streambuf& data, SentHandler&& handler) {
         auto self = shared_from_this();
         boost::asio::async_write(
           out_socket, data.data(), [this, self, handler](const boost::system::error_code error, size_t) {
@@ -93,7 +94,7 @@ void Pipeline::start_timeout_timer() {
                 return;
             }
 
-            _log_with_date_time("pipeline " + std::to_string(get_pipeline_id()) + " got timeout to be destroyed", Log::INFO);
+            _log_with_date_time("pipeline " + tp::to_string(get_pipeline_id()) + " got timeout to be destroyed", Log::INFO);
             timeout_timer_checker = 0;
             destroy();
         }
@@ -110,18 +111,18 @@ void Pipeline::start() {
     _guard;
 
     auto self = shared_from_this();
-    connect_remote_server_ssl(this, config.get_remote_addr(), std::to_string(config.get_remote_port()), resolver, out_socket,
+    connect_remote_server_ssl(this, config.get_remote_addr(), tp::to_string(config.get_remote_port()), resolver, out_socket,
       tcp::endpoint(), [this, self]() {
           _guard;
           connected           = true;
           out_socket_endpoint = out_socket.next_layer().remote_endpoint();
 
-          std::string data(config.get_password().cbegin()->first);
+          tp::string data(config.get_password().cbegin()->first);
           data += "\r\nPP";
           sending_data_cache.insert_data(std::move(data));
 
           _log_with_date_time(
-            "pipeline " + std::to_string(get_pipeline_id()) + " is going to connect remote server and send password...");
+            "pipeline " + tp::to_string(get_pipeline_id()) + " is going to connect remote server and send password...");
 
           start_timeout_timer();
           out_async_recv();
@@ -139,15 +140,15 @@ void Pipeline::session_async_send_cmd(PipelineRequest::Command cmd, Session& ses
         return;
     }
 
-    _log_with_date_time_ALL("pipeline " + std::to_string(get_pipeline_id()) +
-                            " session_id: " + std::to_string(session.get_session_id()) +
+    _log_with_date_time_ALL("pipeline " + tp::to_string(get_pipeline_id()) +
+                            " session_id: " + tp::to_string(session.get_session_id()) +
                             " --> send to server cmd: " + PipelineRequest::get_cmd_string(cmd) +
-                            (cmd == PipelineRequest::ACK ? (" ack count: " + std::to_string(ack_count))
-                                                         : (" data length:" + std::to_string(send_data.length()))) +
-                            " checksum: " + std::to_string(get_checksum(send_data)));
+                            (cmd == PipelineRequest::ACK ? (" ack count: " + tp::to_string(ack_count))
+                                                         : (" data length:" + tp::to_string(send_data.length()))) +
+                            " checksum: " + tp::to_string(get_checksum(send_data)));
 
     sending_data_cache.push_data(
-      [&](boost::asio::streambuf& buf) {
+      [&](tp::streambuf& buf) {
           PipelineRequest::generate(buf, cmd, session.get_session_id(), send_data, ack_count);
       },
       std::move(sent_handler));
@@ -164,11 +165,11 @@ void Pipeline::session_async_send_icmp(const std::string_view& send_data, SentHa
         return;
     }
 
-    _log_with_date_time_ALL("pipeline " + std::to_string(get_pipeline_id()) +
-                            " --> send to server cmd: ICMP data length:" + std::to_string(send_data.length()));
+    _log_with_date_time_ALL("pipeline " + tp::to_string(get_pipeline_id()) +
+                            " --> send to server cmd: ICMP data length:" + tp::to_string(send_data.length()));
 
     sending_data_cache.push_data(
-      [&](boost::asio::streambuf& buf) { PipelineRequest::generate(buf, PipelineRequest::ICMP, 0, send_data); },
+      [&](tp::streambuf& buf) { PipelineRequest::generate(buf, PipelineRequest::ICMP, 0, send_data); },
       std::move(sent_handler));
 
     refresh_timeout_checker();
@@ -192,8 +193,8 @@ void Pipeline::session_destroyed(Session& session) {
                 break;
             }
         }
-        _log_with_date_time_ALL("pipeline " + std::to_string(get_pipeline_id()) +
-                                " send command to close session_id: " + std::to_string(session.get_session_id()));
+        _log_with_date_time_ALL("pipeline " + tp::to_string(get_pipeline_id()) +
+                                " send command to close session_id: " + tp::to_string(session.get_session_id()));
         session_async_send_cmd(PipelineRequest::CLOSE, session, "", [](boost::system::error_code) {});
     }
     _unguard;
@@ -244,15 +245,15 @@ void Pipeline::out_async_recv() {
                   }
 
                   _log_with_date_time_ALL(
-                    "pipeline " + std::to_string(get_pipeline_id()) + " session_id: " + std::to_string(req.session_id) +
+                    "pipeline " + tp::to_string(get_pipeline_id()) + " session_id: " + tp::to_string(req.session_id) +
                     " <-- recv from server cmd: " + req.get_cmd_string() +
-                    (req.command == PipelineRequest::ACK ? (" ack count: " + std::to_string(req.ack_count))
-                                                         : (" data length: " + std::to_string(req.packet_data.length()))) +
-                    " checksum: " + std::to_string(get_checksum(req.packet_data)));
+                    (req.command == PipelineRequest::ACK ? (" ack count: " + tp::to_string(req.ack_count))
+                                                         : (" data length: " + tp::to_string(req.packet_data.length()))) +
+                    " checksum: " + tp::to_string(get_checksum(req.packet_data)));
 
                   if (req.command == PipelineRequest::ICMP) {
                       if (icmp_processor) {
-                          icmp_processor->client_out_send(std::string(req.packet_data));
+                          icmp_processor->client_out_send(tp::string(req.packet_data));
                       }
                   } else {
 
@@ -281,9 +282,9 @@ void Pipeline::out_async_recv() {
                       }
 
                       if (!found) {
-                          _log_with_date_time("pipeline " + std::to_string(get_pipeline_id()) +
-                                                " cannot find session_id:" + std::to_string(req.session_id) +
-                                                " current sessions:" + std::to_string(sessions.size()),
+                          _log_with_date_time("pipeline " + tp::to_string(get_pipeline_id()) +
+                                                " cannot find session_id:" + tp::to_string(req.session_id) +
+                                                " current sessions:" + tp::to_string(sessions.size()),
                             Log::ERROR);
                       }
                   }
@@ -307,8 +308,8 @@ void Pipeline::destroy() {
     }
     destroyed = true;
 
-    _log_with_date_time("pipeline " + std::to_string(get_pipeline_id()) + " destroyed. close all " +
-                          std::to_string(sessions.size()) + " sessions in this pipeline.",
+    _log_with_date_time("pipeline " + tp::to_string(get_pipeline_id()) + " destroyed. close all " +
+                          tp::to_string(sessions.size()) + " sessions in this pipeline.",
       Log::INFO);
 
     if(timeout_timer_checker != 0){

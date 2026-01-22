@@ -22,6 +22,7 @@
 #include "tun/udplocalforwarder.h"
 #include "core/service.h"
 #include "session/session.h"
+#include "mem/memallocator.h"
 
 using namespace boost::asio::ip;
 
@@ -67,7 +68,7 @@ void UDPLocalForwarder::start() {
     udp_timer_async_wait();
 
     _log_with_endpoint(m_local_src,
-      "UDP local forwarder to [" + m_remote_dst.address().to_string() + ":" + std::to_string(m_remote_dst.port()) +
+      "UDP local forwarder to [" + m_remote_dst.address().to_string() + ":" + tp::to_string(m_remote_dst.port()) +
         "] started",
       Log::INFO);
 
@@ -95,7 +96,7 @@ bool UDPLocalForwarder::write_to(const std::string_view& data) {
 
     if (m_is_dns) {
         _log_with_endpoint_ALL(m_local_src, "[dns] --> [" + m_remote_dst.address().to_string() + ":" +
-                                              std::to_string(m_remote_dst.port()) + "] length: " + std::to_string(data.length()));
+                                              tp::to_string(m_remote_dst.port()) + "] length: " + tp::to_string(data.length()));
     }
 
     boost::system::error_code ec;
@@ -151,7 +152,7 @@ void UDPLocalForwarder::destroy(bool) {
     m_destroyed = true;
 
     _log_with_endpoint(m_local_src,
-      "UDP local forwarder to [" + m_remote_dst.address().to_string() + ":" + std::to_string(m_remote_dst.port()) +
+      "UDP local forwarder to [" + m_remote_dst.address().to_string() + ":" + tp::to_string(m_remote_dst.port()) +
         "] disconnected, " + m_stat.to_string(),
       Log::INFO);
 

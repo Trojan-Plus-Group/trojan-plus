@@ -28,6 +28,7 @@
 #include <boost/asio/ip/address_v4.hpp>
 
 #include "core/utils.h"
+#include "mem/memallocator.h"
 
 // Packet header for IPv4.
 //
@@ -86,8 +87,8 @@ class ipv4_header {
     [[nodiscard]] unsigned char protocol() const { return rep_[9]; }
     [[nodiscard]] unsigned short header_checksum() const { return decode(10, 11); }
 
-    std::string to_string()const{
-        std::ostringstream os;
+    tp::string to_string()const{
+        tp::ostringstream os;
         os << "version: " << (int)version() << std::endl
            << "header_length: " << (int)header_length() << std::endl
            << "type_of_service: " << (int)type_of_service() << std::endl

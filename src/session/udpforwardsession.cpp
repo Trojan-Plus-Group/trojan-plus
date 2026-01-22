@@ -36,7 +36,7 @@ using namespace boost::asio::ip;
 using namespace boost::asio::ssl;
 
 UDPForwardSession::UDPForwardSession(Service* _service, const Config& config, context& ssl_context,
-  const udp::endpoint& endpoint, const std::pair<std::string, uint16_t>& targetdst, UDPWriter in_write, bool nat,
+  const udp::endpoint& endpoint, const std::pair<tp::string, uint16_t>& targetdst, UDPWriter in_write, bool nat,
   bool dns)
     : SocketSession(_service, config),
       status(CONNECT),
@@ -61,9 +61,9 @@ int UDPForwardSession::get_udp_timer_timeout_val() const {
 }
 
 tcp::socket& UDPForwardSession::accept_socket() {
-    throw std::logic_error("accept_socket does not exist in UDPForwardSession");
+    throw std::logic_error(tp::string("accept_socket does not exist in UDPForwardSession").c_str());
 }
-void UDPForwardSession::start() { throw std::logic_error("start does not exist in UDPForwardSession"); }
+void UDPForwardSession::start() { throw std::logic_error(tp::string("start does not exist in UDPForwardSession").c_str()); }
 
 void UDPForwardSession::start_udp(const std::string_view& data) {
     udp_timer_async_wait();
@@ -91,20 +91,20 @@ void UDPForwardSession::start_udp(const std::string_view& data) {
 
     out_write_buf.consume(out_write_buf.size());
     streambuf_append(out_write_buf, TrojanRequest::generate(get_config().get_password().cbegin()->first,
-                                      out_udp_endpoint.address().to_string(), out_udp_endpoint.port(), false));
+                                      out_udp_endpoint.address().to_string().c_str(), out_udp_endpoint.port(), false));
     process(udp_recv_endpoint, data);
 
     _log_with_endpoint(udp_recv_endpoint,
-      "session_id: " + std::to_string(get_session_id()) + " forwarding UDP packets to " +
-        out_udp_endpoint.address().to_string() + ':' + std::to_string(out_udp_endpoint.port()) + " via " +
-        get_config().get_remote_addr() + ':' + std::to_string(get_config().get_remote_port()),
+      "session_id: " + tp::to_string(get_session_id()) + " forwarding UDP packets to " +
+        out_udp_endpoint.address().to_string() + ':' + tp::to_string(out_udp_endpoint.port()) + " via " +
+        get_config().get_remote_addr() + ':' + tp::to_string(get_config().get_remote_port()),
       Log::INFO);
 
     if (get_pipeline_component().is_using_pipeline()) {
         cb();
     } else {
         get_config().prepare_ssl_reuse(out_socket);
-        connect_remote_server_ssl(this, get_config().get_remote_addr(), std::to_string(get_config().get_remote_port()),
+        connect_remote_server_ssl(this, get_config().get_remote_addr(), tp::to_string(get_config().get_remote_port()),
           get_resolver(), out_socket, udp_recv_endpoint, cb);
     }
 }
@@ -174,11 +174,11 @@ void UDPForwardSession::in_recv(const std::string_view& data) {
     get_stat().inc_sent_len(length);
 
     _log_with_endpoint(
-      udp_recv_endpoint, "session_id: " + std::to_string(get_session_id()) + " sent a UDP packet of length " +
-                           std::to_string(length) + " bytes to " + out_udp_endpoint.address().to_string() + ':' +
-                           std::to_string(out_udp_endpoint.port()) + " sent_len: " + std::to_string(get_stat().get_sent_len()));
+      udp_recv_endpoint, "session_id: " + tp::to_string(get_session_id()) + " sent a UDP packet of length " +
+                           tp::to_string(length) + " bytes to " + out_udp_endpoint.address().to_string() + ':' +
+                           tp::to_string(out_udp_endpoint.port()) + " sent_len: " + tp::to_string(get_stat().get_sent_len()));
 
-    UDPPacket::generate(out_write_buf, out_udp_endpoint.address().to_string(), out_udp_endpoint.port(), data);
+    UDPPacket::generate(out_write_buf, out_udp_endpoint.address().to_string().c_str(), out_udp_endpoint.port(), data);
     if (status == FORWARD) {
         status = FORWARDING;
         out_async_write(streambuf_to_string_view(out_write_buf));
@@ -197,16 +197,16 @@ void UDPForwardSession::out_recv(const std::string_view& data) {
             if (!is_packet_valid) {
                 if (udp_data_buf.size() > MAX_BUF_LENGTH) {
                     _log_with_endpoint(udp_recv_endpoint,
-                      "session_id: " + std::to_string(get_session_id()) + " UDP packet too long", Log::ERROR);
+                      "session_id: " + tp::to_string(get_session_id()) + " UDP packet too long", Log::ERROR);
                     destroy();
                     return;
                 }
                 break;
             }
-            _log_with_endpoint(udp_recv_endpoint, "session_id: " + std::to_string(get_session_id()) +
-                                                    " received a UDP packet of length " + std::to_string(packet.length) +
+            _log_with_endpoint(udp_recv_endpoint, "session_id: " + tp::to_string(get_session_id()) +
+                                                    " received a UDP packet of length " + tp::to_string(packet.length) +
                                                     " bytes from " + packet.address.address + ':' +
-                                                    std::to_string(packet.address.port));
+                                                    tp::to_string(packet.address.port));
 
             if (is_nat) {
                 boost::system::error_code ec;
@@ -249,7 +249,7 @@ void UDPForwardSession::destroy(bool pipeline_call /*= false*/) {
     status = DESTROY;
 
     _log_with_endpoint(udp_recv_endpoint,
-      "session_id: " + std::to_string(get_session_id()) + " disconnected, " + get_stat().to_string(), Log::INFO);
+      "session_id: " + tp::to_string(get_session_id()) + " disconnected, " + get_stat().to_string(), Log::INFO);
 
     get_resolver().cancel();
 

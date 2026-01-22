@@ -30,6 +30,7 @@
 #include "core/utils.h"
 #include "proto/trojanrequest.h"
 #include "proto/udppacket.h"
+#include "mem/memallocator.h"
 
 using namespace boost::asio::ip;
 
@@ -43,7 +44,7 @@ TUNProxySession::TUNProxySession(Service* _service, bool _is_udp)
     get_pipeline_component().allocate_session_id();
 
     m_sending_data_cache.set_is_connected_func([this]() { return !is_destroyed() && m_connected; });
-    m_sending_data_cache.set_async_writer([this](const boost::asio::streambuf& data, SentHandler&& handler) {
+    m_sending_data_cache.set_async_writer([this](const tp::streambuf& data, SentHandler&& handler) {
         _guard;
         auto self = shared_from_this();
         boost::asio::async_write(
@@ -84,9 +85,9 @@ void TUNProxySession::start() {
             boost::system::error_code ec;
             auto endpoint = m_out_socket.next_layer().local_endpoint(ec);
             _log_with_endpoint(
-              endpoint, "TUNProxySession session_id: " + std::to_string(get_session_id()) + " started", Log::INFO);
+              endpoint, "TUNProxySession session_id: " + tp::to_string(get_session_id()) + " started", Log::INFO);
         } else {
-            auto note_str = "TUNProxySession session_id: " + std::to_string(get_session_id()) + " started in pipeline";
+            auto note_str = "TUNProxySession session_id: " + tp::to_string(get_session_id()) + " started in pipeline";
             if (is_udp_forward_session()) {
                 _log_with_endpoint(m_local_addr_udp, note_str, Log::INFO);
             } else {
@@ -108,13 +109,13 @@ void TUNProxySession::start() {
                     remote_addr = LOCALHOST_IP_ADDRESS;
                 }
                 streambuf_append(m_send_buf, TrojanRequest::generate(get_config().get_password().cbegin()->first,
-                                               remote_addr, m_remote_addr.port(), true));
+                                               remote_addr.c_str(), m_remote_addr.port(), true));
             }
             _unguard;
         };
 
         if (m_send_buf.size() > 0) {
-            boost::asio::streambuf tmp_buf;
+            tp::streambuf tmp_buf;
             streambuf_append(tmp_buf, m_send_buf);
             m_send_buf.consume(m_send_buf.size());
             insert_pwd();
@@ -152,11 +153,11 @@ void TUNProxySession::start() {
         get_service()->get_config().prepare_ssl_reuse(m_out_socket);
         if (is_udp_forward_session()) {
             connect_remote_server_ssl(this, get_service()->get_config().get_remote_addr(),
-              std::to_string(get_service()->get_config().get_remote_port()), m_out_resolver, m_out_socket, m_local_addr_udp,
+              tp::to_string(get_service()->get_config().get_remote_port()), m_out_resolver, m_out_socket, m_local_addr_udp,
               cb);
         } else {
             connect_remote_server_ssl(this, get_service()->get_config().get_remote_addr(),
-              std::to_string(get_service()->get_config().get_remote_port()), m_out_resolver, m_out_socket, m_local_addr, cb);
+              tp::to_string(get_service()->get_config().get_remote_port()), m_out_resolver, m_out_socket, m_local_addr, cb);
         }
     }
 
@@ -172,7 +173,7 @@ void TUNProxySession::destroy(bool pipeline_call) {
     m_destroyed = true;
 
     auto note_str =
-      "TUNProxySession session_id: " + std::to_string(get_session_id()) + " disconnected, " + get_stat().to_string();
+      "TUNProxySession session_id: " + tp::to_string(get_session_id()) + " disconnected, " + get_stat().to_string();
 
     if (is_udp_forward_session()) {
         _log_with_endpoint(m_local_addr_udp, note_str, Log::INFO);
@@ -232,21 +233,21 @@ void TUNProxySession::out_async_send_impl(const std::string_view& data_to_send, 
                       if (!get_pipeline_component().pre_call_ack_func()) {
                           m_wait_ack_handler.emplace_back(_handler);
                           _log_with_endpoint_DEBUG(
-                            m_local_addr, "session_id: " + std::to_string(get_session_id()) +
+                            m_local_addr, "session_id: " + tp::to_string(get_session_id()) +
                                             " cannot TUNProxySession::out_async_send ! Is waiting for ack");
                           return;
                       }
                       _log_with_endpoint_DEBUG(
-                        m_local_addr, "session_id: " + std::to_string(get_session_id()) +
+                        m_local_addr, "session_id: " + tp::to_string(get_session_id()) +
                                         " permit to TUNProxySession::out_async_send ! ack:" +
-                                        std::to_string(get_pipeline_component().pipeline_ack_counter));
+                                        tp::to_string(get_pipeline_component().pipeline_ack_counter));
                   }
               }
               _handler(error);
           });
     } else {
         m_sending_data_cache.push_data(
-          [&](boost::asio::streambuf& buf) { streambuf_append(buf, data_to_send); }, std::move(_handler));
+          [&](tp::streambuf& buf) { streambuf_append(buf, data_to_send); }, std::move(_handler));
     }
 
     _unguard;

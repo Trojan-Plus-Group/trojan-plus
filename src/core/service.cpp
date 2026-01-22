@@ -1,4 +1,3 @@
-#include "mem/memallocator.h"
 /*
  * This file is part of the Trojan Plus project.
  * Trojan is an unidentifiable mechanism that helps you bypass GFW.
@@ -67,7 +66,7 @@ Service::Service(Config& config, bool test)
         if (config.get_run_type() != Config::CLIENT_TUN) {
             tcp::resolver resolver(io_context);
             tcp::endpoint listen_endpoint =
-              *resolver.resolve(config.get_local_addr(), std::to_string(config.get_local_port())).begin();
+              *resolver.resolve(config.get_local_addr(), tp::to_string(config.get_local_port())).begin();
             socket_acceptor.open(listen_endpoint.protocol());
             socket_acceptor.set_option(tcp::acceptor::reuse_address(true));
 
@@ -146,7 +145,7 @@ Service::Service(Config& config, bool test)
                 m_dns_server = TP_MAKE_SHARED(DNSServer, this);
                 if (m_dns_server->start()) {
                     _log_with_date_time(
-                      "[dns] start local dns server at 0.0.0.0:" + std::to_string(config.get_dns().port), Log::WARN);
+                      "[dns] start local dns server at 0.0.0.0:" + tp::to_string(config.get_dns().port), Log::WARN);
                 }
             } else {
                 _log_with_date_time("[dns] dns server has been created in other process.", Log::WARN);
@@ -174,7 +173,7 @@ void Service::prepare_icmpd(Config& config, bool is_ipv4) {
 void Service::run() {
     _guard;
 
-    std::string rt;
+    tp::string rt;
     if (config.get_run_type() == Config::SERVER) {
         rt = "server";
     } else if (config.get_run_type() == Config::FORWARD) {
@@ -188,7 +187,7 @@ void Service::run() {
     } else if (config.get_run_type() == Config::SERVERT_TUN) {
         rt = "server tun";
     } else {
-        throw std::logic_error("unknow run type error");
+        throw std::logic_error(tp::string("unknow run type error").c_str());
     }
 
     if (config.get_experimental().pipeline_num > 0) {
@@ -202,11 +201,11 @@ void Service::run() {
         }
         tcp::endpoint local_endpoint = socket_acceptor.local_endpoint();
 
-        _log_with_date_time(std::string("trojan plus service (") + rt + ") started at " +
-                              local_endpoint.address().to_string() + ':' + std::to_string(local_endpoint.port()),
+        _log_with_date_time(tp::string("trojan plus service (") + rt + ") started at " +
+                              local_endpoint.address().to_string() + ':' + tp::to_string(local_endpoint.port()),
           Log::FATAL);
     } else {
-        _log_with_date_time(std::string("trojan plus service (") + rt + ") started at [" + config.get_tun().tun_name + "] " +
+        _log_with_date_time(tp::string("trojan plus service (") + rt + ") started at [" + config.get_tun().tun_name + "] " +
                               config.get_tun().net_ip + "/" + config.get_tun().net_mask,
           Log::FATAL);
     }
@@ -233,7 +232,7 @@ void Service::stop() {
 
     if (!pipelines.empty()) {
         clear_weak_ptr_list(pipelines);
-        _log_with_date_time("[pipeline] destroy all " + std::to_string(pipelines.size()) + " pipelines");
+        _log_with_date_time("[pipeline] destroy all " + tp::to_string(pipelines.size()) + " pipelines");
         for (auto& it : pipelines) {
             it.lock()->destroy();
         }
@@ -267,7 +266,7 @@ void Service::prepare_pipelines() {
             }
         }
 
-        _log_with_date_time("[pipeline] current exist pipelines: " + std::to_string(curr_num), Log::INFO);
+        _log_with_date_time("[pipeline] current exist pipelines: " + tp::to_string(curr_num), Log::INFO);
 
         for (; curr_num < config.get_experimental().pipeline_num; curr_num++) {
             auto pipeline = TP_MAKE_SHARED(Pipeline, this, config, ssl_context);
@@ -278,8 +277,8 @@ void Service::prepare_pipelines() {
             if (icmp_processor) {
                 pipeline->set_icmpd(icmp_processor);
             }
-            _log_with_date_time("[pipeline] start new pipeline, current: " + std::to_string(pipelines.size()) +
-                                  " std::max:" + std::to_string(config.get_experimental().pipeline_num),
+            _log_with_date_time("[pipeline] start new pipeline, current: " + tp::to_string(pipelines.size()) +
+                                  " std::max:" + tp::to_string(config.get_experimental().pipeline_num),
               Log::INFO);
         }
 
@@ -303,9 +302,9 @@ void Service::prepare_pipelines() {
                     pipelines.emplace_back(pipeline);
                     changed = true;
 
-                    _log_with_date_time("[pipeline] start a balance pipeline: " + config_file +
-                                          " current:" + std::to_string(pipelines.size()) +
-                                          " std::max:" + std::to_string(config.get_experimental().pipeline_num),
+                    _log_with_date_time(tp::string("[pipeline] start a balance pipeline: ") + config_file +
+                                          " current:" + tp::to_string(pipelines.size()) +
+                                          " std::max:" + tp::to_string(config.get_experimental().pipeline_num),
                       Log::INFO);
                 }
             }
@@ -347,7 +346,7 @@ void Service::prepare_pipelines() {
 
                 // auto it = pipelines.begin();
                 // while (it != pipelines.end()) {
-                //     _log_with_date_time("after arrage:" + std::to_string(it->lock()->config.remote_port));
+                //     _log_with_date_time("after arrage:" + tp::to_string(it->lock()->config.remote_port));
                 //     ++it;
                 // }
             }
@@ -365,7 +364,7 @@ void Service::start_session(const std::shared_ptr<Session>& session, SentHandler
         prepare_pipelines();
 
         if (pipelines.empty()) {
-            throw std::logic_error("pipeline is empty after preparing!");
+            throw std::logic_error(tp::string("pipeline is empty after preparing!").c_str());
         }
 
         auto it       = pipelines.begin();
@@ -395,11 +394,11 @@ void Service::start_session(const std::shared_ptr<Session>& session, SentHandler
         }
 
         if (!pipeline) {
-            throw std::logic_error("pipeline fatal logic!");
+            throw std::logic_error(tp::string("pipeline fatal logic!").c_str());
         }
 
-        _log_with_date_time("pipeline " + std::to_string(pipeline->get_pipeline_id()) +
-                              " start session_id: " + std::to_string(session->get_session_id()),
+        _log_with_date_time("pipeline " + tp::to_string(pipeline->get_pipeline_id()) +
+                              " start session_id: " + tp::to_string(session->get_session_id()),
           Log::INFO);
         session->get_pipeline_component().set_use_pipeline();
         pipeline->session_start(*(session.get()), std::move(started_handler));
@@ -471,8 +470,8 @@ void Service::session_destroy_in_pipeline(Session& session) {
         } else {
             auto p = it->lock();
             if (p->is_in_pipeline(session)) {
-                _log_with_date_time("pipeline " + std::to_string(p->get_pipeline_id()) +
-                                    " destroy session_id:" + std::to_string(session.get_session_id()));
+                _log_with_date_time("pipeline " + tp::to_string(p->get_pipeline_id()) +
+                                    " destroy session_id:" + tp::to_string(session.get_session_id()));
                 p->session_destroyed(session);
                 break;
             }
@@ -487,7 +486,7 @@ Pipeline* Service::search_default_pipeline() {
     prepare_pipelines();
 
     if (pipelines.empty()) {
-        throw std::logic_error("pipeline is empty after preparing!");
+        throw std::logic_error(tp::string("pipeline is empty after preparing!").c_str());
     }
 
     Pipeline* pipeline = nullptr;
@@ -572,10 +571,10 @@ void Service::udp_async_read() {
         }
         if (error) {
             stop();
-            throw std::runtime_error(error.message());
+            throw std::runtime_error(error.message().c_str());
         }
 
-        std::pair<std::string, uint16_t> targetdst;
+        tp::pair<tp::string, uint16_t> targetdst;
 
         if (config.get_run_type() == Config::NAT) {
             int read_length = (int)length;
@@ -591,10 +590,10 @@ void Service::udp_async_read() {
             // server sends upd out but now in most of traceroute programs just use icmp to trigger remote server back
             // instead of udp, so we don't need pass TTL to server any more we just keep this codes of retreiving TTL if
             // it will be used for some future features.
-            _log_with_date_time("[udp] get ttl:" + std::to_string(ttl));
+            _log_with_date_time(tp::string("[udp] get ttl:") + tp::to_string(ttl));
         } else {
             udp_read_buf.commit(length);
-            targetdst = std::make_pair(config.get_target_addr(), config.get_target_port());
+            targetdst = tp::make_pair(config.get_target_addr(), config.get_target_port());
         }
 
         if (targetdst.second != 0) {
@@ -611,7 +610,7 @@ void Service::udp_async_read() {
                             this, config, ssl_context, udp_recv_endpoint, targetdst,
                             [this](const udp::endpoint& endpoint, const std::string_view& data) {                  _guard;
                   if (config.get_run_type() == Config::NAT) {
-                      throw std::logic_error("[udp] logic fatal error, cannot call in_write std::function for NAT type!");
+                      throw std::logic_error(tp::string("[udp] logic fatal error, cannot call in_write std::function for NAT type!").c_str());
                   }
 
                   boost::system::error_code ec;
@@ -621,7 +620,7 @@ void Service::udp_async_read() {
                       _log_with_endpoint(
                         udp_recv_endpoint, "[udp] dropped a packet due to firewall policy or rate limit");
                   } else if (ec) {
-                      throw std::runtime_error(ec.message());
+                      throw std::runtime_error(ec.message().c_str());
                   }
                   _unguard;
               },
@@ -664,8 +663,8 @@ void Service::reload_cert() {
 
     if (config.get_run_type() == Config::SERVER) {
         _log_with_date_time("reloading certificate and private key. . . ", Log::WARN);
-        ssl_context.use_certificate_chain_file(config.get_ssl().cert);
-        ssl_context.use_private_key_file(config.get_ssl().key, context::pem);
+        ssl_context.use_certificate_chain_file(config.get_ssl().cert.c_str());
+        ssl_context.use_private_key_file(config.get_ssl().key.c_str(), context::pem);
         boost::system::error_code ec;
         socket_acceptor.cancel(ec);
         async_accept();

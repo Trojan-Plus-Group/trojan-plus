@@ -27,6 +27,7 @@
 #include <stdexcept>
 
 #include "core/utils.h"
+#include "mem/memallocator.h"
 
 class Config;
 class Service;
@@ -38,7 +39,7 @@ class PipelineComponent {
   private:
     // session id counter for pipeline mode
     static SessionIdType s_session_id_counter;
-    static std::set<SessionIdType> s_session_used_ids;
+    static tp::set<SessionIdType> s_session_used_ids;
 
     SessionIdType m_session_id;
     bool m_is_use_pipeline;

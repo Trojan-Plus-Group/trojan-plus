@@ -147,3 +147,16 @@ Optimized the development and CI workflow by introducing a standardized, contain
     *   `scripts/compile_and_test.sh`: Automates the full lifecycle (clean, configure with mimalloc, compile, and run full tests) inside the container.
 *   **Dependency Management**: The image includes all toolchains (GCC 12+, CMake 3.25+), Boost, OpenSSL 3, mimalloc, and Python testing dependencies (`PySocks`, `psutil`, `dnspython`).
 *   **Artifact Distribution**: The image is published as `trojanplusgroup/centos-build:debian` on Docker Hub, serving as the primary environment for Linux CI jobs.
+
+### Custom Memory Allocator Container Refactoring (January 2026)
+Successfully refactored the entire codebase to transition from standard STL containers to custom memory allocator versions within the `tp` namespace.
+*   **Container Migration**: Replaced nearly all instances of `std::string`, `std::vector`, `std::map`, `std::list`, `std::set`, `std::unordered_map`, `std::unordered_set`, `std::deque`, `std::queue`, `std::stack`, and `std::priority_queue` with their `tp::` counterparts.
+*   **Allocator Integration**: These containers now utilize `tp::tp_std_allocator`, which hooks into the project's custom memory allocator system (and `mimalloc` when enabled), providing better memory tracking and potentially improved performance.
+*   **API Enhancements**: 
+    *   Implemented a custom `tp::to_string` using `std::to_chars` for high performance, with support for `bool` and enumeration types.
+    *   Added `tp::` aliases for file streams (`ifstream`, `ofstream`, `fstream`) and string streams (`stringstream`, `ostringstream`, `istringstream`) to maintain naming consistency.
+*   **Code Quality**: 
+    *   Resolved all compilation errors related to type mismatches between `tp::string` and `std::string`.
+    *   Cleaned up all compilation warnings, including sign-compare and deprecated function usage (`sprintf` to `snprintf`).
+    *   Systematically organized `#include "mem/memallocator.h"` across all files to follow consistent project standards.
+*   **Verification**: The refactoring was verified through successful full builds and passing the entire integration test suite on macOS.
