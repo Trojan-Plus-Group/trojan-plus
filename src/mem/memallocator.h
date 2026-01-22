@@ -21,6 +21,12 @@
 #include <stack>
 #include <cwchar>
 #include <boost/asio/streambuf.hpp>
+#include <boost/asio/associated_allocator.hpp>
+#include <boost/version.hpp>
+
+#if BOOST_VERSION >= 107700
+#include <boost/asio/bind_allocator.hpp>
+#endif
 
 namespace tp{
 
@@ -404,6 +410,33 @@ using stack = ::std::stack<T, Container>;
 
 template <typename T, typename Container = tp::vector<T>, typename Compare = ::std::less<typename Container::value_type>>
 using priority_queue = ::std::priority_queue<T, Container, Compare>;
+
+
+template <typename Handler>
+struct handler_alloc_wrapper {
+    Handler handler;
+    using allocator_type = tp_std_allocator<void>;
+
+    handler_alloc_wrapper(Handler h) : handler(std::move(h)) {}
+
+    allocator_type get_allocator() const noexcept {
+        return allocator_type();
+    }
+
+    template <typename... Args>
+    void operator()(Args&&... args) {
+        handler(std::forward<Args>(args)...);
+    }
+};
+
+template <typename Handler>
+auto bind_mem_alloc(Handler&& handler) {
+#if BOOST_VERSION >= 107700
+    return boost::asio::bind_allocator(tp_std_allocator<void>(), std::forward<Handler>(handler));
+#else
+    return handler_alloc_wrapper<std::decay_t<Handler>>(std::forward<Handler>(handler));
+#endif
+}
 
 using ifstream = ::std::ifstream;
 using ofstream = ::std::ofstream;

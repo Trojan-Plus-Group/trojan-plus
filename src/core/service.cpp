@@ -532,7 +532,7 @@ void Service::async_accept() {
         }
     }
 
-    socket_acceptor.async_accept(session->accept_socket(), [this, session](const boost::system::error_code error) {
+    socket_acceptor.async_accept(session->accept_socket(), tp::bind_mem_alloc([this, session](const boost::system::error_code error) {
         _guard;
         if (error == boost::asio::error::operation_aborted) {
             // got cancel signal, stop calling myself
@@ -555,7 +555,7 @@ void Service::async_accept() {
         }
         async_accept();
         _unguard;
-    });
+    }));
 
     _unguard;
 }
@@ -648,11 +648,11 @@ void Service::udp_async_read() {
 
     udp_read_buf.consume_all();
     if (config.get_run_type() == Config::NAT) {
-        udp_socket.async_wait(boost::asio::socket_base::wait_read, [cb](const boost::system::error_code error) {
+        udp_socket.async_wait(boost::asio::socket_base::wait_read, tp::bind_mem_alloc([cb](const boost::system::error_code error) {
             cb(error, 0);
-        });
+        }));
     } else {
-        udp_socket.async_receive_from(udp_read_buf.prepare(config.get_udp_recv_buf()), udp_recv_endpoint, cb);
+        udp_socket.async_receive_from(udp_read_buf.prepare(config.get_udp_recv_buf()), udp_recv_endpoint, tp::bind_mem_alloc(cb));
     }
 
     _unguard;

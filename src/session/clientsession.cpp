@@ -88,7 +88,7 @@ void ClientSession::in_async_read() {
     in_read_buf.consume_all();
     auto self = shared_from_this();
     in_socket.async_read_some(
-      in_read_buf.prepare(MAX_BUF_LENGTH), [this, self](const boost::system::error_code error, size_t length) {
+      in_read_buf.prepare(MAX_BUF_LENGTH), tp::bind_mem_alloc([this, self](const boost::system::error_code error, size_t length) {
           in_read_buf.end_read();
           if (error == boost::asio::error::operation_aborted) {
               return;
@@ -100,7 +100,7 @@ void ClientSession::in_async_read() {
           }
           in_read_buf.commit(length);
           in_recv(in_read_buf);
-      });
+      }));
 }
 
 void ClientSession::in_async_write(const std::string_view& data, size_t ack_count) {
@@ -118,7 +118,7 @@ void ClientSession::in_async_write(const std::string_view& data, size_t ack_coun
     auto self      = shared_from_this();
     auto data_copy = get_service()->get_sending_data_allocator().allocate(data);
     boost::asio::async_write(
-      in_socket, data_copy->data(), [this, self, data_copy, ack_count](const boost::system::error_code error, size_t) {
+      in_socket, data_copy->data(), tp::bind_mem_alloc([this, self, data_copy, ack_count](const boost::system::error_code error, size_t) {
           get_service()->get_sending_data_allocator().free(data_copy);
           if (error) {
               output_debug_info_ec(error);
@@ -139,7 +139,7 @@ void ClientSession::in_async_write(const std::string_view& data, size_t ack_coun
 
               get_service()->session_async_send_to_pipeline(
                 *this, PipelineRequest::ACK, "",
-                [this, self](const boost::system::error_code error) {
+                tp::bind_mem_alloc([this, self](const boost::system::error_code error) {
                     if (error) {
                         output_debug_info_ec(error);
                         destroy();
@@ -147,12 +147,12 @@ void ClientSession::in_async_write(const std::string_view& data, size_t ack_coun
                     }
 
                     in_sent();
-                },
+                }),
                 ack_count);
           } else {
               in_sent();
           }
-      });
+      }));
 }
 
 void ClientSession::out_async_read() {
@@ -164,7 +164,7 @@ void ClientSession::out_async_read() {
         out_read_buf.consume_all();
         auto self = shared_from_this();
         out_socket.async_read_some(
-          out_read_buf.prepare(MAX_BUF_LENGTH), [this, self](const boost::system::error_code error, size_t length) {
+          out_read_buf.prepare(MAX_BUF_LENGTH), tp::bind_mem_alloc([this, self](const boost::system::error_code error, size_t length) {
               out_read_buf.end_read();
               if (error) {
                   output_debug_info_ec(error);
@@ -173,7 +173,7 @@ void ClientSession::out_async_read() {
               }
               out_read_buf.commit(length);
               out_recv(out_read_buf);
-          });
+          }));
     }
 }
 
@@ -188,18 +188,18 @@ void ClientSession::out_async_write(const std::string_view& data) {
     auto self = shared_from_this();
     if (get_pipeline_component().is_using_pipeline()) {
         get_service()->session_async_send_to_pipeline(
-          *this, PipelineRequest::DATA, data, [this, self](const boost::system::error_code error) {
+          *this, PipelineRequest::DATA, data, tp::bind_mem_alloc([this, self](const boost::system::error_code error) {
               if (error) {
                   output_debug_info_ec(error);
                   destroy();
                   return;
               }
               out_sent();
-          });
+          }));
     } else {
         auto data_copy = get_service()->get_sending_data_allocator().allocate(data);
         boost::asio::async_write(
-          out_socket, data_copy->data(), [this, self, data_copy](const boost::system::error_code error, size_t) {
+          out_socket, data_copy->data(), tp::bind_mem_alloc([this, self, data_copy](const boost::system::error_code error, size_t) {
               get_service()->get_sending_data_allocator().free(data_copy);
               if (error) {
                   output_debug_info_ec(error);
@@ -207,7 +207,7 @@ void ClientSession::out_async_write(const std::string_view& data) {
                   return;
               }
               out_sent();
-          });
+          }));
     }
 }
 
@@ -216,7 +216,7 @@ void ClientSession::udp_async_read() {
     udp_read_buf.consume_all();
     auto self = shared_from_this();
     udp_socket.async_receive_from(udp_read_buf.prepare(get_config().get_udp_recv_buf()), udp_recv_endpoint,
-      [this, self](const boost::system::error_code error, size_t length) {
+      tp::bind_mem_alloc([this, self](const boost::system::error_code error, size_t length) {
           udp_read_buf.end_read();
           if (error == boost::asio::error::operation_aborted) {
               return;
@@ -228,14 +228,14 @@ void ClientSession::udp_async_read() {
           }
           udp_read_buf.commit(length);
           udp_recv(udp_read_buf, udp_recv_endpoint);
-      });
+      }));
 }
 
 void ClientSession::udp_async_write(const std::string_view& data, const udp::endpoint& endpoint) {
     auto self      = shared_from_this();
     auto data_copy = get_service()->get_sending_data_allocator().allocate(data);
     udp_socket.async_send_to(
-      data_copy->data(), endpoint, [this, self, data_copy](const boost::system::error_code error, size_t) {
+      data_copy->data(), endpoint, tp::bind_mem_alloc([this, self, data_copy](const boost::system::error_code error, size_t) {
           get_service()->get_sending_data_allocator().free(data_copy);
           if (error) {
               output_debug_info_ec(error);
@@ -243,7 +243,7 @@ void ClientSession::udp_async_write(const std::string_view& data, const udp::end
               return;
           }
           udp_sent();
-      });
+      }));
 }
 
 static const int socks_version = 5;
