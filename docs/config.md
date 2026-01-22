@@ -193,15 +193,6 @@ The NAT config is for transparent proxy. You'll need to [setup iptables rules](h
         "reuse_port": false,
         "fast_open": false,
         "fast_open_qlen": 20
-    },
-    "mysql": {
-        "enabled": false,
-        "server_addr": "127.0.0.1",
-        "server_port": 3306,
-        "database": "trojan",
-        "username": "trojan",
-        "password": "",
-        "cafile": ""
     }
 }
 ```
@@ -235,6 +226,5 @@ The NAT config is for transparent proxy. You'll need to [setup iptables rules](h
     - `reuse_port`: whether to enable TCP port reuse (kernel support required). **Best Practice**: Enabling `reuse_port` (SO_REUSEPORT) allows multiple Trojan processes to listen on the same port. The Linux kernel (since 3.9) automatically distributes incoming connections across these processes using a 4-tuple hash, ensuring high performance and scalability on multi-core systems without lock contention. It is recommended to use a modern Linux kernel (4.5+ for enhanced balancing) for optimal results.
     - `fast_open`: whether to enable TCP Fast Open (kernel support required)
     - `fast_open_qlen`: the server's limit on the size of the queue of TFO requests that have not yet completed the three-way handshake
-- `mysql`: see [Authenticator](authenticator)
 
-[Homepage](.) | [Prev Page](protocol) | [Next Page](authenticator)
+[Homepage](.) | [Prev Page](protocol) | [Next Page](build)

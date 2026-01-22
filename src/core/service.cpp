@@ -47,7 +47,6 @@ using namespace boost::asio::ssl;
 Service::Service(Config& config, bool test)
     : socket_acceptor(io_context),
       ssl_context(context::sslv23),
-      auth(nullptr),
       udp_socket(io_context),
       pipeline_select_idx(0),
       config(config) {
@@ -137,16 +136,6 @@ Service::Service(Config& config, bool test)
     }
 
     config.prepare_ssl_context(ssl_context, plain_http_response);
-
-    if (config.get_run_type() == Config::SERVER) {
-        if (config.get_mysql().enabled) {
-#ifdef ENABLE_MYSQL
-            auth = TP_MAKE_SHARED(Authenticator, config);
-#else  // ENABLE_MYSQL
-            _log_with_date_time("MySQL is not supported", Log::WARN);
-#endif // ENABLE_MYSQL
-        }
-    }
 
 #ifndef __ANDROID__
     if (!test && config.get_dns().enabled) {
@@ -527,12 +516,12 @@ void Service::async_accept() {
     if (config.get_run_type() == Config::SERVER) {
         if (config.get_experimental().pipeline_num > 0) {
             // start a pipeline mode in server run_type
-            auto pipeline = TP_MAKE_SHARED(PipelineSession, this, config, ssl_context, auth, plain_http_response);
+            auto pipeline = TP_MAKE_SHARED(PipelineSession, this, config, ssl_context, plain_http_response);
             pipeline->set_icmpd(icmp_processor);
 
             session = pipeline;
         } else {
-            session = TP_MAKE_SHARED(ServerSession, this, config, ssl_context, auth, plain_http_response);
+            session = TP_MAKE_SHARED(ServerSession, this, config, ssl_context, plain_http_response);
         }
     } else {
         if (config.get_run_type() == Config::FORWARD) {

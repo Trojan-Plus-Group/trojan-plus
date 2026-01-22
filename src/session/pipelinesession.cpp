@@ -25,7 +25,6 @@
 
 #include <boost/asio/ssl.hpp>
 
-#include "core/authenticator.h"
 #include "core/service.h"
 #include "core/utils.h"
 #include "proto/trojanrequest.h"
@@ -35,10 +34,9 @@ using namespace boost::asio::ip;
 using namespace boost::asio::ssl;
 
 PipelineSession::PipelineSession(Service* _service, const Config& config, boost::asio::ssl::context& ssl_context,
-  std::shared_ptr<Authenticator> auth, const std::string& plain_http_response)
+  const std::string& plain_http_response)
     : SocketSession(_service, config),
       status(HANDSHAKE),
-      auth(std::move(auth)),
       plain_http_response(plain_http_response),
       gc_timer(_service->get_io_context()),
       ssl_context(ssl_context) {
@@ -112,7 +110,7 @@ void PipelineSession::in_async_read() {
 }
 void PipelineSession::move_socket_to_serversession(const std::string_view& data) {
     _log_with_endpoint(get_in_endpoint(), "PipelineSession error password, std::move data to ServerSession", Log::ERROR);
-    auto session = TP_MAKE_SHARED(ServerSession, get_service(), get_config(), live_socket, auth, plain_http_response);
+    auto session = TP_MAKE_SHARED(ServerSession, get_service(), get_config(), live_socket, plain_http_response);
     session->in_recv(data);
     live_socket.reset();
     destroy();
@@ -210,7 +208,7 @@ void PipelineSession::process_streaming_data() {
             });
 
             auto session =
-              TP_MAKE_SHARED(ServerSession, get_service(), get_config(), ssl_context, auth, plain_http_response);
+              TP_MAKE_SHARED(ServerSession, get_service(), get_config(), ssl_context, plain_http_response);
             session->set_pipeline_session(shared_from_this());
             session->get_pipeline_component().set_session_id(req.session_id);
             session->get_pipeline_component().set_use_pipeline();

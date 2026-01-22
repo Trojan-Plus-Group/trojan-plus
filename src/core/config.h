@@ -85,16 +85,6 @@ class Config {
         int connect_time_out;
     };
 
-    using MySQLConfig = struct {
-        bool enabled;
-        std::string server_addr;
-        uint16_t server_port;
-        std::string database;
-        std::string username;
-        std::string password;
-        std::string cafile;
-    };
-
     using Experimental = struct {
         uint32_t pipeline_num;
         uint32_t pipeline_timeout;
@@ -158,7 +148,6 @@ class Config {
     Log::Level log_level;
     SSLConfig ssl;
     TCPConfig tcp;
-    MySQLConfig mysql;
     Experimental experimental;
     TUN tun;
     DNS dns;
@@ -196,7 +185,6 @@ class Config {
     _define_getter_const(Log::Level, log_level);
     _define_getter_const(const SSLConfig&, ssl);
     _define_getter_const(const TCPConfig&, tcp);
-    _define_getter_const(const MySQLConfig&, mysql);
     _define_getter_const(const Experimental&, experimental);
     _define_getter_const(const TUN&, tun);
     _define_getter_const(const DNS&, dns);

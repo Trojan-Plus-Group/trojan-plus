@@ -24,7 +24,6 @@
 #include <list>
 #include <string_view>
 
-#include "core/authenticator.h"
 #include "core/utils.h"
 #include "pipelinecomponent.h"
 #include "proto/pipelinerequest.h"
@@ -40,8 +39,6 @@ class PipelineSession : public SocketSession {
 
     enum Status { HANDSHAKE, STREAMING, DESTROY } status;
 
-    std::shared_ptr<Authenticator> auth;
-    std::string auth_password;
     const std::string& plain_http_response;
 
     SessionsList sessions;
@@ -68,7 +65,7 @@ class PipelineSession : public SocketSession {
 
   public:
     PipelineSession(Service* _service, const Config& config, boost::asio::ssl::context& ssl_context,
-      std::shared_ptr<Authenticator> auth, const std::string& plain_http_response);
+      const std::string& plain_http_response);
 
     void destroy(bool pipeline_call = false) final;
 
