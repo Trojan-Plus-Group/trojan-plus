@@ -64,3 +64,8 @@ html/
 *.output
 *.tmpjson
 tombstone*
+
+# for clangd Android
+.cache
+android-build*/
+android_lib/
