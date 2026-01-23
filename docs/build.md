@@ -75,6 +75,29 @@ The `cmake ..` command can be extended with the following options:
     - `-DSYSTEMD_SERVICE=OFF`: don't install systemd service unconditionally.
 - `-DSYSTEMD_SERVICE_PATH=/path/to/systemd/system`: the path to which the systemd service will be installed (defaults to `/lib/systemd/system`).
 
+## Android Build
+
+To build the Android shared library (.so), you need the Android NDK.
+
+### Dependencies
+
+- Android NDK >= r19 (tested with r23b)
+
+### Build
+
+1. Ensure you have the precompiled Android libraries in the `trojan-plus-android-libs` directory. This includes OpenSSL and Boost for Android.
+
+2. Run the build script:
+
+```bash
+./make_android.sh /path/to/android-ndk
+```
+
+This will build the library for multiple architectures (armeabi-v7a, arm64-v8a, x86, x86_64) and output the .so files to `android_lib/<arch>/libtrojan.so`.
+
+Options:
+- Add `-r` for clean build: `./make_android.sh /path/to/android-ndk -r`
+
 ## Docker Build Environment
 
 To ensure a consistent build environment and run tests easily, you can use the provided Docker scripts. These scripts use a lightweight Alpine Linux image with all necessary dependencies pre-installed (including mimalloc).

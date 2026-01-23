@@ -388,8 +388,12 @@ inline string to_string(double value) {
     char buf[64];
     int len = snprintf(buf, sizeof(buf), "%g", value);
     return (len > 0) ? string(buf, len) : string();
+#elif defined(ANDROID)
+    char buf[64];
+    int len = snprintf(buf, sizeof(buf), "%g", value);
+    return (len > 0) ? string(buf, len) : string();
 #else
-    char buf[64]; 
+    char buf[64];
     auto [ptr, ec] = std::to_chars(buf, buf + sizeof(buf), value);
     if (ec == std::errc{}) {
         return string(buf, static_cast<std::size_t>(ptr - buf));
