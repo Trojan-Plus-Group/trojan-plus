@@ -188,6 +188,11 @@ set(TROJAN_SOURCE_FILES
 if(ANDROID)
     add_library(trojan SHARED ${TROJAN_SOURCE_FILES})
 
+    # Android GooglePlay store 16kb alignment required
+    # https://developer.android.com/guide/practices/page-sizes?hl=zh-cn#cmake
+    target_link_options(trojan PRIVATE "-Wl,-z,max-page-size=16384")
+    target_link_options(trojan PRIVATE "-Wl,-z,common-page-size=16384")
+
     add_custom_command(TARGET trojan POST_BUILD
         COMMAND "/bin/cp" -f libtrojan.so "${LIB_OUTPUT_DIR}/libtrojan.so"
         COMMAND "${ANDROID_TOOLCHAIN_PREFIX}strip" -s "${LIB_OUTPUT_DIR}/libtrojan.so"

@@ -38,10 +38,9 @@ ANDROID_NDK_HOME=`realpath $1`
 trojan_path=`realpath .`
 
 # Set the Android API levels
-ANDROID_API=24
+ANDROID_API=31
 
 android_architectures=(
-    armeabi-v7a
     arm64-v8a
     x86
     x86_64
@@ -69,6 +68,8 @@ do
           -DCMAKE_TOOLCHAIN_FILE=${ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake \
           -DANDROID_NDK=${ANDROID_NDK_HOME} \
           -DANDROID_PLATFORM=${ANDROID_API} \
+          -DANDROID_SUPPORT_16KB_PAGE_SIZE=ON \
+          -DANDROID_TOOLCHAIN_PREFIX=${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm- \
           -DANDROID_ABI="${arch}" ..
 
     make -j$(nproc)
