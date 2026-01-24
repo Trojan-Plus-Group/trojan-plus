@@ -494,6 +494,18 @@ uint32_t IPv4Matcher::get_ip_value(const tp::string& ip_str) {
     _unguard;
 }
 
+static void filterIPLine(tp::string& line) {
+    size_t j = 0;
+    
+    for (size_t i = 0; i < line.length(); ++i) {
+        char c = line[i];
+        if ((c >= '0' && c <= '9') || c == '.' || c == '/') {
+            line[j++] = c;
+        }
+    }
+    line.resize(j);
+}
+
 bool IPv4Matcher::load_from_stream(std::istream& is, const tp::string& filename, size_t& loaded_count) {
     _guard;
     loaded_count = 0;
@@ -502,6 +514,7 @@ bool IPv4Matcher::load_from_stream(std::istream& is, const tp::string& filename,
     }
 
     for (tp::string line; std::getline(is, line);) {
+        filterIPLine(line);
         if (line.empty()) {
             continue;
         }
@@ -521,8 +534,8 @@ bool IPv4Matcher::load_from_stream(std::istream& is, const tp::string& filename,
                 _log_with_date_time(error_msg, Log::ERROR);
                 continue;
             }
-            uint32_t subnet_mask = 0xFFFFFFFF << (32 - mask);
-            subnet[ip & subnet_mask].emplace_back(subnet_mask);
+            uint32_t subnet_mask = gsl::at(mask_values, mask);
+            subnet[mask].emplace_back(ip & subnet_mask);
             loaded_count++;
         } else {
             uint32_t ip = get_ip_value(line);
@@ -531,6 +544,9 @@ bool IPv4Matcher::load_from_stream(std::istream& is, const tp::string& filename,
                 loaded_count++;
             }
         }
+    }
+    for (auto& it : subnet) {
+        std::sort(it.second.begin(), it.second.end());
     }
     std::sort(ips.begin(), ips.end());
     return true;

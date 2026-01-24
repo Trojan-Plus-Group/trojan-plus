@@ -20,6 +20,7 @@
 #include <queue>
 #include <stack>
 #include <cwchar>
+#include <type_traits>
 #include <boost/asio/streambuf.hpp>
 #include <boost/asio/associated_allocator.hpp>
 #include <boost/version.hpp>
@@ -268,7 +269,7 @@ struct tj_deleter
 {
     void operator()(std::remove_extent_t<T>* ptr) const
     {
-        if constexpr (std::is_array_v<T>)
+        if constexpr (std::is_array<T>::value)
             get_tj_mem_allocator().delete_array_object(ptr);
         else
             get_tj_mem_allocator().delete_object(ptr);
@@ -279,7 +280,7 @@ template <typename T>
 using tj_unique_ptr = std::unique_ptr<T, tj_deleter<T>>;
 
 template <typename T, typename... Args>
-inline std::enable_if_t<!std::is_array_v<T>, tj_unique_ptr<T>> make_tj_unique(const char* file, int line, Args&&... args)
+inline std::enable_if_t<!std::is_array<T>::value, tj_unique_ptr<T>> make_tj_unique(const char* file, int line, Args&&... args)
 {
     auto *ptr =
         ::new (get_tj_mem_allocator().malloc_aligned(sizeof(T), alignof(T), file, line)) T(std::forward<Args>(args)...);
@@ -287,7 +288,7 @@ inline std::enable_if_t<!std::is_array_v<T>, tj_unique_ptr<T>> make_tj_unique(co
 }
 
 template <typename T>
-inline std::enable_if_t<std::is_array_v<T>, tj_unique_ptr<T>> make_tj_unique(const char* file, int line, size_t num)
+inline std::enable_if_t<std::is_array<T>::value, tj_unique_ptr<T>> make_tj_unique(const char* file, int line, size_t num)
 {
     return tj_unique_ptr<T>(get_tj_mem_allocator().new_array_object<T>(num, file, line));
 }

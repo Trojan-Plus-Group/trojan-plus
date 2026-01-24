@@ -53,10 +53,10 @@ For Android builds (shared library):
 
 ```bash
 # Ensure precompiled Android libraries are in trojan-plus-android-libs/
-./make_android.sh /path/to/android-ndk
+./build_android_so.sh /path/to/android-ndk
 
 # Optional: Clean build
-./make_android.sh /path/to/android-ndk -r
+./build_android_so.sh /path/to/android-ndk -r
 ```
 
 This builds .so files for architectures armeabi-v7a, arm64-v8a, x86, x86_64 in android_lib/<arch>/libtrojan.so.

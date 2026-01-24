@@ -90,13 +90,13 @@ To build the Android shared library (.so), you need the Android NDK.
 2. Run the build script:
 
 ```bash
-./make_android.sh /path/to/android-ndk
+./build_android_so.sh /path/to/android-ndk
 ```
 
 This will build the library for multiple architectures (armeabi-v7a, arm64-v8a, x86, x86_64) and output the .so files to `android_lib/<arch>/libtrojan.so`.
 
 Options:
-- Add `-r` for clean build: `./make_android.sh /path/to/android-ndk -r`
+- Add `-r` for clean build: `./build_android_so.sh /path/to/android-ndk -r`
 
 ## Docker Build Environment
 
