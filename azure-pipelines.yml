@@ -20,7 +20,7 @@ stages:
     - script: |
         set -euo pipefail
         set -v
-        cmake -DDEFAULT_CONFIG=config.json -DFORCE_TCP_FASTOPEN=ON -DBoost_USE_STATIC_LIBS=ON -DENABLE_MIMALLOC=ON .
+        cmake -DDEFAULT_CONFIG=config.json -DFORCE_TCP_FASTOPEN=ON -DBoost_USE_STATIC_LIBS=ON -DOPENSSL_USE_STATIC_LIBS=ON -DENABLE_MIMALLOC=ON .
         make -j$(nproc)
         strip -s trojan
     - publish: $(System.DefaultWorkingDirectory)/trojan
