@@ -11,6 +11,7 @@
 #include <sstream>
 #include <memory>
 #include <cstdlib>
+#include <cstdio>
 #include <new>
 #include <vector>
 #include <list>
@@ -385,11 +386,9 @@ string to_string(T value) {
 }
 
 inline string to_string(double value) {
-#if defined(__APPLE__) && defined(__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__) && __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 130300
-    char buf[64];
-    int len = snprintf(buf, sizeof(buf), "%g", value);
-    return (len > 0) ? string(buf, len) : string();
-#elif defined(ANDROID)
+#if (defined(__APPLE__) && defined(__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__) && __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 130300) || \
+    defined(ANDROID) || \
+    (defined(__GNUC__) && __GNUC__ < 11 && !defined(__clang__))
     char buf[64];
     int len = snprintf(buf, sizeof(buf), "%g", value);
     return (len > 0) ? string(buf, len) : string();
