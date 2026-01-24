@@ -441,7 +441,7 @@ void ClientSession::request_remote() {
     if (get_pipeline_component().is_using_pipeline()) {
         cb();
     } else {
-        connect_remote_server_ssl(this, get_config().get_remote_addr(), tp::to_string(get_config().get_remote_port()),
+        connect_remote_server_ssl(self, get_config().get_remote_addr(), tp::to_string(get_config().get_remote_port()),
           get_resolver(), out_socket, get_in_endpoint(), cb);
     }
 }

@@ -351,7 +351,7 @@ void ServerSession::in_recv(const std::string_view& data, size_t ack_count) {
         has_queried_out = true;
 
         auto self = shared_from_this();
-        connect_out_socket(this, query_addr, query_port, get_resolver(), out_socket, get_in_endpoint(), [this, self]() {
+        connect_out_socket(self, query_addr, query_port, get_resolver(), out_socket, get_in_endpoint(), [this, self]() {
             status = FORWARD;
             out_async_read();
             if (out_write_buf.size() != 0) {

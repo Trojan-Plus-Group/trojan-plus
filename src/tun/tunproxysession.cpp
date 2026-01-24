@@ -152,11 +152,11 @@ void TUNProxySession::start() {
     } else {
         get_service()->get_config().prepare_ssl_reuse(m_out_socket);
         if (is_udp_forward_session()) {
-            connect_remote_server_ssl(this, get_service()->get_config().get_remote_addr(),
+            connect_remote_server_ssl(self, get_service()->get_config().get_remote_addr(),
               tp::to_string(get_service()->get_config().get_remote_port()), m_out_resolver, m_out_socket, m_local_addr_udp,
               cb);
         } else {
-            connect_remote_server_ssl(this, get_service()->get_config().get_remote_addr(),
+            connect_remote_server_ssl(self, get_service()->get_config().get_remote_addr(),
               tp::to_string(get_service()->get_config().get_remote_port()), m_out_resolver, m_out_socket, m_local_addr, cb);
         }
     }

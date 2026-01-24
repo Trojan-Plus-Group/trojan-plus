@@ -93,7 +93,7 @@ void TUNLocalSession::start() {
         auto remote_addr =
           get_config().get_tun().redirect_local ? LOCALHOST_IP_ADDRESS : m_remote_addr.address().to_string();
         auto self = shared_from_this();
-        connect_out_socket(this, remote_addr.c_str(), tp::to_string(m_remote_addr.port()), m_resolver, m_tcp_socket,
+        connect_out_socket(self, remote_addr.c_str(), tp::to_string(m_remote_addr.port()), m_resolver, m_tcp_socket,
           m_local_addr_udp, [this, self]() {
               _guard;
 

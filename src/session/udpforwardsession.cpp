@@ -104,7 +104,7 @@ void UDPForwardSession::start_udp(const std::string_view& data) {
         cb();
     } else {
         get_config().prepare_ssl_reuse(out_socket);
-        connect_remote_server_ssl(this, get_config().get_remote_addr(), tp::to_string(get_config().get_remote_port()),
+        connect_remote_server_ssl(self, get_config().get_remote_addr(), tp::to_string(get_config().get_remote_port()),
           get_resolver(), out_socket, udp_recv_endpoint, cb);
     }
 }

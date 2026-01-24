@@ -111,7 +111,7 @@ void Pipeline::start() {
     _guard;
 
     auto self = shared_from_this();
-    connect_remote_server_ssl(this, config.get_remote_addr(), tp::to_string(config.get_remote_port()), resolver, out_socket,
+    connect_remote_server_ssl(self, config.get_remote_addr(), tp::to_string(config.get_remote_port()), resolver, out_socket,
       tcp::endpoint(), [this, self]() {
           _guard;
           connected           = true;
