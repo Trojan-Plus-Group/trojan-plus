@@ -327,11 +327,16 @@ namespace tp
 template <typename T>
 struct tp_std_allocator {
      using value_type = T;
+     
+     template <typename U>
+     struct rebind { typedef tp_std_allocator<U> other; };
+
      tp_std_allocator() = default;
-     template <typename U> tp_std_allocator(const tp_std_allocator<U>&) {}
+
+     template <typename U> 
+     tp_std_allocator(const tp_std_allocator<U>&) {}
 
      T* allocate(std::size_t n) {
-         // 调用项目自定义的带统计的对齐分配
          return static_cast<T*>(get_tj_mem_allocator().malloc_aligned(
              n * sizeof(T), alignof(T), "tp_std_allocator", 0));
      }
@@ -339,8 +344,7 @@ struct tp_std_allocator {
      void deallocate(T* p, std::size_t) {
          get_tj_mem_allocator().free_aligned(p);
      }
-
-     // 支持与不同类型的 allocator 相互比较
+     
      template <typename U> bool operator==(const tp_std_allocator<U>&) const { return true; }
      template <typename U> bool operator!=(const tp_std_allocator<U>&) const { return false; }
 };
