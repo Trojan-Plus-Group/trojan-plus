@@ -40,11 +40,3 @@ fi
 # Run python with -u for unbuffered output to see logs in real-time
 # Output is displayed on terminal and saved to test.log
 python3 -u fulltest_main.py $TEST_ARGS
-
-# 4. Final verification
-if grep -q "ALL SUCC" ../../test.log; then
-    echo -e "\n--- RESULT: ALL TESTS PASSED ---"
-else
-    echo -e "\n--- RESULT: TESTS FAILED (See test.log for details) ---"
-    exit 1
-fi

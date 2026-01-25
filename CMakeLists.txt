@@ -235,6 +235,12 @@ else()
 
     set(OPENSSL_USE_STATIC_LIBS TRUE)
     find_package(OpenSSL 1.1.0 REQUIRED)
+    
+    option(ENABLE_TLS13_CIPHERSUITES "Build with TLS1.3 ciphersuites support" ON)
+    if(ENABLE_TLS13_CIPHERSUITES)
+        add_definitions(-DENABLE_TLS13_CIPHERSUITES)
+    endif()
+
     include_directories(${OPENSSL_INCLUDE_DIR})
     target_link_libraries(trojan ${OPENSSL_LIBRARIES})
     if(UNIX AND NOT APPLE)
