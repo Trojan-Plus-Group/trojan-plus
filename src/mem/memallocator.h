@@ -327,6 +327,10 @@ namespace tp
 template <typename T>
 struct tp_std_allocator {
      using value_type = T;
+     using pointer = T*;
+     using const_pointer = const T*;
+     using size_type = std::size_t;
+     using difference_type = std::ptrdiff_t;
      
      template <typename U>
      struct rebind { typedef tp_std_allocator<U> other; };
@@ -347,6 +351,28 @@ struct tp_std_allocator {
      
      template <typename U> bool operator==(const tp_std_allocator<U>&) const { return true; }
      template <typename U> bool operator!=(const tp_std_allocator<U>&) const { return false; }
+};
+
+template <>
+struct tp_std_allocator<void> {
+    using value_type = void;
+    using pointer = void*;
+    using const_pointer = const void*;
+
+    template <typename U>
+    struct rebind { typedef tp_std_allocator<U> other; };
+
+    template <typename T>
+    T* allocate(std::size_t n) {
+        return static_cast<T*>(get_tj_mem_allocator().malloc_aligned(
+            n * sizeof(T), alignof(T), "tp_std_allocator", 1));
+    }
+
+    template <typename T>
+    void deallocate(T* p, std::size_t) {
+        get_tj_mem_allocator().free_aligned(p);
+    }
+     
 };
 
 using streambuf = boost::asio::basic_streambuf<tp::tp_std_allocator<char>>;
@@ -374,7 +400,7 @@ string to_string(T value) {
         char buf[32];
         int len = snprintf(buf, sizeof(buf), std::is_signed_v<U> ? "%lld" : "%llu", 
                            (std::is_signed_v<U> ? (long long)value : (unsigned long long)value));
-        return (len > 0) ? string(buf, len) : string();
+        return (len > 0) ? string(buf, static_cast<std::size_t>(len)) : string();
 #else
         char buf[24]; 
         auto [ptr, ec] = std::to_chars(buf, buf + sizeof(buf), value);
