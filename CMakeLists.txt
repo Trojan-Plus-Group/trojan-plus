@@ -235,12 +235,6 @@ else()
 
     set(OPENSSL_USE_STATIC_LIBS TRUE)
     find_package(OpenSSL 1.1.0 REQUIRED)
-    
-    option(ENABLE_TLS13_CIPHERSUITES "Build with TLS1.3 ciphersuites support" ON)
-    if(ENABLE_TLS13_CIPHERSUITES)
-        add_definitions(-DENABLE_TLS13_CIPHERSUITES)
-    endif()
-
     include_directories(${OPENSSL_INCLUDE_DIR})
     target_link_libraries(trojan ${OPENSSL_LIBRARIES})
     if(UNIX AND NOT APPLE)
@@ -248,17 +242,16 @@ else()
     endif()
 endif()
 
-if(OPENSSL_VERSION VERSION_GREATER_EQUAL 1.1.1)
-    option(ENABLE_SSL_KEYLOG "Build with SSL KeyLog support" ON)
-    if(ENABLE_SSL_KEYLOG)
-        add_definitions(-DENABLE_SSL_KEYLOG)
-    endif()
-
-    option(ENABLE_TLS13_CIPHERSUITES "Build with TLS1.3 ciphersuites support" ON)
-    if(ENABLE_TLS13_CIPHERSUITES)
-        add_definitions(-DENABLE_TLS13_CIPHERSUITES)
-    endif()
+option(ENABLE_SSL_KEYLOG "Build with SSL KeyLog support" ON)
+if(ENABLE_SSL_KEYLOG)
+    add_definitions(-DENABLE_SSL_KEYLOG)
 endif()
+
+option(ENABLE_TLS13_CIPHERSUITES "Build with TLS1.3 ciphersuites support" ON)
+if(ENABLE_TLS13_CIPHERSUITES)
+    add_definitions(-DENABLE_TLS13_CIPHERSUITES)
+endif()
+
 
 option(FORCE_TCP_FASTOPEN "Force build with TCP Fast Open support" OFF)
 if(FORCE_TCP_FASTOPEN)
