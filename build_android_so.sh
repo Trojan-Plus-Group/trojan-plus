@@ -72,7 +72,7 @@ do
           -DANDROID_TOOLCHAIN_PREFIX=${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm- \
           -DANDROID_ABI="${arch}" ..
 
-    make -j$(nproc)
+    make -j$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 2)
 done
 
 
