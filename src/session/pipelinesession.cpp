@@ -109,7 +109,7 @@ void PipelineSession::in_async_read() {
       }));
 }
 void PipelineSession::move_socket_to_serversession(const std::string_view& data) {
-    _log_with_endpoint(get_in_endpoint(), "PipelineSession error password, std::move data to ServerSession", Log::ERROR);
+    _log_with_endpoint(get_in_endpoint(), "PipelineSession error password, std::move data to ServerSession", Log::WARN);
     auto session = TP_MAKE_SHARED(ServerSession, get_service(), get_config(), live_socket, plain_http_response);
     session->in_recv(data);
     live_socket.reset();

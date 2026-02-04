@@ -389,9 +389,19 @@ bool Config::sip003() {
 
 void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, tp::string& plain_http_response) {
     _guard;
+
     auto* native_context = ssl_context.native_handle();
-    ssl_context.set_options(
-      context::default_workarounds | context::no_sslv2 | context::no_sslv3 | context::single_dh_use);
+
+    long options = SSL_OP_ALL;              // Enable all bug workarounds for compatibility
+    options |= SSL_OP_NO_SSLv2;             // Disable SSLv2
+    options |= SSL_OP_NO_SSLv3;             // Disable SSLv3
+    options |= SSL_OP_NO_TLSv1;             // Disable TLSv1 (Required for A+ rating)
+    options |= SSL_OP_NO_TLSv1_1;           // Disable TLSv1.1 (Required for A+ rating)
+    options |= SSL_OP_SINGLE_DH_USE;        // Ensure a new key is generated for every DH exchange
+    options |= SSL_OP_NO_COMPRESSION;       // Disable compression (Prevents CRIME attacks, required for A+ rating)
+
+    SSL_CTX_set_options(native_context, options);
+
     if (!ssl.curves.empty()) {
         SSL_CTX_set1_curves_list(native_context, ssl.curves.c_str());
     }
@@ -442,7 +452,6 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, tp::str
         } else {
             ssl_context.use_tmp_dh_file(ssl.dhparam.c_str());
         }
-
     } else {
         if (ssl.sni.empty()) {
             ssl.sni = remote_addr;
