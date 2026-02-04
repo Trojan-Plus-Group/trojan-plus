@@ -173,3 +173,12 @@ Successfully refactored the entire codebase to transition from standard STL cont
     *   Cleaned up all compilation warnings, including sign-compare and deprecated function usage (`sprintf` to `snprintf`).
     *   Systematically organized `#include "mem/memallocator.h"` across all files to follow consistent project standards.
 *   **Verification**: The refactoring was verified through successful full builds and passing the entire integration test suite on macOS.
+
+### Server Fallback (remote_addr) Fix and Test Coverage (February 2026)
+Resolved issues where `remote_addr` forwarding (decoy website) could fail in `server` mode.
+*   **TCP Connection Fix**: Updated `connect_out_socket` to respect `prefer_ipv4` configuration, preventing connection failures in IPv4-only environments when DNS resolves IPv6 addresses first.
+*   **Memory Continuity Fix**: Fixed a critical bug in `streambuf_to_string_view` that assumed contiguous memory in `asio::streambuf`. It now safely handles fragmented buffers by merging them into a thread-local buffer when necessary.
+*   **Fallback Test Suite**: 
+    *   Introduced `tests/LinuxFullTest/fulltest_fallback.py` to specifically verify that non-Trojan HTTPS traffic is correctly decrypted and forwarded to the backend decoy server.
+    *   Integrated this test into the main `fulltest_main.py` (via `-f/--fallback` flag) and the CI pipeline (`azure-pipelines.yml`).
+*   **Documentation**: Updated `docs/config.md` to clarify that `remote_addr` receives decrypted plain text and should point to a plain text server (e.g., Nginx on port 80).

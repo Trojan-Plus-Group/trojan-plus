@@ -33,6 +33,7 @@ import fulltest_gen_content
 import fulltest_server
 import fulltest_client
 import fulltest_dns
+import fulltest_fallback
 from fulltest_utils import print_time_log, is_macos_system, is_windows_system, is_linux_system
 
 
@@ -382,6 +383,12 @@ def main():
                 output_log = True
                 return 1
 
+        if cmd_args.fallback:
+            print_time_log("start trojan plus fallback test...")
+            if fulltest_fallback.main() != 0:
+                output_log = True
+                return 1
+
     finally:
         close_process(test_server_process, output_log)
 
@@ -403,10 +410,12 @@ if __name__ == "__main__":
                         action='store_true', default=False)
     parser.add_argument("-d", "--dns", help='whether test dns forwarding [port]',
                         type=int, nargs='?', const=53)
+    parser.add_argument("-f", "--fallback", help=" whether test server fallback (remote_addr) mode",
+                        action='store_true', default=False)
 
     cmd_args = parser.parse_args()
-    if not cmd_args.normal and not cmd_args.dns and not cmd_args.tun:
-        print("Error: must use -n or -d or -t args\n\n")
+    if not cmd_args.normal and not cmd_args.dns and not cmd_args.tun and not cmd_args.fallback:
+        print("Error: must use -n or -d or -t or -f args\n\n")
         parser.print_help()
         exit(1)
 

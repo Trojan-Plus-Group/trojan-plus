@@ -91,7 +91,7 @@ stages:
         chmod +x "$BINARY"
 
         cd tests/LinuxFullTest/
-        sudo python3 fulltest_main.py $BINARY -g -d 5333
+        sudo python3 fulltest_main.py $BINARY -g -d 5333 -f
 
         ifconfig
         route -n
@@ -126,7 +126,7 @@ stages:
         BINARY="$PIPELINE_WORKSPACE/WindowsBinary/trojan.exe"
         py -3 -m pip install PySocks psutil dnspython
         cd tests/LinuxFullTest/
-        py -3 fulltest_main.py $BINARY -g -n -d 5333
+        py -3 fulltest_main.py $BINARY -g -n -d 5333 -f
       env:
         PIPELINE_WORKSPACE: $(Pipeline.Workspace)
 
@@ -145,7 +145,7 @@ stages:
         chmod +x "$BINARY"
         cd tests/LinuxFullTest/
         python3 -m pip install PySocks psutil dnspython --break-system-packages
-        python3 fulltest_main.py $BINARY -g -n -d 5333
+        python3 fulltest_main.py $BINARY -g -n -d 5333 -f
       env:
         PIPELINE_WORKSPACE: $(Pipeline.Workspace)
 
