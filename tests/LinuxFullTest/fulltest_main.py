@@ -78,9 +78,12 @@ def get_cooldown_rss_limit():
 def start_trojan_plus_process(config):
     print_time_log("start " + config + "...")
     output_log_file = open(config + ".output", "w+")
+    kwargs = {'universal_newlines': True}
+    if not is_windows_system():
+        kwargs['restore_signals'] = True
     process = Popen([binary_path, "-c", config], executable=binary_path, bufsize=1024 * 1024,
                     stdout=output_log_file, stderr=output_log_file,
-                    restore_signals=True, universal_newlines=True)
+                    **kwargs)
     process.output_log_file = output_log_file
     process.executable_name = sys.executable
     time.sleep(1)
@@ -122,9 +125,9 @@ def run_test_server():
         os.system(f"lsof -ti:{TEST_SERVER_PORT} | xargs kill -9 > /dev/null 2>&1")
     
     output_log_file = open("config/test_server.output", "w+")
-    process = Popen([sys.executable, "fulltest_server.py", TEST_FILES_DIR, str(TEST_SERVER_PORT)],
+    process = Popen([sys.executable, "-u", "fulltest_server.py", TEST_FILES_DIR, str(TEST_SERVER_PORT)],
                     executable=sys.executable, bufsize=1024 * 1024, stdout=output_log_file, stderr=output_log_file,
-                    restore_signals=False, universal_newlines=True)
+                    universal_newlines=True)
     process.output_log_file = output_log_file
     
     # Wait and check if it survived initial startup
@@ -385,7 +388,7 @@ def main():
 
         if cmd_args.fallback:
             print_time_log("start trojan plus fallback test...")
-            if fulltest_fallback.main() != 0:
+            if fulltest_fallback.main(binary_path) != 0:
                 output_log = True
                 return 1
 

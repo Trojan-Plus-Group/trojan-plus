@@ -3,7 +3,7 @@
     "local_addr": "127.0.0.1",
     "local_port": 14650,
     "remote_addr": "127.0.0.1",
-    "remote_port": 18081,
+    "remote_port": 18181,
     "password": [
         "88888888"
     ],
@@ -28,6 +28,6 @@
         "keep_alive": true,
         "reuse_port": true,
         "fast_open": false,
-        "connect_time_out": 3
+        "connect_time_out": 10
     }
 }

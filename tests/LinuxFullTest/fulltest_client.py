@@ -100,28 +100,39 @@ def get_file_udp(file, length, port):
 
 
 def post_file_udp(file, data, port):
-    for _ in range(0, UDP_RETRY_MAX_COUNT):
+    for i in range(0, UDP_RETRY_MAX_COUNT):
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp_socket:
                 udp_socket.settimeout(RECV_DATA_TIMEOUT)
                 udp_socket.setsockopt(
                     socket.SOL_SOCKET, socket.SO_SNDBUF, UDP_BUFF_SIZE)
-                fulltest_udp_proto.bind_port(udp_socket, port)
+                
+                # Use a unique port for each retry to bypass stuck sessions
+                bind_port = port + (i * 100)
+                fulltest_udp_proto.bind_port(udp_socket, bind_port)
 
                 global request_host_ip
                 addr = (request_host_ip, serv_port)
 
                 param = urllib.parse.urlencode(
                     {'file': file, 'len': len(data), 'm': 'POST'}).encode()
-                udp_socket.sendto(param + b'\r\n', addr)
-                time.sleep(0.01)
+                
+                # Small sleep before sending to let the tunnel stabilize
+                time.sleep(0.1) 
+                
+                sent_len = udp_socket.sendto(param + b'\r\n', addr)
+                if sent_len <= 0:
+                    raise Exception("Failed to send UDP header")
+                
+                time.sleep(0.05)
 
                 fulltest_udp_proto.send_udp_file_data(udp_socket, addr, data)
 
                 return udp_socket.recv(UDP_SEND_PACKET_LENGTH)
-        except:
-            print_time_log("post_file_udp [" + file + "] failed!")
-            traceback.print_exc(file=sys.stdout)
+        except Exception as e:
+            print_time_log(f"post_file_udp [{file}] attempt {i} failed: {e}")
+            if i == UDP_RETRY_MAX_COUNT - 1:
+                traceback.print_exc(file=sys.stdout)
 
         time.sleep(1)
 

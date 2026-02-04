@@ -46,5 +46,5 @@ def print_time_log(log=None, end='\n'):
         time_str = time_str + ' E' + \
             str(current_datetime - former_print_time_log_datatime)
 
-    print('[' + time_str + '] ' + str(log if log else ''), end=end)
+    print('[' + time_str + '] ' + str(log if log else ''), end=end, flush=True)
     former_print_time_log_datatime = current_datetime

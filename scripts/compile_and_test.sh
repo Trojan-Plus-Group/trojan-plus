@@ -28,7 +28,7 @@ docker run --rm -v "$(pwd):/usr/src/trojan" $IMAGE_NAME /bin/bash -c "
     echo '--- Running Full Python Tests (Normal + Fallback) ---'
     cd ../tests/LinuxFullTest
     # -g generates files, -n tests normal modes, -f tests server fallback (remote_addr).
-    python3 fulltest_main.py /usr/src/trojan/build/trojan -g -n -f
+    python3 -u fulltest_main.py /usr/src/trojan/build/trojan -g -n -f
 "
 
 echo "Compilation and tests completed successfully!"
