@@ -109,7 +109,7 @@ void PipelineSession::in_async_read() {
       }));
 }
 void PipelineSession::move_socket_to_serversession(const std::string_view& data) {
-    _log_with_endpoint(get_in_endpoint(), "PipelineSession error password, std::move data to ServerSession", Log::ERROR);
+    _log_with_endpoint(get_in_endpoint(), "PipelineSession error password, std::move data to ServerSession", Log::WARN);
     auto session = TP_MAKE_SHARED(ServerSession, get_service(), get_config(), live_socket, plain_http_response);
     session->in_recv(data);
     live_socket.reset();
@@ -122,6 +122,18 @@ void PipelineSession::in_recv(const std::string_view&) {
         size_t npos      = data.find("\r\nPP");
         if (npos == std::string::npos) {
             if (data.length() < Config::MAX_PASSWORD_LENGTH) {
+                // if it's not a trojan request, maybe it's a decoy request, we should not wait for password
+                bool is_prefix = false;
+                for (const auto& p : get_config().get_password()) {
+                    if (p.first.compare(0, data.length(), data) == 0) {
+                        is_prefix = true;
+                        break;
+                    }
+                }
+                if (!is_prefix) {
+                    move_socket_to_serversession(data);
+                    return;
+                }
                 in_async_read();
             } else {
                 move_socket_to_serversession(data);
@@ -291,6 +303,11 @@ void PipelineSession::timer_async_wait() {
     auto self = shared_from_this();
     gc_timer.async_wait(tp::bind_mem_alloc([this, self](const boost::system::error_code error) {
         if (!error) {
+            if (in_read_buf.size() > 0) {
+                _log_with_endpoint(get_in_endpoint(), "PipelineSession wait for password timeout, but got data, move to ServerSession");
+                move_socket_to_serversession(in_read_buf);
+                return;
+            }
             _log_with_endpoint(get_in_endpoint(), "PipelineSession wait for password timeout");
             destroy();
         }

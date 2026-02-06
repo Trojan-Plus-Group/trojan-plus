@@ -40,20 +40,26 @@ server_udp_send_port_start = 40000
 
 
 def bind_port(udp_socket, port):
-    try_max_count = 10
+    try_max_count = 20
     offset = 1000
     port_increase = 0
-    for _ in range(0, try_max_count):
+    
+    try:
+        udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    except:
+        pass
+
+    for i in range(0, try_max_count):
         try:
             try_port = port + port_increase
             udp_socket.bind(("", try_port))
             return try_port
-        except:
-            if port_increase == 0:
-                traceback.print_exc(file=sys.stdout)
-
-            port_increase = offset
-            offset = offset + 1
+        except OSError:
+            if i == 0:
+                print_time_log(f"UDP bind on {port} failed, retrying...")
+            
+            port_increase = offset + (i * 100)
+            offset = offset + 100
 
     raise Exception("[ERROR] Cannot bind a new port for udp socket!")
 

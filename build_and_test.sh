@@ -28,13 +28,13 @@ cd tests/LinuxFullTest/
 TEST_ARGS="../../build/trojan -g"
 if [[ "$OSTYPE" == "linux-gnu"* ]]; then
     # Linux setup
-    TEST_ARGS="$TEST_ARGS -n -d 5333"
+    TEST_ARGS="$TEST_ARGS -n -d 5333 -f"
 elif [[ "$OSTYPE" == "darwin"* ]]; then
     # macOS setup
-    TEST_ARGS="$TEST_ARGS -n"
+    TEST_ARGS="$TEST_ARGS -n -f"
 elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" || "$OSTYPE" == "win32" ]]; then
     # Windows setup
-    TEST_ARGS="$TEST_ARGS -n -d 5333"
+    TEST_ARGS="$TEST_ARGS -n -d 5333 -f"
 fi
 
 # Run python with -u for unbuffered output to see logs in real-time

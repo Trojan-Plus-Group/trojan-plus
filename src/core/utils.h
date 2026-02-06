@@ -445,6 +445,15 @@ void connect_out_socket(ThisT this_ptr, tp::string addr, tp::string port, boost:
               return;
           }
           auto iterator = results.begin();
+          if (this_ptr->get_config().get_tcp().prefer_ipv4) {
+              for (auto it = results.begin(); it != results.end(); ++it) {
+                  const auto& address = it->endpoint().address();
+                  if (address.is_v4()) {
+                      iterator = it;
+                      break;
+                  }
+              }
+          }
           _log_with_endpoint(
             in_endpoint, addr + " is resolved to " + iterator->endpoint().address().to_string(), Log::ALL);
           boost::system::error_code ec;

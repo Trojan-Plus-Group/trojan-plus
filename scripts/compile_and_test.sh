@@ -25,11 +25,10 @@ docker run --rm -v "$(pwd):/usr/src/trojan" $IMAGE_NAME /bin/bash -c "
     echo '--- Building Trojan ---'
     make -j\$(nproc)
     
-    echo '--- Running Full Python Tests (No DNS) ---'
+    echo '--- Running Full Python Tests (Normal + Fallback) ---'
     cd ../tests/LinuxFullTest
-    # Removed -d flag to skip DNS tests. 
-    # -g generates files, -n tests normal modes.
-    python3 fulltest_main.py /usr/src/trojan/build/trojan -g -n
+    # -g generates files, -n tests normal modes, -f tests server fallback (remote_addr).
+    python3 -u fulltest_main.py /usr/src/trojan/build/trojan -g -n -f
 "
 
 echo "Compilation and tests completed successfully!"

@@ -51,7 +51,7 @@ docker run --rm --privileged -t --platform linux/amd64 \
         echo '--- Running TUN Full Test ---'
         cd tests/LinuxFullTest/
         export PYTHONUNBUFFERED=1
-        # python3 -u fulltest_main.py \"\$BINARY\" -t -n -g
+        # python3 -u fulltest_main.py \"\$BINARY\" -t -n -g -f
         python3 -u fulltest_main.py \"\$BINARY\" -t
     "
 

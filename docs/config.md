@@ -200,8 +200,8 @@ The NAT config is for transparent proxy. You'll need to [setup iptables rules](h
 - `run_type`: running trojan as `server`
 - `local_addr`: trojan server will be bound to the specified interface. Feel free to change this to `::` or other addresses, if you know what you are doing.
 - `local_port`: trojan server will be bound to this port
-- `remote_addr`: the endpoint address that trojan server will connect to when encountering [other protocols](protocol#other-protocols)
-- `remote_port`: the endpoint port that trojan server will connect when encountering [other protocols](protocol#other-protocols)
+- `remote_addr`: the endpoint address that trojan server will connect to when encountering [other protocols](protocol#other-protocols). **Note**: Trojan will decrypt the incoming SSL traffic and forward the **decrypted plain text** to this address. It is strongly recommended to point this to a local plain text server (e.g., Nginx on port 80).
+- `remote_port`: the endpoint port that trojan server will connect when encountering [other protocols](protocol#other-protocols). **Note**: This should be a port that accepts plain text (e.g., port 80), not an SSL-enabled port (e.g., port 443).
 - `password`: an array of passwords used for verification
 - `log_level`: how much log to dump. 0: ALL; 1: INFO; 2: WARN; 3: ERROR; 4: FATAL; 5: OFF.
 - `ssl`: `SSL` specific configurations
