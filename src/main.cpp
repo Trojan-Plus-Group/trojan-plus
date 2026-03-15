@@ -71,7 +71,7 @@ void signal_async_wait(signal_set& sig, Service& service, bool& restart) {
 // after disconnection, the whole process will be killed in Android
 static std::shared_ptr<Service> g_service;
 
-int main(int argc, const char* argv[]) {
+int main_impl(int argc, const char* argv[]) {
     try {
         Log::log("Trojan Plus v" + Version::get_version() + " starts.", Log::FATAL);
         tp::string config_file;
@@ -188,3 +188,9 @@ int main(int argc, const char* argv[]) {
 #endif
     }
 }
+
+#ifndef IOS
+int main(int argc, const char* argv[]) {
+    return main_impl(argc, argv);
+}
+#endif

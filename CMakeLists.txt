@@ -90,6 +90,7 @@ if(ANDROID)
 endif()
 
 if(IOS)
+    add_definitions(-DIOS)
     option(ENABLE_IOS_LOG "Build with iOS unified logging" ON)
     if(ENABLE_IOS_LOG)
         add_definitions(-DENABLE_IOS_LOG=1)

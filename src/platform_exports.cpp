@@ -26,8 +26,8 @@
 
 #include <signal.h>
 
-// Forward declaration of main function
-extern int main(int argc, const char* argv[]);
+// Forward declaration of main_impl function
+extern int main_impl(int argc, const char* argv[]);
 
 // ============================================================================
 // Android JNI Exports
@@ -50,7 +50,7 @@ JNIEXPORT void JNICALL Java_com_trojan_1plus_android_TrojanPlusVPNService_runMai
 
     const char* path   = g_android_java_env->GetStringUTFChars(configPath, 0);
     const char* args[] = {"trojan", "-c", path};
-    main(3, args);
+    main_impl(3, args);
     g_android_java_env->ReleaseStringUTFChars(configPath, path);
     g_android_java_env            = NULL;
     g_android_java_service_class  = NULL;
@@ -87,7 +87,7 @@ extern "C" {
 
 TROJAN_API void trojan_run_main(const char* config_path) {
     const char* args[] = {"trojan", "-c", config_path};
-    main(3, args);
+    main_impl(3, args);
 }
 
 TROJAN_API void trojan_stop_main(void) {

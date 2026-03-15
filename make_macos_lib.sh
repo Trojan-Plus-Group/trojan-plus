@@ -1,17 +1,17 @@
 #!/bin/sh
 
+# If no Xcode path provided, use default
 if [ ! -n "$1" ]; then
-    echo "Usage: $0 <xcode_path> [-r]";
-    echo "Example: $0 /Applications/Xcode.app -r";
-    exit 1;
-fi
-
-clean_build=0
-if [ -n "$2" ] && [ "$2" == "-r" ]; then
+    XCODE_PATH="/Applications/Xcode.app"
     clean_build=1
+    echo "No Xcode path provided, using default: ${XCODE_PATH} with clean build (-r)"
+else
+    XCODE_PATH="$1"
+    clean_build=0
+    if [ -n "$2" ] && [ "$2" == "-r" ]; then
+        clean_build=1
+    fi
 fi
-
-XCODE_PATH="$1"
 DEVELOPER_DIR="${XCODE_PATH}/Contents/Developer"
 export DEVELOPER_DIR
 
