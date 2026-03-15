@@ -62,7 +62,7 @@ void android_protect_socket(int fd);
 #else
 
 // Stub for non-Android platforms
-inline void android_protect_socket(int fd) { (void)fd; }
+void android_protect_socket(int fd);
 
 #endif // __ANDROID__
 

@@ -73,6 +73,10 @@ void android_protect_socket(int fd) {
 
 } // extern "C"
 
+#else
+
+void android_protect_socket(int){}
+
 #endif // __ANDROID__
 
 // ============================================================================
