@@ -24,11 +24,6 @@
 #include <fstream>
 #include <gsl/gsl>
 
-#ifdef __ANDROID__
-#include <jni.h>
-#include <signal.h>
-#endif //__ANDROID__
-
 #include "core/service.h"
 #include "core/version.h"
 #include "log.h"
@@ -943,46 +938,3 @@ bool prepare_nat_udp_target_bind(
 }
 
 #endif // _WIN32
-
-#ifdef __ANDROID__
-
-int main(int argc, const char* argv[]);
-
-extern "C" {
-
-JNIEnv* g_android_java_env              = NULL;
-jclass g_android_java_service_class     = NULL;
-jmethodID g_android_java_protect_socket = NULL;
-
-JNIEXPORT void JNICALL Java_com_trojan_1plus_android_TrojanPlusVPNService_runMain(
-  JNIEnv* env, jclass service_class, jstring configPath) {
-    g_android_java_env           = env;
-    g_android_java_service_class = service_class;
-    g_android_java_protect_socket =
-      g_android_java_env->GetStaticMethodID(g_android_java_service_class, "protectSocket", "(I)V");
-
-    const char* path   = g_android_java_env->GetStringUTFChars(configPath, 0);
-    const char* args[] = {"trojan", "-c", path};
-    main(3, args);
-    g_android_java_env            = NULL;
-    g_android_java_service_class  = NULL;
-    g_android_java_protect_socket = NULL;
-}
-
-JNIEXPORT void JNICALL Java_com_trojan_1plus_android_TrojanPlusVPNService_stopMain(JNIEnv*, jclass) { raise(SIGUSR2); }
-
-JNIEXPORT jstring JNICALL Java_com_trojan_1plus_android_TrojanPlusVPNService_getVersion(JNIEnv* env, jclass) {
-    return env->NewStringUTF(Version::get_version().c_str());
-}
-
-} // extern "C"
-
-void android_protect_socket(int fd) {
-    if (g_android_java_env != NULL && g_android_java_service_class != NULL && g_android_java_protect_socket != NULL) {
-        g_android_java_env->CallStaticVoidMethod(g_android_java_service_class, g_android_java_protect_socket, fd);
-    }
-}
-#else
-
-void android_protect_socket(int) {}
-#endif

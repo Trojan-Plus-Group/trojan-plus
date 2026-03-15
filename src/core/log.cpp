@@ -31,6 +31,9 @@
 #ifdef ENABLE_ANDROID_LOG
 #include <android/log.h>
 #endif // ENABLE_ANDROID_LOG
+#ifdef ENABLE_IOS_LOG
+#include <os/log.h>
+#endif // ENABLE_IOS_LOG
 using namespace boost::posix_time;
 using namespace boost::asio::ip;
 
@@ -44,7 +47,30 @@ Log::LogCallback Log::log_callback{};
 
 void Log::log(const tp::string& message, Level level) {
     if (level >= Log::level) {
-#ifdef ENABLE_ANDROID_LOG
+#ifdef ENABLE_IOS_LOG
+        os_log_type_t log_type;
+        switch (level) {
+            case Log::ALL:
+                log_type = OS_LOG_TYPE_DEBUG;
+                break;
+            case Log::INFO:
+                log_type = OS_LOG_TYPE_INFO;
+                break;
+            case Log::WARN:
+                log_type = OS_LOG_TYPE_DEFAULT;
+                break;
+            case Log::ERROR:
+                log_type = OS_LOG_TYPE_ERROR;
+                break;
+            case Log::FATAL:
+                log_type = OS_LOG_TYPE_FAULT;
+                break;
+            default:
+                log_type = OS_LOG_TYPE_DEFAULT;
+                break;
+        }
+        os_log_with_type(OS_LOG_DEFAULT, log_type, "%{public}s", message.c_str());
+#elif defined(ENABLE_ANDROID_LOG)
         int log_level;
         switch (level) {
             case Log::ALL:
@@ -70,7 +96,7 @@ void Log::log(const tp::string& message, Level level) {
 #else
         fprintf(output_stream, "%s\n", message.c_str());
         fflush(output_stream);
-#endif // ENABLE_ANDROID_LOG
+#endif // ENABLE_IOS_LOG
         if (log_callback) {
             log_callback(message, level);
         }

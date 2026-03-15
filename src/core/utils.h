@@ -427,6 +427,7 @@ class IPv4Matcher {
     static void test_cases();
 };
 
+// Forward declaration for Android socket protection
 void android_protect_socket(int fd);
 
 template <typename ThisT, typename EndPoint>

@@ -417,6 +417,7 @@ string to_string(T value) {
 
 inline string to_string(double value) {
 #if (defined(__APPLE__) && defined(__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__) && __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 130300) || \
+    (defined(__APPLE__) && defined(__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__) && __ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__ < 160300) || \
     defined(ANDROID) || \
     (defined(__GNUC__) && __GNUC__ < 11 && !defined(__clang__))
     char buf[64];

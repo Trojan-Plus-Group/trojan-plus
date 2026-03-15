@@ -6,7 +6,9 @@ We'll only cover the build process on Linux since we will be providing Windows a
 
 Install these dependencies before you build:
 
-- [CMake](https://cmake.org/) >= 3.10.2
+- [CMake](https://cmake.org/) >= 3.10.2 
+- [Visual Studio](https://visualstudio.microsoft.com/) >= 2019 (only for Windows)
+- [XCode](https://developer.apple.com/xcode/) 14+ (only for XCode)
 - [Boost](http://www.boost.org/) >= 1.77.0 (1.85.0+ recommended for stable async_wait support)
 - [OpenSSL](https://www.openssl.org/) >= 1.1.1g (3.0.15 recommended)
 
@@ -97,6 +99,66 @@ This will build the library for multiple architectures (armeabi-v7a, arm64-v8a, 
 
 Options:
 - Add `-r` for clean build: `./build_android_so.sh /path/to/android-ndk -r`
+
+## iOS Build
+
+To build the iOS static library (.a) and XCFramework for use in iOS applications (e.g., MAUI apps).
+
+### Dependencies
+
+- Xcode (tested with Xcode 17.0+)
+- CMake >= 3.10.2
+- Pre-built iOS libraries in `trojan-plus-ios-libs` submodule (OpenSSL 3.0.15 + Boost 1.85.0)
+
+### Build
+
+1. Initialize the iOS libraries submodule:
+
+```bash
+git submodule update --init --recursive
+cd trojan-plus-ios-libs
+./make_openssl.sh
+./make_boost.sh
+cd ..
+```
+
+2. Build the iOS static library:
+
+```bash
+./make_ios.sh /Applications/Xcode.app -r
+```
+
+This will build for all iOS architectures (iphoneos arm64, iphonesimulator arm64/x86_64) and create an XCFramework at `ios_lib/trojan.xcframework`.
+
+Options:
+- Add `-r` for clean build
+
+## macOS Build
+
+To build the macOS static library (.a) and XCFramework for use in macOS applications (e.g., MAUI apps).
+
+### Dependencies
+
+- Xcode (tested with Xcode 17.0+)
+- CMake >= 3.10.2
+- Boost and OpenSSL via Homebrew:
+
+```bash
+brew install boost openssl
+```
+
+### Build
+
+```bash
+./make_macos.sh /Applications/Xcode.app -r
+```
+
+This will build for the current architecture (arm64 on Apple Silicon, x86_64 on Intel) and create an XCFramework at `macos_lib/trojan.xcframework`.
+
+Options:
+- Add `-r` for clean build
+
+**Note**: To create a universal binary with both arm64 and x86_64, build on both types of Macs and combine the libraries using `lipo`.
 
 ## Docker Build Environment
 

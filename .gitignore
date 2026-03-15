@@ -70,3 +70,8 @@ tombstone*
 .cache
 android-build*/
 android_lib/
+ios-build*/
+macos-build*/
+ios_lib/
+macos_lib/
+xcframework/

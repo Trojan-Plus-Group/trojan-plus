@@ -476,7 +476,7 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, tp::str
                     CertCloseStore(h_store, 0);
                 }
 #endif // _WIN32
-#ifdef __APPLE__
+#if defined(__APPLE__) && !TARGET_OS_IPHONE
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 
@@ -542,7 +542,7 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, tp::str
                     CFRelease(systemRoots);
                 }
 #pragma clang diagnostic pop
-#endif // __APPLE__
+#endif // __APPLE__ && !TARGET_OS_IPHONE
             } else {
                 ssl_context.load_verify_file(ssl.cert.c_str());
             }

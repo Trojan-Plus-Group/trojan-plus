@@ -86,7 +86,23 @@ if(ANDROID)
     else()
         set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -Qunused-arguments")
         set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -Qunused-arguments")
-    endif()    
+    endif()
+endif()
+
+if(IOS)
+    option(ENABLE_IOS_LOG "Build with iOS unified logging" ON)
+    if(ENABLE_IOS_LOG)
+        add_definitions(-DENABLE_IOS_LOG=1)
+    endif()
+
+    # Suppress unused argument warnings like Android
+    if(CMAKE_BUILD_TYPE STREQUAL Release)
+        set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -Qunused-arguments")
+        set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -Qunused-arguments")
+    else()
+        set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -Qunused-arguments")
+        set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -Qunused-arguments")
+    endif()
 endif()
 
 option(USE_GUARD_BACKSTACK "Build with try catch all functions" OFF)
@@ -117,37 +133,37 @@ include_directories(
     badvpn
 )
 
-set(TROJAN_SOURCE_FILES 
+set(TROJAN_SOURCE_FILES
     src/tun/lwip_custom/sys.c
-    
-    badvpn/lwip/src/core/udp.c 
-    badvpn/lwip/src/core/memp.c 
-    badvpn/lwip/src/core/init.c 
-    badvpn/lwip/src/core/pbuf.c 
-    badvpn/lwip/src/core/tcp.c 
-    badvpn/lwip/src/core/tcp_out.c 
-    badvpn/lwip/src/core/netif.c 
-    badvpn/lwip/src/core/def.c 
-    badvpn/lwip/src/core/ip.c 
-    badvpn/lwip/src/core/mem.c 
-    badvpn/lwip/src/core/tcp_in.c 
-    badvpn/lwip/src/core/stats.c 
-    badvpn/lwip/src/core/inet_chksum.c 
-    badvpn/lwip/src/core/timeouts.c 
-    badvpn/lwip/src/core/ipv4/icmp.c 
-    badvpn/lwip/src/core/ipv4/igmp.c 
-    badvpn/lwip/src/core/ipv4/ip4_addr.c 
-    badvpn/lwip/src/core/ipv4/ip4_frag.c 
-    badvpn/lwip/src/core/ipv4/ip4.c 
-    badvpn/lwip/src/core/ipv4/autoip.c 
-    badvpn/lwip/src/core/ipv6/ethip6.c 
-    badvpn/lwip/src/core/ipv6/inet6.c 
-    badvpn/lwip/src/core/ipv6/ip6_addr.c 
-    badvpn/lwip/src/core/ipv6/mld6.c 
-    badvpn/lwip/src/core/ipv6/dhcp6.c 
-    badvpn/lwip/src/core/ipv6/icmp6.c 
-    badvpn/lwip/src/core/ipv6/ip6.c 
-    badvpn/lwip/src/core/ipv6/ip6_frag.c 
+
+    badvpn/lwip/src/core/udp.c
+    badvpn/lwip/src/core/memp.c
+    badvpn/lwip/src/core/init.c
+    badvpn/lwip/src/core/pbuf.c
+    badvpn/lwip/src/core/tcp.c
+    badvpn/lwip/src/core/tcp_out.c
+    badvpn/lwip/src/core/netif.c
+    badvpn/lwip/src/core/def.c
+    badvpn/lwip/src/core/ip.c
+    badvpn/lwip/src/core/mem.c
+    badvpn/lwip/src/core/tcp_in.c
+    badvpn/lwip/src/core/stats.c
+    badvpn/lwip/src/core/inet_chksum.c
+    badvpn/lwip/src/core/timeouts.c
+    badvpn/lwip/src/core/ipv4/icmp.c
+    badvpn/lwip/src/core/ipv4/igmp.c
+    badvpn/lwip/src/core/ipv4/ip4_addr.c
+    badvpn/lwip/src/core/ipv4/ip4_frag.c
+    badvpn/lwip/src/core/ipv4/ip4.c
+    badvpn/lwip/src/core/ipv4/autoip.c
+    badvpn/lwip/src/core/ipv6/ethip6.c
+    badvpn/lwip/src/core/ipv6/inet6.c
+    badvpn/lwip/src/core/ipv6/ip6_addr.c
+    badvpn/lwip/src/core/ipv6/mld6.c
+    badvpn/lwip/src/core/ipv6/dhcp6.c
+    badvpn/lwip/src/core/ipv6/icmp6.c
+    badvpn/lwip/src/core/ipv6/ip6.c
+    badvpn/lwip/src/core/ipv6/ip6_frag.c
     badvpn/lwip/src/core/ipv6/nd6.c
 
     src/mem/memallocator.cpp
@@ -158,6 +174,7 @@ set(TROJAN_SOURCE_FILES
     src/core/pipeline.cpp
     src/core/icmpd.cpp
     src/core/utils.cpp
+    src/platform_exports.cpp
     src/main.cpp
     src/proto/socks5address.cpp
     src/proto/trojanrequest.cpp
@@ -197,6 +214,20 @@ if(ANDROID)
         COMMAND "/bin/cp" -f libtrojan.so "${LIB_OUTPUT_DIR}/libtrojan.so"
         COMMAND "${ANDROID_TOOLCHAIN_PREFIX}strip" -s "${LIB_OUTPUT_DIR}/libtrojan.so"
         COMMENT "Strip debug symbols done on final binary.")
+elseif(IOS OR (APPLE AND BUILD_IOS_MACOS_STATIC))
+    add_library(trojan STATIC ${TROJAN_SOURCE_FILES})
+
+    set_target_properties(trojan PROPERTIES
+        XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY ""
+        XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED NO
+        XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED NO
+        XCODE_ATTRIBUTE_ENABLE_BITCODE NO
+    )
+
+    add_custom_command(TARGET trojan POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:trojan> "${LIB_OUTPUT_DIR}/libtrojan.a"
+        COMMAND strip -x "${LIB_OUTPUT_DIR}/libtrojan.a"
+        COMMENT "Strip debug symbols from static library")
 else()
     add_executable(trojan ${TROJAN_SOURCE_FILES})
 endif()
@@ -213,9 +244,9 @@ include_directories(${PROJECT_SOURCE_DIR}/GSL/include)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 if (ANDROID)
-    set(ANDROID_MY_LIBS ${PROJECT_SOURCE_DIR}/trojan-plus-android-libs) 
-    set(ANDROID_MY_LIBS_LIBRARIES 
-        ${ANDROID_MY_LIBS}/lib/${ANDROID_ABI}/libssl.a 
+    set(ANDROID_MY_LIBS ${PROJECT_SOURCE_DIR}/trojan-plus-android-libs)
+    set(ANDROID_MY_LIBS_LIBRARIES
+        ${ANDROID_MY_LIBS}/lib/${ANDROID_ABI}/libssl.a
         ${ANDROID_MY_LIBS}/lib/${ANDROID_ABI}/libcrypto.a
         ${ANDROID_MY_LIBS}/lib/${ANDROID_ABI}/libboost_system.a
         ${ANDROID_MY_LIBS}/lib/${ANDROID_ABI}/libboost_program_options.a)
@@ -224,6 +255,44 @@ if (ANDROID)
 
     include_directories(${ANDROID_MY_LIBS}/include)
     target_link_libraries(trojan ${ANDROID_MY_LIBS_LIBRARIES})
+elseif(IOS)
+    set(IOS_MY_LIBS ${PROJECT_SOURCE_DIR}/trojan-plus-ios-libs)
+
+    # Determine device vs simulator
+    if(CMAKE_OSX_SYSROOT MATCHES "[Ii][Pp][Hh][Oo][Nn][Ee][Oo][Ss]")
+        set(IOS_PLATFORM "iphoneos")
+    else()
+        set(IOS_PLATFORM "iphonesimulator")
+    endif()
+
+    # Determine architecture
+    if(CMAKE_OSX_ARCHITECTURES MATCHES "arm64")
+        set(IOS_ARCH "arm64")
+    elseif(CMAKE_OSX_ARCHITECTURES MATCHES "x86_64")
+        set(IOS_ARCH "x86_64")
+    endif()
+
+    message(STATUS "iOS Build Configuration:")
+    message(STATUS "  CMAKE_OSX_SYSROOT: ${CMAKE_OSX_SYSROOT}")
+    message(STATUS "  CMAKE_OSX_ARCHITECTURES: ${CMAKE_OSX_ARCHITECTURES}")
+    message(STATUS "  IOS_PLATFORM: ${IOS_PLATFORM}")
+    message(STATUS "  IOS_ARCH: ${IOS_ARCH}")
+
+    set(IOS_MY_LIBS_LIBRARIES
+        ${IOS_MY_LIBS}/lib/${IOS_PLATFORM}/${IOS_ARCH}/libssl.a
+        ${IOS_MY_LIBS}/lib/${IOS_PLATFORM}/${IOS_ARCH}/libcrypto.a
+        ${IOS_MY_LIBS}/lib/${IOS_PLATFORM}/${IOS_ARCH}/libboost_system.a
+        ${IOS_MY_LIBS}/lib/${IOS_PLATFORM}/${IOS_ARCH}/libboost_program_options.a)
+
+    message(STATUS "  Library paths:")
+    foreach(lib ${IOS_MY_LIBS_LIBRARIES})
+        message(STATUS "    ${lib}")
+    endforeach()
+
+    set(OPENSSL_VERSION 1.1.1)
+
+    include_directories(${IOS_MY_LIBS}/include)
+    target_link_libraries(trojan ${IOS_MY_LIBS_LIBRARIES})
 else()
     set(Boost_USE_STATIC_LIBS ON)
     find_package(Boost 1.72.0 REQUIRED COMPONENTS program_options)
@@ -258,7 +327,7 @@ if(FORCE_TCP_FASTOPEN)
     add_definitions(-DTCP_FASTOPEN=23 -DTCP_FASTOPEN_CONNECT=30)
 endif()
 
-if(NOT ANDROID)    
+if(NOT ANDROID)
     if(CMAKE_SYSTEM_NAME STREQUAL Linux)
         option(ENABLE_NAT "Build with NAT support" ON)
         if(ENABLE_NAT)
@@ -271,26 +340,28 @@ if(NOT ANDROID)
         endif()
     endif()
 
-    if(APPLE)
+    if(APPLE AND NOT IOS)
         find_library(CoreFoundation CoreFoundation)
         find_library(Security Security)
         target_link_libraries(trojan ${CoreFoundation} ${Security})
     endif()
 
-    option(ENABLE_MIMALLOC "Build with mimalloc support" ON)
-    if(ENABLE_MIMALLOC)
-        set(MI_BUILD_SHARED OFF CACHE BOOL "" FORCE)
-        set(MI_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-        set(MI_BUILD_OBJECT OFF CACHE BOOL "" FORCE)
-        set(MI_INSTALL OFF CACHE BOOL "" FORCE)
-        set(MI_OVERRIDE OFF CACHE BOOL "" FORCE)
-        set(MI_OSX_ZONE OFF CACHE BOOL "" FORCE)
-        set(MI_OSX_INTERPOSE OFF CACHE BOOL "" FORCE)
-        add_subdirectory(mimalloc EXCLUDE_FROM_ALL)
-        target_include_directories(trojan BEFORE PRIVATE mimalloc/include)
-        target_link_libraries(trojan mimalloc-static)
-        add_definitions(-DENABLE_MIMALLOC)
-        message(STATUS "mimalloc will be built from source (API only) and linked statically")
+    if(NOT IOS)
+        option(ENABLE_MIMALLOC "Build with mimalloc support" ON)
+        if(ENABLE_MIMALLOC)
+            set(MI_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+            set(MI_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+            set(MI_BUILD_OBJECT OFF CACHE BOOL "" FORCE)
+            set(MI_INSTALL OFF CACHE BOOL "" FORCE)
+            set(MI_OVERRIDE OFF CACHE BOOL "" FORCE)
+            set(MI_OSX_ZONE OFF CACHE BOOL "" FORCE)
+            set(MI_OSX_INTERPOSE OFF CACHE BOOL "" FORCE)
+            add_subdirectory(mimalloc EXCLUDE_FROM_ALL)
+            target_include_directories(trojan BEFORE PRIVATE mimalloc/include)
+            target_link_libraries(trojan mimalloc-static)
+            add_definitions(-DENABLE_MIMALLOC)
+            message(STATUS "mimalloc will be built from source (API only) and linked statically")
+        endif()
     endif()
 
     if(WIN32)
