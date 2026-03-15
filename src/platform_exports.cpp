@@ -85,16 +85,20 @@ void android_protect_socket(int){}
 
 extern "C" {
 
-void trojan_run_main(const char* config_path) {
+TROJAN_API void trojan_run_main(const char* config_path) {
     const char* args[] = {"trojan", "-c", config_path};
     main(3, args);
 }
 
-void trojan_stop_main(void) {
+TROJAN_API void trojan_stop_main(void) {
+#ifdef _WIN32
+    raise(SIGTERM);
+#else
     raise(SIGUSR2);
+#endif
 }
 
-const char* trojan_get_version(void) {
+TROJAN_API const char* trojan_get_version(void) {
     static tp::string version = Version::get_version();
     return version.c_str();
 }
