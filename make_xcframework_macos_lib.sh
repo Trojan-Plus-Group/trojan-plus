@@ -87,8 +87,14 @@ if [ ! -f "${OPENSSL_PREFIX}/lib/libssl.a" ] || [ ! -f "${OPENSSL_PREFIX}/lib/li
     exit 1
 fi
 
-if [ ! -f "${BOOST_PREFIX}/lib/libboost_system.a" ] || [ ! -f "${BOOST_PREFIX}/lib/libboost_program_options.a" ]; then
-    echo "Error: Boost static libraries not found in ${BOOST_PREFIX}/lib/"
+# Check if boost_system is header-only (libboost_system.a doesn't exist in Boost 1.70+)
+BOOST_HAS_SYSTEM_LIB=0
+if [ -f "${BOOST_PREFIX}/lib/libboost_system.a" ]; then
+    BOOST_HAS_SYSTEM_LIB=1
+fi
+
+if [ ! -f "${BOOST_PREFIX}/lib/libboost_program_options.a" ]; then
+    echo "Error: Boost static library libboost_program_options.a not found in ${BOOST_PREFIX}/lib/"
     exit 1
 fi
 
@@ -138,16 +144,26 @@ merge_libraries() {
     # Extract or copy each library
     extract_or_copy "${ssl_lib}" "${temp_dir}/libssl.a" "${arch}" || exit 1
     extract_or_copy "${crypto_lib}" "${temp_dir}/libcrypto.a" "${arch}" || exit 1
-    extract_or_copy "${boost_system_lib}" "${temp_dir}/libboost_system.a" "${arch}" || exit 1
+    if [ ${BOOST_HAS_SYSTEM_LIB} -eq 1 ]; then
+        extract_or_copy "${boost_system_lib}" "${temp_dir}/libboost_system.a" "${arch}" || exit 1
+    fi
     extract_or_copy "${boost_po_lib}" "${temp_dir}/libboost_program_options.a" "${arch}" || exit 1
 
     # Use libtool to merge all static libraries into one
-    libtool -static -o "${output_lib}" \
-        "${trojan_lib}" \
-        "${temp_dir}/libssl.a" \
-        "${temp_dir}/libcrypto.a" \
-        "${temp_dir}/libboost_system.a" \
-        "${temp_dir}/libboost_program_options.a"
+    if [ ${BOOST_HAS_SYSTEM_LIB} -eq 1 ]; then
+        libtool -static -o "${output_lib}" \
+            "${trojan_lib}" \
+            "${temp_dir}/libssl.a" \
+            "${temp_dir}/libcrypto.a" \
+            "${temp_dir}/libboost_system.a" \
+            "${temp_dir}/libboost_program_options.a"
+    else
+        libtool -static -o "${output_lib}" \
+            "${trojan_lib}" \
+            "${temp_dir}/libssl.a" \
+            "${temp_dir}/libcrypto.a" \
+            "${temp_dir}/libboost_program_options.a"
+    fi
 
     # Clean up temp directory
     rm -rf "${temp_dir}"
