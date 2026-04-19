@@ -295,18 +295,71 @@ elseif(IOS)
     include_directories(${IOS_MY_LIBS}/include)
     target_link_libraries(trojan ${IOS_MY_LIBS_LIBRARIES})
 else()
-    set(Boost_USE_STATIC_LIBS ON)
-    find_package(Boost 1.72.0 REQUIRED COMPONENTS program_options)
-    include_directories(${Boost_INCLUDE_DIR})
-    target_link_libraries(trojan ${Boost_LIBRARIES})
-    if(MSVC)
-        add_definitions(-DBOOST_DATE_TIME_NO_LIB)
+    # Platform-specific static library paths
+    if(APPLE)
+        # macOS: use Homebrew static libraries if available
+        find_path(OPENSSL_ROOT_DIR openssl OPENSSL_INCLUDE_DIR
+            PATHS
+                /opt/homebrew/opt/openssl@3
+                /usr/local/opt/openssl@3
+                /opt/homebrew/opt/openssl
+                /usr/local/opt/openssl
+            NO_DEFAULT_PATH
+        )
+        if(OPENSSL_ROOT_DIR)
+            set(OPENSSL_USE_STATIC_LIBS TRUE)
+            find_package(OpenSSL 1.1.0 REQUIRED PATHS ${OPENSSL_ROOT_DIR} NO_DEFAULT_PATH)
+        else()
+            set(OPENSSL_USE_STATIC_LIBS TRUE)
+            find_package(OpenSSL 1.1.0 REQUIRED)
+        endif()
+        include_directories(${OPENSSL_INCLUDE_DIR})
+        target_link_libraries(trojan ${OPENSSL_LIBRARIES})
+
+        find_path(BOOST_ROOT boost/program_options.hpp
+            PATHS
+                /opt/homebrew/opt/boost
+                /usr/local/opt/boost
+            NO_DEFAULT_PATH
+        )
+        if(BOOST_ROOT)
+            set(Boost_USE_STATIC_LIBS ON)
+            set(BOOST_INCLUDEDIR ${BOOST_ROOT}/include)
+            set(BOOST_LIBRARYDIR ${BOOST_ROOT}/lib)
+            find_package(Boost 1.72.0 REQUIRED COMPONENTS program_options)
+        else()
+            set(Boost_USE_STATIC_LIBS ON)
+            find_package(Boost 1.72.0 REQUIRED COMPONENTS program_options)
+        endif()
+        include_directories(${Boost_INCLUDE_DIR})
+        target_link_libraries(trojan ${Boost_LIBRARIES})
+    elseif(LINUX)
+        # Linux: try to find static libraries first, fallback to any
+        set(OPENSSL_USE_STATIC_LIBS TRUE)
+        find_package(OpenSSL 1.1.0 REQUIRED)
+        include_directories(${OPENSSL_INCLUDE_DIR})
+        target_link_libraries(trojan ${OPENSSL_LIBRARIES})
+
+        set(Boost_USE_STATIC_LIBS ON)
+        find_package(Boost 1.72.0 REQUIRED COMPONENTS program_options)
+        include_directories(${Boost_INCLUDE_DIR})
+        target_link_libraries(trojan ${Boost_LIBRARIES})
+    else()
+        # Windows and other platforms
+        set(Boost_USE_STATIC_LIBS ON)
+        find_package(Boost 1.72.0 REQUIRED COMPONENTS program_options)
+        include_directories(${Boost_INCLUDE_DIR})
+        target_link_libraries(trojan ${Boost_LIBRARIES})
+        if(MSVC)
+            add_definitions(-DBOOST_DATE_TIME_NO_LIB)
+        endif()
+
+        set(OPENSSL_USE_STATIC_LIBS TRUE)
+        find_package(OpenSSL 1.1.0 REQUIRED)
+        include_directories(${OPENSSL_INCLUDE_DIR})
+        target_link_libraries(trojan ${OPENSSL_LIBRARIES})
     endif()
 
-    set(OPENSSL_USE_STATIC_LIBS TRUE)
-    find_package(OpenSSL 1.1.0 REQUIRED)
-    include_directories(${OPENSSL_INCLUDE_DIR})
-    target_link_libraries(trojan ${OPENSSL_LIBRARIES})
     if(UNIX AND NOT APPLE)
         target_link_libraries(trojan dl)
     endif()
