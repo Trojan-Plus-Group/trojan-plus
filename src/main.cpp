@@ -189,7 +189,7 @@ int main_impl(int argc, const char* argv[]) {
     }
 }
 
-#ifndef IOS
+#if !defined(IOS) && !defined(BUILD_LIBRARY)
 int main(int argc, const char* argv[]) {
     return main_impl(argc, argv);
 }

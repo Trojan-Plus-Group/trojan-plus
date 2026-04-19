@@ -98,6 +98,22 @@ if [ ! -f "${BOOST_PREFIX}/lib/libboost_program_options.a" ]; then
     exit 1
 fi
 
+# Find mimalloc library from the build directory
+MIMALLOC_LIB=""
+if [ -f "${trojan_path}/macos-build-x86_64/mimalloc/Release/libmimalloc.a" ]; then
+    MIMALLOC_LIB="${trojan_path}/macos-build-x86_64/mimalloc/Release/libmimalloc.a"
+elif [ -f "${trojan_path}/macos-build-arm64/mimalloc/Release/libmimalloc.a" ]; then
+    MIMALLOC_LIB="${trojan_path}/macos-build-arm64/mimalloc/Release/libmimalloc.a"
+fi
+
+if [ -z "${MIMALLOC_LIB}" ]; then
+    echo "Error: mimalloc library not found!"
+    echo "Please ensure the build completed successfully."
+    exit 1
+fi
+
+echo "  mimalloc: ${MIMALLOC_LIB}"
+
 echo ""
 echo "Merging dependencies into fat libraries..."
 
@@ -149,6 +165,9 @@ merge_libraries() {
     fi
     extract_or_copy "${boost_po_lib}" "${temp_dir}/libboost_program_options.a" "${arch}" || exit 1
 
+    # Extract or copy mimalloc (may need architecture extraction if fat binary)
+    extract_or_copy "${MIMALLOC_LIB}" "${temp_dir}/libmimalloc.a" "${arch}" || exit 1
+
     # Use libtool to merge all static libraries into one
     if [ ${BOOST_HAS_SYSTEM_LIB} -eq 1 ]; then
         libtool -static -o "${output_lib}" \
@@ -156,13 +175,15 @@ merge_libraries() {
             "${temp_dir}/libssl.a" \
             "${temp_dir}/libcrypto.a" \
             "${temp_dir}/libboost_system.a" \
-            "${temp_dir}/libboost_program_options.a"
+            "${temp_dir}/libboost_program_options.a" \
+            "${temp_dir}/libmimalloc.a"
     else
         libtool -static -o "${output_lib}" \
             "${trojan_lib}" \
             "${temp_dir}/libssl.a" \
             "${temp_dir}/libcrypto.a" \
-            "${temp_dir}/libboost_program_options.a"
+            "${temp_dir}/libboost_program_options.a" \
+            "${temp_dir}/libmimalloc.a"
     fi
 
     # Clean up temp directory
@@ -208,5 +229,5 @@ echo ""
 echo "macOS XCFramework created successfully!"
 echo "Output: ${output_path}/trojan-macos.xcframework"
 echo ""
-echo "Note: The XCFramework includes all dependencies (OpenSSL, Boost)."
+echo "Note: The XCFramework includes all dependencies (OpenSSL, Boost, mimalloc)."
 echo "Your macOS app only needs to link this single framework."

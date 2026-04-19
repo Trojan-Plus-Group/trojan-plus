@@ -203,7 +203,12 @@ set(TROJAN_SOURCE_FILES
     src/tun/udplocalforwarder.cpp
 )
 
+# Option to build as a library (without main function) instead of executable
+option(BUILD_LIBRARY "Build as a static library (excluding main function)" OFF)
+
 if(ANDROID)
+    # Build as static library without main function (for embedding in other projects)
+    add_definitions(-DBUILD_LIBRARY)
     add_library(trojan SHARED ${TROJAN_SOURCE_FILES})
 
     # Android GooglePlay store 16kb alignment required
@@ -215,7 +220,9 @@ if(ANDROID)
         COMMAND "/bin/cp" -f libtrojan.so "${LIB_OUTPUT_DIR}/libtrojan.so"
         COMMAND "${ANDROID_TOOLCHAIN_PREFIX}strip" -s "${LIB_OUTPUT_DIR}/libtrojan.so"
         COMMENT "Strip debug symbols done on final binary.")
-elseif(IOS OR (APPLE AND BUILD_IOS_MACOS_STATIC))
+elseif(IOS OR (APPLE AND BUILD_LIBRARY))
+    # Build as static library without main function (for embedding in other projects)
+    add_definitions(-DBUILD_LIBRARY)
     add_library(trojan STATIC ${TROJAN_SOURCE_FILES})
 
     set_target_properties(trojan PROPERTIES

@@ -63,7 +63,7 @@ do
           -DCMAKE_XCODE_ATTRIBUTE_ONLY_ACTIVE_ARCH=NO \
           -DLIB_OUTPUT_DIR="${output_path}" \
           -DCMAKE_BUILD_TYPE=Release \
-          -DBUILD_IOS_MACOS_STATIC=ON \
+          -DBUILD_LIBRARY=ON \
           ..
 
     cmake --build . --config Release -- -jobs ${BUILD_THREADS}
