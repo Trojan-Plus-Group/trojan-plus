@@ -23,6 +23,7 @@
 #define _TROJAN_UTILS_H_
 
 #include "mem/memallocator.h"
+#include "platform_exports.h"
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ip/udp.hpp>
@@ -426,9 +427,6 @@ class IPv4Matcher {
 
     static void test_cases();
 };
-
-// Forward declaration for Android socket protection
-void android_protect_socket(int fd);
 
 template <typename ThisT, typename EndPoint>
 void connect_out_socket(ThisT this_ptr, tp::string addr, tp::string port, boost::asio::ip::tcp::resolver& resolver,

@@ -42,7 +42,6 @@ ANDROID_API=31
 
 android_architectures=(
     arm64-v8a
-    x86
     x86_64
 )
 
