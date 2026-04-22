@@ -58,7 +58,7 @@ class mem_allocator {
         uint32_t start_offset;
     };
 
-    static const size_t memory_recorder_header_size = sizeof(memory_recorder_header);
+    static constexpr size_t memory_recorder_header_size = sizeof(memory_recorder_header);
     static size_t cantor_paring_normalize(const int x) {
         return x >= 0 ? (static_cast<size_t>(x) << 1) : ~(static_cast<size_t>(x) << 1);
     }
