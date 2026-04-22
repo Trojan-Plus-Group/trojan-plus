@@ -50,7 +50,7 @@ terms of the MIT license. A copy of the license can be found in the file
   #include <sys/sysctl.h>
 #endif
 
-#if !defined(__HAIKU__) && !defined(__APPLE__) && !defined(__CYGWIN__)
+#if !defined(__HAIKU__) && !defined(__APPLE__) && !defined(__CYGWIN__) && !defined(__ANDROID__)
   #define MI_HAS_SYSCALL_H
   #include <sys/syscall.h>
 #endif

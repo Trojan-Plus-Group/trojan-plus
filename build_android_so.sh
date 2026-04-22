@@ -23,16 +23,24 @@
 #
 
 if [ ! -n "$1" ]; then
-    echo "Please append android NDK home path with this script!";
+    echo "Usage: $0 <ndk_path> [-r] [-d]"
+    echo "  -r  : clean rebuild"
+    echo "  -d  : debug build (with symbols, no strip)"
     exit 1;
 fi
 
 clean_build=0
+debug_build=0
 
-if [ -n "$2" ] && [ "$2" == "-r" ] ; then
-    clean_build=1
-fi
+for arg in "$@"; do
+    if [ "$arg" == "-r" ]; then
+        clean_build=1
+    elif [ "$arg" == "-d" ]; then
+        debug_build=1
+    fi
+done
 
+# Re-parse NDK path (first positional argument)
 ANDROID_NDK_HOME=`realpath $1`
 
 trojan_path=`realpath .`
@@ -57,13 +65,21 @@ do
         rm -rf ${build_path}/*
     fi
 
-    cd ${build_path}   
+    cd ${build_path}
+
+    # Determine build type
+    if [ ${debug_build} = "1" ]; then
+        build_type="Debug"
+    else
+        build_type="Release"
+    fi
 
     # https://developer.android.google.cn/ndk/guides/cmake
     cmake -DENABLE_ANDROID_LOG=ON \
           -DUSE_GUARD_BACKSTACK=ON \
           -DLIB_OUTPUT_DIR=${output_path} \
-          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_BUILD_TYPE=${build_type} \
+          -DMI_LOCAL_DYNAMIC_TLS=ON \
           -DCMAKE_TOOLCHAIN_FILE=${ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake \
           -DANDROID_NDK=${ANDROID_NDK_HOME} \
           -DANDROID_PLATFORM=${ANDROID_API} \
@@ -72,6 +88,14 @@ do
           -DANDROID_ABI="${arch}" ..
 
     make -j$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 2)
+
+    # Debug build: copy unstripped library to android_lib debug folder
+    if [ ${debug_build} = "1" ]; then
+        debug_output_path=${trojan_path}/android_lib/${arch}_debug
+        mkdir -p ${debug_output_path}
+        cp -f ${output_path}/libtrojan.so ${debug_output_path}/
+        echo "Debug library copied to ${debug_output_path}/libtrojan.so"
+    fi
 done
 
 
