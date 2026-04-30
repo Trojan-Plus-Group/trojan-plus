@@ -24,11 +24,20 @@ tp::list<SSL_SESSION*>SSLSession::sessions;
 
 int SSLSession::new_session_cb(SSL*, SSL_SESSION *session) {
     sessions.push_front(session);
-    return 0;
+    // Return 1 to take ownership of the session object.
+    // wolfSSL (and OpenSSL >= 1.1.0): returning 1 means the application
+    // is responsible for freeing the session via SSL_SESSION_free().
+    // Returning 0 would let SSL_CTX manage the lifetime, meaning the
+    // pointer can become dangling at any time.
+    return 1;
 }
 
 void SSLSession::remove_session_cb(SSL_CTX*, SSL_SESSION *session) {
     sessions.remove(session);
+    // When the SSL_CTX asks us to remove the session, it no longer
+    // needs it. Since we own the object (new_session_cb returned 1),
+    // we must free it here.
+    SSL_SESSION_free(session);
 }
 
 SSL_SESSION *SSLSession::get_session() {

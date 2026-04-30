@@ -10,3 +10,6 @@
 [submodule "trojan-plus-ios-libs"]
 	path = trojan-plus-ios-libs
 	url = https://github.com/Trojan-Plus-Group/trojan-plus-ios-libs.git
+[submodule "wolfssl"]
+	path = wolfssl
+	url = https://github.com/Trojan-Plus-Group/wolfssl

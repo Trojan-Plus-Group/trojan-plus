@@ -30,6 +30,7 @@
 #include <cstdint>
 #include <map>
 #include <vector>
+#include <openssl/evp.h>
 #include "mem/memallocator.h"
 
 class Config {

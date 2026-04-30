@@ -28,8 +28,7 @@ Trojan plus project's best running environment is Linux system in NAT mode (migh
   - or Clang 5+ (XCode 9+ / macOS 10.13+) in MacOS
 * [CMake](https://cmake.org/) >= 3.10.2
 * [Boost](http://www.boost.org/) >= 1.77.0 ( 1.85.0 recommend )
-* [OpenSSL](https://www.openssl.org/) >= 1.1.1g ( 3.0.15 recommend)
-
+* [wolfSSL](https://www.wolfssl.com/) (included as a submodule)
 **Note:** This project uses Git submodules (e.g., `badvpn`, `GSL`). Please ensure you initialize them before building:
 ```bash
 git submodule update --init --recursive
@@ -48,7 +47,7 @@ Here's a [config wiki](https://github.com/Trojan-Plus-Group/trojan-plus/wiki/Con
 * [trojan in GPLv3](https://github.com/trojan-gfw/trojan/blob/master/LICENSE)
 * [badvpn (lwip part)](https://github.com/Trojan-Plus-Group/badvpn)
 * [boost.org](https://www.boost.org/users/license.html)
-* [openssl](https://www.openssl.org/)
+* [wolfssl](https://www.wolfssl.com/)
 * [mimalloc](https://github.com/microsoft/mimalloc)
 * [GSL](https://github.com/microsoft/GSL)
 

@@ -43,22 +43,13 @@ merge_libraries() {
 
     echo "  Merging ${platform}/${arch}..."
 
-    # Check if OpenSSL and Boost libraries exist
-    local ssl_lib="${ios_libs_path}/${platform}/${arch}/libssl.a"
-    local crypto_lib="${ios_libs_path}/${platform}/${arch}/libcrypto.a"
+    # Check if Boost libraries exist
     local boost_system_lib="${ios_libs_path}/${platform}/${arch}/libboost_system.a"
     local boost_po_lib="${ios_libs_path}/${platform}/${arch}/libboost_program_options.a"
-
-    if [ ! -f "${ssl_lib}" ] || [ ! -f "${crypto_lib}" ]; then
-        echo "Error: OpenSSL libraries not found for ${platform}/${arch}"
-        exit 1
-    fi
 
     # Use libtool to merge all static libraries into one
     libtool -static -o "${output_lib}" \
         "${trojan_lib}" \
-        "${ssl_lib}" \
-        "${crypto_lib}" \
         "${boost_system_lib}" \
         "${boost_po_lib}"
 

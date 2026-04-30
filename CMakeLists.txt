@@ -251,15 +251,67 @@ include_directories(${PROJECT_SOURCE_DIR}/GSL/include)
 # as developer, I am always add this option...
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# ===== wolfSSL configuration (replaces OpenSSL) =====
+# wolfSSL is built from source as a static library via add_subdirectory.
+# The WOLFSSL_ASIO option enables Boost.Asio compatibility and automatically
+# enables OPENSSL_EXTRA and OPENSSL_ALL for the OpenSSL compatibility layer.
+set(WOLFSSL_ASIO "yes" CACHE STRING "" FORCE)
+set(WOLFSSL_TLS13 "yes" CACHE STRING "" FORCE)
+set(WOLFSSL_ALPN "yes" CACHE STRING "" FORCE)
+set(WOLFSSL_SNI "yes" CACHE STRING "" FORCE)
+set(WOLFSSL_SESSION_TICKET "yes" CACHE STRING "" FORCE)
+set(WOLFSSL_HARDEN "yes" CACHE STRING "" FORCE)
+set(WOLFSSL_SINGLE_THREADED "no" CACHE STRING "" FORCE)
+set(WOLFSSL_EXAMPLES "no" CACHE STRING "" FORCE)
+set(WOLFSSL_CRYPT_TESTS "no" CACHE STRING "" FORCE)
+set(WOLFSSL_INSTALL "no" CACHE STRING "" FORCE)
+
+# Disable ASM for cross-compilation safety
+if(ANDROID OR IOS)
+    set(WOLFSSL_ASM "no" CACHE STRING "" FORCE)
+endif()
+
+# Force wolfSSL to build as static library regardless of parent project setting
+set(BUILD_SHARED_LIBS_SAVED ${BUILD_SHARED_LIBS})
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+add_subdirectory(wolfssl EXCLUDE_FROM_ALL)
+set(BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS_SAVED} CACHE BOOL "" FORCE)
+
+# Add features to wolfSSL that are not available as CMake options
+# HAVE_SECRET_CALLBACK enables SSL_CTX_set_keylog_callback implementation
+target_compile_definitions(wolfssl PRIVATE HAVE_SECRET_CALLBACK)
+
+message(STATUS "wolfSSL will be built from source and linked statically")
+
+# wolfSSL OpenSSL compat headers: make #include <openssl/ssl.h> resolve to
+# wolfssl/wolfssl/openssl/ssl.h (BEFORE any system OpenSSL headers)
+target_include_directories(trojan BEFORE PRIVATE
+    ${CMAKE_SOURCE_DIR}/wolfssl/wolfssl
+)
+
+# Boost.Asio SSL layer needs this to work with wolfSSL
+target_compile_definitions(trojan PRIVATE
+    BOOST_ASIO_USE_WOLFSSL
+    OPENSSL_EXTRA
+    OPENSSL_ALL
+    HAVE_EX_DATA
+    HAVE_SECRET_CALLBACK     # Required for SSL_CTX_set_keylog_callback
+    WOLFSSL_NO_OPTIONS_H     # Suppress #warning in settings.h (MSVC has no #warning)
+    NO_WC_SSIZE_TYPE         # Avoid ssize_t redefinition conflict with lwip
+    OPENSSL_NO_SSL2          # wolfSSL does not support SSLv2
+    OPENSSL_NO_SSL3          # wolfSSL does not support SSLv3
+    OPENSSL_VERSION_NUMBER=0x10100000L  # Boost.Asio needs >= 1.1.0 for modern API paths
+    SSL_TXT_TLSV1_2          # Needed by WOLFSSL_ASIO mode
+    HAVE_ECC                 # Enable ECC compat macros (SSL_CTX_set1_curves_list)
+)
+target_link_libraries(trojan wolfssl)
+
+# ===== Boost dependency (per-platform) =====
 if (ANDROID)
     set(ANDROID_MY_LIBS ${PROJECT_SOURCE_DIR}/trojan-plus-android-libs)
     set(ANDROID_MY_LIBS_LIBRARIES
-        ${ANDROID_MY_LIBS}/lib/${ANDROID_ABI}/libssl.a
-        ${ANDROID_MY_LIBS}/lib/${ANDROID_ABI}/libcrypto.a
         ${ANDROID_MY_LIBS}/lib/${ANDROID_ABI}/libboost_system.a
         ${ANDROID_MY_LIBS}/lib/${ANDROID_ABI}/libboost_program_options.a)
-
-    set(OPENSSL_VERSION 1.1.1)
 
     include_directories(${ANDROID_MY_LIBS}/include)
     target_link_libraries(trojan ${ANDROID_MY_LIBS_LIBRARIES})
@@ -287,8 +339,6 @@ elseif(IOS)
     message(STATUS "  IOS_ARCH: ${IOS_ARCH}")
 
     set(IOS_MY_LIBS_LIBRARIES
-        ${IOS_MY_LIBS}/lib/${IOS_PLATFORM}/${IOS_ARCH}/libssl.a
-        ${IOS_MY_LIBS}/lib/${IOS_PLATFORM}/${IOS_ARCH}/libcrypto.a
         ${IOS_MY_LIBS}/lib/${IOS_PLATFORM}/${IOS_ARCH}/libboost_system.a
         ${IOS_MY_LIBS}/lib/${IOS_PLATFORM}/${IOS_ARCH}/libboost_program_options.a)
 
@@ -297,32 +347,10 @@ elseif(IOS)
         message(STATUS "    ${lib}")
     endforeach()
 
-    set(OPENSSL_VERSION 1.1.1)
-
     include_directories(${IOS_MY_LIBS}/include)
     target_link_libraries(trojan ${IOS_MY_LIBS_LIBRARIES})
 else()
-    # Platform-specific static library paths
     if(APPLE)
-        # macOS: use Homebrew static libraries if available
-        find_path(OPENSSL_ROOT_DIR openssl OPENSSL_INCLUDE_DIR
-            PATHS
-                /opt/homebrew/opt/openssl@3
-                /usr/local/opt/openssl@3
-                /opt/homebrew/opt/openssl
-                /usr/local/opt/openssl
-            NO_DEFAULT_PATH
-        )
-        if(OPENSSL_ROOT_DIR)
-            set(OPENSSL_USE_STATIC_LIBS TRUE)
-            find_package(OpenSSL REQUIRED PATHS ${OPENSSL_ROOT_DIR} NO_DEFAULT_PATH)
-        else()
-            set(OPENSSL_USE_STATIC_LIBS TRUE)
-            find_package(OpenSSL REQUIRED)
-        endif()
-        include_directories(${OPENSSL_INCLUDE_DIR})
-        target_link_libraries(trojan ${OPENSSL_LIBRARIES})
-
         find_path(BOOST_ROOT boost/program_options.hpp
             PATHS
                 /opt/homebrew/opt/boost
@@ -341,12 +369,6 @@ else()
         include_directories(${Boost_INCLUDE_DIR})
         target_link_libraries(trojan ${Boost_LIBRARIES})
     elseif(LINUX)
-        # Linux: try to find static libraries first, fallback to any
-        set(OPENSSL_USE_STATIC_LIBS TRUE)
-        find_package(OpenSSL REQUIRED)
-        include_directories(${OPENSSL_INCLUDE_DIR})
-        target_link_libraries(trojan ${OPENSSL_LIBRARIES})
-
         set(Boost_USE_STATIC_LIBS ON)
         find_package(Boost 1.72.0 REQUIRED COMPONENTS program_options)
         include_directories(${Boost_INCLUDE_DIR})
@@ -360,11 +382,6 @@ else()
         if(MSVC)
             add_definitions(-DBOOST_DATE_TIME_NO_LIB)
         endif()
-
-        set(OPENSSL_USE_STATIC_LIBS TRUE)
-        find_package(OpenSSL REQUIRED)
-        include_directories(${OPENSSL_INCLUDE_DIR})
-        target_link_libraries(trojan ${OPENSSL_LIBRARIES})
     endif()
 
     if(UNIX AND NOT APPLE)

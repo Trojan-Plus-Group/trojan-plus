@@ -15,7 +15,7 @@ The project prioritizes performance and features over simplicity, using a multi-
 - C++17 compiler (GCC 7+, Clang 5+, MSVC 2017+)
 - CMake >= 3.10.2
 - Boost >= 1.72.0 (1.80.0+ recommended)
-- OpenSSL >= 1.1.0
+- wolfSSL (via submodule)
 - Git submodules (badvpn, GSL, mimalloc)
 
 **CRITICAL**: Always initialize git submodules before building:
@@ -38,7 +38,7 @@ make -j$(sysctl -n hw.ncpu)  # macOS
 - `-DENABLE_MIMALLOC=ON/OFF`: Enable mimalloc allocator (default ON, recommended)
 - `-DENABLE_NAT=ON/OFF`: NAT support (Linux only, default ON)
 - `-DENABLE_REUSE_PORT=ON/OFF`: SO_REUSEPORT support (Linux only, default ON)
-- `-DENABLE_SSL_KEYLOG=ON/OFF`: SSL KeyLog support (OpenSSL >= 1.1.1, default ON)
+- `-DENABLE_SSL_KEYLOG=ON/OFF`: SSL KeyLog support (default ON)
 - `-DFORCE_TCP_FASTOPEN=ON/OFF`: Force TCP Fast Open support
 
 ### Docker Build Environment
@@ -153,7 +153,7 @@ See `docs/config.md` for full configuration documentation.
 ### External Libraries
 
 - **Boost**: Uses program_options, asio (io_context, ssl, timers, sockets)
-- **OpenSSL**: SSL/TLS implementation
+- **wolfSSL**: SSL/TLS implementation
 
 ## Running
 
@@ -169,4 +169,4 @@ See `docs/config.md` for full configuration documentation.
 - **mimalloc Integration**: Bundled and statically linked for improved multi-threaded performance
 - **Asio Modernization**: Removed deprecated null_buffers() pattern, using async_wait()
 - **Security Hardening**: Replaced sprintf with snprintf throughout
-- **macOS Compatibility**: Fixed OpenSSL 3.x compatibility, suppressed SecKeychain deprecation warnings
+- **macOS Compatibility**: Fixed wolfSSL compatibility, suppressed SecKeychain deprecation warnings

@@ -25,6 +25,7 @@
 #include <boost/version.hpp>
 #include <cstdlib>
 #include <iostream>
+#include <wolfssl/version.h>
 #include <openssl/opensslv.h>
 
 #include "core/service.h"
@@ -82,7 +83,7 @@ int main_impl(int argc, const char* argv[]) {
         desc.add_options()("config,c",
           po::value<tp::string>(&config_file)->default_value(DEFAULT_CONFIG)->value_name("CONFIG"),
           "specify config file")("help,h", "print help message")("keylog,k",
-          po::value<tp::string>(&keylog_file)->value_name("KEYLOG"), "specify keylog file location (OpenSSL >= 1.1.1)")(
+          po::value<tp::string>(&keylog_file)->value_name("KEYLOG"), "specify keylog file location")(
           "log,l", po::value<tp::string>(&log_file)->value_name("LOG"), "specify log file location")(
           "test,t", po::bool_switch(&test), "test config file")("version,v", "print version and build info");
         po::positional_options_description pd;
@@ -127,11 +128,8 @@ int main_impl(int argc, const char* argv[]) {
 #else  // ENABLE_REUSE_PORT
             Log::log("[Disabled] TCP Port Reuse Support", Log::FATAL);
 #endif // ENABLE_REUSE_PORT
-            Log::log("OpenSSL Information", Log::FATAL);
-            if (OpenSSL_version_num() != OPENSSL_VERSION_NUMBER) {
-                Log::log(tp::string("\tCompile-time Version: ") + OPENSSL_VERSION_TEXT, Log::FATAL);
-            }
-            Log::log(tp::string("\tBuild Flags: ") + OpenSSL_version(OPENSSL_CFLAGS), Log::FATAL);
+            Log::log("SSL Library Information", Log::FATAL);
+            Log::log(tp::string("\tVersion: wolfSSL ") + LIBWOLFSSL_VERSION_STRING, Log::FATAL);
             exit(EXIT_SUCCESS);
         }
         if (vm.count("log")) {
