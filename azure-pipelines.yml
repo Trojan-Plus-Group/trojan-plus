@@ -66,7 +66,7 @@ stages:
 
         mkdir build && cd build
         cmake -DBOOST_ROOT="$(pwd)/../boost_${BOOST_VERSION}" -DBoost_NO_BOOST_CMAKE=ON -DBoost_USE_STATIC_LIBS=ON -DENABLE_MIMALLOC=ON ..
-        cmake --build . --config Release
+        cmake --build . --config Release -- /m
     - publish: $(System.DefaultWorkingDirectory)/build/Release/trojan.exe
       artifact: WindowsBinary
 
