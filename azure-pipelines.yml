@@ -38,7 +38,7 @@ stages:
         set -v
         brew install boost
         mkdir build && cd build
-        cmake -DBoost_USE_STATIC_LIBS=ON -DDEFAULT_CONFIG=../config.json -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 -DENABLE_MIMALLOC=ON ..
+        cmake -DBoost_USE_STATIC_LIBS=ON -DDEFAULT_CONFIG=../config.json -DCMAKE_OSX_DEPLOYMENT_TARGET=10.14 -DENABLE_MIMALLOC=ON ..
         make -j$(sysctl -n hw.ncpu)
         strip -SXTx trojan
     - publish: $(System.DefaultWorkingDirectory)/build/trojan
