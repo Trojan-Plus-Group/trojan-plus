@@ -61,7 +61,7 @@ stages:
         unzip -q boost_${BOOST_VERSION}.zip
         cd boost_${BOOST_VERSION}
         ./bootstrap.bat
-        ./b2 --with-system --with-program_options variant=release link=static threading=multi runtime-link=shared address-model=64
+        ./b2 -j%NUMBER_OF_PROCESSORS% --with-system --with-program_options variant=release link=static threading=multi runtime-link=shared address-model=64
         cd ..
 
         mkdir build && cd build
