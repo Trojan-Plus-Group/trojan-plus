@@ -61,12 +61,12 @@ stages:
         unzip -q boost_${BOOST_VERSION}.zip
         cd boost_${BOOST_VERSION}
         ./bootstrap.bat
-        ./b2 -j%NUMBER_OF_PROCESSORS% --with-system --with-program_options variant=release link=static threading=multi runtime-link=shared address-model=64
+        ./b2 -j$NUMBER_OF_PROCESSORS --with-system --with-program_options variant=release link=static threading=multi runtime-link=shared address-model=64
         cd ..
 
         mkdir build && cd build
         cmake -DBOOST_ROOT="$(pwd)/../boost_${BOOST_VERSION}" -DBoost_NO_BOOST_CMAKE=ON -DBoost_USE_STATIC_LIBS=ON -DENABLE_MIMALLOC=ON ..
-        cmake --build . --config Release -- /m
+        cmake --build . --config Release --parallel
     - publish: $(System.DefaultWorkingDirectory)/build/Release/trojan.exe
       artifact: WindowsBinary
 
