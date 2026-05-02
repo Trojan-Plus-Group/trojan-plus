@@ -37,6 +37,11 @@
 #include "session/session.h"
 #include "session/udpforwardsession.h"
 #include "mem/memallocator.h"
+#ifdef ENABLE_QUIC
+#include "quic/quic_client_endpoint.h"
+#include "quic/quic_server_endpoint.h"
+#include "quic/quic_tls_ctx.h"
+#endif
 
 class TUNDev;
 class DNSServer;
@@ -69,6 +74,13 @@ class Service {
     std::shared_ptr<TUNDev> m_tundev;
 
     SendingDataAllocator m_sending_data_allocator;
+
+#ifdef ENABLE_QUIC
+    std::shared_ptr<QuicTlsCtx> m_quic_tls_ctx;
+    std::shared_ptr<QuicServerEndpoint> m_quic_server;
+    std::shared_ptr<QuicClientEndpoint> m_quic_client;
+    void prepare_quic_endpoint();
+#endif
 
     const Config& config;
 

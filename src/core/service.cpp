@@ -136,6 +136,12 @@ Service::Service(Config& config, bool test)
 
     config.prepare_ssl_context(ssl_context, plain_http_response);
 
+#ifdef ENABLE_QUIC
+    if (!test) {
+        prepare_quic_endpoint();
+    }
+#endif
+
 #ifndef __ANDROID__
     if (!test && config.get_dns().enabled) {
         if (config.get_run_type() == Config::SERVER || config.get_run_type() == Config::FORWARD) {
@@ -204,6 +210,15 @@ void Service::run() {
         _log_with_date_time(tp::string("trojan plus service (") + rt + ") started at " +
                               local_endpoint.address().to_string() + ':' + tp::to_string(local_endpoint.port()),
           Log::FATAL);
+
+#ifdef ENABLE_QUIC
+        if (m_quic_server) {
+            m_quic_server->start();
+        }
+        if (m_quic_client) {
+            m_quic_client->start();
+        }
+#endif
     } else {
         _log_with_date_time(tp::string("trojan plus service (") + rt + ") started at [" + config.get_tun().tun_name + "] " +
                               config.get_tun().net_ip + "/" + config.get_tun().net_mask,
@@ -246,11 +261,43 @@ void Service::stop() {
         udp_socket.close(ec);
     }
 
+#ifdef ENABLE_QUIC
+    if (m_quic_server) {
+        m_quic_server->stop();
+    }
+    if (m_quic_client) {
+        m_quic_client->stop();
+    }
+#endif
+
 #endif
 
     io_context.stop();
     _unguard;
 }
+
+#ifdef ENABLE_QUIC
+void Service::prepare_quic_endpoint() {
+    _guard;
+
+    if (!config.get_quic().enabled) {
+        return;
+    }
+
+    const auto run_type = config.get_run_type();
+    if (run_type == Config::SERVER || run_type == Config::SERVERT_TUN) {
+        m_quic_tls_ctx = TP_MAKE_SHARED(QuicTlsCtx, config, QuicTlsCtx::Role::Server);
+        m_quic_server  = TP_MAKE_SHARED(QuicServerEndpoint, std::ref(io_context), config, m_quic_tls_ctx);
+        _log_with_date_time("[quic] server endpoint prepared (Phase 1 skeleton)", Log::WARN);
+    } else {
+        m_quic_tls_ctx = TP_MAKE_SHARED(QuicTlsCtx, config, QuicTlsCtx::Role::Client);
+        m_quic_client  = TP_MAKE_SHARED(QuicClientEndpoint, std::ref(io_context), config, m_quic_tls_ctx);
+        _log_with_date_time("[quic] client endpoint prepared (Phase 1 skeleton)", Log::WARN);
+    }
+
+    _unguard;
+}
+#endif
 
 void Service::prepare_pipelines() {
     _guard;

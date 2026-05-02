@@ -20,24 +20,30 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 
-cmake_minimum_required(VERSION 3.10.2)
+cmake_minimum_required(VERSION 3.20)
 
 if(POLICY CMP0167)
   cmake_policy(SET CMP0167 OLD)
 endif()
 
 project(trojan CXX C)
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
-# c++17 standard support:
-# https://en.wikipedia.org/wiki/C%2B%2B17
+# c++23 standard support (required for QUIC integration via ngtcp2 examples patterns):
+# https://en.cppreference.com/w/cpp/compiler_support/23
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-  if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS "7.0.0")
-    message(FATAL_ERROR "Insufficient gcc version, please install higher version (minimum_required 7.0.0)")
+  if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS "13.0.0")
+    message(FATAL_ERROR "Insufficient gcc version, please install higher version (minimum_required 13.0.0 for C++23)")
+  endif()
+elseif(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+  if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS "16.0.0")
+    message(FATAL_ERROR "Insufficient clang version, please install higher version (minimum_required 16.0.0 for C++23)")
   endif()
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
-  if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS "19.14")
-    message(FATAL_ERROR "Insufficient msvc version, please install higher version (minimum_required Visual Studio 2017 15.7 MSVC 19.14)")
+  if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS "19.34")
+    message(FATAL_ERROR "Insufficient msvc version, please install higher version (minimum_required Visual Studio 2022 17.4 MSVC 19.34 for C++23)")
   endif()
 endif()
 
@@ -203,6 +209,20 @@ set(TROJAN_SOURCE_FILES
     src/tun/udplocalforwarder.cpp
 )
 
+# QUIC transport via ngtcp2 + wolfSSL (default ON)
+option(ENABLE_QUIC "Build QUIC transport via ngtcp2 + wolfSSL" ON)
+if(ENABLE_QUIC)
+    list(APPEND TROJAN_SOURCE_FILES
+        src/quic/quic_tls_ctx.cpp
+        src/quic/quic_endpoint.cpp
+        src/quic/quic_server_endpoint.cpp
+        src/quic/quic_client_endpoint.cpp
+        src/quic/quic_connection.cpp
+        src/quic/quic_session.cpp
+        src/quic/outbound_transport.cpp
+    )
+endif()
+
 # Option to build as a library (without main function) instead of executable
 option(BUILD_LIBRARY "Build as a static library (excluding main function)" OFF)
 
@@ -273,6 +293,12 @@ set(WOLFSSL_ECC "yes" CACHE STRING "" FORCE)
 # Note: HAVE_AESGCM / HAVE_SUPPORTED_CURVES / HAVE_ECC are C preprocessor macros,
 # not wolfSSL CMake options — define them via target_compile_definitions below.
 
+# Required by ngtcp2_crypto_wolfssl: enables wolfSSL_set_quic_method and the
+# QUIC encryption-level callbacks (header in wolfssl/wolfssl/quic.h).
+if(ENABLE_QUIC)
+    set(WOLFSSL_QUIC "yes" CACHE STRING "" FORCE)
+endif()
+
 # Disable ASM for cross-compilation safety
 if(ANDROID OR IOS)
     set(WOLFSSL_ASM "no" CACHE STRING "" FORCE)
@@ -300,6 +326,55 @@ else()
 endif()
 
 message(STATUS "wolfSSL will be built from source and linked statically")
+
+# ===== ngtcp2 (QUIC) configuration =====
+# ngtcp2 ships its own CMakeLists.txt; it locates wolfSSL via find_package, which
+# would normally scan the system. We pre-seed the cache with paths into the
+# in-tree wolfSSL submodule and the CMake target name, so the bundled
+# Findwolfssl.cmake module short-circuits to our local build.
+if(ENABLE_QUIC)
+    # wolfSSL is built via add_subdirectory above; ngtcp2's bundled Findwolfssl
+    # uses these vars, and ngtcp2/crypto/wolfssl pulls in <wolfssl/options.h>
+    # which is generated into the build tree, so the include list must contain
+    # both the source dir and the build dir.
+    set(WOLFSSL_INCLUDE_DIR  "${CMAKE_SOURCE_DIR}/wolfssl" CACHE PATH   "" FORCE)
+    set(WOLFSSL_LIBRARY      wolfssl                       CACHE STRING "" FORCE)
+    set(WOLFSSL_LIBRARIES    wolfssl                       CACHE STRING "" FORCE)
+    set(WOLFSSL_INCLUDE_DIRS
+        "${CMAKE_SOURCE_DIR}/wolfssl"
+        "${CMAKE_BINARY_DIR}/wolfssl"
+        CACHE STRING "" FORCE)
+
+    set(ENABLE_LIB_ONLY     ON  CACHE BOOL "" FORCE)
+    set(ENABLE_STATIC_LIB   ON  CACHE BOOL "" FORCE)
+    set(ENABLE_SHARED_LIB   OFF CACHE BOOL "" FORCE)
+    set(ENABLE_WOLFSSL      ON  CACHE BOOL "" FORCE)
+    set(ENABLE_OPENSSL      OFF CACHE BOOL "" FORCE)
+    set(ENABLE_GNUTLS       OFF CACHE BOOL "" FORCE)
+    set(ENABLE_BORINGSSL    OFF CACHE BOOL "" FORCE)
+    set(ENABLE_PICOTLS      OFF CACHE BOOL "" FORCE)
+    set(BUILD_TESTING       OFF CACHE BOOL "" FORCE)
+
+    add_subdirectory(ngtcp2 EXCLUDE_FROM_ALL)
+
+    # ngtcp2/crypto/wolfssl/wolfssl.c includes <wolfssl/options.h>, which is
+    # generated into the wolfSSL build tree (not the source tree). Patch the
+    # include search path on the static crypto target.
+    target_include_directories(ngtcp2_crypto_wolfssl_static PRIVATE
+        ${CMAKE_BINARY_DIR}/wolfssl
+        ${CMAKE_SOURCE_DIR}/wolfssl
+    )
+
+    target_compile_definitions(trojan PRIVATE ENABLE_QUIC)
+    target_include_directories(trojan PRIVATE
+        ${CMAKE_SOURCE_DIR}/ngtcp2/lib/includes
+        ${CMAKE_SOURCE_DIR}/ngtcp2/crypto/includes
+        ${CMAKE_BINARY_DIR}/ngtcp2/lib/includes
+        ${CMAKE_BINARY_DIR}/ngtcp2/crypto/includes
+    )
+
+    message(STATUS "ngtcp2 (QUIC) will be built from source and linked statically against wolfSSL")
+endif()
 
 # wolfSSL OpenSSL compat headers: make #include <openssl/ssl.h> resolve to
 # wolfssl/wolfssl/openssl/ssl.h (BEFORE any system OpenSSL headers)
@@ -334,6 +409,10 @@ target_compile_definitions(trojan PRIVATE
     HAVE_ECC                 # Enable ECC compat macros (SSL_CTX_set1_curves_list)
 )
 target_link_libraries(trojan wolfssl)
+
+if(ENABLE_QUIC)
+    target_link_libraries(trojan ngtcp2_static ngtcp2_crypto_wolfssl_static)
+endif()
 
 # ===== Boost dependency (per-platform) =====
 if (ANDROID)

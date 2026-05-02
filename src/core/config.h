@@ -97,6 +97,19 @@ class Config {
         bool pipeline_proxy_icmp;
     };
 
+    using QUICConfig = struct {
+        bool       enabled;                  // master switch; default false
+        bool       prefer_quic;              // client: try QUIC first, fall back to TCP+TLS on failure
+        uint32_t   fallback_timeout_ms;      // client: QUIC handshake timeout before falling back
+        tp::string alpn_token;               // ALPN advertised; default "h3" for HTTP/3 disguise
+        uint32_t   max_idle_timeout_ms;      // QUIC idle timeout
+        uint32_t   max_concurrent_streams;   // per-connection bidi stream limit
+        uint32_t   max_datagram_size;        // per-packet size hint
+        uint32_t   recv_buffer_size;         // UDP recv buffer bytes
+        uint32_t   send_buffer_size;         // UDP send buffer bytes
+        tp::string h3_upstream;              // server: real HTTP/3 backend for non-trojan traffic (Phase 3)
+    };
+
     using TUN = struct {
         tp::string tun_name;
         tp::string net_ip;
@@ -151,6 +164,7 @@ class Config {
     SSLConfig ssl;
     TCPConfig tcp;
     Experimental experimental;
+    QUICConfig quic;
     TUN tun;
     DNS dns;
     ROUTE route;
@@ -188,6 +202,7 @@ class Config {
     _define_getter_const(const SSLConfig&, ssl);
     _define_getter_const(const TCPConfig&, tcp);
     _define_getter_const(const Experimental&, experimental);
+    _define_getter_const(const QUICConfig&, quic);
     _define_getter_const(const TUN&, tun);
     _define_getter_const(const DNS&, dns);
     _define_getter_const(const ROUTE&, route);

@@ -211,6 +211,29 @@ void Config::populate(const ptree& tree) {
         }
     }
 
+    quic.enabled                = tree.get("quic.enabled", false);
+    quic.prefer_quic            = tree.get("quic.prefer_quic", true);
+    quic.fallback_timeout_ms    = tree.get("quic.fallback_timeout_ms", 3000U);
+    quic.alpn_token             = tree.get("quic.alpn_token", std::string("h3")).c_str();
+    quic.max_idle_timeout_ms    = tree.get("quic.max_idle_timeout_ms", 30000U);
+    quic.max_concurrent_streams = tree.get("quic.max_concurrent_streams", 100U);
+    quic.max_datagram_size      = tree.get("quic.max_datagram_size", 1200U);
+    quic.recv_buffer_size       = tree.get("quic.recv_buffer_size", quic.max_datagram_size * 64U);
+    quic.send_buffer_size       = tree.get("quic.send_buffer_size", quic.max_datagram_size * 64U);
+    quic.h3_upstream            = tree.get("quic.h3_upstream", std::string()).c_str();
+
+#ifndef ENABLE_QUIC
+    if (quic.enabled) {
+        _log_with_date_time("quic.enabled=true but ENABLE_QUIC was OFF at build time", Log::FATAL);
+    }
+#endif
+    if (quic.enabled && !quic.h3_upstream.empty()) {
+        _log_with_date_time("quic.h3_upstream is configured; full HTTP/3 fallback is implemented in Phase 3", Log::WARN);
+    }
+    if (quic.enabled && experimental.pipeline_num > 0 && quic.prefer_quic) {
+        _log_with_date_time("pipeline_num is ignored when quic.enabled=true (QUIC streams already provide native multiplexing)", Log::WARN);
+    }
+
     tun.tun_name       = tree.get("tun.tun_name", std::string()).c_str();
     tun.net_ip         = tree.get("tun.net_ip", std::string()).c_str();
     tun.net_mask       = tree.get("tun.net_mask", std::string()).c_str();
