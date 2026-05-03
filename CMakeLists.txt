@@ -261,6 +261,9 @@ set(WOLFSSL_ALPN "yes" CACHE STRING "" FORCE)
 set(WOLFSSL_SNI "yes" CACHE STRING "" FORCE)
 set(WOLFSSL_SESSION_TICKET "yes" CACHE STRING "" FORCE)
 set(WOLFSSL_HARDEN "yes" CACHE STRING "" FORCE)
+set(WOLFSSL_TFM_TIMING_RESISTANT "yes" CACHE STRING "" FORCE)
+set(WOLFSSL_ECC_TIMING_RESISTANT "yes" CACHE STRING "" FORCE)
+set(WOLFSSL_KEYLOG_EXPORT "yes" CACHE STRING "" FORCE)
 set(WOLFSSL_SINGLE_THREADED "no" CACHE STRING "" FORCE)
 set(WOLFSSL_EXAMPLES "no" CACHE STRING "" FORCE)
 set(WOLFSSL_CRYPT_TESTS "no" CACHE STRING "" FORCE)
@@ -271,6 +274,11 @@ set(WOLFSSL_ECC "yes" CACHE STRING "" FORCE)
 set(HAVE_AESGCM "yes" CACHE STRING "" FORCE)
 set(HAVE_SUPPORTED_CURVES "yes" CACHE STRING "" FORCE)
 set(HAVE_ECC "yes" CACHE STRING "" FORCE)
+
+# Pass WC_NO_HARDEN to wolfSSL by adding to CMAKE_EXE_LINKER_FLAGS
+# This ensures the define reaches wolfSSL compilation even when WOLFSSL_HARDEN=yes
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DWC_NO_HARDEN")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DWC_NO_HARDEN")
 
 # Disable ASM for cross-compilation safety
 if(ANDROID OR IOS)
@@ -283,9 +291,6 @@ set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 add_subdirectory(wolfssl EXCLUDE_FROM_ALL)
 set(BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS_SAVED} CACHE BOOL "" FORCE)
 
-# Add features to wolfSSL that are not available as CMake options
-# HAVE_SECRET_CALLBACK enables SSL_CTX_set_keylog_callback implementation
-target_compile_definitions(wolfssl PRIVATE HAVE_SECRET_CALLBACK)
 
 message(STATUS "wolfSSL will be built from source and linked statically")
 
@@ -293,6 +298,7 @@ message(STATUS "wolfSSL will be built from source and linked statically")
 # wolfssl/wolfssl/openssl/ssl.h (BEFORE any system OpenSSL headers)
 target_include_directories(trojan BEFORE PRIVATE
     ${CMAKE_SOURCE_DIR}/wolfssl/wolfssl
+    ${CMAKE_CURRENT_BINARY_DIR}/wolfssl
 )
 
 # Boost.Asio SSL layer needs this to work with wolfSSL
@@ -301,8 +307,7 @@ target_compile_definitions(trojan PRIVATE
     OPENSSL_EXTRA
     OPENSSL_ALL
     HAVE_EX_DATA
-    HAVE_SECRET_CALLBACK     # Required for SSL_CTX_set_keylog_callback
-    WOLFSSL_NO_OPTIONS_H     # Suppress #warning in settings.h (MSVC has no #warning)
+    WOLFSSL_IGNORE_FILE_WARN
     NO_WC_SSIZE_TYPE         # Avoid ssize_t redefinition conflict with lwip
     OPENSSL_NO_SSL2          # wolfSSL does not support SSLv2
     OPENSSL_NO_SSL3          # wolfSSL does not support SSLv3
