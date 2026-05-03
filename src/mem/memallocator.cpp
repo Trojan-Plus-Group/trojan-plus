@@ -146,7 +146,7 @@ void *mem_allocator::malloc_aligned_impl(size_t size, size_t align) {
 #ifdef _WIN32
         return ::_aligned_malloc(size, align);
 #else
-        void *ptr;
+        void *ptr = nullptr;
         ::posix_memalign(&ptr, align, size);
         return ptr;
 #endif
@@ -264,6 +264,8 @@ std::string mem_allocator::show_stat(int top_count) {
 }
 
 void mem_allocator::record_malloc(void *ptr, size_t size, size_t offset, const char *file, int line) {
+    if(!ptr) return;
+    
     auto *header = (memory_recorder_header *)((uint8_t *)ptr + offset - memory_recorder_header_size);
     header->size = size;
     header->start_offset = offset;
