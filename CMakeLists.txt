@@ -295,8 +295,13 @@ set(WOLFSSL_ECC "yes" CACHE STRING "" FORCE)
 
 # Required by ngtcp2_crypto_wolfssl: enables wolfSSL_set_quic_method and the
 # QUIC encryption-level callbacks (header in wolfssl/wolfssl/quic.h).
+# Also enable OPENSSLEXTRA so that wolfSSL_EVP_aes_{128,256}_ecb are compiled
+# in; ngtcp2_crypto_wolfssl's wolfssl.c references those symbols via
+# ngtcp2_crypto_ctx_initial / ngtcp2_crypto_ctx_tls.
 if(ENABLE_QUIC)
-    set(WOLFSSL_QUIC "yes" CACHE STRING "" FORCE)
+    set(WOLFSSL_QUIC         "yes" CACHE STRING "" FORCE)
+    set(WOLFSSL_OPENSSLEXTRA "yes" CACHE STRING "" FORCE)
+    set(WOLFSSL_AESECB       "yes" CACHE STRING "" FORCE)
 endif()
 
 # Disable ASM for cross-compilation safety

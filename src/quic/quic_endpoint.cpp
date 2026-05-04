@@ -105,3 +105,20 @@ void QuicEndpoint::stop() {
         m_socket.close(ec);
     }
 }
+
+void QuicEndpoint::send_packet(const boost::asio::ip::udp::endpoint& dest,
+                               const uint8_t* data, std::size_t len) {
+    if (!m_socket.is_open() || len == 0) {
+        return;
+    }
+    boost::system::error_code ec;
+    m_socket.send_to(boost::asio::buffer(data, len), dest, 0, ec);
+    if (ec) {
+        _log_with_date_time("QuicEndpoint::send_packet: " + tp::string(ec.message().c_str()), Log::WARN);
+    }
+}
+
+boost::asio::ip::udp::endpoint QuicEndpoint::local_endpoint() const {
+    boost::system::error_code ec;
+    return m_socket.local_endpoint(ec);
+}

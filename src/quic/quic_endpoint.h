@@ -11,6 +11,7 @@
 #ifndef _QUIC_ENDPOINT_H_
 #define _QUIC_ENDPOINT_H_
 
+#include <cstdint>
 #include <memory>
 
 #include <boost/asio/io_context.hpp>
@@ -24,10 +25,6 @@ class QuicTlsCtx;
 
 // Base class for both server and client QUIC endpoints. Owns the UDP socket
 // and the connection table keyed by ngtcp2 destination connection ID.
-//
-// Phase 1 status: skeleton — opens / closes the UDP socket, runs an idle
-// async_receive_from loop, and logs incoming datagrams. ngtcp2 wiring lands in
-// the next iteration.
 class QuicEndpoint : public std::enable_shared_from_this<QuicEndpoint> {
   public:
     QuicEndpoint(boost::asio::io_context& io_ctx, const Config& config,
@@ -43,9 +40,15 @@ class QuicEndpoint : public std::enable_shared_from_this<QuicEndpoint> {
     boost::asio::io_context& io_context() { return m_io_context; }
     const Config& config() const { return m_config; }
 
+    // Send a UDP datagram to the given remote endpoint (called by QuicConnection::pump_write).
+    void send_packet(const boost::asio::ip::udp::endpoint& dest,
+                     const uint8_t* data, std::size_t len);
+
+    // Local endpoint of the bound UDP socket (needed to build ngtcp2 path).
+    boost::asio::ip::udp::endpoint local_endpoint() const;
+
   protected:
-    void open_socket(const boost::asio::ip::udp::endpoint& bind_ep,
-                     bool reuse_port);
+    void open_socket(const boost::asio::ip::udp::endpoint& bind_ep, bool reuse_port);
     void async_recv();
     virtual void on_packet(const uint8_t* data, std::size_t len,
                            const boost::asio::ip::udp::endpoint& src) = 0;

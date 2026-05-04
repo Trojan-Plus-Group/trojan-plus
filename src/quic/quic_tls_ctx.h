@@ -15,7 +15,10 @@
 #include "mem/memallocator.h"
 
 struct WOLFSSL_CTX;
+struct WOLFSSL;
 
+// Shared per-endpoint wolfSSL context. Constructed once per QuicEndpoint
+// and handed to each QuicConnection so it can create a per-connection WOLFSSL*.
 class QuicTlsCtx {
   public:
     enum class Role { Server, Client };
@@ -25,6 +28,10 @@ class QuicTlsCtx {
 
     QuicTlsCtx(const QuicTlsCtx&)            = delete;
     QuicTlsCtx& operator=(const QuicTlsCtx&) = delete;
+
+    // Create a new per-connection WOLFSSL handle from this context.
+    // Caller owns the returned handle and must call wolfSSL_free() on it.
+    [[nodiscard]] WOLFSSL* create_ssl() const;
 
     [[nodiscard]] WOLFSSL_CTX* native_handle() const { return m_ctx; }
     [[nodiscard]] Role role() const { return m_role; }

@@ -109,5 +109,11 @@ class Service {
     Pipeline* search_default_pipeline();
 
     SendingDataAllocator& get_sending_data_allocator() { return m_sending_data_allocator; }
+
+#ifdef ENABLE_QUIC
+    QuicClientEndpoint* get_quic_client() const { return m_quic_client.get(); }
+#else
+    QuicClientEndpoint* get_quic_client() const { return nullptr; }
+#endif
 };
 #endif // _SERVICE_H_

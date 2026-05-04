@@ -37,7 +37,7 @@ ClientSession::ClientSession(Service* _service, const Config& config, context& s
       status(HANDSHAKE),
       first_packet_recv(false),
       in_socket(_service->get_io_context()),
-      out_socket(_service->get_io_context(), ssl_context),
+      m_ssl_ctx(ssl_context),
       udp_socket(_service->get_io_context()) {
     set_session_name("ClientSession");
     get_pipeline_component().allocate_session_id();
@@ -56,7 +56,7 @@ bool ClientSession::prepare_session() {
         destroy();
         return false;
     }
-    get_config().prepare_ssl_reuse(out_socket);
+    // prepare_ssl_reuse is now called inside TlsOutboundTransport::async_connect.
     return true;
 }
 
@@ -163,7 +163,7 @@ void ClientSession::out_async_read() {
         out_read_buf.begin_read(__FILE__, __LINE__);
         out_read_buf.consume_all();
         auto self = shared_from_this();
-        out_socket.async_read_some(
+        m_out->async_read_some(
           out_read_buf.prepare(MAX_BUF_LENGTH), tp::bind_mem_alloc([this, self](const boost::system::error_code error, size_t length) {
               out_read_buf.end_read();
               if (error) {
@@ -198,8 +198,9 @@ void ClientSession::out_async_write(const std::string_view& data) {
           }));
     } else {
         auto data_copy = get_service()->get_sending_data_allocator().allocate(data);
-        boost::asio::async_write(
-          out_socket, data_copy->data(), tp::bind_mem_alloc([this, self, data_copy](const boost::system::error_code error, size_t) {
+        // data_copy keeps the streambuf alive; m_out reads from the string_view asynchronously.
+        m_out->async_write(
+          streambuf_to_string_view(*data_copy), tp::bind_mem_alloc([this, self, data_copy](const boost::system::error_code error, size_t) {
               get_service()->get_sending_data_allocator().free(data_copy);
               if (error) {
                   output_debug_info_ec(error);
@@ -441,8 +442,20 @@ void ClientSession::request_remote() {
     if (get_pipeline_component().is_using_pipeline()) {
         cb();
     } else {
-        connect_remote_server_ssl(self, get_config().get_remote_addr(), tp::to_string(get_config().get_remote_port()),
-          get_resolver(), out_socket, get_in_endpoint(), cb);
+        // Lazily create the outbound transport on first use so that in_ep is available.
+        if (!m_out) {
+            m_out = create_outbound_transport(
+                get_service()->get_io_context(),
+                m_ssl_ctx,
+                get_config(),
+                get_in_endpoint(),
+                get_service()->get_quic_client());
+        }
+        m_out->async_connect(
+            get_config().get_remote_addr(),
+            static_cast<uint16_t>(get_config().get_remote_port()),
+            cb,
+            [this, self]() { destroy(); });
     }
 }
 
@@ -587,7 +600,10 @@ void ClientSession::destroy(bool pipeline_call /*= false*/) {
         udp_socket.close(ec);
     }
 
-    shutdown_ssl_socket(this, out_socket);
+    if (m_out) {
+        m_out->cancel();
+        m_out->close();
+    }
 
     if (!pipeline_call && get_pipeline_component().is_using_pipeline()) {
         get_service()->session_destroy_in_pipeline(*this);

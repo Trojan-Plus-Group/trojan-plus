@@ -29,6 +29,7 @@
 
 #include "core/pipeline.h"
 #include "core/utils.h"
+#include "quic/outbound_transport.h"
 #include "socketsession.h"
 
 class Service;
@@ -40,7 +41,9 @@ class ClientSession : public SocketSession {
     Status status;
     bool first_packet_recv;
     boost::asio::ip::tcp::socket in_socket;
-    SSLSocket out_socket;
+    // Outbound connection to the trojan server (TLS or QUIC stream).
+    std::shared_ptr<OutboundTransport> m_out;
+    boost::asio::ssl::context& m_ssl_ctx;
     boost::asio::ip::udp::socket udp_socket;
     boost::asio::ip::udp::endpoint udp_recv_endpoint;
 

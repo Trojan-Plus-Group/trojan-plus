@@ -128,6 +128,11 @@ int main_impl(int argc, const char* argv[]) {
 #else  // ENABLE_REUSE_PORT
             Log::log("[Disabled] TCP Port Reuse Support", Log::FATAL);
 #endif // ENABLE_REUSE_PORT
+#ifdef ENABLE_QUIC
+            Log::log(" [Enabled] QUIC Support (ngtcp2 + wolfSSL)", Log::FATAL);
+#else  // ENABLE_QUIC
+            Log::log("[Disabled] QUIC Support (ngtcp2 + wolfSSL)", Log::FATAL);
+#endif // ENABLE_QUIC
             Log::log("SSL Library Information", Log::FATAL);
             Log::log(tp::string("\tVersion: wolfSSL ") + LIBWOLFSSL_VERSION_STRING, Log::FATAL);
             exit(EXIT_SUCCESS);

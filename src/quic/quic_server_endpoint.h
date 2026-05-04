@@ -11,8 +11,11 @@
 #ifndef _QUIC_SERVER_ENDPOINT_H_
 #define _QUIC_SERVER_ENDPOINT_H_
 
+#include "quic_connection.h"
 #include "quic_endpoint.h"
 
+// Server-side QUIC endpoint. Binds to local_addr:local_port and dispatches
+// incoming datagrams to QuicConnection instances keyed by DCID.
 class QuicServerEndpoint : public QuicEndpoint {
   public:
     QuicServerEndpoint(boost::asio::io_context& io_ctx, const Config& config,
@@ -23,6 +26,12 @@ class QuicServerEndpoint : public QuicEndpoint {
   protected:
     void on_packet(const uint8_t* data, std::size_t len,
                    const boost::asio::ip::udp::endpoint& src) override;
+
+  private:
+    // Connection table: hex-encoded DCID → QuicConnection.
+    tp::unordered_map<tp::string, std::shared_ptr<QuicConnection>> m_conns;
+
+    static tp::string dcid_key(const uint8_t* dcid, std::size_t dcidlen);
 };
 
 #endif // _QUIC_SERVER_ENDPOINT_H_
