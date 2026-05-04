@@ -220,7 +220,7 @@ void Config::populate(const ptree& tree) {
 
     dns.enabled          = tree.get("dns.enabled", false);
     dns.port             = tree.get("dns.port", default_dns_port);
-    dns.udp_timeout      = tree.get("dns.dns_udp_timeout", default_dns_udp_timeout);
+    dns.udp_timeout      = tree.get("dns.udp_timeout", default_dns_udp_timeout);
     dns.udp_recv_buf     = tree.get("dns.udp_recv_buf", default_dns_udp_recv_buf);
     dns.udp_socket_buf   = tree.get("dns.udp_socket_buf", default_dns_udp_socket_buf);
     dns.gfwlist          = tree.get("dns.gfwlist", std::string()).c_str();
@@ -290,7 +290,7 @@ void Config::load_dns(const boost::property_tree::ptree& tree) {
         }
     } else {
         dns.enabled = false;
-        _log_with_date_time("[dns] please fill 'tun.gfwlist' as filename!", Log::ERROR);
+        _log_with_date_time("[dns] please fill 'dns.gfwlist' as filename!", Log::ERROR);
     }
 
     if (dns.enabled) {

@@ -26,7 +26,7 @@
         "session_ticket": false,
         "session_timeout": 600,
         "plain_http_response": "",
-        "curves": "",
+        "curves": "X25519:P-256:P-384",
         "dhparam": ""
     },
     "tcp": {
@@ -36,5 +36,11 @@
         "reuse_port": false,
         "fast_open": false,
         "fast_open_qlen": 20
+    },
+    "experimental": {
+        "pipeline_num": 0,
+        "pipeline_timeout": 600,
+        "pipeline_ack_window": 200,
+        "pipeline_proxy_icmp": false
     }
 }

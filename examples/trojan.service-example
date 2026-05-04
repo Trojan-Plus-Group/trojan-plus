@@ -1,3 +1,9 @@
+# NOTE: This file is a CMake template. The @CMAKE_INSTALL_FULL_BINDIR@,
+# @CMAKE_INSTALL_FULL_SYSCONFDIR@, and @CONFIG_NAME@ placeholders are
+# automatically replaced with real paths during `cmake --install`.
+# Do NOT copy this file directly to /etc/systemd/system/ — use the
+# installed version from the build output instead.
+
 [Unit]
 Description=trojan
 Documentation=man:trojan(1) https://trojan-gfw.github.io/trojan/config https://trojan-gfw.github.io/trojan/
