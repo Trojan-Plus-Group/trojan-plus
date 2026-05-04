@@ -286,6 +286,18 @@ set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 add_subdirectory(wolfssl EXCLUDE_FROM_ALL)
 set(BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS_SAVED} CACHE BOOL "" FORCE)
 
+# wolfSSL 5.9.1 does not expose secure renegotiation as a CMake option (listed as TODO).
+# Enable it only when requested: it adds RFC 5746 renegotiation_info to ServerHello
+# (required for SSL Labs A rating) but increases code size and attack surface.
+# RFC 7627 Extended Master Secret must accompany it; wolfssl's CMake option handles that.
+option(ENABLE_SECURE_RENEGOTIATION "Build with RFC 5746 secure renegotiation support (enables SSL Labs A rating)" OFF)
+if(ENABLE_SECURE_RENEGOTIATION)
+    set(WOLFSSL_EXTENDED_MASTER "yes" CACHE STRING "" FORCE)
+    target_compile_definitions(wolfssl PRIVATE HAVE_SECURE_RENEGOTIATION)
+    message(STATUS "Secure renegotiation (RFC 5746) enabled")
+else()
+    message(STATUS "Secure renegotiation (RFC 5746) disabled (use -DENABLE_SECURE_RENEGOTIATION=ON to enable)")
+endif()
 
 message(STATUS "wolfSSL will be built from source and linked statically")
 
@@ -312,6 +324,8 @@ target_compile_definitions(trojan PRIVATE
     TFM_TIMING_RESISTANT      # Mirror WOLFSSL_HARDEN=yes: timing-resistant big-integer ops
     ECC_TIMING_RESISTANT      # Mirror WOLFSSL_HARDEN=yes: timing-resistant ECC ops
     WC_RSA_BLINDING           # Mirror WOLFSSL_HARDEN=yes: RSA blinding
+    $<$<BOOL:${ENABLE_SECURE_RENEGOTIATION}>:HAVE_SECURE_RENEGOTIATION>  # RFC 5746 (SSL Labs A, -DENABLE_SECURE_RENEGOTIATION=ON)
+    $<$<BOOL:${ENABLE_SECURE_RENEGOTIATION}>:HAVE_EXTENDED_MASTER>      # RFC 7627, required with secure renegotiation
     NO_WC_SSIZE_TYPE         # Avoid ssize_t redefinition conflict with lwip
     OPENSSL_NO_SSL2          # wolfSSL does not support SSLv2
     OPENSSL_NO_SSL3          # wolfSSL does not support SSLv3
