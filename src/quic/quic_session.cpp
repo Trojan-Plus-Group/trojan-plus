@@ -19,6 +19,9 @@
 #include "proto/trojanrequest.h"
 #include "quic_connection.h"
 
+// Reuse the same upper bound as the password hash storage in Config.
+static constexpr std::size_t kMaxPasswordLineBytes = Config::MAX_PASSWORD_LENGTH;
+
 QuicProxySession::QuicProxySession(std::shared_ptr<QuicConnection> conn, int64_t stream_id,
                                    const Config& config, boost::asio::io_context& io_ctx)
     : m_conn(std::move(conn)),
@@ -90,12 +93,21 @@ void QuicProxySession::try_parse_request() {
     // This avoids premature fallback to h3_upstream if the password is split across packets.
     size_t first_crlf = m_recv_buf.find("\r\n");
     if (first_crlf == tp::string::npos) {
-        if (m_recv_buf.length() > 512) { // Reasonable limit for a password line
+        if (m_recv_buf.length() > kMaxPasswordLineBytes) {
             _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) +
-                                    " no CRLF in 512 bytes, falling back to h3_upstream",
+                                    " no CRLF in " + tp::to_string(kMaxPasswordLineBytes) +
+                                    " bytes, falling back to h3_upstream",
                                 Log::WARN);
             forward_to_h3_upstream();
         }
+        return;
+    }
+    if (first_crlf > kMaxPasswordLineBytes) {
+        _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) +
+                                " password line exceeds " + tp::to_string(kMaxPasswordLineBytes) +
+                                " bytes, falling back to h3_upstream",
+                            Log::WARN);
+        forward_to_h3_upstream();
         return;
     }
 

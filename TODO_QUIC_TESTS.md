@@ -1,5 +1,17 @@
 # QUIC 测试覆盖缺口 TODO
 
+## 工作流程规范
+
+**每修复一个缺口条目后，必须执行以下步骤，直到全部测试通过才能算完成：**
+
+1. 修改测试代码或实现代码
+2. 重新编译（如果修改了 C++ 源码）：`cd build && make -j$(sysctl -n hw.ncpu)`
+3. 运行完整 QUIC 测试套件：`python3 fulltest_main.py ../../build/trojan -q`
+4. 如果有测试失败，分析原因并修复代码（测试代码或实现代码均可能需要改），重回第 2 步
+5. 所有测试通过后，将对应条目标记为 `[x] ✅ 已修复`
+
+---
+
 ## 如何单独运行 QUIC 测试
 
 ```bash
@@ -56,11 +68,11 @@ python3 fulltest_main.py ../../build/trojan -q
   保留 `m_recv_buf` 内容，等 resolve 回调就绪后统一发送。
 - **相关文件**：`src/quic/quic_session.cpp:61`，`tests/LinuxFullTest/fulltest_quic.py`（T4）
 
-#### [ ] h3_upstream 未配置时的 drop 路径
-- **问题**：`QuicProxySession::forward_to_h3_upstream()`（`src/quic/quic_session.cpp:136`）
-  当 `quic.h3_upstream` 为空字符串时直接调用 `destroy()` 丢弃连接，但没有任何测试覆盖。
-  T4 始终带着一个有效的 h3_upstream 地址。
-- **建议修复**：新增测试：`h3_upstream=""` 时发送非 Trojan 流量，验证连接被优雅关闭（不崩溃）。
+#### [x] h3_upstream 未配置时的 drop 路径 ✅ 已修复（由 T6 覆盖）
+- **修复**：T6（`test_h3_upstream_unconfigured_drop`）完整覆盖此路径：
+  服务端 `h3_upstream=""`，客户端使用错误密码触发 `forward_to_h3_upstream()`，
+  验证服务端日志出现 `"h3_upstream not configured, dropping"` 且进程未崩溃。
+- **相关文件**：`src/quic/quic_session.cpp:136`，`tests/LinuxFullTest/fulltest_quic.py`（T6）
 
 #### [ ] 512 字节无 CRLF fallback
 - **问题**：`QuicProxySession::try_parse_request()`（`src/quic/quic_session.cpp:87`）
