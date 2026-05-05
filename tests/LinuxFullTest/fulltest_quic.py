@@ -2,13 +2,14 @@
 QUIC integration tests for trojan-plus.
 
 Test cases:
-  T1: e2e_basic_proxy     - QUIC handshake + HTTP GET proxy
-  T2: e2e_multistream     - concurrent streams over one QUIC connection
-  T3: e2e_post_data       - HTTP POST through QUIC
-  T4: h3_upstream_fallback - non-trojan traffic forwarded to h3_upstream
-  T5: idle_timeout        - connection closes after max_idle_timeout_ms
-  T7: alpn_negotiation    - verify ALPN token in logs
-  T8: quic_disabled       - quic.enabled=false falls back to TLS
+  T1: e2e_basic_proxy              - QUIC handshake + HTTP GET proxy
+  T2: e2e_multistream              - concurrent streams over one QUIC connection
+  T3: e2e_post_data                - HTTP POST through QUIC
+  T4: h3_upstream_fallback         - non-trojan traffic forwarded to h3_upstream
+  T5: idle_timeout                 - connection closes after max_idle_timeout_ms
+  T6: h3_upstream_unconfigured_drop - non-trojan traffic dropped when h3_upstream is empty
+  T7: alpn_negotiation             - verify ALPN token in logs
+  T8: quic_disabled                - quic.enabled=false falls back to TLS
 """
 
 import json
@@ -449,12 +450,15 @@ def test_h3_upstream_fallback(binary_path):
             dump = True
             return False
 
-        # Send any HTTP request — wrong password will trigger h3_upstream.
+        # Send HTTP request — wrong password triggers h3_upstream forwarding.
+        # The mock echoes back "HTTP/1.1 200 OK ... H3 Upstream Fallback!" via UDP,
+        # which QuicProxySession::udp_read() must relay back through the QUIC stream.
+        resp_body = None
         try:
             url = f"http://127.0.0.1:{HTTP_TARGET_PORT}/"
-            http_get_via_socks5(url, QUIC_CLIENT_PROXY_PORT, timeout=8)
+            resp_body = http_get_via_socks5(url, QUIC_CLIENT_PROXY_PORT, timeout=8)
         except Exception:
-            pass  # Response may be garbage; we only care about server log.
+            pass  # urllib may fail to parse an incomplete HTTP response; checked below.
 
         # Verify server log shows UDP h3_upstream forwarding.
         m = wait_for_log(srv_log, r"forwarding to UDP h3_upstream", timeout=10)
@@ -468,6 +472,23 @@ def test_h3_upstream_fallback(binary_path):
                           r"received \d+ bytes", timeout=5)
         if not m2:
             print_time_log("[T4] FAIL: h3_upstream UDP mock did not receive data")
+            dump = True
+            return False
+
+        # Verify mock also sent a response back (round-trip).
+        m3 = wait_for_log("config/quic_h3mock.output",
+                          r"sent response", timeout=5)
+        if not m3:
+            print_time_log("[T4] FAIL: h3_upstream UDP mock did not send response")
+            dump = True
+            return False
+
+        # Verify the response was relayed back through the QUIC stream to the client.
+        # The mock sends "HTTP/1.1 200 OK ... H3 Upstream Fallback!" as UDP;
+        # QuicProxySession::udp_read() forwards it back via send_stream_data().
+        if resp_body is None or b"H3 Upstream Fallback!" not in resp_body:
+            print_time_log(f"[T4] FAIL: mock response not relayed to client "
+                           f"(got {resp_body!r})")
             dump = True
             return False
 
@@ -522,6 +543,74 @@ def test_idle_timeout(binary_path):
             return False
 
         print_time_log("[T5] idle_timeout PASSED")
+        return True
+    except Exception:
+        traceback.print_exc()
+        dump = True
+        return False
+    finally:
+        close_process(client, dump)
+        close_process(server, dump)
+
+
+def test_h3_upstream_unconfigured_drop(binary_path):
+    """T6: Non-trojan traffic with h3_upstream='' → session dropped cleanly, server stays alive."""
+    print_time_log("[T6] h3_upstream_unconfigured_drop: starting...")
+
+    # Server with h3_upstream explicitly empty (default config already has this,
+    # but we set it explicitly to make the test intent clear).
+    srv_cfg = patch_quic_config("quic_server_config.json", {
+        "remote_port": HTTP_TARGET_PORT,
+        "quic": {"enabled": True, "h3_upstream": ""},
+    })
+    # Client with WRONG password so the server cannot authenticate the Trojan
+    # request and falls into forward_to_h3_upstream() → drop path.
+    cli_cfg = patch_quic_config("quic_client_config.json", {
+        "password": ["wrongpassword_t6"],
+    })
+
+    server, srv_log = start_trojan(binary_path, srv_cfg)
+    client, cli_log = start_trojan(binary_path, cli_cfg)
+    dump = False
+    try:
+        if not server or not client:
+            dump = True
+            return False
+
+        if not wait_for_log(cli_log, r"QuicConnection: handshake completed", timeout=15):
+            print_time_log("[T6] FAIL: QUIC handshake not seen")
+            dump = True
+            return False
+        time.sleep(1)
+
+        if not wait_for_port(QUIC_CLIENT_PROXY_PORT, timeout=5):
+            print_time_log("[T6] FAIL: proxy port not open")
+            dump = True
+            return False
+
+        # Send a request – the wrong password causes an auth failure on the server,
+        # which triggers forward_to_h3_upstream() with an empty h3_upstream.
+        # The request will fail from the client's perspective; that is expected.
+        try:
+            url = f"http://127.0.0.1:{HTTP_TARGET_PORT}/"
+            http_get_via_socks5(url, QUIC_CLIENT_PROXY_PORT, timeout=5)
+        except Exception:
+            pass  # Connection will be dropped; client-side error is expected.
+
+        # The server must log the drop message from forward_to_h3_upstream().
+        m = wait_for_log(srv_log, r"h3_upstream not configured, dropping", timeout=10)
+        if not m:
+            print_time_log("[T6] FAIL: 'h3_upstream not configured, dropping' not found in server log")
+            dump = True
+            return False
+
+        # Verify the server process is still alive (did not crash).
+        if server.poll() is not None:
+            print_time_log("[T6] FAIL: server process crashed")
+            dump = True
+            return False
+
+        print_time_log("[T6] h3_upstream_unconfigured_drop PASSED")
         return True
     except Exception:
         traceback.print_exc()
@@ -659,6 +748,7 @@ ALL_TESTS = [
     ("T3", test_e2e_post_data),
     ("T4", test_h3_upstream_fallback),
     ("T5", test_idle_timeout),
+    ("T6", test_h3_upstream_unconfigured_drop),
     ("T7", test_alpn_negotiation),
     ("T8", test_quic_disabled),
 ]

@@ -45,22 +45,28 @@ void QuicProxySession::on_stream_data(const uint8_t* data, std::size_t len, bool
         return;
     }
     m_recv_buf.append(reinterpret_cast<const char*>(data), len);
-    char hex[129];
-    for (int i = 0; i < std::min((int)len, 64); ++i) {
-        snprintf(hex + i * 2, 3, "%02x", data[i]);
+
+    if (Log::level == Log::ALL) {
+        char hex[129];
+        for (int i = 0; i < std::min((int)len, 64); ++i) {
+            snprintf(hex + i * 2, 3, "%02x", data[i]);
+        }
+        hex[std::min((int)len, 64) * 2] = '\0';
+        _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) + " recv " +
+                            tp::to_string(len) + " bytes, parsed=" + tp::to_string(m_request_parsed) +
+                            " hex=" + hex, Log::ALL);
     }
-    hex[std::min((int)len, 64) * 2] = '\0';
-    _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) + " recv " +
-                        tp::to_string(len) + " bytes, parsed=" + tp::to_string(m_request_parsed) +
-                        " hex=" + hex, Log::INFO);
+
 
     if (m_upstream_forwarding) {
-        if (!m_recv_buf.empty()) {
-            // Forward stream data as a UDP packet to h3_upstream.
+        if (!m_recv_buf.empty() && m_udp_socket.is_open()) {
+            // UDP socket is ready: forward accumulated bytes immediately.
             boost::system::error_code ec;
             m_udp_socket.send_to(boost::asio::buffer(m_recv_buf), m_udp_remote_ep, 0, ec);
             m_recv_buf.clear();
         }
+        // If socket is not yet open (DNS resolve still pending), leave m_recv_buf intact
+        // so the resolve callback in forward_to_h3_upstream() will flush it once ready.
         if (fin) {
             destroy(); // Close stream if FIN received in fallback mode.
         }
