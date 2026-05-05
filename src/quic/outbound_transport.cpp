@@ -164,11 +164,12 @@ class TlsOutboundTransport
 // QuicStreamTransport – wraps a single QUIC bidi stream
 // ─────────────────────────────────────────────────────────────
 
-class QuicStreamTransport : public OutboundTransport {
+class QuicStreamTransport : public OutboundTransport,
+                          public std::enable_shared_from_this<QuicStreamTransport> {
   public:
     QuicStreamTransport(boost::asio::io_context& io_ctx,
                         QuicClientEndpoint*      endpoint)
-        : m_io_ctx(io_ctx), m_endpoint(endpoint) {}
+        : m_io_ctx(io_ctx), m_endpoint(endpoint), m_write_timer(io_ctx) {}
 
     // host/port are the trojan server coordinates but ignored here – the QUIC
     // connection to the server is already maintained by QuicClientEndpoint.
@@ -221,20 +222,46 @@ class QuicStreamTransport : public OutboundTransport {
     }
 
     void async_write(std::string_view data, IoHandler handler) override {
-        bool ok = m_endpoint->send_stream_data(
+        auto buf = TP_MAKE_SHARED(tp::string, data);
+        do_write(buf, 0, std::move(handler));
+    }
+
+    void do_write(std::shared_ptr<tp::string> buf, std::size_t offset, IoHandler handler) {
+        if (offset >= buf->size()) {
+            boost::asio::post(m_io_ctx, [handler = std::move(handler), len = buf->size()]() mutable {
+                handler({}, len);
+            });
+            return;
+        }
+
+        int64_t written = m_endpoint->send_stream_data(
             m_stream_id,
-            reinterpret_cast<const uint8_t*>(data.data()),
-            data.size(),
+            reinterpret_cast<const uint8_t*>(buf->data() + offset),
+            buf->size() - offset,
             false);
-        std::size_t len = data.size();
-        boost::asio::post(m_io_ctx,
-            [handler = std::move(handler), ok, len]() mutable {
-                if (ok) {
-                    handler({}, len);
+
+        if (written < 0) {
+            boost::asio::post(m_io_ctx, [handler = std::move(handler)]() mutable {
+                handler(boost::asio::error::broken_pipe, 0);
+            });
+            return;
+        }
+
+        offset += written;
+        if (offset < buf->size()) {
+            m_write_timer.expires_after(std::chrono::milliseconds(5));
+            m_write_timer.async_wait([this, self = shared_from_this(), buf, offset, h = std::move(handler)](const boost::system::error_code& ec) mutable {
+                if (!ec) {
+                    do_write(buf, offset, std::move(h));
                 } else {
-                    handler(boost::asio::error::broken_pipe, 0);
+                    h(ec, 0);
                 }
             });
+        } else {
+            boost::asio::post(m_io_ctx, [handler = std::move(handler), len = buf->size()]() mutable {
+                handler({}, len);
+            });
+        }
     }
 
     void cancel() override {
@@ -277,6 +304,7 @@ class QuicStreamTransport : public OutboundTransport {
     IoHandler                m_pending_handler;
     bool                     m_has_pending{false};
     bool                     m_fin_received{false};
+    boost::asio::steady_timer m_write_timer;
 };
 
 // ─────────────────────────────────────────────────────────────

@@ -48,11 +48,10 @@ docker run --rm --privileged -t --platform linux/amd64 \
         route add 114.114.114.114 gw \"\$DEFAULT_GW\" metric 0 || true
         route add 8.8.8.8 gw \"\$DEFAULT_GW\" metric 0 || true
 
-        echo '--- Running TUN Full Test ---'
+        echo '--- Running Full Tests (including QUIC) ---'
         cd tests/LinuxFullTest/
         export PYTHONUNBUFFERED=1
-        # python3 -u fulltest_main.py \"\$BINARY\" -t -n -g -f
-        python3 -u fulltest_main.py \"\$BINARY\" -t
+        python3 -u fulltest_main.py \"\$BINARY\" -t -n -q -g -f
     "
 
 if [ $? -eq 0 ]; then

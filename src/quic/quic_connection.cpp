@@ -107,10 +107,16 @@ void QuicConnection::cb_rand(uint8_t* dest, size_t destlen, const ngtcp2_rand_ct
 
 int QuicConnection::cb_get_new_connection_id(ngtcp2_conn* /*conn*/, ngtcp2_cid* cid,
                                              ngtcp2_stateless_reset_token* token,
-                                             size_t cidlen, void* /*user_data*/) {
+                                             size_t cidlen, void* user_data) {
     cid->datalen = cidlen;
     wolfSSL_RAND_bytes(cid->data, static_cast<int>(cidlen));
     wolfSSL_RAND_bytes(reinterpret_cast<uint8_t*>(token), NGTCP2_STATELESS_RESET_TOKENLEN);
+    
+    auto* self = static_cast<QuicConnection*>(user_data);
+    if (self->on_new_connection_id_cb) {
+        self->on_new_connection_id_cb(cid);
+    }
+    
     return 0;
 }
 
@@ -221,13 +227,15 @@ bool QuicConnection::init_server(const uint8_t* data, std::size_t datalen,
 
     auto path = make_path(local_ep, remote_ep);
 
-    // Choose a new SCID for the server (18 bytes is common, max is NGTCP2_MAX_CIDLEN=20).
-    static constexpr size_t kSvScidLen = 18;
+    // Choose a new SCID for the server.
     ngtcp2_cid sv_scid;
-    sv_scid.datalen = kSvScidLen;
-    wolfSSL_RAND_bytes(sv_scid.data, static_cast<int>(kSvScidLen));
+    sv_scid.datalen = kServerScidLen;
+    wolfSSL_RAND_bytes(sv_scid.data, static_cast<int>(kServerScidLen));
 
-    int rv = ngtcp2_conn_server_new(&m_conn, dcid, scid ? scid : &sv_scid, &path, version,
+    // ngtcp2_conn_server_new(conn, dcid, scid, path, version, ...):
+    //   dcid = the client's SCID (server uses it as its destination CID)
+    //   scid = the server's own SCID (newly generated sv_scid)
+    int rv = ngtcp2_conn_server_new(&m_conn, scid ? scid : dcid, &sv_scid, &path, version,
                                     &callbacks, &settings, &params, nullptr, this);
     if (rv != 0) {
         _log_with_date_time(
@@ -252,6 +260,7 @@ bool QuicConnection::init_server(const uint8_t* data, std::size_t datalen,
         _log_with_date_time(
             "QuicConnection::init_server: initial ngtcp2_conn_read_pkt: " + tp::string(ngtcp2_strerror(rv)),
             Log::WARN);
+        return false;
     }
 
     pump_write();
@@ -418,32 +427,68 @@ void QuicConnection::pump_write() {
 
 // ---- send_stream_data -------------------------------------------------------
 
-bool QuicConnection::send_stream_data(int64_t stream_id, const uint8_t* data, std::size_t datalen,
+int64_t QuicConnection::send_stream_data(int64_t stream_id, const uint8_t* data, std::size_t datalen,
                                       bool fin) {
     if (m_closed || !m_conn) {
-        return false;
+        return -1;
     }
 
     ngtcp2_path_storage ps;
     ngtcp2_path_storage_zero(&ps);
     ngtcp2_pkt_info pi{};
 
-    ngtcp2_vec vec{.base = const_cast<uint8_t*>(data), .len = datalen};
-    ngtcp2_ssize pdatalen = -1;
+    std::size_t written = 0;
+    bool fin_sent = false;
 
-    auto nwrite = ngtcp2_conn_writev_stream(m_conn, &ps.path, &pi, m_write_buf.data(), m_write_buf.size(),
-                                            &pdatalen, fin ? NGTCP2_WRITE_STREAM_FLAG_FIN : 0,
-                                            stream_id, &vec, 1, now_nanos());
-    if (nwrite < 0) {
-        _log_with_date_time(
-            "QuicConnection::send_stream_data: " + tp::string(ngtcp2_strerror(static_cast<int>(nwrite))),
-            Log::WARN);
-        return false;
+    for (;;) {
+        std::size_t remain = datalen - written;
+        ngtcp2_vec vec{.base = const_cast<uint8_t*>(data + written), .len = remain};
+        ngtcp2_ssize pdatalen = -1;
+
+        bool send_fin = fin && !fin_sent && (remain == 0 || written + remain == datalen);
+        uint32_t flags = 0;
+        if (send_fin) flags |= NGTCP2_WRITE_STREAM_FLAG_FIN;
+
+        auto nwrite = ngtcp2_conn_writev_stream(m_conn, &ps.path, &pi, m_write_buf.data(), m_write_buf.size(),
+                                                &pdatalen, flags,
+                                                stream_id, &vec, 1, now_nanos());
+
+        if (nwrite < 0) {
+            if (nwrite == NGTCP2_ERR_STREAM_DATA_BLOCKED) {
+                // Not a fatal error, just blocked. Return what we wrote so far (or 0).
+                return static_cast<int64_t>(written);
+            }
+            if (nwrite != NGTCP2_ERR_STREAM_SHUT_WR) {
+                _log_with_date_time(
+                    "QuicConnection::send_stream_data: " + tp::string(ngtcp2_strerror(static_cast<int>(nwrite))),
+                    Log::WARN);
+            }
+            if (written > 0) return static_cast<int64_t>(written);
+            return -1;
+        }
+
+        if (nwrite > 0) {
+            m_endpoint.send_packet(m_peer, m_write_buf.data(), static_cast<std::size_t>(nwrite));
+        }
+
+        if (pdatalen > 0) {
+            written += pdatalen;
+        }
+
+        if (send_fin && pdatalen >= 0) {
+            fin_sent = true;
+        }
+
+        if (written == datalen && (fin_sent || !fin)) {
+            break;
+        }
+
+        if (nwrite == 0 && pdatalen <= 0) {
+            // Flow control or congestion control blocked. Data may be lost if not buffered.
+            break;
+        }
     }
-    if (nwrite > 0) {
-        m_endpoint.send_packet(m_peer, m_write_buf.data(), static_cast<std::size_t>(nwrite));
-    }
-    return true;
+    return static_cast<int64_t>(written);
 }
 
 // ---- open_bidi_stream -------------------------------------------------------

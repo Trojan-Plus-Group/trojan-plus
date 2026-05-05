@@ -10,6 +10,7 @@ This document provides a comprehensive overview of the `trojan-plus` project, ge
 *   **Pipeline Mode**: A feature to decrease connection latency.
 *   **Load Balancing**: Distributes traffic across multiple servers to increase bandwidth.
 *   **ICMP Proxying**: Ability to proxy ICMP messages (like `ping`).
+*   **QUIC (HTTP/3) Support**: Experimental support for Trojan-over-QUIC and HTTP/3 upstream fallback.
 
 The project is built using CMake and is intended to be cross-platform, with specific build configurations for Linux, macOS, Windows, and Android (as a shared library). It can function as a client, a server, or in specialized modes like `forward` (port forwarding) and `nat` (transparent proxy).
 
@@ -89,10 +90,10 @@ The project includes a comprehensive "full test" suite.
     **Linux**:
     ```bash
     cd tests/LinuxFullTest/
-    # Basic full test
-    sudo python3.8 fulltest_main.py /path/to/build/trojan -g -d 5333
+    # Basic full test (includes QUIC)
+    sudo python3.8 fulltest_main.py /path/to/build/trojan -g -q -d 5333
     # TUN mode test (requires root and manual network setup as seen in CI)
-    sudo python3.8 fulltest_main.py /path/to/build/trojan -t -n -d 5333
+    sudo python3.8 fulltest_main.py /path/to/build/trojan -t -n -q -d 5333
     ```
 
     **macOS**:

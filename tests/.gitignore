@@ -1,2 +1,4 @@
 # Allow config files in tests
 !*.json
+*.tmp.json
+*.tmpjson

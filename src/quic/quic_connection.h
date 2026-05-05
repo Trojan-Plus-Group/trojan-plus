@@ -67,7 +67,7 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     void pump_write();
 
     // Send data on an existing bidi stream. Returns false on error.
-    bool send_stream_data(int64_t stream_id, const uint8_t* data, std::size_t datalen, bool fin);
+    int64_t send_stream_data(int64_t stream_id, const uint8_t* data, std::size_t datalen, bool fin);
 
     // Open a new client-initiated bidi stream. Returns -1 on error.
     int64_t open_bidi_stream();
@@ -80,6 +80,8 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     [[nodiscard]] const boost::asio::ip::udp::endpoint& peer() const { return m_peer; }
     [[nodiscard]] ngtcp2_conn* native_handle() const { return m_conn; }
 
+    static constexpr size_t kServerScidLen = 18;
+
     // Callback invoked on handshake completion (client: after server Finished).
     std::function<void()> on_handshake_completed_cb;
     // Callback invoked when stream data arrives (stream_id, data, len, fin).
@@ -88,6 +90,8 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     std::function<void(int64_t)> on_stream_open_cb;
     // Callback invoked when a stream is closed.
     std::function<void(int64_t)> on_stream_close_cb;
+    // Callback invoked when a new Connection ID is generated.
+    std::function<void(const ngtcp2_cid*)> on_new_connection_id_cb;
 
   private:
     // ngtcp2 static callbacks — forward to instance methods.

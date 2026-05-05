@@ -69,27 +69,29 @@ void QuicServerEndpoint::on_packet(const uint8_t* data, std::size_t len,
     }
 
     ngtcp2_version_cid vc{};
-    // Use NGTCP2_MAX_CIDLEN (20) for the short-header DCID length hint.
-    int rv = ngtcp2_pkt_decode_version_cid(&vc, data, len, NGTCP2_MAX_CIDLEN);
+    // Use the expected server SCID length for the short-header DCID length hint.
+    int rv = ngtcp2_pkt_decode_version_cid(&vc, data, len, QuicConnection::kServerScidLen);
     if (rv < 0) {
         return;
     }
 
     tp::string key = dcid_key(vc.dcid, vc.dcidlen);
 
-    // Lightweight GC of closed connections.
-    for (auto it = m_conns.begin(); it != m_conns.end();) {
-        if (it->second->is_closed()) {
-            it = m_conns.erase(it);
-        } else {
-            ++it;
-        }
+    auto it = m_conns.find(key);
+    if (it != m_conns.end()) {
+        it->second->on_packet(data, len, local_endpoint(), src);
+        return;
     }
 
-    auto conn_it = m_conns.find(key);
-    if (conn_it != m_conns.end()) {
-        conn_it->second->on_packet(data, len, local_endpoint(), src);
-        return;
+    _log_with_date_time("QuicServerEndpoint: new connection for DCID " + key, Log::INFO);
+
+    // Lightweight GC of closed connections.
+    for (auto iter = m_conns.begin(); iter != m_conns.end();) {
+        if (iter->second->is_closed()) {
+            iter = m_conns.erase(iter);
+        } else {
+            ++iter;
+        }
     }
 
     // New connection – must be an Initial packet.
@@ -133,6 +135,16 @@ void QuicServerEndpoint::on_packet(const uint8_t* data, std::size_t len,
         }
     };
 
+    // new connection ID generated: add it to the routing table.
+    conn->on_new_connection_id_cb = [this, weak_conn](const ngtcp2_cid* cid) {
+        auto locked = weak_conn.lock();
+        if (locked) {
+            tp::string ckey = dcid_key(cid->data, cid->datalen);
+            _log_with_date_time("QuicServerEndpoint: added NEW CID " + ckey, Log::INFO);
+            m_conns[ckey] = locked;
+        }
+    };
+
     ngtcp2_cid dcid_c{};
     std::memcpy(dcid_c.data, vc.dcid, vc.dcidlen);
     dcid_c.datalen = vc.dcidlen;
@@ -152,6 +164,10 @@ void QuicServerEndpoint::on_packet(const uint8_t* data, std::size_t len,
     // Index under both the initial DCID (for any retransmitted Initials) and
     // the server's SCID (sv_scid), which the client uses as DCID for all
     // Handshake and 1-RTT packets after receiving the server's Initial.
+    _log_with_date_time("QuicServerEndpoint: added initial DCID " + key, Log::INFO);
     m_conns[key]                                              = conn;
-    m_conns[dcid_key(sv_scid.data, sv_scid.datalen)] = std::move(conn);
+    
+    tp::string sv_key = dcid_key(sv_scid.data, sv_scid.datalen);
+    _log_with_date_time("QuicServerEndpoint: added server SCID " + sv_key, Log::INFO);
+    m_conns[sv_key] = std::move(conn);
 }

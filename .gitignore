@@ -64,7 +64,6 @@ build-quic/
 #for fulltest
 /tests/LinuxFullTest/html
 *.output
-*.tmpjson
 tombstone*
 
 # for clangd Android

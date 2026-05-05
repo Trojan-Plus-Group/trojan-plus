@@ -8,19 +8,21 @@
  * (at your option) any later version.
  */
 
-#ifndef _QUIC_SESSION_H_
-#define _QUIC_SESSION_H_
+#ifndef QUIC_SESSION_H
+#define QUIC_SESSION_H
 
-#include <cstdint>
 #include <memory>
+#include <cstdint>
 
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/tcp.hpp>
-
-#include "mem/memallocator.h"
+#include <boost/asio/ip/udp.hpp>
+#include <boost/asio/steady_timer.hpp>
 
 class QuicConnection;
 class Config;
+
+#include "mem/memallocator.h"
 
 // Server-side per-stream proxy session. Buffers incoming stream bytes until a
 // complete TrojanRequest header is received, then dials a TCP socket to the
@@ -45,25 +47,39 @@ class QuicProxySession : public std::enable_shared_from_this<QuicProxySession> {
     void forward_to_h3_upstream();
     void connect_target(const tp::string& host, uint16_t port);
     void tcp_read();
-    void stream_write(const tp::string& data);
+    void flush_tcp_read_buf(std::size_t offset, std::size_t bytes);
+    void write_to_target(tp::string data, bool fin = false);
+    void do_tcp_write();
+    void udp_read();
     void destroy();
 
     std::shared_ptr<QuicConnection> m_conn;
     int64_t m_stream_id;
     const Config& m_config;
-    boost::asio::io_context& m_io_ctx;
 
     boost::asio::ip::tcp::socket m_tcp_socket;
     boost::asio::ip::tcp::resolver m_resolver;
 
+    boost::asio::ip::udp::socket m_udp_socket;
+    boost::asio::ip::udp::resolver m_udp_resolver;
+    boost::asio::ip::udp::endpoint m_udp_remote_ep;
+
     tp::string m_recv_buf;    // accumulates stream bytes until request parsed
-    tp::string m_payload;     // post-header payload forwarded to upstream
     tp::string m_tcp_buf;     // read buffer for upstream → stream direction
+    tp::string m_udp_buf;     // read buffer for UDP upstream → stream direction
     bool m_request_parsed{false};
     bool m_upstream_forwarding{false}; // forwarding non-trojan traffic to h3_upstream
     bool m_destroyed{false};
 
     static constexpr std::size_t kTcpBufSize = 16 * 1024;
+    boost::asio::steady_timer m_write_timer;
+
+    struct TcpWriteBuffer {
+        tp::string data;
+        bool fin{false};
+    };
+    tp::deque<TcpWriteBuffer> m_tcp_write_queue;
+    bool m_is_writing_to_tcp{false};
 };
 
-#endif // _QUIC_SESSION_H_
+#endif // QUIC_SESSION_H

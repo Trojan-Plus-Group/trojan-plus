@@ -9,6 +9,7 @@
  */
 
 #include "quic_session.h"
+#include <memory>
 
 #include <boost/asio/connect.hpp>
 #include <boost/asio/write.hpp>
@@ -23,10 +24,13 @@ QuicProxySession::QuicProxySession(std::shared_ptr<QuicConnection> conn, int64_t
     : m_conn(std::move(conn)),
       m_stream_id(stream_id),
       m_config(config),
-      m_io_ctx(io_ctx),
       m_tcp_socket(io_ctx),
-      m_resolver(io_ctx) {
+      m_resolver(io_ctx),
+      m_udp_socket(io_ctx),
+      m_udp_resolver(io_ctx),
+      m_write_timer(io_ctx) {
     m_tcp_buf.resize(kTcpBufSize, '\0');
+    m_udp_buf.resize(kTcpBufSize, '\0');
 }
 
 QuicProxySession::~QuicProxySession() = default;
@@ -43,37 +47,23 @@ void QuicProxySession::on_stream_data(const uint8_t* data, std::size_t len, bool
     m_recv_buf.append(reinterpret_cast<const char*>(data), len);
 
     if (m_upstream_forwarding) {
-        if (m_tcp_socket.is_open() && !m_recv_buf.empty()) {
-            auto self = shared_from_this();
-            auto buf  = TP_MAKE_SHARED(tp::string, m_recv_buf);
+        if (!m_recv_buf.empty()) {
+            // Forward stream data as a UDP packet to h3_upstream.
+            boost::system::error_code ec;
+            m_udp_socket.send_to(boost::asio::buffer(m_recv_buf), m_udp_remote_ep, 0, ec);
             m_recv_buf.clear();
-            boost::asio::async_write(
-                m_tcp_socket, boost::asio::buffer(*buf),
-                [this, self, buf](const boost::system::error_code& ec, std::size_t) {
-                    if (ec) {
-                        destroy();
-                    }
-                });
         }
-        // m_recv_buf will be flushed when the TCP connect completes if socket not open yet.
+        if (fin) {
+            destroy(); // Close stream if FIN received in fallback mode.
+        }
     } else if (!m_request_parsed) {
         try_parse_request();
-    } else if (m_tcp_socket.is_open() && !m_recv_buf.empty()) {
-        auto self = shared_from_this();
-        auto buf  = TP_MAKE_SHARED(tp::string, m_recv_buf);
+        if (m_request_parsed && fin) {
+            write_to_target(tp::string(), true);
+        }
+    } else if (!m_recv_buf.empty() || fin) {
+        write_to_target(std::move(m_recv_buf), fin);
         m_recv_buf.clear();
-        boost::asio::async_write(
-            m_tcp_socket, boost::asio::buffer(*buf),
-            [this, self, buf](const boost::system::error_code& ec, std::size_t) {
-                if (ec) {
-                    destroy();
-                }
-            });
-    }
-
-    if (fin && m_tcp_socket.is_open()) {
-        boost::system::error_code ec;
-        m_tcp_socket.shutdown(boost::asio::ip::tcp::socket::shutdown_send, ec);
     }
 }
 
@@ -82,12 +72,26 @@ void QuicProxySession::on_stream_close() {
 }
 
 void QuicProxySession::try_parse_request() {
+    // Wait for at least the first CRLF (end of password) before deciding if it's Trojan.
+    // This avoids premature fallback to h3_upstream if the password is split across packets.
+    size_t first_crlf = m_recv_buf.find("\r\n");
+    if (first_crlf == tp::string::npos) {
+        if (m_recv_buf.length() > 512) { // Reasonable limit for a password line
+            _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) +
+                                    " no CRLF in 512 bytes, falling back to h3_upstream",
+                                Log::WARN);
+            forward_to_h3_upstream();
+        }
+        return;
+    }
+
     TrojanRequest req;
     int parsed = req.parse(m_recv_buf);
     if (parsed == -1) {
+        // If it has a CRLF but still fails to parse as Trojan, it's definitely non-trojan.
         _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) +
-                                " not a trojan request, forwarding to h3_upstream",
-                            Log::WARN);
+                                " parse failed, forwarding to h3_upstream",
+                            Log::INFO);
         forward_to_h3_upstream();
         return;
     }
@@ -112,8 +116,7 @@ void QuicProxySession::try_parse_request() {
                         Log::INFO);
 
     m_request_parsed = true;
-    m_payload        = req.payload;
-    // Clear consumed bytes from buffer.
+    write_to_target(tp::string(req.payload.data(), req.payload.length()));
     m_recv_buf.clear();
 
     connect_target(tp::string(req.address.address), req.address.port);
@@ -132,69 +135,84 @@ void QuicProxySession::forward_to_h3_upstream() {
     // Parse host:port from h3_upstream.
     auto colon_pos = h3.rfind(':');
     tp::string host((colon_pos == tp::string::npos) ? h3 : h3.substr(0, colon_pos));
-    tp::string port_str((colon_pos == tp::string::npos) ? "443"
-                                                         : h3.substr(colon_pos + 1));
+    tp::string port_str((colon_pos == tp::string::npos) ? "443" : h3.substr(colon_pos + 1));
 
     m_upstream_forwarding = true;
 
-    auto self = shared_from_this();
-    m_resolver.async_resolve(
+    auto self = this->shared_from_this();
+    m_udp_resolver.async_resolve(
         host, port_str,
         [this, self](const boost::system::error_code& ec,
-                     boost::asio::ip::tcp::resolver::results_type results) {
+                     boost::asio::ip::udp::resolver::results_type results) {
             if (ec || m_destroyed) {
-                _log_with_date_time("QuicProxySession: h3_upstream resolve failed: " +
+                _log_with_date_time("QuicProxySession: h3_upstream UDP resolve failed: " +
                                         tp::string(ec.message().c_str()),
                                     Log::ERROR);
                 destroy();
                 return;
             }
-            boost::asio::async_connect(
-                m_tcp_socket, results,
-                [this, self](const boost::system::error_code& ec2,
-                             const boost::asio::ip::tcp::endpoint& ep) {
-                    if (ec2 || m_destroyed) {
-                        _log_with_date_time(
-                            "QuicProxySession: h3_upstream config failed: " +
-                                tp::string(m_config.get_quic().h3_upstream.c_str()) +
-                                " unreachable, dropping client",
-                            Log::ERROR);
-                        destroy();
-                        return;
-                    }
-                    _log_with_date_time(
-                        "QuicProxySession: stream " + tp::to_string(m_stream_id) +
-                            " forwarding to h3_upstream " +
-                            tp::string(ep.address().to_string().c_str()) + ":" +
-                            tp::to_string(ep.port()),
-                        Log::INFO);
 
-                    // Forward all buffered raw bytes (the original non-trojan request).
-                    if (!m_recv_buf.empty()) {
-                        auto buf = TP_MAKE_SHARED(tp::string, m_recv_buf);
-                        m_recv_buf.clear();
-                        boost::asio::async_write(
-                            m_tcp_socket, boost::asio::buffer(*buf),
-                            [this, self, buf](const boost::system::error_code& ec3, std::size_t) {
-                                if (ec3) {
-                                    destroy();
-                                    return;
-                                }
-                                tcp_read();
-                            });
-                    } else {
-                        tcp_read();
-                    }
-                });
+            m_udp_remote_ep = *results.begin();
+            boost::system::error_code ec2;
+            m_udp_socket.open(m_udp_remote_ep.protocol(), ec2);
+            if (ec2) {
+                _log_with_date_time("QuicProxySession: h3_upstream UDP socket open failed: " +
+                                        tp::string(ec2.message().c_str()),
+                                    Log::ERROR);
+                destroy();
+                return;
+            }
+
+            _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) +
+                                    " forwarding to UDP h3_upstream " +
+                                    tp::string(m_udp_remote_ep.address().to_string().c_str()) + ":" +
+                                    tp::to_string(m_udp_remote_ep.port()),
+                                Log::INFO);
+
+            // Forward all buffered raw bytes.
+            if (!m_recv_buf.empty()) {
+                boost::system::error_code ec3;
+                m_udp_socket.send_to(boost::asio::buffer(m_recv_buf), m_udp_remote_ep, 0, ec3);
+                m_recv_buf.clear();
+            }
+            udp_read();
+        });
+}
+
+void QuicProxySession::udp_read() {
+    if (m_destroyed || !m_udp_socket.is_open()) {
+        return;
+    }
+    auto self = this->shared_from_this();
+    m_udp_socket.async_receive_from(
+        boost::asio::buffer(&m_udp_buf[0], kTcpBufSize), m_udp_remote_ep,
+        [this, self](const boost::system::error_code& ec, std::size_t bytes) {
+            if (m_destroyed) {
+                return;
+            }
+            if (ec) {
+                if (ec != boost::asio::error::operation_aborted) {
+                    _log_with_date_time("QuicProxySession: h3_upstream UDP read: " +
+                                            tp::string(ec.message().c_str()),
+                                        Log::WARN);
+                    destroy();
+                }
+                return;
+            }
+            if (m_conn && !m_conn->is_closed()) {
+                m_conn->send_stream_data(m_stream_id, reinterpret_cast<const uint8_t*>(&m_udp_buf[0]), bytes, false);
+                m_conn->pump_write();
+            }
+            udp_read();
         });
 }
 
 void QuicProxySession::connect_target(const tp::string& host, uint16_t port) {
-    auto self = shared_from_this();
+    auto self = this->shared_from_this();
     m_resolver.async_resolve(
         host, tp::to_string(port).c_str(),
-        [this, self](const boost::system::error_code& ec,
-                     boost::asio::ip::tcp::resolver::results_type results) {
+        [this, self, host, port](const boost::system::error_code& ec,
+                                 boost::asio::ip::tcp::resolver::results_type results) {
             if (ec || m_destroyed) {
                 if (ec) {
                     _log_with_date_time("QuicProxySession: resolve failed: " +
@@ -206,44 +224,78 @@ void QuicProxySession::connect_target(const tp::string& host, uint16_t port) {
             }
             boost::asio::async_connect(
                 m_tcp_socket, results,
-                [this, self](const boost::system::error_code& ec2,
-                             const boost::asio::ip::tcp::endpoint& ep) {
+                [this, self, host, port](const boost::system::error_code& ec2,
+                                         [[maybe_unused]] const boost::asio::ip::tcp::endpoint& ep) {
                     if (ec2 || m_destroyed) {
-                        if (ec2) {
-                            _log_with_date_time("QuicProxySession: connect failed: " +
-                                                    tp::string(ec2.message().c_str()),
-                                                Log::WARN);
-                        }
+                        _log_with_date_time(
+                            "QuicProxySession: target unreachable (" + host + ":" +
+                                tp::to_string(port) + "), dropping client: " +
+                                tp::string(ec2.message().c_str()),
+                            Log::ERROR);
                         destroy();
                         return;
                     }
-                    _log_with_date_time(
-                        "QuicProxySession: stream " + tp::to_string(m_stream_id) +
-                            " connected to " + tp::string(ep.address().to_string().c_str()) +
-                            ":" + tp::to_string(ep.port()),
-                        Log::INFO);
+                    _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) +
+                                            " connected to " + host + ":" + tp::to_string(port),
+                                        Log::INFO);
 
-                    // Forward payload (header remainder) and any data that
-                    // arrived while TCP was connecting.
-                    m_payload.append(m_recv_buf);
-                    m_recv_buf.clear();
-
-                    if (!m_payload.empty()) {
-                        auto buf = TP_MAKE_SHARED(tp::string, std::move(m_payload));
-                        m_payload.clear();
-                        boost::asio::async_write(
-                            m_tcp_socket, boost::asio::buffer(*buf),
-                            [this, self, buf](const boost::system::error_code& ec3, std::size_t) {
-                                if (ec3) {
-                                    destroy();
-                                    return;
-                                }
-                                tcp_read();
-                            });
-                    } else {
-                        tcp_read();
+                    // Forward any data that arrived while TCP was connecting.
+                    if (!m_is_writing_to_tcp && m_tcp_socket.is_open()) {
+                        do_tcp_write();
                     }
+                    tcp_read();
                 });
+        });
+}
+
+void QuicProxySession::write_to_target(tp::string data, bool fin) {
+    if (data.empty() && !fin) {
+        return;
+    }
+    m_tcp_write_queue.push_back({std::move(data), fin});
+    if (!m_is_writing_to_tcp && m_tcp_socket.is_open()) {
+        do_tcp_write();
+    }
+}
+
+void QuicProxySession::do_tcp_write() {
+    if (m_destroyed || !m_tcp_socket.is_open() || m_tcp_write_queue.empty()) {
+        m_is_writing_to_tcp = false;
+        return;
+    }
+
+    m_is_writing_to_tcp = true;
+    auto self = this->shared_from_this();
+    auto& front = m_tcp_write_queue.front();
+    
+    // If we only have a FIN (no data), handle it immediately.
+    if (front.data.empty() && front.fin) {
+        boost::system::error_code ec;
+        m_tcp_socket.shutdown(boost::asio::socket_base::shutdown_send, ec);
+        m_tcp_write_queue.pop_front();
+        do_tcp_write();
+        return;
+    }
+
+    auto buf = TP_MAKE_SHARED(tp::string, std::move(front.data));
+    bool fin = front.fin;
+    m_tcp_write_queue.pop_front();
+
+    boost::asio::async_write(
+        m_tcp_socket, boost::asio::buffer(*buf),
+        [this, self, buf, fin](const boost::system::error_code& ec, std::size_t) {
+            if (m_destroyed) {
+                return;
+            }
+            if (ec) {
+                destroy();
+                return;
+            }
+            if (fin) {
+                boost::system::error_code ec2;
+                m_tcp_socket.shutdown(boost::asio::socket_base::shutdown_send, ec2);
+            }
+            do_tcp_write();
         });
 }
 
@@ -251,7 +303,7 @@ void QuicProxySession::tcp_read() {
     if (m_destroyed || !m_tcp_socket.is_open()) {
         return;
     }
-    auto self = shared_from_this();
+    auto self = this->shared_from_this();
     m_tcp_socket.async_read_some(
         boost::asio::buffer(&m_tcp_buf[0], kTcpBufSize),
         [this, self](const boost::system::error_code& ec, std::size_t bytes) {
@@ -272,13 +324,38 @@ void QuicProxySession::tcp_read() {
                 return;
             }
             if (m_conn && !m_conn->is_closed()) {
-                m_conn->send_stream_data(m_stream_id,
-                                         reinterpret_cast<const uint8_t*>(m_tcp_buf.data()),
-                                         bytes, false);
-                m_conn->pump_write();
+                flush_tcp_read_buf(0, bytes);
             }
-            tcp_read();
         });
+}
+
+void QuicProxySession::flush_tcp_read_buf(std::size_t offset, std::size_t bytes) {
+    if (m_destroyed || !m_conn || m_conn->is_closed()) {
+        return;
+    }
+
+    int64_t written = m_conn->send_stream_data(m_stream_id,
+                                               reinterpret_cast<const uint8_t*>(m_tcp_buf.data() + offset),
+                                               bytes - offset, false);
+    if (written < 0) {
+        destroy();
+        return;
+    }
+
+    m_conn->pump_write();
+
+    offset += written;
+    if (offset < bytes) {
+        m_write_timer.expires_after(std::chrono::milliseconds(5));
+        auto self = this->shared_from_this();
+        m_write_timer.async_wait([this, self, offset, bytes](const boost::system::error_code& ec) {
+            if (!ec) {
+                flush_tcp_read_buf(offset, bytes);
+            }
+        });
+    } else {
+        tcp_read();
+    }
 }
 
 void QuicProxySession::destroy() {
@@ -287,10 +364,14 @@ void QuicProxySession::destroy() {
     }
     m_destroyed = true;
     m_resolver.cancel();
+    m_udp_resolver.cancel();
     boost::system::error_code ec;
     if (m_tcp_socket.is_open()) {
-        m_tcp_socket.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
+        m_tcp_socket.shutdown(boost::asio::socket_base::shutdown_both, ec);
         m_tcp_socket.close(ec);
+    }
+    if (m_udp_socket.is_open()) {
+        m_udp_socket.close(ec);
     }
     if (m_conn && !m_conn->is_closed()) {
         m_conn->send_stream_data(m_stream_id, nullptr, 0, true);
