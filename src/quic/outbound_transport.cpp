@@ -233,7 +233,6 @@ class QuicStreamTransport : public OutboundTransport,
             });
             return;
         }
-
         int64_t written = m_endpoint->send_stream_data(
             m_stream_id,
             reinterpret_cast<const uint8_t*>(buf->data() + offset),

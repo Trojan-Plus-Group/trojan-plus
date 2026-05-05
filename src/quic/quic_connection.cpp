@@ -469,6 +469,8 @@ int64_t QuicConnection::send_stream_data(int64_t stream_id, const uint8_t* data,
 
         if (nwrite > 0) {
             m_endpoint.send_packet(m_peer, m_write_buf.data(), static_cast<std::size_t>(nwrite));
+            _log_with_date_time("QuicConnection::send_stream_data: sent packet len=" + 
+                                tp::to_string(nwrite) + " pdatalen=" + tp::to_string(pdatalen), Log::ALL);
         }
 
         if (pdatalen > 0) {

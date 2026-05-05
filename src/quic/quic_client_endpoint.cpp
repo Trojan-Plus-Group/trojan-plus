@@ -148,16 +148,16 @@ int64_t QuicClientEndpoint::open_bidi_stream(
     return -1;
 }
 
-bool QuicClientEndpoint::send_stream_data(int64_t stream_id, const uint8_t* data,
-                                          std::size_t len, bool fin) {
+int64_t QuicClientEndpoint::send_stream_data(int64_t stream_id, const uint8_t* data,
+                                              std::size_t len, bool fin) {
     if (!m_conn || m_conn->is_closed()) {
-        return false;
+        return -1;
     }
-    bool ok = m_conn->send_stream_data(stream_id, data, len, fin);
-    if (ok) {
+    int64_t written = m_conn->send_stream_data(stream_id, data, len, fin);
+    if (written >= 0) {
         m_conn->pump_write();
     }
-    return ok;
+    return written;
 }
 
 void QuicClientEndpoint::set_stream_data_handler(

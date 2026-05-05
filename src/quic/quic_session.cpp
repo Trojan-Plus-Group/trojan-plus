@@ -45,6 +45,14 @@ void QuicProxySession::on_stream_data(const uint8_t* data, std::size_t len, bool
         return;
     }
     m_recv_buf.append(reinterpret_cast<const char*>(data), len);
+    char hex[129];
+    for (int i = 0; i < std::min((int)len, 64); ++i) {
+        snprintf(hex + i * 2, 3, "%02x", data[i]);
+    }
+    hex[std::min((int)len, 64) * 2] = '\0';
+    _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) + " recv " +
+                        tp::to_string(len) + " bytes, parsed=" + tp::to_string(m_request_parsed) +
+                        " hex=" + hex, Log::INFO);
 
     if (m_upstream_forwarding) {
         if (!m_recv_buf.empty()) {
@@ -112,11 +120,14 @@ void QuicProxySession::try_parse_request() {
 
     _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) +
                             " authenticated as " + it->second + " → " + req.address.address +
-                            ":" + tp::to_string(req.address.port),
+                            ":" + tp::to_string(req.address.port) + " payload_len=" + 
+                            tp::to_string(req.payload.length()),
                         Log::INFO);
 
     m_request_parsed = true;
-    write_to_target(tp::string(req.payload.data(), req.payload.length()));
+    if (!req.payload.empty()) {
+        write_to_target(tp::string(req.payload.data(), req.payload.length()));
+    }
     m_recv_buf.clear();
 
     connect_target(tp::string(req.address.address), req.address.port);

@@ -25,16 +25,16 @@ echo "--- Running Integration Tests ---"
 cd tests/LinuxFullTest/
 
 # Define arguments based on runtime platform
-TEST_ARGS="../../build/trojan -g"
+TEST_ARGS="../../build/trojan -g -q"
 if [[ "$OSTYPE" == "linux-gnu"* ]]; then
     # Linux setup
-    TEST_ARGS="$TEST_ARGS -q -n -d 5333 -f"
+    TEST_ARGS="$TEST_ARGS -n -d 5333 -f"
 elif [[ "$OSTYPE" == "darwin"* ]]; then
     # macOS setup
     TEST_ARGS="$TEST_ARGS -n -f"
 elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" || "$OSTYPE" == "win32" ]]; then
     # Windows setup
-    TEST_ARGS="$TEST_ARGS -q -n -d 5333 -f"
+    TEST_ARGS="$TEST_ARGS -n -d 5333 -f"
 fi
 
 # Run python with -u for unbuffered output to see logs in real-time

@@ -179,10 +179,6 @@ void ClientSession::out_async_read() {
 
 void ClientSession::out_async_write(const std::string_view& data) {
 
-    _write_data_to_file_DEBUG("ClientSession::out_async_write status: " + tp::to_string((int)status) +
-                              " session_id: " + tp::to_string(get_session_id()) + " length: " + tp::to_string(data.length()) +
-                              " checksum: " + tp::to_string(get_checksum(data)));
-
     _write_data_to_file_DEBUG(get_session_id(), "ClientSession_out_async_write", data);
 
     auto self = shared_from_this();
