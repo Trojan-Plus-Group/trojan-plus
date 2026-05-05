@@ -42,7 +42,7 @@ class QuicClientEndpoint : public QuicEndpoint {
     [[nodiscard]] bool is_connected() const;
 
     [[nodiscard]] bool is_known_unreachable() const { return m_known_unreachable; }
-    void mark_unreachable() { m_known_unreachable = true; }
+    void mark_unreachable();
 
   protected:
     void on_packet(const uint8_t* data, std::size_t len,
@@ -54,6 +54,7 @@ class QuicClientEndpoint : public QuicEndpoint {
     std::shared_ptr<QuicConnection> m_conn;
     bool m_known_unreachable{false};
     bool m_connecting{false};
+    boost::asio::steady_timer m_retry_timer;
 
     // Per-stream data handlers: stream_id → handler.
     tp::unordered_map<int64_t, std::function<void(const uint8_t*, std::size_t, bool)>>

@@ -138,7 +138,8 @@ QuicConnection::QuicConnection(QuicEndpoint& endpoint, std::shared_ptr<QuicTlsCt
     : m_endpoint(endpoint),
       m_tls_ctx(std::move(tls_ctx)),
       m_peer(peer),
-      m_loss_timer(endpoint.io_context()) {}
+      m_loss_timer(endpoint.io_context()),
+      m_write_buf(NGTCP2_MAX_UDP_PAYLOAD_SIZE) {}
 
 QuicConnection::~QuicConnection() {
     if (m_conn) {
@@ -376,13 +377,12 @@ void QuicConnection::pump_write() {
         return;
     }
 
-    std::array<uint8_t, NGTCP2_MAX_UDP_PAYLOAD_SIZE> buf{};
     ngtcp2_path_storage ps;
     ngtcp2_path_storage_zero(&ps);
     ngtcp2_pkt_info pi{};
 
     for (;;) {
-        auto nwrite = ngtcp2_conn_write_pkt(m_conn, &ps.path, &pi, buf.data(), buf.size(),
+        auto nwrite = ngtcp2_conn_write_pkt(m_conn, &ps.path, &pi, m_write_buf.data(), m_write_buf.size(),
                                             now_nanos());
         if (nwrite < 0) {
             if (nwrite == NGTCP2_ERR_WRITE_MORE) {
@@ -412,7 +412,7 @@ void QuicConnection::pump_write() {
             dest = boost::asio::ip::udp::endpoint(boost::asio::ip::address_v6(bytes),
                                                   ntohs(sin6->sin6_port));
         }
-        m_endpoint.send_packet(dest, buf.data(), static_cast<std::size_t>(nwrite));
+        m_endpoint.send_packet(dest, m_write_buf.data(), static_cast<std::size_t>(nwrite));
     }
 }
 
@@ -424,7 +424,6 @@ bool QuicConnection::send_stream_data(int64_t stream_id, const uint8_t* data, st
         return false;
     }
 
-    std::array<uint8_t, NGTCP2_MAX_UDP_PAYLOAD_SIZE> buf{};
     ngtcp2_path_storage ps;
     ngtcp2_path_storage_zero(&ps);
     ngtcp2_pkt_info pi{};
@@ -432,7 +431,7 @@ bool QuicConnection::send_stream_data(int64_t stream_id, const uint8_t* data, st
     ngtcp2_vec vec{.base = const_cast<uint8_t*>(data), .len = datalen};
     ngtcp2_ssize pdatalen = -1;
 
-    auto nwrite = ngtcp2_conn_writev_stream(m_conn, &ps.path, &pi, buf.data(), buf.size(),
+    auto nwrite = ngtcp2_conn_writev_stream(m_conn, &ps.path, &pi, m_write_buf.data(), m_write_buf.size(),
                                             &pdatalen, fin ? NGTCP2_WRITE_STREAM_FLAG_FIN : 0,
                                             stream_id, &vec, 1, now_nanos());
     if (nwrite < 0) {
@@ -442,7 +441,7 @@ bool QuicConnection::send_stream_data(int64_t stream_id, const uint8_t* data, st
         return false;
     }
     if (nwrite > 0) {
-        m_endpoint.send_packet(m_peer, buf.data(), static_cast<std::size_t>(nwrite));
+        m_endpoint.send_packet(m_peer, m_write_buf.data(), static_cast<std::size_t>(nwrite));
     }
     return true;
 }
@@ -469,13 +468,12 @@ void QuicConnection::close() {
     m_closed = true;
     m_loss_timer.cancel();
     if (m_conn) {
-        std::array<uint8_t, NGTCP2_MAX_UDP_PAYLOAD_SIZE> buf{};
         ngtcp2_path_storage ps;
         ngtcp2_path_storage_zero(&ps);
         ngtcp2_pkt_info pi{};
         ngtcp2_ccerr    ccerr;
         ngtcp2_ccerr_default(&ccerr);
-        ngtcp2_conn_write_connection_close(m_conn, &ps.path, &pi, buf.data(), buf.size(), &ccerr,
+        ngtcp2_conn_write_connection_close(m_conn, &ps.path, &pi, m_write_buf.data(), m_write_buf.size(), &ccerr,
                                           now_nanos());
     }
 }

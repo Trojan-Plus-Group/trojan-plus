@@ -10,6 +10,8 @@
 
 #include "quic_client_endpoint.h"
 
+#include <chrono>
+
 #include <boost/asio/ip/address.hpp>
 
 #include "core/config.h"
@@ -18,7 +20,7 @@
 
 QuicClientEndpoint::QuicClientEndpoint(boost::asio::io_context& io_ctx, const Config& config,
                                        std::shared_ptr<QuicTlsCtx> tls_ctx)
-    : QuicEndpoint(io_ctx, config, std::move(tls_ctx)) {}
+    : QuicEndpoint(io_ctx, config, std::move(tls_ctx)), m_retry_timer(io_ctx) {}
 
 void QuicClientEndpoint::start() {
     if (m_running) {
@@ -105,6 +107,26 @@ void QuicClientEndpoint::on_packet(const uint8_t* data, std::size_t len,
 
 bool QuicClientEndpoint::is_connected() const {
     return m_conn && !m_conn->is_closed() && m_conn->is_handshake_done();
+}
+
+void QuicClientEndpoint::mark_unreachable() {
+    m_known_unreachable = true;
+    uint32_t retry_ms   = m_config.get_quic().retry_connect_timeout_ms;
+    if (retry_ms == 0 || !m_running) {
+        return;
+    }
+    auto self = shared_from_this();
+    m_retry_timer.expires_after(std::chrono::milliseconds(retry_ms));
+    m_retry_timer.async_wait([this, self](const boost::system::error_code& ec) {
+        if (ec || !m_running) {
+            return;
+        }
+        _log_with_date_time("QuicClientEndpoint: retrying QUIC connection to " +
+                                m_config.get_remote_addr(),
+                            Log::INFO);
+        m_known_unreachable = false;
+        connect_to_server();
+    });
 }
 
 int64_t QuicClientEndpoint::open_bidi_stream(

@@ -439,7 +439,56 @@ void ClientSession::request_remote() {
         out_async_write(streambuf_to_string_view(out_write_buf));
     };
 
-    if (get_pipeline_component().is_using_pipeline()) {
+    const bool pipeline_assigned = get_pipeline_component().is_using_pipeline();
+
+#ifdef ENABLE_QUIC
+    auto*      quic_client    = get_service()->get_quic_client();
+    const bool try_quic_first = (quic_client != nullptr) &&
+                                get_config().get_quic().enabled &&
+                                get_config().get_quic().prefer_quic &&
+                                quic_client->is_connected() &&
+                                !quic_client->is_known_unreachable();
+#else
+    constexpr bool try_quic_first = false;
+#endif
+
+    if (try_quic_first) {
+        // Lazily create the outbound transport on first use so that in_ep is available.
+        if (!m_out) {
+            m_out = create_outbound_transport(
+                get_service()->get_io_context(),
+                m_ssl_ctx,
+                get_config(),
+                get_in_endpoint(),
+                get_service()->get_quic_client());
+        }
+        m_out->async_connect(
+            get_config().get_remote_addr(),
+            static_cast<uint16_t>(get_config().get_remote_port()),
+            cb,
+            [this, self, pipeline_assigned, cb]() {
+                if (m_out && m_out->is_via_quic()) {
+                    _log_with_endpoint(get_in_endpoint(),
+                        "session_id: " + tp::to_string(get_session_id()) +
+                        " QUIC stream open failed, falling back to " +
+                        (pipeline_assigned ? "pipeline" : "destroy"),
+                        Log::WARN);
+                    m_out->cancel();
+                    m_out->close();
+                    m_out.reset();
+                    if (pipeline_assigned) {
+                        cb();
+                    } else {
+                        destroy();
+                    }
+                } else {
+                    destroy();
+                }
+            });
+        return;
+    }
+
+    if (pipeline_assigned) {
         cb();
     } else {
         // Lazily create the outbound transport on first use so that in_ep is available.

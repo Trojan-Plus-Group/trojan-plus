@@ -213,7 +213,7 @@ void Config::populate(const ptree& tree) {
 
     quic.enabled                = tree.get("quic.enabled", false);
     quic.prefer_quic            = tree.get("quic.prefer_quic", true);
-    quic.fallback_timeout_ms    = tree.get("quic.fallback_timeout_ms", 3000U);
+    quic.retry_connect_timeout_ms = tree.get("quic.retry_connect_timeout_ms", 0U);
     quic.alpn_token             = tree.get("quic.alpn_token", std::string("h3")).c_str();
     quic.max_idle_timeout_ms    = tree.get("quic.max_idle_timeout_ms", 30000U);
     quic.max_concurrent_streams = tree.get("quic.max_concurrent_streams", 100U);
@@ -231,7 +231,10 @@ void Config::populate(const ptree& tree) {
         _log_with_date_time("quic.h3_upstream is configured; full HTTP/3 fallback is implemented in Phase 3", Log::WARN);
     }
     if (quic.enabled && experimental.pipeline_num > 0 && quic.prefer_quic) {
-        _log_with_date_time("pipeline_num is ignored when quic.enabled=true (QUIC streams already provide native multiplexing)", Log::WARN);
+        _log_with_date_time(
+            "quic.prefer_quic=true with pipeline_num>0: QUIC will be tried first per session, "
+            "pipeline will be used as fallback if QUIC stream open fails",
+            Log::WARN);
     }
 
     tun.tun_name       = tree.get("tun.tun_name", std::string()).c_str();

@@ -178,9 +178,11 @@ class QuicStreamTransport : public OutboundTransport {
         // Register data handler before opening the stream so we never miss data.
         // We use a sentinel stream_id = -2 until the real sid is assigned.
         auto sid = m_endpoint->open_bidi_stream(
-            [this, on_success = std::move(on_success)](int64_t sid) mutable {
+            [this, on_success = std::move(on_success),
+                   on_error_deferred = on_error](int64_t sid) mutable {
                 if (sid < 0) {
                     // Endpoint returned failure inside the deferred callback.
+                    boost::asio::post(m_io_ctx, std::move(on_error_deferred));
                     return;
                 }
                 m_stream_id = sid;

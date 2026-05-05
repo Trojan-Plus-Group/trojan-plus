@@ -139,6 +139,8 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     bool m_closed{false};
     bool m_handshake_done{false};
     bool m_is_server{false};
+
+    tp::vector<uint8_t> m_write_buf;
 };
 
 #endif // _QUIC_CONNECTION_H_
