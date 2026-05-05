@@ -27,23 +27,22 @@ if(POLICY CMP0167)
 endif()
 
 project(trojan CXX C)
-set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# c++23 standard support (required for QUIC integration via ngtcp2 examples patterns):
-# https://en.cppreference.com/w/cpp/compiler_support/23
+# C++17 is sufficient: ngtcp2 is a C library; only its examples use C++23.
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-  if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS "13.0.0")
-    message(FATAL_ERROR "Insufficient gcc version, please install higher version (minimum_required 13.0.0 for C++23)")
+  if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS "7.0.0")
+    message(FATAL_ERROR "Insufficient gcc version, please install higher version (minimum_required 7.0.0 for C++17)")
   endif()
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
-  if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS "16.0.0")
-    message(FATAL_ERROR "Insufficient clang version, please install higher version (minimum_required 16.0.0 for C++23)")
+  if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS "5.0.0")
+    message(FATAL_ERROR "Insufficient clang version, please install higher version (minimum_required 5.0.0 for C++17)")
   endif()
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
-  if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS "19.34")
-    message(FATAL_ERROR "Insufficient msvc version, please install higher version (minimum_required Visual Studio 2022 17.4 MSVC 19.34 for C++23)")
+  if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS "19.14")
+    message(FATAL_ERROR "Insufficient msvc version, please install higher version (minimum_required Visual Studio 2017 15.7 MSVC 19.14 for C++17)")
   endif()
 endif()
 
