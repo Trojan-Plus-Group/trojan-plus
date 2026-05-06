@@ -68,7 +68,9 @@ class QuicProxySession : public std::enable_shared_from_this<QuicProxySession> {
     tp::string m_tcp_buf;     // read buffer for upstream → stream direction
     tp::string m_udp_buf;     // read buffer for UDP upstream → stream direction
     bool m_request_parsed{false};
-    bool m_upstream_forwarding{false}; // forwarding non-trojan traffic to h3_upstream
+bool m_upstream_forwarding{false}; // forwarding non-trojan traffic to h3_upstream
+    bool m_waiting_h3_response{false}; // waiting for h3_upstream UDP response
+    bool m_stream_fin_received{false}; // client sent QUIC stream FIN
     bool m_destroyed{false};
 
     static constexpr std::size_t kTcpBufSize = 16 * 1024;

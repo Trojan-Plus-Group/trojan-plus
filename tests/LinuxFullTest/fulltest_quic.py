@@ -2,14 +2,20 @@
 QUIC integration tests for trojan-plus.
 
 Test cases:
-  T1: e2e_basic_proxy              - QUIC handshake + HTTP GET proxy
-  T2: e2e_multistream              - concurrent streams over one QUIC connection
-  T3: e2e_post_data                - HTTP POST through QUIC
-  T4: h3_upstream_fallback         - non-trojan traffic forwarded to h3_upstream
-  T5: idle_timeout                 - connection closes after max_idle_timeout_ms
-  T6: h3_upstream_unconfigured_drop - non-trojan traffic dropped when h3_upstream is empty
-  T7: alpn_negotiation             - verify ALPN token in logs
-  T8: quic_disabled                - quic.enabled=false falls back to TLS
+  T1:  e2e_basic_proxy              - QUIC handshake + HTTP GET proxy
+  T2:  e2e_multistream              - concurrent streams over one QUIC connection
+  T3:  e2e_post_data                - HTTP POST through QUIC
+  T4:  h3_upstream_fallback         - non-trojan traffic forwarded to h3_upstream
+  T5:  idle_timeout                 - connection closes after max_idle_timeout_ms
+  T6:  h3_upstream_unconfigured_drop - non-trojan traffic dropped when h3_upstream is empty
+  T7:  alpn_negotiation             - verify ALPN token in logs
+  T8:  quic_disabled                - quic.enabled=false falls back to TLS
+  T9:  client_retry_no_server       - retry_connect_timeout_ms > 0 fires; = 0 does not
+  T10: prefer_quic_false            - prefer_quic=false routes data over TLS, not QUIC streams
+  T11: tcp_target_unreachable       - server logs error and drops session on TCP connect fail
+  T12: large_file_transfer          - 300 KB file exercises QUIC flow-control back-pressure
+  T13: h3_upstream_dns_failure      - h3_upstream with invalid hostname → resolve error, no crash
+  T14: multiple_quic_connections    - two independent QUIC clients connect to same server concurrently
 """
 
 import json
@@ -29,6 +35,9 @@ try:
 except ImportError:
     socks = None
 
+import threading
+_socks_lock = threading.Lock()  # protects global socket.socket monkey-patch
+
 current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.append(current_dir)
@@ -38,12 +47,16 @@ from fulltest_utils import print_time_log, is_windows_system
 # ---------------------------------------------------------------------------
 # Port assignments (must not collide with existing tests)
 # ---------------------------------------------------------------------------
-QUIC_SERVER_PORT = 14651
-QUIC_CLIENT_PROXY_PORT = 10621
-HTTP_TARGET_PORT = 18083          # dedicated target HTTP server for QUIC tests
-H3_UPSTREAM_PORT = 18182
+QUIC_SERVER_PORT        = 14651
+QUIC_CLIENT_PROXY_PORT  = 10621
+QUIC_CLIENT_PROXY_PORT_2 = 10622   # second client for T14
+HTTP_TARGET_PORT        = 18083    # dedicated target HTTP server for QUIC tests
+H3_UPSTREAM_PORT        = 18182
+DEAD_TARGET_PORT        = 19993    # nothing listens here (used by T11)
 
-TEST_FILES_DIR = 'html'
+TEST_FILES_DIR   = 'html'
+LARGE_FILE_NAME  = 'quic_large_test.bin'
+LARGE_FILE_SIZE  = 300 * 1024      # 300 KB > 256 KB QUIC flow-control window
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -145,8 +158,21 @@ def start_http_target():
     return proc
 
 
+def _kill_port(port):
+    """Kill any process listening on a given UDP port (Windows)."""
+    try:
+        result = __import__('subprocess').run(
+            ['powershell', '-Command',
+             f'(Get-NetUDPEndpoint -LocalPort {port} -ErrorAction SilentlyContinue).OwningProcess | ForEach-Object {{ Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }}'],
+            capture_output=True, timeout=5)
+    except Exception:
+        pass
+
+
 def start_h3_upstream_mock():
-    """Start the h3_upstream UDP mock server."""
+    """Start the h3_upstream UDP mock server (kills any stale process on that port first)."""
+    _kill_port(H3_UPSTREAM_PORT)
+    time.sleep(0.3)
     log_file = open("config/quic_h3mock.output", "w+")
     proc = Popen([sys.executable, "-u", "fulltest_quic_h3mock.py", str(H3_UPSTREAM_PORT)],
                  executable=sys.executable,
@@ -155,7 +181,6 @@ def start_h3_upstream_mock():
                  universal_newlines=True)
     proc._log_file = log_file
     proc._log_path = "config/quic_h3mock.output"
-    # For UDP, we wait for the log instead of wait_for_port.
     if not wait_for_log("config/quic_h3mock.output", r"listening on .*:" + str(H3_UPSTREAM_PORT), timeout=8):
         print_time_log(f"h3_upstream UDP mock server failed to start on {H3_UPSTREAM_PORT}")
         proc.kill()
@@ -181,18 +206,35 @@ def patch_quic_config(base_name, overrides):
     return tmp
 
 
+def patch_quic_config_with_suffix(base_name, suffix, overrides):
+    """Like patch_quic_config but writes to a file with a custom suffix."""
+    path = os.path.join("config", base_name)
+    with open(path, 'r') as f:
+        cfg = json.load(f)
+    for key, val in overrides.items():
+        if isinstance(val, dict) and key in cfg and isinstance(cfg[key], dict):
+            cfg[key].update(val)
+        else:
+            cfg[key] = val
+    tmp = path + suffix
+    with open(tmp, 'w') as f:
+        json.dump(cfg, f, indent=4)
+    return tmp
+
+
 def http_get_via_socks5(url, proxy_port, timeout=15):
-    """HTTP GET through a SOCKS5 proxy. Returns response bytes."""
+    """HTTP GET through a SOCKS5 proxy. Returns response body bytes."""
     if socks is None:
         raise RuntimeError("PySocks not installed")
     orig = socket.socket
-    try:
-        socks.set_default_proxy(socks.SOCKS5, "127.0.0.1", proxy_port)
-        socket.socket = socks.socksocket
-        req = urllib.request.urlopen(url, timeout=timeout)
-        return req.read()
-    finally:
-        socket.socket = orig
+    with _socks_lock:
+        try:
+            socks.set_default_proxy(socks.SOCKS5, "127.0.0.1", proxy_port)
+            socket.socket = socks.socksocket
+            req = urllib.request.urlopen(url, timeout=timeout)
+            return req.read()
+        finally:
+            socket.socket = orig
 
 
 def http_post_via_socks5(url, data, proxy_port, timeout=15):
@@ -212,8 +254,30 @@ def http_post_via_socks5(url, data, proxy_port, timeout=15):
         socket.socket = orig
 
 
+def ensure_large_test_file():
+    """Create a 300 KB test file in the html directory if it doesn't exist.
+    Returns True if the file is ready, False if html dir doesn't exist.
+    """
+    if not os.path.isdir(TEST_FILES_DIR):
+        return False
+    large_path = os.path.join(TEST_FILES_DIR, LARGE_FILE_NAME)
+    if not os.path.exists(large_path):
+        import random
+        rng = random.Random(42)
+        CHARS = b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+        data = bytes(CHARS[rng.randrange(len(CHARS))] for _ in range(LARGE_FILE_SIZE))
+        with open(large_path, 'wb') as f:
+            f.write(data)
+        index_path = os.path.join(TEST_FILES_DIR, "index.html")
+        if os.path.exists(index_path):
+            with open(index_path, 'a') as f:
+                f.write('\n' + LARGE_FILE_NAME)
+        print_time_log(f"Created large test file: {large_path} ({LARGE_FILE_SIZE} bytes)")
+    return True
+
+
 # ---------------------------------------------------------------------------
-# Test cases
+# Test cases  T1 – T8 (existing)
 # ---------------------------------------------------------------------------
 
 def test_e2e_basic_proxy(binary_path):
@@ -739,18 +803,482 @@ def test_quic_disabled(binary_path):
 
 
 # ---------------------------------------------------------------------------
+# Test cases  T9 – T14 (new)
+# ---------------------------------------------------------------------------
+
+def test_client_retry_no_server(binary_path):
+    """T9: retry_connect_timeout_ms > 0 fires retry; = 0 does not retry.
+
+    mark_unreachable() is called when the DNS resolution for the server address
+    fails. With retry_connect_timeout_ms=500, the timer fires and logs
+    "retrying QUIC connection". With retry_connect_timeout_ms=0, no retry log.
+    """
+    print_time_log("[T9] client_retry_no_server: starting...")
+
+    # --- Part A: retry_connect_timeout_ms=500, should see "retrying" ---
+    # Use an unresolvable hostname (.invalid TLD is reserved by RFC 2606).
+    cli_cfg_a = patch_quic_config("quic_client_config.json", {
+        "remote_addr": "quic-test-unreachable.invalid",
+        "quic": {"enabled": True, "prefer_quic": True, "retry_connect_timeout_ms": 500},
+    })
+    client_a, cli_log_a = start_trojan(binary_path, cli_cfg_a)
+    dump_a = False
+    part_a_ok = False
+    try:
+        if not client_a:
+            dump_a = True
+        else:
+            # DNS failure should be quick; retry at 500 ms; allow up to 10 s total.
+            m = wait_for_log(cli_log_a,
+                             r"retrying QUIC connection|server resolve failed",
+                             timeout=10)
+            if not m:
+                print_time_log("[T9] FAIL: Part A — no retry/resolve-failed log with retry_ms=500")
+                dump_a = True
+            else:
+                retry_seen = wait_for_log(cli_log_a, r"retrying QUIC connection", timeout=5)
+                if not retry_seen:
+                    print_time_log("[T9] FAIL: Part A — resolve failed but no retry log (retry_ms=500)")
+                    dump_a = True
+                else:
+                    print_time_log("[T9] Part A OK: retry log seen with retry_ms=500")
+                    part_a_ok = True
+    except Exception:
+        traceback.print_exc()
+        dump_a = True
+    finally:
+        close_process(client_a, dump_a)
+
+    if not part_a_ok:
+        return False
+
+    # --- Part B: retry_connect_timeout_ms=0, must NOT see "retrying" ---
+    cli_cfg_b = patch_quic_config_with_suffix("quic_client_config.json", ".tmpb.json", {
+        "remote_addr": "quic-test-unreachable.invalid",
+        "quic": {"enabled": True, "prefer_quic": True, "retry_connect_timeout_ms": 0},
+    })
+    client_b, cli_log_b = start_trojan(binary_path, cli_cfg_b)
+    dump_b = False
+    part_b_ok = False
+    try:
+        if not client_b:
+            dump_b = True
+        else:
+            # Wait for DNS failure first.
+            wait_for_log(cli_log_b, r"server resolve failed", timeout=10)
+            time.sleep(2)  # Extra grace period; if retry_ms=0, no retry should fire.
+            with open(cli_log_b, 'r', errors='replace') as f:
+                content = f.read()
+            if re.search(r"retrying QUIC connection", content):
+                print_time_log("[T9] FAIL: Part B — retry log appeared with retry_ms=0")
+                dump_b = True
+            else:
+                print_time_log("[T9] Part B OK: no retry seen with retry_ms=0")
+                part_b_ok = True
+    except Exception:
+        traceback.print_exc()
+        dump_b = True
+    finally:
+        close_process(client_b, dump_b)
+
+    if not part_b_ok:
+        return False
+
+    print_time_log("[T9] client_retry_no_server PASSED")
+    return True
+
+
+def test_prefer_quic_false(binary_path):
+    """T10: prefer_quic=false → QUIC endpoint connects but data is routed via TLS.
+
+    QuicClientEndpoint still establishes a QUIC connection (enabled=true), but
+    the per-request transport selector skips it (prefer_quic=false).  The server
+    should therefore never see any QuicProxySession streams for the test request.
+    """
+    print_time_log("[T10] prefer_quic_false: starting...")
+
+    srv_cfg = patch_quic_config("quic_server_config.json", {
+        "remote_port": HTTP_TARGET_PORT,
+    })
+    cli_cfg = patch_quic_config("quic_client_config.json", {
+        "quic": {"enabled": True, "prefer_quic": False},
+    })
+
+    server, srv_log = start_trojan(binary_path, srv_cfg)
+    client, cli_log = start_trojan(binary_path, cli_cfg)
+    dump = False
+    try:
+        if not server or not client:
+            dump = True
+            return False
+
+        if not wait_for_port(QUIC_SERVER_PORT, timeout=8):
+            print_time_log("[T10] FAIL: server port not open")
+            dump = True
+            return False
+        if not wait_for_port(QUIC_CLIENT_PROXY_PORT, timeout=8):
+            print_time_log("[T10] FAIL: client proxy port not open")
+            dump = True
+            return False
+
+        # Allow the QUIC endpoint time to (optionally) handshake in background.
+        time.sleep(2)
+
+        # Fetch a test file — should succeed via TLS transport.
+        url_base = f"http://127.0.0.1:{HTTP_TARGET_PORT}/"
+        got_index = http_get_via_socks5(url_base, QUIC_CLIENT_PROXY_PORT).decode('utf-8')
+        files = [f for f in got_index.splitlines() if f.strip()]
+        if not files:
+            print_time_log("[T10] FAIL: no test files")
+            dump = True
+            return False
+
+        test_file = files[0]
+        url = f"http://127.0.0.1:{HTTP_TARGET_PORT}/{test_file}"
+        got = http_get_via_socks5(url, QUIC_CLIENT_PROXY_PORT)
+        with open(os.path.join(TEST_FILES_DIR, test_file), 'rb') as f:
+            want = f.read()
+        if got != want:
+            print_time_log("[T10] FAIL: content mismatch — TLS path did not work")
+            dump = True
+            return False
+
+        # With prefer_quic=false, the server must never handle the request as a
+        # QUIC proxy session (no QuicProxySession stream opened for proxy data).
+        with open(srv_log, 'r', errors='replace') as f:
+            srv_content = f.read()
+        if re.search(r"QuicProxySession: stream \d+ opened", srv_content):
+            print_time_log("[T10] FAIL: QuicProxySession stream opened on server despite prefer_quic=false")
+            dump = True
+            return False
+
+        print_time_log("[T10] prefer_quic_false PASSED")
+        return True
+    except Exception:
+        traceback.print_exc()
+        dump = True
+        return False
+    finally:
+        close_process(client, dump)
+        close_process(server, dump)
+
+
+def test_tcp_target_unreachable(binary_path):
+    """T11: Server cannot reach the TCP target → session destroyed, client doesn't hang.
+
+    The trojan request wraps the destination 127.0.0.1:DEAD_TARGET_PORT.
+    The server's QuicProxySession::connect_target() gets a connection-refused
+    error and must destroy the session cleanly without blocking.
+    """
+    print_time_log("[T11] tcp_target_unreachable: starting...")
+
+    srv_cfg = patch_quic_config("quic_server_config.json", {
+        "remote_port": HTTP_TARGET_PORT,
+    })
+    cli_cfg = patch_quic_config("quic_client_config.json", {})
+
+    server, srv_log = start_trojan(binary_path, srv_cfg)
+    client, cli_log = start_trojan(binary_path, cli_cfg)
+    dump = False
+    try:
+        if not server or not client:
+            dump = True
+            return False
+
+        if not wait_for_log(cli_log, r"QuicConnection: handshake completed", timeout=15):
+            print_time_log("[T11] FAIL: QUIC handshake not seen")
+            dump = True
+            return False
+        time.sleep(1)
+
+        if not wait_for_port(QUIC_CLIENT_PROXY_PORT, timeout=5):
+            print_time_log("[T11] FAIL: proxy port not open")
+            dump = True
+            return False
+
+        # Request targets DEAD_TARGET_PORT — the server will try to TCP-connect
+        # to 127.0.0.1:DEAD_TARGET_PORT and get connection-refused.
+        t_start = time.time()
+        try:
+            url = f"http://127.0.0.1:{DEAD_TARGET_PORT}/"
+            http_get_via_socks5(url, QUIC_CLIENT_PROXY_PORT, timeout=10)
+        except Exception:
+            pass  # Expected: the connection will be refused/closed.
+        elapsed = time.time() - t_start
+
+        # The request must not hang — should fail within 12 seconds.
+        if elapsed > 12:
+            print_time_log(f"[T11] FAIL: request hung for {elapsed:.1f}s")
+            dump = True
+            return False
+
+        # Verify the server logged a target-unreachable message.
+        m = wait_for_log(srv_log, r"target unreachable|connect.*failed", timeout=8)
+        if not m:
+            print_time_log("[T11] FAIL: no 'target unreachable' log found on server")
+            dump = True
+            return False
+
+        # Server process must still be alive.
+        if server.poll() is not None:
+            print_time_log("[T11] FAIL: server process crashed")
+            dump = True
+            return False
+
+        print_time_log(f"[T11] tcp_target_unreachable PASSED (elapsed={elapsed:.2f}s)")
+        return True
+    except Exception:
+        traceback.print_exc()
+        dump = True
+        return False
+    finally:
+        close_process(client, dump)
+        close_process(server, dump)
+
+
+def test_large_file_transfer(binary_path):
+    """T12: Transfer a 300 KB file through QUIC to exercise flow-control back-pressure.
+
+    The QUIC stream window is 256 KB (initial_max_stream_data_bidi_*).  A 300 KB
+    file forces flush_tcp_read_buf() to hit NGTCP2_ERR_STREAM_DATA_BLOCKED and
+    retry via the 5 ms write timer, verifying that path works correctly.
+    """
+    print_time_log("[T12] large_file_transfer: starting...")
+
+    if not ensure_large_test_file():
+        print_time_log("[T12] SKIP: html test-files directory not available")
+        return True
+
+    srv_cfg = patch_quic_config("quic_server_config.json", {
+        "remote_port": HTTP_TARGET_PORT,
+    })
+    cli_cfg = patch_quic_config("quic_client_config.json", {})
+
+    server, srv_log = start_trojan(binary_path, srv_cfg)
+    client, cli_log = start_trojan(binary_path, cli_cfg)
+    dump = False
+    try:
+        if not server or not client:
+            dump = True
+            return False
+
+        if not wait_for_log(cli_log, r"QuicConnection: handshake completed", timeout=15):
+            print_time_log("[T12] FAIL: QUIC handshake not seen")
+            dump = True
+            return False
+        time.sleep(1)
+
+        if not wait_for_port(QUIC_CLIENT_PROXY_PORT, timeout=5):
+            print_time_log("[T12] FAIL: proxy port not open")
+            dump = True
+            return False
+
+        url = f"http://127.0.0.1:{HTTP_TARGET_PORT}/{LARGE_FILE_NAME}"
+        got = http_get_via_socks5(url, QUIC_CLIENT_PROXY_PORT, timeout=30)
+        with open(os.path.join(TEST_FILES_DIR, LARGE_FILE_NAME), 'rb') as f:
+            want = f.read()
+
+        if len(got) != len(want):
+            print_time_log(f"[T12] FAIL: size mismatch (got {len(got)}, want {len(want)})")
+            dump = True
+            return False
+        if got != want:
+            print_time_log("[T12] FAIL: content mismatch for large file")
+            dump = True
+            return False
+
+        print_time_log(f"[T12] large_file_transfer PASSED ({len(got)} bytes)")
+        return True
+    except Exception:
+        traceback.print_exc()
+        dump = True
+        return False
+    finally:
+        close_process(client, dump)
+        close_process(server, dump)
+
+
+def test_h3_upstream_dns_failure(binary_path):
+    """T13: h3_upstream hostname doesn't resolve → session destroyed, server stays alive.
+
+    QuicProxySession::forward_to_h3_upstream() calls async_resolve on the
+    h3_upstream address.  If DNS fails, the error is logged and destroy() is
+    called.  The server process must not crash.
+    """
+    print_time_log("[T13] h3_upstream_dns_failure: starting...")
+
+    # Configure h3_upstream with an unresolvable hostname.
+    srv_cfg = patch_quic_config("quic_server_config.json", {
+        "remote_port": HTTP_TARGET_PORT,
+        "quic": {"enabled": True, "h3_upstream": "quic-test-h3-upstream.invalid:443"},
+    })
+    # Wrong password forces the server into forward_to_h3_upstream().
+    cli_cfg = patch_quic_config("quic_client_config.json", {
+        "password": ["wrongpassword_t13"],
+    })
+
+    server, srv_log = start_trojan(binary_path, srv_cfg)
+    client, cli_log = start_trojan(binary_path, cli_cfg)
+    dump = False
+    try:
+        if not server or not client:
+            dump = True
+            return False
+
+        if not wait_for_log(cli_log, r"QuicConnection: handshake completed", timeout=15):
+            print_time_log("[T13] FAIL: QUIC handshake not seen")
+            dump = True
+            return False
+        time.sleep(1)
+
+        if not wait_for_port(QUIC_CLIENT_PROXY_PORT, timeout=5):
+            print_time_log("[T13] FAIL: proxy port not open")
+            dump = True
+            return False
+
+        # Trigger the wrong-password → forward_to_h3_upstream() → DNS failure path.
+        try:
+            url = f"http://127.0.0.1:{HTTP_TARGET_PORT}/"
+            http_get_via_socks5(url, QUIC_CLIENT_PROXY_PORT, timeout=5)
+        except Exception:
+            pass  # Expected: DNS fails, session is dropped.
+
+        # DNS resolution for .invalid can be slow on some resolvers; allow up to 20 s.
+        m = wait_for_log(srv_log, r"h3_upstream UDP resolve failed", timeout=20)
+        if not m:
+            print_time_log("[T13] FAIL: 'h3_upstream UDP resolve failed' not in server log")
+            dump = True
+            return False
+
+        # Server must remain alive.
+        if server.poll() is not None:
+            print_time_log("[T13] FAIL: server crashed after h3_upstream DNS failure")
+            dump = True
+            return False
+
+        print_time_log("[T13] h3_upstream_dns_failure PASSED")
+        return True
+    except Exception:
+        traceback.print_exc()
+        dump = True
+        return False
+    finally:
+        close_process(client, dump)
+        close_process(server, dump)
+
+
+def test_multiple_quic_connections(binary_path):
+    """T14: Two independent QUIC clients connect to the same server concurrently.
+
+    Validates QuicServerEndpoint::m_conns routing-table correctness when two
+    separate connection IDs (from different UDP sources) coexist simultaneously.
+    """
+    print_time_log("[T14] multiple_quic_connections: starting...")
+
+    srv_cfg = patch_quic_config("quic_server_config.json", {
+        "remote_port": HTTP_TARGET_PORT,
+    })
+    # Client 1: standard config on QUIC_CLIENT_PROXY_PORT.
+    cli_cfg1 = patch_quic_config("quic_client_config.json", {})
+    # Client 2: identical config but on a different local SOCKS5 port.
+    cli_cfg2 = patch_quic_config_with_suffix("quic_client_config.json", ".tmp2.json", {
+        "local_port": QUIC_CLIENT_PROXY_PORT_2,
+    })
+
+    server, srv_log = start_trojan(binary_path, srv_cfg)
+    client1, cli_log1 = start_trojan(binary_path, cli_cfg1)
+    client2, cli_log2 = start_trojan(binary_path, cli_cfg2)
+    dump = False
+    try:
+        if not server or not client1 or not client2:
+            dump = True
+            return False
+
+        # Both clients must complete the QUIC handshake.
+        if not wait_for_log(cli_log1, r"QuicConnection: handshake completed", timeout=15):
+            print_time_log("[T14] FAIL: client1 QUIC handshake not seen")
+            dump = True
+            return False
+        if not wait_for_log(cli_log2, r"QuicConnection: handshake completed", timeout=15):
+            print_time_log("[T14] FAIL: client2 QUIC handshake not seen")
+            dump = True
+            return False
+        time.sleep(1)
+
+        if not wait_for_port(QUIC_CLIENT_PROXY_PORT, timeout=5):
+            print_time_log("[T14] FAIL: client1 proxy port not open")
+            dump = True
+            return False
+        if not wait_for_port(QUIC_CLIENT_PROXY_PORT_2, timeout=5):
+            print_time_log("[T14] FAIL: client2 proxy port not open")
+            dump = True
+            return False
+
+        # Resolve the list of test files.
+        url_base = f"http://127.0.0.1:{HTTP_TARGET_PORT}/"
+        index = http_get_via_socks5(url_base, QUIC_CLIENT_PROXY_PORT).decode('utf-8')
+        files = [f for f in index.splitlines() if f.strip()]
+        if not files:
+            print_time_log("[T14] FAIL: no test files")
+            dump = True
+            return False
+
+        # Use two different files so the transfers are genuinely independent.
+        file1 = files[0]
+        file2 = files[1] if len(files) > 1 else files[0]
+        url1 = f"http://127.0.0.1:{HTTP_TARGET_PORT}/{file1}"
+        url2 = f"http://127.0.0.1:{HTTP_TARGET_PORT}/{file2}"
+        with open(os.path.join(TEST_FILES_DIR, file1), 'rb') as f:
+            want1 = f.read()
+        with open(os.path.join(TEST_FILES_DIR, file2), 'rb') as f:
+            want2 = f.read()
+
+        def fetch(url, proxy_port, want):
+            got = http_get_via_socks5(url, proxy_port)
+            return got == want
+
+        ok = True
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            fut1 = pool.submit(fetch, url1, QUIC_CLIENT_PROXY_PORT, want1)
+            fut2 = pool.submit(fetch, url2, QUIC_CLIENT_PROXY_PORT_2, want2)
+            for fut, label in [(fut1, "client1"), (fut2, "client2")]:
+                if not fut.result():
+                    print_time_log(f"[T14] FAIL: data mismatch for {label}")
+                    ok = False
+                    dump = True
+
+        if ok:
+            print_time_log("[T14] multiple_quic_connections PASSED")
+        return ok
+    except Exception:
+        traceback.print_exc()
+        dump = True
+        return False
+    finally:
+        close_process(client2, dump)
+        close_process(client1, dump)
+        close_process(server, dump)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
 ALL_TESTS = [
-    ("T1", test_e2e_basic_proxy),
-    ("T2", test_e2e_multistream),
-    ("T3", test_e2e_post_data),
-    ("T4", test_h3_upstream_fallback),
-    ("T5", test_idle_timeout),
-    ("T6", test_h3_upstream_unconfigured_drop),
-    ("T7", test_alpn_negotiation),
-    ("T8", test_quic_disabled),
+    ("T1",  test_e2e_basic_proxy),
+    ("T2",  test_e2e_multistream),
+    ("T3",  test_e2e_post_data),
+    ("T4",  test_h3_upstream_fallback),
+    ("T5",  test_idle_timeout),
+    ("T6",  test_h3_upstream_unconfigured_drop),
+    ("T7",  test_alpn_negotiation),
+    ("T8",  test_quic_disabled),
+    ("T9",  test_client_retry_no_server),
+    ("T10", test_prefer_quic_false),
+    ("T11", test_tcp_target_unreachable),
+    ("T12", test_large_file_transfer),
+    ("T13", test_h3_upstream_dns_failure),
+    ("T14", test_multiple_quic_connections),
 ]
 
 
@@ -766,7 +1294,8 @@ def main(binary_path):
 
     # Kill any leftover processes on our ports.
     if not is_windows_system():
-        for p in [QUIC_SERVER_PORT, QUIC_CLIENT_PROXY_PORT, HTTP_TARGET_PORT, H3_UPSTREAM_PORT]:
+        for p in [QUIC_SERVER_PORT, QUIC_CLIENT_PROXY_PORT, QUIC_CLIENT_PROXY_PORT_2,
+                  HTTP_TARGET_PORT, H3_UPSTREAM_PORT]:
             os.system(f"lsof -ti:{p} | xargs kill -9 > /dev/null 2>&1")
 
     # Start the dedicated HTTP target server.

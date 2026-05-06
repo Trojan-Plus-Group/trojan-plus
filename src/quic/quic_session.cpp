@@ -85,6 +85,12 @@ void QuicProxySession::on_stream_data(const uint8_t* data, std::size_t len, bool
 }
 
 void QuicProxySession::on_stream_close() {
+    if (m_upstream_forwarding && m_waiting_h3_response) {
+        // Client QUIC stream closed while waiting for h3_upstream UDP response.
+        // Defer destroy until the UDP response arrives (or a timeout fires).
+        m_stream_fin_received = true;
+        return;
+    }
     destroy();
 }
 
@@ -204,6 +210,7 @@ void QuicProxySession::forward_to_h3_upstream() {
                 (void)m_udp_socket.send_to(boost::asio::buffer(m_recv_buf), m_udp_remote_ep, 0, ec3);
                 m_recv_buf.clear();
             }
+            m_waiting_h3_response = true;
             udp_read();
         });
 }
@@ -220,6 +227,20 @@ void QuicProxySession::udp_read() {
                 return;
             }
             if (ec) {
+#ifdef _WIN32
+                // Windows WSAECONNRESET (10054): non-fatal ICMP "port unreachable" feedback
+                // from a previous send_to on an unconnected UDP socket. It may arrive
+                // together with valid response data (bytes > 0). Process data and retry.
+                if (ec.value() == 10054) {
+                    if (bytes > 0 && m_conn && !m_conn->is_closed()) {
+                        m_conn->send_stream_data(m_stream_id,
+                            reinterpret_cast<const uint8_t*>(&m_udp_buf[0]), bytes, false);
+                        m_conn->pump_write();
+                    }
+                    udp_read();
+                    return;
+                }
+#endif
                 if (ec != boost::asio::error::operation_aborted) {
                     _log_with_date_time("QuicProxySession: h3_upstream UDP read: " +
                                             tp::string(ec.message().c_str()),
@@ -229,8 +250,19 @@ void QuicProxySession::udp_read() {
                 return;
             }
             if (m_conn && !m_conn->is_closed()) {
-                m_conn->send_stream_data(m_stream_id, reinterpret_cast<const uint8_t*>(&m_udp_buf[0]), bytes, false);
+                m_conn->send_stream_data(m_stream_id,
+                    reinterpret_cast<const uint8_t*>(&m_udp_buf[0]), bytes, false);
                 m_conn->pump_write();
+            }
+            // Response received and sent to QUIC stream — clear waiting flag.
+            // If stream FIN already arrived during UDP wait, destroy now.
+            m_waiting_h3_response = false;
+            if (m_stream_fin_received) {
+                _log_with_date_time("QuicProxySession: stream " +
+                                        tp::to_string(m_stream_id) +
+                                        " h3 response done, closing", Log::INFO);
+                destroy();
+                return;
             }
             udp_read();
         });

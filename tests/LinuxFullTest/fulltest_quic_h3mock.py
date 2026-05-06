@@ -36,7 +36,12 @@ try:
                 print_time_log(f"h3_upstream UDP mock server listening on 127.0.0.1:{port}")
 
                 while True:
-                    data, addr = s.recvfrom(4096)
+                    try:
+                        data, addr = s.recvfrom(4096)
+                    except ConnectionResetError:
+                        # Windows: ICMP port-unreachable feedback from a previous sendto.
+                        # Non-fatal for a UDP server — retry.
+                        continue
                     if not data:
                         continue
 

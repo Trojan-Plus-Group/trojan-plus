@@ -46,6 +46,12 @@ python3 fulltest_main.py ../../build/trojan -q
 | T6 | `test_h3_upstream_unconfigured_drop` | `h3_upstream=""` 时非 Trojan 流量被优雅丢弃，服务端不崩溃 |
 | T7 | `test_alpn_negotiation` | ALPN 令牌出现在日志中（两端都验证） |
 | T8 | `test_quic_disabled` | `quic.enabled=false` 回退 TLS 并验证数据完整性 |
+| T9 | `test_client_retry_no_server` | `retry_connect_timeout_ms>0` 触发重连日志；`=0` 时不重连 |
+| T10 | `test_prefer_quic_false` | `prefer_quic=false` 时数据走 TLS，服务端无 QuicProxySession |
+| T11 | `test_tcp_target_unreachable` | TCP 目标不可达时会话正常销毁，不挂起 |
+| T12 | `test_large_file_transfer` | 300 KB 文件传输，触发 256 KB 流窗口回压重试路径 |
+| T13 | `test_h3_upstream_dns_failure` | h3_upstream 主机名 DNS 失败 → 记录错误，服务端不崩溃 |
+| T14 | `test_multiple_quic_connections` | 两个独立客户端同时连接同一服务端，验证 CID 路由表并发正确性 |
 
 ---
 
@@ -61,12 +67,22 @@ python3 fulltest_main.py ../../build/trojan -q
 #### [x] h3_upstream 响应回路未验证 ✅ 已修复
 - **测试修复**：T4 现在捕获 `http_get_via_socks5` 的返回值，并断言响应体包含 `"H3 Upstream Fallback!"`；
   同时新增对 mock 日志 `"sent response"` 的检查，确保 UDP 响应已发出。
-- **实现 bug 一并修复**：测试过程中发现 `QuicProxySession::on_stream_data()`
-  在 `m_upstream_forwarding=true` 但 UDP socket 尚未打开时（DNS resolve 异步进行中），
-  会对未开启的 socket 调用 `send_to()` 导致数据静默丢失，`m_recv_buf` 被提前清空，
-  使 resolve 回调发送空数据。修复：在 `m_udp_socket.is_open()` 为 false 时跳过发送，
-  保留 `m_recv_buf` 内容，等 resolve 回调就绪后统一发送。
-- **相关文件**：`src/quic/quic_session.cpp:61`，`tests/LinuxFullTest/fulltest_quic.py`（T4）
+- **实现 bug 一并修复**（两次迭代）：
+  - **第一阶段**（2026-05-06）：`QuicProxySession::on_stream_data()`
+    在 `m_upstream_forwarding=true` 但 UDP socket 尚未打开时（DNS resolve 异步进行中），
+    会对未开启的 socket 调用 `send_to()` 导致数据静默丢失。修复：在
+    `m_udp_socket.is_open()` 为 false 时跳过发送，保留 `m_recv_buf` 内容，
+    等 resolve 回调就绪后统一发送。
+  - **第二阶段**（2026-05-06）：T4 在完整测试套件中偶发失败。
+    根因：客户端 QUIC stream FIN 先于 h3mock UDP 响应到达，`on_stream_close()`
+    调用 `destroy()` 关闭 UDP socket，导致响应丢失。
+    修复：新增 `m_waiting_h3_response` 和 `m_stream_fin_received` 标志。
+    `on_stream_close()` 检测到正在等待 h3_upstream 响应时延迟 destroy；
+    `udp_read()` 收到 UDP 响应后若检测到 `m_stream_fin_received=true` 才真正 destroy。
+    同时 Windows WSAECONNRESET（10054）在 `udp_read()` 中被正确处理——
+    若错误伴随有效数据（`bytes > 0`），仍处理数据后重试 receive，不破坏连接。
+- **相关文件**：`src/quic/quic_session.cpp`（T4），`src/quic/quic_session.h`，
+  `tests/LinuxFullTest/fulltest_quic.py`（T4），`tests/LinuxFullTest/fulltest_quic_h3mock.py`
 
 #### [x] h3_upstream 未配置时的 drop 路径 ✅ 已修复（由 T6 覆盖）
 - **修复**：T6（`test_h3_upstream_unconfigured_drop`）完整覆盖此路径：
@@ -74,58 +90,65 @@ python3 fulltest_main.py ../../build/trojan -q
   验证服务端日志出现 `"h3_upstream not configured, dropping"` 且进程未崩溃。
 - **相关文件**：`src/quic/quic_session.cpp:136`，`tests/LinuxFullTest/fulltest_quic.py`（T6）
 
-#### [ ] 512 字节无 CRLF fallback
-- **问题**：`QuicProxySession::try_parse_request()`（`src/quic/quic_session.cpp:87`）
-  当缓冲区超过 512 字节且没有 `\r\n` 时，会 fallback 到 h3_upstream（或 drop）。
-  这个边界从未被触发测试。
-- **建议修复**：新增测试：发送 513 字节无换行的随机数据到 QUIC 代理，验证服务端正确处理。
+#### [ ] 无 CRLF fallback（kMaxPasswordLineBytes 边界）
+- **问题**：`QuicProxySession::try_parse_request()`（`src/quic/quic_session.cpp:91`）
+  当缓冲区超过 `kMaxPasswordLineBytes`（= `Config::MAX_PASSWORD_LENGTH` = 128 字节）
+  且没有 `\r\n` 时，会 fallback 到 h3_upstream（或 drop）。这个边界从未被触发测试。
+- **为何暂跳过**：测试需要向服务端的 QUIC 流直接注入超过 128 字节的无换行裸字节。
+  现有 Python 测试框架通过正常 trojan 客户端转发，客户端始终会插入正确的 `\r\n`。
+  实现此测试需要 Python 层的 QUIC 库（如 `aioquic`）直接发送原始 QUIC 流数据，
+  或修改测试客户端支持"原始字节注入"模式。
+- **建议后续修复**：引入 `aioquic` 依赖后，新增 T15：直接建立 QUIC 连接并发送
+  129+ 字节的无换行数据，验证服务端日志出现 `"no CRLF in"` 并正确 fallback。
 
 ---
 
 ### 🟠 重要（可靠性相关）
 
-#### [ ] 客户端断线重连逻辑
-- **问题**：`QuicClientEndpoint::mark_unreachable()`（`src/quic/quic_client_endpoint.cpp:112`）
-  在连接失败后启动 `retry_connect_timeout_ms` 定时器重连，配置值为 500ms，
-  但从未有测试模拟服务端不可达后验证客户端会重连。
-  `retry_connect_timeout_ms=0` 时跳过重试的特殊路径同样未测试。
-- **建议修复**：
-  - 新增 T_RETRY：先不启动服务端，只启动客户端，等待重连失败日志；
-  - 新增 T_RECONNECT：启动后关闭服务端再重启，验证客户端重新建立 QUIC 连接。
+#### [x] 客户端断线重连逻辑（DNS 失败路径）✅ 已修复（T9 覆盖 retry_ms>0 和 =0 分支）
+- **修复**：T9（`test_client_retry_no_server`）使用不可解析的 `.invalid` 主机名触发
+  DNS 失败 → `mark_unreachable()`。分两部分验证：Part A `retry_ms=500` 应见
+  `"retrying QUIC connection"` 日志；Part B `retry_ms=0` 必须不出现该日志。
+- **相关文件**：`src/quic/quic_client_endpoint.cpp:112`，`tests/LinuxFullTest/fulltest_quic.py`（T9）
+- **仍未覆盖**：启动后关闭服务端再重启、验证客户端重新建立连接（T_RECONNECT）——
+  需要实现连接断开后自动重连逻辑，当前代码中 `mark_unreachable` 只在连接建立阶段调用。
 
-#### [ ] `prefer_quic: false` 的传输路径选择
-- **问题**：所有测试都使用 `prefer_quic: true`。T8 测试了 `enabled: false`，
-  但没有测试 `enabled: true, prefer_quic: false` 的情况，
-  此时应该走 TLS 传输而非 QUIC。
-- **建议修复**：新增测试：配置 `prefer_quic: false`，发送请求，验证日志中无 `QuicConnection` 字样。
+#### [x] `prefer_quic: false` 的传输路径选择 ✅ 已修复（T10 覆盖）
+- **修复**：T10（`test_prefer_quic_false`）配置 `enabled=true, prefer_quic=false`，
+  发送 HTTP GET，验证：① 数据正确返回（TLS 路径有效）；
+  ② 服务端日志中无 `QuicProxySession: stream \d+ opened`（代理请求未走 QUIC 流）。
+- **相关文件**：`src/quic/outbound_transport.cpp:323`，`tests/LinuxFullTest/fulltest_quic.py`（T10）
 
-#### [ ] TCP 目标不可达时的会话清理
-- **问题**：`QuicProxySession::connect_target()`（`src/quic/quic_session.cpp:221`）
-  在 TCP 连接失败时调用 `destroy()`，但没有测试验证这条路径下 QUIC 流是否被正确关闭
-  （是否向客户端发送 FIN）。
-- **建议修复**：新增测试：配置 `remote_port` 指向一个不存在的端口，发送请求，验证不挂起。
+#### [x] TCP 目标不可达时的会话清理 ✅ 已修复（T11 覆盖）
+- **修复**：T11（`test_tcp_target_unreachable`）请求目标为 `127.0.0.1:DEAD_TARGET_PORT`，
+  服务端 `connect_target()` 收到 connection-refused → `destroy()`。
+  验证：① 服务端日志出现 `"target unreachable|connect.*failed"`；
+  ② 客户端不挂起（12 秒内失败）；③ 服务端进程存活。
+- **相关文件**：`src/quic/quic_session.cpp:259`，`tests/LinuxFullTest/fulltest_quic.py`（T11）
 
-#### [ ] 流控背压（大文件传输）
-- **问题**：`QuicProxySession::flush_tcp_read_buf()`（`src/quic/quic_session.cpp:343`）
-  在 `send_stream_data()` 返回 `NGTCP2_ERR_STREAM_DATA_BLOCKED` 时有 5ms 重试逻辑。
-  QUIC 流窗口为 256KB（`initial_max_stream_data_bidi_*`），但没有任何测试故意发送
-  超过窗口大小的数据来触发重试路径。
-- **建议修复**：在 T2 或新增测试中使用 > 256KB 的文件，验证大文件能完整传输。
+#### [x] 流控背压（大文件传输）✅ 已修复（T12 覆盖）
+- **修复**：T12（`test_large_file_transfer`）在 `html/` 目录生成 300 KB 测试文件
+  （`quic_large_test.bin`，超过 256 KB 流窗口），通过 QUIC 传输并进行字节级比对。
+  若 `flush_tcp_read_buf()` 的重试路径有问题，内容会不完整或传输会超时。
+- **相关文件**：`src/quic/quic_session.cpp:361`，`tests/LinuxFullTest/fulltest_quic.py`（T12）
 
 ---
 
 ### 🟡 次要（边界场景）
 
-#### [ ] 多个独立 QUIC 连接并发
-- **问题**：T2 测试了单连接上多流，但从未测试多个客户端进程同时连接同一服务端，
-  验证 `QuicServerEndpoint::m_conns` 路由表的并发插入/查找正确性。
+#### [x] 多个独立 QUIC 连接并发 ✅ 已修复（T14 覆盖）
+- **修复**：T14（`test_multiple_quic_connections`）启动两个独立的 trojan 客户端进程
+  （分别监听 SOCKS5 端口 10621 和 10622），同时发起请求，两者并发传输不同文件，
+  字节级验证，确认 `m_conns` 路由表正确处理多个并发连接 ID。
+- **相关文件**：`src/quic/quic_server_endpoint.cpp`，`tests/LinuxFullTest/fulltest_quic.py`（T14）
 
-#### [ ] DNS 解析失败路径
-- **问题**：
-  - `QuicClientEndpoint::connect_to_server()`（`src/quic/quic_client_endpoint.cpp:52`）
-    DNS 失败 → `mark_unreachable()`：未测试。
-  - `QuicProxySession::forward_to_h3_upstream()`（`src/quic/quic_session.cpp:154`）
-    UDP 解析失败 → `destroy()`：未测试。
+#### [x] DNS 解析失败路径 ✅ 已修复（T9 + T13 覆盖）
+- **修复**：
+  - T9 覆盖 `QuicClientEndpoint::connect_to_server()` DNS 失败 → `mark_unreachable()`。
+  - T13（`test_h3_upstream_dns_failure`）：`h3_upstream` 配置为不可解析主机名，
+    错误密码触发 `forward_to_h3_upstream()` → DNS 失败 → `destroy()`。
+    验证服务端日志 `"h3_upstream UDP resolve failed"` 且进程存活。
+- **相关文件**：`src/quic/quic_client_endpoint.cpp:62`，`src/quic/quic_session.cpp:176`，`tests/LinuxFullTest/fulltest_quic.py`（T9, T13）
 
 #### [ ] IPv6 端点
 - **问题**：`fill_sockaddr_union()`（`src/quic/quic_connection.cpp:34`）和
