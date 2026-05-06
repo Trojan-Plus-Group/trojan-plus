@@ -90,16 +90,12 @@ python3 fulltest_main.py ../../build/trojan -q
   验证服务端日志出现 `"h3_upstream not configured, dropping"` 且进程未崩溃。
 - **相关文件**：`src/quic/quic_session.cpp:136`，`tests/LinuxFullTest/fulltest_quic.py`（T6）
 
-#### [ ] 无 CRLF fallback（kMaxPasswordLineBytes 边界）
-- **问题**：`QuicProxySession::try_parse_request()`（`src/quic/quic_session.cpp:91`）
-  当缓冲区超过 `kMaxPasswordLineBytes`（= `Config::MAX_PASSWORD_LENGTH` = 128 字节）
-  且没有 `\r\n` 时，会 fallback 到 h3_upstream（或 drop）。这个边界从未被触发测试。
-- **为何暂跳过**：测试需要向服务端的 QUIC 流直接注入超过 128 字节的无换行裸字节。
-  现有 Python 测试框架通过正常 trojan 客户端转发，客户端始终会插入正确的 `\r\n`。
-  实现此测试需要 Python 层的 QUIC 库（如 `aioquic`）直接发送原始 QUIC 流数据，
-  或修改测试客户端支持"原始字节注入"模式。
-- **建议后续修复**：引入 `aioquic` 依赖后，新增 T15：直接建立 QUIC 连接并发送
-  129+ 字节的无换行数据，验证服务端日志出现 `"no CRLF in"` 并正确 fallback。
+#### [x] 无 CRLF fallback（kMaxPasswordLineBytes 边界） ✅ 已修复
+- **修复**：新增 T15（`test_no_crlf_fallback`），通过 `aioquic` 直接建立 QUIC 连接，
+  发送 150 字节无 `\r\n` 的原始字节，触发 `try_parse_request()` 的边界路径。
+  验证：① 服务端日志出现 `"no CRLF in 128 bytes"`；② h3_upstream mock 收到数据；
+  ③ 服务端进程未崩溃。
+- **相关文件**：`tests/LinuxFullTest/fulltest_quic.py`（T15）
 
 ---
 

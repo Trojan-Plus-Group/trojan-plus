@@ -1260,6 +1260,117 @@ def test_multiple_quic_connections(binary_path):
         close_process(server, dump)
 
 
+def test_no_crlf_fallback(binary_path):
+    """T15: kMaxPasswordLineBytes boundary — >128 bytes with no CRLF → h3_upstream fallback.
+
+    QuicProxySession::try_parse_request() falls back to h3_upstream when the
+    receive buffer exceeds kMaxPasswordLineBytes (128 bytes, equal to
+    Config::MAX_PASSWORD_LENGTH) and still has no \\r\\n.  The normal trojan
+    client always injects CRLF, so this boundary is never hit through the
+    standard proxy path.  We use aioquic to send a raw QUIC stream with >128
+    bytes of contiguous non-CRLF data, then verify:
+      1. The server falls back to h3_upstream (log message contains "no CRLF in");
+      2. The h3_upstream mock receives the data (log shows "received N bytes");
+      3. The server process stays alive (no crash).
+    """
+    print_time_log("[T15] test_no_crlf_fallback: starting...")
+
+    srv_cfg = patch_quic_config("quic_server_config.json", {
+        "remote_port": HTTP_TARGET_PORT,
+        "quic": {"enabled": True, "h3_upstream": f"127.0.0.1:{H3_UPSTREAM_PORT}"},
+    })
+
+    mock = start_h3_upstream_mock()
+    server, srv_log = start_trojan(binary_path, srv_cfg)
+
+    try:
+        dump = False
+        if not mock or not server:
+            dump = True
+            return False
+
+        # Wait for QUIC server to be ready (UDP listener is up).
+        if not wait_for_log(srv_log, r"QuicServerEndpoint: listening on UDP", timeout=10):
+            print_time_log("[T15] FAIL: server QUIC endpoint not ready")
+            dump = True
+            return False
+
+        # Run aioquic in a subprocess to avoid event-loop conflicts with the
+        # SOCKS socket monkey-patching done by other test functions.
+        script_path = os.path.join(os.path.dirname(__file__), "_t15_aioquic_client.py")
+        with open(script_path, "w") as f:
+            f.write(f"""
+import asyncio
+from aioquic.asyncio import connect as async_connect
+from aioquic.quic.configuration import QuicConfiguration
+
+async def main():
+    config = QuicConfiguration(alpn_protocols=["h3"], is_client=True)
+    config.verify_mode = 0
+    try:
+        async with async_connect(
+            "127.0.0.1",
+            {QUIC_SERVER_PORT},
+            configuration=config,
+            wait_connected=False,
+        ) as protocol:
+            reader, writer = await protocol.create_stream()
+            writer.write(b"X" * 150)  # 150 bytes, no \r\n
+            await writer.drain()
+            writer.close()
+            await asyncio.sleep(3)
+    except Exception as e:
+        print(f"AIOQUIC_ERROR: {{e}}")
+
+asyncio.run(main())
+""")
+
+        result = __import__('subprocess').run(
+            [sys.executable, script_path],
+            capture_output=True, timeout=15
+        )
+        if result.stdout:
+            for line in result.stdout.decode('utf-8', errors='replace').splitlines():
+                if line.strip():
+                    print_time_log(f"[T15] aioquic: {line}")
+        if result.stderr:
+            for line in result.stderr.decode('utf-8', errors='replace').splitlines():
+                if line.strip() and 'AIOQUIC_ERROR' not in line:
+                    print_time_log(f"[T15] aioquic stderr: {line}")
+
+        # Verify server fell back to h3_upstream (log message contains "no CRLF in").
+        m = wait_for_log(srv_log, r"no CRLF in", timeout=10)
+        if not m:
+            print_time_log("[T15] FAIL: 'no CRLF in' not found in server log")
+            dump = True
+            return False
+        print_time_log("[T15] server fallback triggered (no CRLF in 128 bytes)")
+
+        # Verify h3_upstream mock received the data.
+        m2 = wait_for_log("config/quic_h3mock.output", r"received \d+ bytes", timeout=5)
+        if not m2:
+            print_time_log("[T15] FAIL: h3_upstream mock did not receive data")
+            dump = True
+            return False
+        print_time_log("[T15] h3_upstream mock received forwarded data")
+
+        # Server must stay alive.
+        if server.poll() is not None:
+            print_time_log("[T15] FAIL: server process crashed")
+            dump = True
+            return False
+
+        print_time_log("[T15] test_no_crlf_fallback PASSED")
+        return True
+    except Exception:
+        traceback.print_exc()
+        dump = True
+        return False
+    finally:
+        close_process(server, dump)
+        close_process(mock, dump)
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -1279,6 +1390,7 @@ ALL_TESTS = [
     ("T12", test_large_file_transfer),
     ("T13", test_h3_upstream_dns_failure),
     ("T14", test_multiple_quic_connections),
+    ("T15", test_no_crlf_fallback),
 ]
 
 

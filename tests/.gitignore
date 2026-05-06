@@ -4,3 +4,4 @@
 *.tmp2.json
 *.tmpb.json
 *.tmpjson
+_t15_aioquic_client.py

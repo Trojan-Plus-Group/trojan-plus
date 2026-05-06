@@ -23,7 +23,7 @@ cd ..
 
 REM 2. Dependency Check
 echo --- Checking dependencies ---
-python -m pip install PySocks psutil dnspython --quiet
+python -m pip install PySocks psutil dnspython aioquic --quiet
 if %ERRORLEVEL% NEQ 0 (
     echo Warning: Failed to install some dependencies. Tests might fail.
 )

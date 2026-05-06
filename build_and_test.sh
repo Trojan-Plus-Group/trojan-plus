@@ -31,7 +31,7 @@ if ! command -v python3 &> /dev/null; then
     PYTHON_CMD="python"
 fi
 
-$PYTHON_CMD -m pip install PySocks psutil dnspython $PIP_FLAGS
+$PYTHON_CMD -m pip install PySocks psutil dnspython aioquic $PIP_FLAGS
 
 # 3. Platform-Aware Testing with Real-time Logging
 echo "--- Running Integration Tests ---"
