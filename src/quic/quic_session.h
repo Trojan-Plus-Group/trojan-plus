@@ -13,11 +13,13 @@
 
 #include <memory>
 #include <cstdint>
+#include <functional>
 
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/tcp.hpp>
-#include <boost/asio/ip/udp.hpp>
 #include <boost/asio/steady_timer.hpp>
+
+#include <nghttp3/nghttp3.h>
 
 class QuicConnection;
 class Config;
@@ -50,8 +52,50 @@ class QuicProxySession : public std::enable_shared_from_this<QuicProxySession> {
     void flush_tcp_read_buf(std::size_t offset, std::size_t bytes);
     void write_to_target(tp::string data, bool fin = false);
     void do_tcp_write();
-    void udp_read();
+    void tcp_read_from_upstream();
     void destroy();
+
+    // H3UpstreamHandler: encapsulates nghttp3 HTTP/3 decoding and h3→h1.1 conversion
+    class H3UpstreamHandler {
+      public:
+        using WriteCallback = std::function<void(tp::string data, bool fin)>;
+        using CloseCallback = std::function<void()>;
+
+        H3UpstreamHandler(QuicProxySession& parent, WriteCallback write_cb, CloseCallback close_cb);
+        ~H3UpstreamHandler();
+
+        void feed_stream_data(const uint8_t* data, size_t len, bool fin);
+        void close();
+
+        [[nodiscard]] bool is_request_complete() const { return m_request_complete; }
+        [[nodiscard]] bool is_valid() const { return m_valid; }
+        [[nodiscard]] const tp::string& get_http1_request() const { return m_http1_request; }
+        void clear_request() { m_http1_request.clear(); m_request_complete = false; }
+
+      private:
+        static int cb_begin_headers(nghttp3_conn*, int64_t, void*, void*);
+        static int cb_recv_header(nghttp3_conn*, int64_t, int32_t, nghttp3_rcbuf*, nghttp3_rcbuf*, uint8_t, void*, void*);
+        static int cb_end_headers(nghttp3_conn*, int64_t, int, void*, void*);
+        static int cb_recv_data(nghttp3_conn*, int64_t, const uint8_t*, size_t, void*, void*);
+        static int cb_end_stream(nghttp3_conn*, int64_t, void*, void*);
+        static int cb_stream_close(nghttp3_conn*, int64_t, uint64_t, void*, void*);
+
+        void build_http1_request_line();
+
+        QuicProxySession& m_parent;
+        WriteCallback m_write_cb;
+        CloseCallback m_close_cb;
+
+        std::unique_ptr<nghttp3_conn, decltype(&nghttp3_conn_del)> m_conn;
+        tp::string m_http1_request;
+        tp::string m_method;
+        tp::string m_scheme;
+        tp::string m_authority;
+        tp::string m_path;
+        tp::string m_regular_headers;
+        bool m_request_complete{false};
+        bool m_valid{true};
+    };
 
     std::shared_ptr<QuicConnection> m_conn;
     int64_t m_stream_id;
@@ -60,16 +104,10 @@ class QuicProxySession : public std::enable_shared_from_this<QuicProxySession> {
     boost::asio::ip::tcp::socket m_tcp_socket;
     boost::asio::ip::tcp::resolver m_resolver;
 
-    boost::asio::ip::udp::socket m_udp_socket;
-    boost::asio::ip::udp::resolver m_udp_resolver;
-    boost::asio::ip::udp::endpoint m_udp_remote_ep;
-
     tp::string m_recv_buf;    // accumulates stream bytes until request parsed
     tp::string m_tcp_buf;     // read buffer for upstream → stream direction
-    tp::string m_udp_buf;     // read buffer for UDP upstream → stream direction
     bool m_request_parsed{false};
-bool m_upstream_forwarding{false}; // forwarding non-trojan traffic to h3_upstream
-    bool m_waiting_h3_response{false}; // waiting for h3_upstream UDP response
+    bool m_upstream_forwarding{false}; // forwarding non-trojan traffic to h3_upstream
     bool m_stream_fin_received{false}; // client sent QUIC stream FIN
     bool m_destroyed{false};
 
@@ -82,6 +120,8 @@ bool m_upstream_forwarding{false}; // forwarding non-trojan traffic to h3_upstre
     };
     tp::deque<TcpWriteBuffer> m_tcp_write_queue;
     bool m_is_writing_to_tcp{false};
+
+    std::unique_ptr<H3UpstreamHandler> m_h3_handler;
 };
 
 #endif // QUIC_SESSION_H

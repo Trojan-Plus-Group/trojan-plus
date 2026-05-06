@@ -170,7 +170,7 @@ def _kill_port(port):
 
 
 def start_h3_upstream_mock():
-    """Start the h3_upstream UDP mock server (kills any stale process on that port first)."""
+    """Start the h3_upstream TCP mock server (kills any stale process on that port first)."""
     _kill_port(H3_UPSTREAM_PORT)
     time.sleep(0.3)
     log_file = open("config/quic_h3mock.output", "w+")
@@ -182,11 +182,11 @@ def start_h3_upstream_mock():
     proc._log_file = log_file
     proc._log_path = "config/quic_h3mock.output"
     if not wait_for_log("config/quic_h3mock.output", r"listening on .*:" + str(H3_UPSTREAM_PORT), timeout=8):
-        print_time_log(f"h3_upstream UDP mock server failed to start on {H3_UPSTREAM_PORT}")
+        print_time_log(f"h3_upstream TCP mock server failed to start on {H3_UPSTREAM_PORT}")
         proc.kill()
         log_file.close()
         return None
-    print_time_log(f"h3_upstream UDP mock server ready on {H3_UPSTREAM_PORT}")
+    print_time_log(f"h3_upstream TCP mock server ready on {H3_UPSTREAM_PORT}")
     return proc
 
 
@@ -484,7 +484,7 @@ def test_h3_upstream_fallback(binary_path):
     """T4: Non-trojan traffic forwarded to h3_upstream (wrong password)."""
     print_time_log("[T4] h3_upstream_fallback: starting...")
 
-    # Server with h3_upstream pointing to mock UDP server.
+    # Server with h3_upstream pointing to mock TCP server.
     srv_cfg = patch_quic_config("quic_server_config.json", {
         "remote_port": HTTP_TARGET_PORT,
         "quic": {"enabled": True, "h3_upstream": f"127.0.0.1:{H3_UPSTREAM_PORT}"},
@@ -515,8 +515,8 @@ def test_h3_upstream_fallback(binary_path):
             return False
 
         # Send HTTP request — wrong password triggers h3_upstream forwarding.
-        # The mock echoes back "HTTP/1.1 200 OK ... H3 Upstream Fallback!" via UDP,
-        # which QuicProxySession::udp_read() must relay back through the QUIC stream.
+        # The mock echoes back "HTTP/1.1 200 OK ... H3 Upstream Fallback!" via TCP,
+        # which QuicProxySession::tcp_read_from_upstream() must relay back through the QUIC stream.
         resp_body = None
         try:
             url = f"http://127.0.0.1:{HTTP_TARGET_PORT}/"
@@ -524,10 +524,10 @@ def test_h3_upstream_fallback(binary_path):
         except Exception:
             pass  # urllib may fail to parse an incomplete HTTP response; checked below.
 
-        # Verify server log shows UDP h3_upstream forwarding.
-        m = wait_for_log(srv_log, r"forwarding to UDP h3_upstream", timeout=10)
+        # Verify server log shows HTTP upstream forwarding.
+        m = wait_for_log(srv_log, r"HTTP upstream connected to", timeout=10)
         if not m:
-            print_time_log("[T4] FAIL: h3_upstream UDP forwarding log not found")
+            print_time_log("[T4] FAIL: h3_upstream forwarding log not found")
             dump = True
             return False
 
@@ -535,7 +535,7 @@ def test_h3_upstream_fallback(binary_path):
         m2 = wait_for_log("config/quic_h3mock.output",
                           r"received \d+ bytes", timeout=5)
         if not m2:
-            print_time_log("[T4] FAIL: h3_upstream UDP mock did not receive data")
+            print_time_log("[T4] FAIL: h3_upstream TCP mock did not receive data")
             dump = True
             return False
 
@@ -543,13 +543,13 @@ def test_h3_upstream_fallback(binary_path):
         m3 = wait_for_log("config/quic_h3mock.output",
                           r"sent response", timeout=5)
         if not m3:
-            print_time_log("[T4] FAIL: h3_upstream UDP mock did not send response")
+            print_time_log("[T4] FAIL: h3_upstream TCP mock did not send response")
             dump = True
             return False
 
         # Verify the response was relayed back through the QUIC stream to the client.
-        # The mock sends "HTTP/1.1 200 OK ... H3 Upstream Fallback!" as UDP;
-        # QuicProxySession::udp_read() forwards it back via send_stream_data().
+        # The mock sends "HTTP/1.1 200 OK ... H3 Upstream Fallback!" as TCP;
+        # QuicProxySession::tcp_read_from_upstream() forwards it back via send_stream_data().
         if resp_body is None or b"H3 Upstream Fallback!" not in resp_body:
             print_time_log(f"[T4] FAIL: mock response not relayed to client "
                            f"(got {resp_body!r})")
@@ -1144,9 +1144,9 @@ def test_h3_upstream_dns_failure(binary_path):
             pass  # Expected: DNS fails, session is dropped.
 
         # DNS resolution for .invalid can be slow on some resolvers; allow up to 20 s.
-        m = wait_for_log(srv_log, r"h3_upstream UDP resolve failed", timeout=20)
+        m = wait_for_log(srv_log, r"h3_upstream TCP resolve failed", timeout=20)
         if not m:
-            print_time_log("[T13] FAIL: 'h3_upstream UDP resolve failed' not in server log")
+            print_time_log("[T13] FAIL: 'h3_upstream TCP resolve failed' not in server log")
             dump = True
             return False
 

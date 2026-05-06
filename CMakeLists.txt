@@ -417,6 +417,25 @@ if(ENABLE_QUIC)
     )
 
     message(STATUS "ngtcp2 (QUIC) will be built from a patched copy in the build tree")
+
+    # ===== nghttp3 (HTTP/3 decoding) =====
+    set(NGHTTP3_SRC_DIR "${CMAKE_SOURCE_DIR}/nghttp3")
+
+    set(ENABLE_LIB_ONLY     ON  CACHE BOOL "" FORCE)
+    set(ENABLE_STATIC_LIB   ON  CACHE BOOL "" FORCE)
+    set(ENABLE_SHARED_LIB   OFF CACHE BOOL "" FORCE)
+    set(BUILD_TESTING       OFF CACHE BOOL "" FORCE)
+
+    add_subdirectory("${NGHTTP3_SRC_DIR}" "${CMAKE_BINARY_DIR}/nghttp3" EXCLUDE_FROM_ALL)
+
+    target_include_directories(trojan PRIVATE
+        ${NGHTTP3_SRC_DIR}/lib/includes
+        ${CMAKE_BINARY_DIR}/nghttp3/lib/includes
+    )
+
+    target_link_libraries(trojan nghttp3_static)
+
+    message(STATUS "nghttp3 (HTTP/3) will be built from submodule and linked statically")
 endif()
 
 # wolfSSL OpenSSL compat headers: make #include <openssl/ssl.h> resolve to
