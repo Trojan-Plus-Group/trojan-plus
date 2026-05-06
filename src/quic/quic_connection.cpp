@@ -219,7 +219,8 @@ bool QuicConnection::init_server(const uint8_t* data, std::size_t datalen,
     params.initial_max_stream_data_bidi_remote = 256 * 1024;
     params.initial_max_data                    = 4 * 1024 * 1024;
     params.initial_max_streams_bidi            = 100;
-    params.initial_max_streams_uni             = 0;
+    params.initial_max_stream_data_uni         = 32 * 1024;
+    params.initial_max_streams_uni             = 3;
     params.max_idle_timeout = static_cast<ngtcp2_duration>(
         m_endpoint.config().get_quic().max_idle_timeout_ms) * 1'000'000ULL;
     params.original_dcid         = *dcid;
@@ -325,8 +326,11 @@ bool QuicConnection::init_client(const boost::asio::ip::udp::endpoint& local_ep,
     params.initial_max_stream_data_bidi_local  = 256 * 1024;
     params.initial_max_stream_data_bidi_remote = 256 * 1024;
     params.initial_max_data                    = 4 * 1024 * 1024;
-    params.initial_max_streams_bidi            = 100;
-    params.initial_max_streams_uni             = 0;
+    params.initial_max_streams_bidi            = 0;
+    params.initial_max_stream_data_uni         = 32 * 1024;
+    params.initial_max_streams_uni             = 100;
+    params.initial_max_stream_data_bidi_local  = 512 * 1024;
+    params.initial_max_stream_data_bidi_remote = 0;
     params.max_idle_timeout = static_cast<ngtcp2_duration>(
         m_endpoint.config().get_quic().max_idle_timeout_ms) * 1'000'000ULL;
 
