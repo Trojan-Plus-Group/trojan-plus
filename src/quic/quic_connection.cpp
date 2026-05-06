@@ -162,10 +162,12 @@ ngtcp2_path QuicConnection::make_path(const boost::asio::ip::udp::endpoint& loca
                                       const boost::asio::ip::udp::endpoint& remote_ep) {
     fill_sockaddr_union(local_ep, m_local_su, m_local_len);
     fill_sockaddr_union(remote_ep, m_remote_su, m_remote_len);
-    return ngtcp2_path{
-        .local  = {.addr = &m_local_su.sa, .addrlen = m_local_len},
-        .remote = {.addr = &m_remote_su.sa, .addrlen = m_remote_len},
-    };
+    ngtcp2_path path;
+    path.local.addr     = &m_local_su.sa;
+    path.local.addrlen  = m_local_len;
+    path.remote.addr    = &m_remote_su.sa;
+    path.remote.addrlen = m_remote_len;
+    return path;
 }
 
 // ---- server init ------------------------------------------------------------
@@ -188,24 +190,24 @@ bool QuicConnection::init_server(const uint8_t* data, std::size_t datalen,
     m_conn_ref.user_data = this;
     wolfSSL_set_app_data(m_ssl, &m_conn_ref);
 
-    static constexpr ngtcp2_callbacks callbacks{
-        .recv_client_initial      = cb_recv_client_initial,
-        .recv_crypto_data         = cb_recv_crypto_data,
-        .handshake_completed      = cb_handshake_completed,
-        .encrypt                  = ngtcp2_crypto_encrypt_cb,
-        .decrypt                  = ngtcp2_crypto_decrypt_cb,
-        .hp_mask                  = ngtcp2_crypto_hp_mask_cb,
-        .recv_stream_data         = cb_recv_stream_data,
-        .stream_open              = cb_stream_open,
-        .stream_close             = cb_stream_close,
-        .rand                     = cb_rand,
-        .update_key               = cb_update_key,
-        .delete_crypto_aead_ctx   = ngtcp2_crypto_delete_crypto_aead_ctx_cb,
-        .delete_crypto_cipher_ctx = ngtcp2_crypto_delete_crypto_cipher_ctx_cb,
-        .version_negotiation      = ngtcp2_crypto_version_negotiation_cb,
-        .get_new_connection_id2   = cb_get_new_connection_id,
-        .get_path_challenge_data2 = ngtcp2_crypto_get_path_challenge_data2_cb,
-    };
+    ngtcp2_callbacks callbacks;
+    std::memset(&callbacks, 0, sizeof(callbacks));
+    callbacks.recv_client_initial      = cb_recv_client_initial;
+    callbacks.recv_crypto_data         = cb_recv_crypto_data;
+    callbacks.handshake_completed      = cb_handshake_completed;
+    callbacks.encrypt                  = ngtcp2_crypto_encrypt_cb;
+    callbacks.decrypt                  = ngtcp2_crypto_decrypt_cb;
+    callbacks.hp_mask                  = ngtcp2_crypto_hp_mask_cb;
+    callbacks.recv_stream_data         = cb_recv_stream_data;
+    callbacks.stream_open              = cb_stream_open;
+    callbacks.stream_close             = cb_stream_close;
+    callbacks.rand                     = cb_rand;
+    callbacks.update_key               = cb_update_key;
+    callbacks.delete_crypto_aead_ctx   = ngtcp2_crypto_delete_crypto_aead_ctx_cb;
+    callbacks.delete_crypto_cipher_ctx = ngtcp2_crypto_delete_crypto_cipher_ctx_cb;
+    callbacks.version_negotiation      = ngtcp2_crypto_version_negotiation_cb;
+    callbacks.get_new_connection_id2   = cb_get_new_connection_id;
+    callbacks.get_path_challenge_data2 = ngtcp2_crypto_get_path_challenge_data2_cb;
 
     ngtcp2_settings settings;
     ngtcp2_settings_default(&settings);
@@ -292,27 +294,27 @@ bool QuicConnection::init_client(const boost::asio::ip::udp::endpoint& local_ep,
                        static_cast<uint16_t>(sni.size()));
     }
 
-    static constexpr ngtcp2_callbacks callbacks{
-        .client_initial                = ngtcp2_crypto_client_initial_cb,
-        .recv_crypto_data              = cb_recv_crypto_data,
-        .handshake_completed           = cb_handshake_completed,
-        .recv_version_negotiation      = nullptr,
-        .encrypt                       = ngtcp2_crypto_encrypt_cb,
-        .decrypt                       = ngtcp2_crypto_decrypt_cb,
-        .hp_mask                       = ngtcp2_crypto_hp_mask_cb,
-        .recv_stream_data              = cb_recv_stream_data,
-        .stream_close                  = cb_stream_close,
-        .recv_retry                    = ngtcp2_crypto_recv_retry_cb,
-        .extend_max_local_streams_bidi = cb_extend_max_local_streams_bidi,
-        .rand                          = cb_rand,
-        .update_key                    = cb_update_key,
-        .handshake_confirmed           = cb_handshake_completed, // reuse for confirmed event
-        .delete_crypto_aead_ctx        = ngtcp2_crypto_delete_crypto_aead_ctx_cb,
-        .delete_crypto_cipher_ctx      = ngtcp2_crypto_delete_crypto_cipher_ctx_cb,
-        .version_negotiation           = ngtcp2_crypto_version_negotiation_cb,
-        .get_new_connection_id2        = cb_get_new_connection_id,
-        .get_path_challenge_data2      = ngtcp2_crypto_get_path_challenge_data2_cb,
-    };
+    ngtcp2_callbacks callbacks;
+    std::memset(&callbacks, 0, sizeof(callbacks));
+    callbacks.client_initial                = ngtcp2_crypto_client_initial_cb;
+    callbacks.recv_crypto_data              = cb_recv_crypto_data;
+    callbacks.handshake_completed           = cb_handshake_completed;
+    callbacks.recv_version_negotiation      = nullptr;
+    callbacks.encrypt                       = ngtcp2_crypto_encrypt_cb;
+    callbacks.decrypt                       = ngtcp2_crypto_decrypt_cb;
+    callbacks.hp_mask                       = ngtcp2_crypto_hp_mask_cb;
+    callbacks.recv_stream_data              = cb_recv_stream_data;
+    callbacks.stream_close                  = cb_stream_close;
+    callbacks.recv_retry                    = ngtcp2_crypto_recv_retry_cb;
+    callbacks.extend_max_local_streams_bidi = cb_extend_max_local_streams_bidi;
+    callbacks.rand                          = cb_rand;
+    callbacks.update_key                    = cb_update_key;
+    callbacks.handshake_confirmed           = cb_handshake_completed;
+    callbacks.delete_crypto_aead_ctx        = ngtcp2_crypto_delete_crypto_aead_ctx_cb;
+    callbacks.delete_crypto_cipher_ctx      = ngtcp2_crypto_delete_crypto_cipher_ctx_cb;
+    callbacks.version_negotiation           = ngtcp2_crypto_version_negotiation_cb;
+    callbacks.get_new_connection_id2        = cb_get_new_connection_id;
+    callbacks.get_path_challenge_data2      = ngtcp2_crypto_get_path_challenge_data2_cb;
 
     ngtcp2_settings settings;
     ngtcp2_settings_default(&settings);
@@ -442,7 +444,9 @@ int64_t QuicConnection::send_stream_data(int64_t stream_id, const uint8_t* data,
 
     for (;;) {
         std::size_t remain = datalen - written;
-        ngtcp2_vec vec{.base = const_cast<uint8_t*>(data + written), .len = remain};
+        ngtcp2_vec vec;
+        vec.base = const_cast<uint8_t*>(data + written);
+        vec.len  = remain;
         ngtcp2_ssize pdatalen = -1;
 
         bool send_fin = fin && !fin_sent && (remain == 0 || written + remain == datalen);

@@ -31,7 +31,50 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# C++17 is sufficient: ngtcp2 is a C library; only its examples use C++23.
+if(MSVC)
+    # 1. Reduce wolfssl warning noise by overriding /Wall with /W3
+    # wolfSSL's CMakeLists.txt uses WARNING_C_FLAGS if defined.
+    set(WARNING_C_FLAGS "/W3" CACHE STRING "Override wolfSSL warnings" FORCE)
+    add_compile_options(/W3 /utf-8)
+endif()
+
+## 2. Fix ngtcp2 _Generic issue without touching the original source.
+# We copy ngtcp2 to the build directory, patch it there, and use that version.
+set(NGTCP2_SRC_DIR "${CMAKE_SOURCE_DIR}/ngtcp2")
+set(NGTCP2_PATCHED_DIR "${CMAKE_BINARY_DIR}/ngtcp2_patched")
+
+# Always perform copy/patch to ensure consistency if the submodule changed
+message(STATUS "Ensuring patched copy of ngtcp2 in ${NGTCP2_PATCHED_DIR}")
+file(COPY "${NGTCP2_SRC_DIR}/" DESTINATION "${NGTCP2_PATCHED_DIR}")
+
+if(MSVC)
+    # Patch ngtcp2_macro.h in the copy: Replace _Generic with ternary for MSVC
+    set(PATCH_MACRO_H "${NGTCP2_PATCHED_DIR}/lib/ngtcp2_macro.h")
+    if(EXISTS "${PATCH_MACRO_H}")
+        file(READ "${PATCH_MACRO_H}" CONTENT)
+        set(MSVC_MACRO_FIX "
+#ifdef _MSC_VER
+#  define ngtcp2_max(A, B) ((A) > (B) ? (A) : (B))
+#  define ngtcp2_min(A, B) ((A) < (B) ? (A) : (B))
+#else
+")
+        string(REPLACE "#define ngtcp2_max(A, B)" "${MSVC_MACRO_FIX}#define ngtcp2_max(A, B)" CONTENT "${CONTENT}")
+        set(CONTENT "${CONTENT}\n#endif\n")
+        file(WRITE "${PATCH_MACRO_H}" "${CONTENT}")
+    endif()
+
+    # Patch ngtcp2_fmt.h in the copy: Remove redundant signed char associations
+    set(PATCH_FMT_H "${NGTCP2_PATCHED_DIR}/lib/ngtcp2_fmt.h")
+    if(EXISTS "${PATCH_FMT_H}")
+        file(READ "${PATCH_FMT_H}" CONTENT)
+        string(REPLACE "signed char: ngtcp2_fmt_hex_signed_char_init," "" CONTENT "${CONTENT}")
+        string(REPLACE "signed char: ngtcp2_fmt_hexw_signed_char_init," "" CONTENT "${CONTENT}")
+        string(REPLACE "signed char: ngtcp2_fmt_write_int64," "" CONTENT "${CONTENT}")
+        file(WRITE "${PATCH_FMT_H}" "${CONTENT}")
+    endif()
+endif()
+
+# C++20 is sufficient: ngtcp2 is a C library; only its examples use C++23.
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
   if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS "7.0.0")
     message(FATAL_ERROR "Insufficient gcc version, please install higher version (minimum_required 7.0.0 for C++17)")
@@ -354,16 +397,12 @@ if(ENABLE_QUIC)
     set(ENABLE_SHARED_LIB   OFF CACHE BOOL "" FORCE)
     set(ENABLE_WOLFSSL      ON  CACHE BOOL "" FORCE)
     set(ENABLE_OPENSSL      OFF CACHE BOOL "" FORCE)
-    set(ENABLE_GNUTLS       OFF CACHE BOOL "" FORCE)
-    set(ENABLE_BORINGSSL    OFF CACHE BOOL "" FORCE)
-    set(ENABLE_PICOTLS      OFF CACHE BOOL "" FORCE)
     set(BUILD_TESTING       OFF CACHE BOOL "" FORCE)
 
-    add_subdirectory(ngtcp2 EXCLUDE_FROM_ALL)
+    # Use the patched copy in the build directory
+    add_subdirectory("${NGTCP2_PATCHED_DIR}" "${CMAKE_BINARY_DIR}/ngtcp2" EXCLUDE_FROM_ALL)
 
-    # ngtcp2/crypto/wolfssl/wolfssl.c includes <wolfssl/options.h>, which is
-    # generated into the wolfSSL build tree (not the source tree). Patch the
-    # include search path on the static crypto target.
+    # Patch the include search path on the static crypto target.
     target_include_directories(ngtcp2_crypto_wolfssl_static PRIVATE
         ${CMAKE_BINARY_DIR}/wolfssl
         ${CMAKE_SOURCE_DIR}/wolfssl
@@ -371,13 +410,13 @@ if(ENABLE_QUIC)
 
     target_compile_definitions(trojan PRIVATE ENABLE_QUIC)
     target_include_directories(trojan PRIVATE
-        ${CMAKE_SOURCE_DIR}/ngtcp2/lib/includes
-        ${CMAKE_SOURCE_DIR}/ngtcp2/crypto/includes
+        ${NGTCP2_PATCHED_DIR}/lib/includes
+        ${NGTCP2_PATCHED_DIR}/crypto/includes
         ${CMAKE_BINARY_DIR}/ngtcp2/lib/includes
         ${CMAKE_BINARY_DIR}/ngtcp2/crypto/includes
     )
 
-    message(STATUS "ngtcp2 (QUIC) will be built from source and linked statically against wolfSSL")
+    message(STATUS "ngtcp2 (QUIC) will be built from a patched copy in the build tree")
 endif()
 
 # wolfSSL OpenSSL compat headers: make #include <openssl/ssl.h> resolve to
