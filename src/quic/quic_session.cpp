@@ -65,7 +65,7 @@ void QuicProxySession::on_stream_data(const uint8_t* data, std::size_t len, bool
         if (!m_recv_buf.empty() && m_udp_socket.is_open()) {
             // UDP socket is ready: forward accumulated bytes immediately.
             boost::system::error_code ec;
-            m_udp_socket.send_to(boost::asio::buffer(m_recv_buf), m_udp_remote_ep, 0, ec);
+            (void)m_udp_socket.send_to(boost::asio::buffer(m_recv_buf), m_udp_remote_ep, 0, ec);
             m_recv_buf.clear();
         }
         // If socket is not yet open (DNS resolve still pending), leave m_recv_buf intact
@@ -183,7 +183,7 @@ void QuicProxySession::forward_to_h3_upstream() {
 
             m_udp_remote_ep = *results.begin();
             boost::system::error_code ec2;
-            m_udp_socket.open(m_udp_remote_ep.protocol(), ec2);
+            ec2 = m_udp_socket.open(m_udp_remote_ep.protocol(), ec2);
             if (ec2) {
                 _log_with_date_time("QuicProxySession: h3_upstream UDP socket open failed: " +
                                         tp::string(ec2.message().c_str()),
@@ -201,7 +201,7 @@ void QuicProxySession::forward_to_h3_upstream() {
             // Forward all buffered raw bytes.
             if (!m_recv_buf.empty()) {
                 boost::system::error_code ec3;
-                m_udp_socket.send_to(boost::asio::buffer(m_recv_buf), m_udp_remote_ep, 0, ec3);
+                (void)m_udp_socket.send_to(boost::asio::buffer(m_recv_buf), m_udp_remote_ep, 0, ec3);
                 m_recv_buf.clear();
             }
             udp_read();
@@ -300,7 +300,7 @@ void QuicProxySession::do_tcp_write() {
     // If we only have a FIN (no data), handle it immediately.
     if (front.data.empty() && front.fin) {
         boost::system::error_code ec;
-        m_tcp_socket.shutdown(boost::asio::socket_base::shutdown_send, ec);
+        ec = m_tcp_socket.shutdown(boost::asio::socket_base::shutdown_send, ec);
         m_tcp_write_queue.pop_front();
         do_tcp_write();
         return;
@@ -322,7 +322,7 @@ void QuicProxySession::do_tcp_write() {
             }
             if (fin) {
                 boost::system::error_code ec2;
-                m_tcp_socket.shutdown(boost::asio::socket_base::shutdown_send, ec2);
+                ec2 = m_tcp_socket.shutdown(boost::asio::socket_base::shutdown_send, ec2);
             }
             do_tcp_write();
         });
@@ -396,11 +396,11 @@ void QuicProxySession::destroy() {
     m_udp_resolver.cancel();
     boost::system::error_code ec;
     if (m_tcp_socket.is_open()) {
-        m_tcp_socket.shutdown(boost::asio::socket_base::shutdown_both, ec);
-        m_tcp_socket.close(ec);
+        ec = m_tcp_socket.shutdown(boost::asio::socket_base::shutdown_both, ec);
+        ec = m_tcp_socket.close(ec);
     }
     if (m_udp_socket.is_open()) {
-        m_udp_socket.close(ec);
+        ec = m_udp_socket.close(ec);
     }
     if (m_conn && !m_conn->is_closed()) {
         m_conn->send_stream_data(m_stream_id, nullptr, 0, true);
