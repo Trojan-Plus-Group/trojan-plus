@@ -69,8 +69,6 @@ class QuicProxySession : public std::enable_shared_from_this<QuicProxySession> {
 
         [[nodiscard]] bool is_request_complete() const { return m_request_complete; }
         [[nodiscard]] bool is_valid() const { return m_valid; }
-        [[nodiscard]] const tp::string& get_http1_request() const { return m_http1_request; }
-        void clear_request() { m_http1_request.clear(); m_request_complete = false; }
 
       private:
         static int cb_begin_headers(nghttp3_conn*, int64_t, void*, void*);
@@ -79,8 +77,6 @@ class QuicProxySession : public std::enable_shared_from_this<QuicProxySession> {
         static int cb_recv_data(nghttp3_conn*, int64_t, const uint8_t*, size_t, void*, void*);
         static int cb_end_stream(nghttp3_conn*, int64_t, void*, void*);
         static int cb_stream_close(nghttp3_conn*, int64_t, uint64_t, void*, void*);
-
-        void build_http1_request_line();
 
         QuicProxySession& m_parent;
         WriteCallback m_write_cb;
@@ -121,7 +117,7 @@ class QuicProxySession : public std::enable_shared_from_this<QuicProxySession> {
     tp::deque<TcpWriteBuffer> m_tcp_write_queue;
     bool m_is_writing_to_tcp{false};
 
-    std::unique_ptr<H3UpstreamHandler> m_h3_handler;
+    tp::tj_unique_ptr<H3UpstreamHandler> m_h3_handler;
 };
 
 #endif // QUIC_SESSION_H

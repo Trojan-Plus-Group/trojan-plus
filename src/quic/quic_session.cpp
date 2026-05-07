@@ -64,13 +64,15 @@ void QuicProxySession::on_stream_data(const uint8_t* data, std::size_t len, bool
                 m_recv_buf.size(), fin);
             m_recv_buf.clear();
         }
-        if (fin) {
-            destroy();
-        }
+        // Don't destroy here — TCP may not be connected yet.
+        // FIN will be handled by on_stream_close via m_stream_fin_received.
     } else if (!m_request_parsed) {
         try_parse_request();
         if (m_request_parsed && fin) {
             write_to_target(tp::string(), true);
+        } else if (m_upstream_forwarding && fin) {
+            // try_parse_request() set m_upstream_forwarding; preserve FIN for TCP connect
+            m_stream_fin_received = true;
         }
     } else if (!m_recv_buf.empty() || fin) {
         write_to_target(std::move(m_recv_buf), fin);
@@ -200,7 +202,7 @@ void QuicProxySession::forward_to_h3_upstream() {
                         " HTTP upstream connected to " + host + ":" + port_str, Log::INFO);
 
                     // Create H3 handler and flush any buffered data
-                    m_h3_handler = std::make_unique<H3UpstreamHandler>(
+                    m_h3_handler = TP_MAKE_UNIQUE(H3UpstreamHandler,
                         *this,
                         [this](tp::string data, bool fin) { write_to_target(std::move(data), fin); },
                         [this]() { destroy(); });
@@ -209,13 +211,14 @@ void QuicProxySession::forward_to_h3_upstream() {
                         m_h3_handler->feed_stream_data(
                             reinterpret_cast<const uint8_t*>(m_recv_buf.data()),
                             m_recv_buf.size(), m_stream_fin_received);
-                        // If h3 handler didn't parse headers, fall back to raw byte forwarding
-                        if (m_h3_handler && !m_h3_handler->is_request_complete() && m_h3_handler->is_valid()) {
-                            _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) +
-                                " h3 parse incomplete, falling back to raw bytes", Log::WARN);
-                            write_to_target(std::move(m_recv_buf), m_stream_fin_received);
-                        }
+                        // Data was either:
+                        //  (a) consumed by nghttp3 → callbacks (cb_end_headers etc.) fired m_write_cb
+                        //  (b) rejected by nghttp3 → feed_stream_data itself called m_write_cb raw
+                        // Either way, do NOT double-send m_recv_buf here (Issue 5 fix).
                         m_recv_buf.clear();
+                    } else if (m_stream_fin_received) {
+                        // FIN arrived before TCP connected — feed FIN to H3 handler now.
+                        m_h3_handler->feed_stream_data(nullptr, 0, true);
                     }
                     tcp_read_from_upstream();
                 });
@@ -461,9 +464,13 @@ QuicProxySession::H3UpstreamHandler::~H3UpstreamHandler() = default;
 
 void QuicProxySession::H3UpstreamHandler::feed_stream_data(const uint8_t* data, size_t len, bool fin) {
     if (!m_valid) {
-        // Fallback to raw byte forwarding
+        // Fallback to raw byte forwarding — send data and FIN separately
+        // so do_tcp_write() triggers shutdown(SHUT_WR) for the FIN entry.
         if (len > 0) {
-            m_write_cb(tp::string(reinterpret_cast<const char*>(data), len), fin);
+            m_write_cb(tp::string(reinterpret_cast<const char*>(data), len), false);
+        }
+        if (fin) {
+            m_write_cb(tp::string(), true);
         }
         return;
     }
@@ -476,7 +483,10 @@ void QuicProxySession::H3UpstreamHandler::feed_stream_data(const uint8_t* data, 
         // nghttp3 decode failed or didn't consume all data - fall back to raw byte forwarding
         m_valid = false;
         if (len > 0) {
-            m_write_cb(tp::string(reinterpret_cast<const char*>(data), len), fin);
+            m_write_cb(tp::string(reinterpret_cast<const char*>(data), len), false);
+        }
+        if (fin) {
+            m_write_cb(tp::string(), true);
         }
         return;
     }
@@ -486,13 +496,6 @@ void QuicProxySession::H3UpstreamHandler::close() {
     if (m_conn) {
         m_conn.reset();
     }
-}
-
-void QuicProxySession::H3UpstreamHandler::build_http1_request_line() {
-    // Build HTTP/1.1 request line from pseudo-headers
-    // e.g., "GET / HTTP/1.1\r\n"
-    m_http1_request = m_method + " " + m_path + " HTTP/1.1\r\n";
-    m_request_complete = true;
 }
 
 int QuicProxySession::H3UpstreamHandler::cb_begin_headers(
@@ -539,23 +542,26 @@ int QuicProxySession::H3UpstreamHandler::cb_recv_header(
 int QuicProxySession::H3UpstreamHandler::cb_end_headers(
     nghttp3_conn*, int64_t, int fin, void* user_data, void*) {
     auto* handler = static_cast<H3UpstreamHandler*>(user_data);
-    // Build complete HTTP/1.1 request: request line + headers + \r\n
-    // 1. Request line
+    // Build HTTP/1.1 request line + headers in memory (small, bounded by header count).
     handler->m_http1_request = handler->m_method + " " + handler->m_path + " HTTP/1.1\r\n";
-    // 2. Regular headers
     handler->m_http1_request += handler->m_regular_headers;
-    // 3. Host header from authority if present
     if (!handler->m_authority.empty()) {
         handler->m_http1_request += "Host: " + handler->m_authority + "\r\n";
     }
-    // 4. End of headers
+    // Issue 4 fix: force Connection: close so the upstream doesn't keep-alive,
+    // which would block the QUIC stream from receiving FIN until Nginx times out.
+    handler->m_http1_request += "Connection: close\r\n";
     handler->m_http1_request += "\r\n";
 
     handler->m_request_complete = true;
 
+    // Issue 3 fix: send headers immediately (streaming), never buffer the body.
+    // Always send headers with fin=false so the write queue entry stays consistent;
+    // if the H3 stream has no body (fin==1), enqueue a separate FIN-only item.
+    handler->m_write_cb(std::move(handler->m_http1_request), false);
+    handler->m_http1_request.clear();
     if (fin) {
-        // Request complete, send to backend
-        handler->m_write_cb(tp::string(handler->m_http1_request), true);
+        handler->m_write_cb(tp::string(), true);
     }
     return 0;
 }
@@ -564,20 +570,25 @@ int QuicProxySession::H3UpstreamHandler::cb_recv_data(
     nghttp3_conn*, int64_t, const uint8_t* data,
     size_t datalen, void* user_data, void*) {
     auto* handler = static_cast<H3UpstreamHandler*>(user_data);
-    handler->m_http1_request.append(reinterpret_cast<const char*>(data), datalen);
+    // Issue 3 fix: stream body chunks directly — never buffer in memory.
+    if (datalen > 0) {
+        handler->m_write_cb(tp::string(reinterpret_cast<const char*>(data), datalen), false);
+    }
     return 0;
 }
 
 int QuicProxySession::H3UpstreamHandler::cb_end_stream(
     nghttp3_conn*, int64_t, void* user_data, void*) {
     auto* handler = static_cast<H3UpstreamHandler*>(user_data);
-    if (!handler->m_http1_request.empty()) {
-        handler->m_write_cb(tp::string(handler->m_http1_request), true);
-    }
+    // Body was already streamed in cb_recv_data; just send FIN now.
+    handler->m_write_cb(tp::string(), true);
     return 0;
 }
 
 int QuicProxySession::H3UpstreamHandler::cb_stream_close(
-    nghttp3_conn*, int64_t, uint64_t, void*, void*) {
+    nghttp3_conn*, int64_t, uint64_t, void* user_data, void*) {
+    auto* handler = static_cast<H3UpstreamHandler*>(user_data);
+    // Body was already streamed in cb_recv_data; just send FIN now.
+    handler->m_write_cb(tp::string(), true);
     return 0;
 }
