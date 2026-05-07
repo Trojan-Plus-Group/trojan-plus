@@ -261,6 +261,7 @@ if(ENABLE_QUIC)
         src/quic/quic_client_endpoint.cpp
         src/quic/quic_connection.cpp
         src/quic/quic_session.cpp
+        src/quic/quic_session_upstream.cpp
         src/quic/outbound_transport.cpp
     )
 endif()

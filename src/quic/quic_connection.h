@@ -24,6 +24,7 @@
 #include <ngtcp2/ngtcp2_crypto.h>
 
 #include "mem/memallocator.h"
+#include "quic_stream_handler.h"
 
 class QuicEndpoint;
 class QuicTlsCtx;
@@ -72,6 +73,10 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     // Open a new client-initiated bidi stream. Returns -1 on error.
     int64_t open_bidi_stream();
 
+    // Handler management
+    void set_stream_handler(int64_t stream_id, std::shared_ptr<QuicStreamHandler> handler);
+    void remove_stream_handler(int64_t stream_id);
+
     // Gracefully close the connection.
     void close();
 
@@ -100,7 +105,7 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
                                    uint64_t offset, const uint8_t* data, size_t datalen, void* user_data);
     static int cb_handshake_completed(ngtcp2_conn*, void* user_data);
     static int cb_recv_stream_data(ngtcp2_conn*, uint32_t flags, int64_t stream_id,
-                                   uint64_t offset, const uint8_t* data, size_t datalen,
+                                   uint64_t offset, const uint8_t* data, std::size_t datalen,
                                    void* user_data, void* stream_user_data);
     static int cb_stream_open(ngtcp2_conn*, int64_t stream_id, void* user_data);
     static int cb_stream_close(ngtcp2_conn*, uint32_t flags, int64_t stream_id,
@@ -144,6 +149,7 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     bool m_handshake_done{false};
     bool m_is_server{false};
 
+    tp::unordered_map<int64_t, std::shared_ptr<QuicStreamHandler>> m_stream_handlers;
     tp::vector<uint8_t> m_write_buf;
 };
 

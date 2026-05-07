@@ -142,11 +142,37 @@
 
 ---
 
-## 阶段三：nghttp3 初始化与多路复用架构重构（根本问题）
+## 阶段三：架构解耦与 UDP 代理支持
+
+### 3.1 迁移 Fallback 路径的 TCP 处理到 UpstreamHandler [DONE]
+- **文件**：`src/quic/quic_session.cpp`, `src/quic/quic_session.h`
+- **重构方案**：
+  - [x] 将 `m_tcp_socket`, `m_resolver`, `m_tcp_write_queue` 以及相关的 `do_tcp_write`, `tcp_read_from_upstream` 等逻辑从 `QuicProxySession` 移动到 `H3UpstreamHandler` 中。
+  - [x] `QuicProxySession` 在识别出非 Trojan 流量后，仅负责创建 `H3UpstreamHandler` 并将原始字节（以及后续的流数据）透传给它。
+  - [x] **目的**：使 `QuicProxySession` 专注于处理 Trojan 协议代理逻辑，实现 Fallback 路径与主路径的逻辑隔离。
+
+### 3.2 独立 UpstreamHandler 模块并重构 [DONE]
+- **文件**：`[NEW] src/quic/quic_session_upstream.h`, `[NEW] src/quic/quic_session_upstream.cpp`
+- **重构方案**：
+  - [x] 将 `H3UpstreamHandler` 提取并重命名为 `QuicUpstreamHandler`。
+  - [x] 抽离到独立文件 `src/quic/quic_session_upstream.h/cpp`，减少 `quic_session.cpp` 的体量，提高可维护性。
+  - [x] 优化接口设计，使其能更清晰地处理“QUIC Stream 数据 -> H1.1 转换 -> TCP 转发 -> 上游响应回传”的完整链路。
+  - [x] **[NEW] 处理器动态切换**：引入 `QuicStreamHandler` 接口，允许 `QuicConnection` 在运行时动态更换 Stream 的处理器。在 Fallback 模式下，`QuicProxySession` 会将自己替换为 `QuicUpstreamHandler` 并自我销毁，显著降低内存占用。
+
+### 3.3 实现 Trojan UDP 代理支持 [DONE]
+- **文件**：`src/quic/quic_session.cpp`, `src/proto/trojanrequest.h`
+- **问题**：目前 `QuicProxySession` 仅实现了 TCP 代理。Trojan 协议支持 UDP 转发。
+- **重构方案**：
+  - [x] 在 `try_parse_request` 解析出 `TrojanRequest` 后，检查 `command` 字段。
+  - [x] 如果是 UDP 请求（`UDP_ASSOCIATE`），实现对应的 UDP 转发逻辑，确保 QUIC 连接能正确承载 Trojan UDP 的数据打包格式。
+
+---
+
+## 阶段四：nghttp3 初始化与多路复用架构重构（根本问题）
 
 > 注意：此阶段改动量最大，建议单独开分支，充分测试。
 
-### 3.1 补全 nghttp3 服务端初始化（绑定 control / QPACK 流）
+### 4.1 补全 nghttp3 服务端初始化（绑定 control / QPACK 流）
 
 - **文件**：`src/quic/quic_session.cpp`，`H3UpstreamHandler` 构造函数
 - **问题**：当前只调用 `nghttp3_conn_server_new` 而未绑定任何单向流，导致：
@@ -168,7 +194,7 @@
 
 ---
 
-### 3.2 将 nghttp3 实例上提到 `QuicConnection` 级别（多路复用根本修复）
+### 4.2 将 nghttp3 实例上提到 `QuicConnection` 级别（多路复用根本修复）
 
 - **文件**：`src/quic/quic_connection.h/.cpp`，`src/quic/quic_session.h/.cpp`
 - **问题**：当前每个 `QuicProxySession`（每条流）持有独立的 `nghttp3_conn`，这与 HTTP/3 协议模型不符：
@@ -193,9 +219,9 @@
 
 ---
 
-## 阶段四：资源管理与健壮性
+## 阶段五：资源管理与健壮性
 
-### 4.1 为 h3_upstream TCP 连接添加超时
+### 5.1 为 h3_upstream TCP 连接添加超时
 
 - **文件**：`src/quic/quic_session.cpp`，`forward_to_h3_upstream`
 - **问题**：`async_connect` 没有 deadline，上游不可达时 QUIC stream 及 session 资源最长泄漏 60–120s（内核 SYN 重传超时）。
@@ -214,7 +240,7 @@
 
 ---
 
-### 4.2 h3_upstream DNS 缓存（避免每流重复解析）
+### 5.2 h3_upstream DNS 缓存（避免每流重复解析）
 
 - **文件**：`src/quic/quic_connection.h/.cpp`
 - **问题**：每个 fallback 流都独立调 `async_resolve`，高并发下（一个 QUIC 连接多流同时 fallback）会向 DNS 发大量重复查询并创建大量 TCP 连接。
@@ -224,7 +250,7 @@
 
 ---
 
-### 4.3 限制单连接 fallback 流数量（防止上游 DoS 放大）
+### 5.3 限制单连接 fallback 流数量（防止上游 DoS 放大）
 
 - **文件**：`src/quic/quic_connection.h/.cpp`
 - **问题**：当前没有限制，恶意客户端可在一个 QUIC 连接上开大量流触发大量 fallback TCP 连接，放大攻击上游 nginx。

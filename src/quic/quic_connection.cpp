@@ -74,10 +74,16 @@ int QuicConnection::cb_recv_stream_data(ngtcp2_conn* conn, uint32_t flags, int64
                                         uint64_t /*offset*/, const uint8_t* data, size_t datalen,
                                         void* user_data, void* /*stream_user_data*/) {
     auto* self = static_cast<QuicConnection*>(user_data);
-    if (self->on_stream_data_cb) {
-        bool fin = (flags & NGTCP2_STREAM_DATA_FLAG_FIN) != 0;
+    bool fin = (flags & NGTCP2_STREAM_DATA_FLAG_FIN) != 0;
+
+    auto it = self->m_stream_handlers.find(stream_id);
+    if (it != self->m_stream_handlers.end()) {
+        auto handler = it->second;
+        handler->on_stream_data(data, datalen, fin);
+    } else if (self->on_stream_data_cb) {
         self->on_stream_data_cb(stream_id, data, datalen, fin);
     }
+
     ngtcp2_conn_extend_max_stream_offset(conn, stream_id, datalen);
     ngtcp2_conn_extend_max_offset(conn, datalen);
     return 0;
@@ -95,9 +101,16 @@ int QuicConnection::cb_stream_close(ngtcp2_conn* /*conn*/, uint32_t /*flags*/, i
                                     uint64_t /*app_error_code*/, void* user_data,
                                     void* /*stream_user_data*/) {
     auto* self = static_cast<QuicConnection*>(user_data);
-    if (self->on_stream_close_cb) {
+
+    auto it = self->m_stream_handlers.find(stream_id);
+    if (it != self->m_stream_handlers.end()) {
+        auto handler = it->second;
+        handler->on_stream_close();
+        self->m_stream_handlers.erase(stream_id);
+    } else if (self->on_stream_close_cb) {
         self->on_stream_close_cb(stream_id);
     }
+
     return 0;
 }
 
@@ -512,6 +525,14 @@ int64_t QuicConnection::open_bidi_stream() {
         return -1;
     }
     return stream_id;
+}
+
+void QuicConnection::set_stream_handler(int64_t stream_id, std::shared_ptr<QuicStreamHandler> handler) {
+    m_stream_handlers[stream_id] = std::move(handler);
+}
+
+void QuicConnection::remove_stream_handler(int64_t stream_id) {
+    m_stream_handlers.erase(stream_id);
 }
 
 // ---- close ------------------------------------------------------------------

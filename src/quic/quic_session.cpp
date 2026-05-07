@@ -9,6 +9,7 @@
  */
 
 #include "quic_session.h"
+#include "quic_session_upstream.h"
 #include <memory>
 #include <string_view>
 #include <initializer_list>
@@ -19,6 +20,7 @@
 #include "core/config.h"
 #include "core/log.h"
 #include "proto/trojanrequest.h"
+#include "proto/udppacket.h"
 #include "quic_connection.h"
 
 // Reuse the same upper bound as the password hash storage in Config.
@@ -26,13 +28,17 @@ static constexpr std::size_t kMaxPasswordLineBytes = Config::MAX_PASSWORD_LENGTH
 
 QuicProxySession::QuicProxySession(std::shared_ptr<QuicConnection> conn, int64_t stream_id,
                                    const Config& config, boost::asio::io_context& io_ctx)
-    : m_conn(std::move(conn)),
+    : m_conn(conn),
       m_stream_id(stream_id),
       m_config(config),
+      m_io_ctx(io_ctx),
       m_tcp_socket(io_ctx),
       m_resolver(io_ctx),
+      m_udp_socket(io_ctx),
+      m_udp_resolver(io_ctx),
       m_write_timer(io_ctx) {
     m_tcp_buf.resize(kTcpBufSize, '\0');
+    m_udp_recv_buf.resize(kTcpBufSize, '\0');
 }
 
 QuicProxySession::~QuicProxySession() = default;
@@ -59,41 +65,28 @@ void QuicProxySession::on_stream_data(const uint8_t* data, std::size_t len, bool
                             " hex=" + hex, Log::ALL);
     }
 
-    if (m_upstream_forwarding) {
-        // If FIN arrives before the upstream TCP connection is established, preserve it for later use.
-        if (fin) m_stream_fin_received = true;
-        if (m_h3_handler && !m_recv_buf.empty()) {
-            m_h3_handler->feed_stream_data(
-                reinterpret_cast<const uint8_t*>(m_recv_buf.data()),
-                m_recv_buf.size(), fin);
-            m_recv_buf.clear();
-        }
-        // Don't destroy here — TCP may not be connected yet.
-        // FIN will be handled by on_stream_close via m_stream_fin_received.
-    } else if (!m_request_parsed) {
-        try_parse_request();
+    if (!m_request_parsed) {
+        try_parse_request(fin);
         if (m_request_parsed && fin) {
             write_to_target(tp::string(), true);
-        } else if (m_upstream_forwarding && fin) {
-            // try_parse_request() set m_upstream_forwarding; preserve FIN for TCP connect
-            m_stream_fin_received = true;
         }
     } else if (!m_recv_buf.empty() || fin) {
-        write_to_target(std::move(m_recv_buf), fin);
-        m_recv_buf.clear();
+        if (m_is_udp) {
+            m_udp_data_buf += std::move(m_recv_buf);
+            m_recv_buf.clear();
+            out_udp_sent();
+        } else {
+            write_to_target(std::move(m_recv_buf), fin);
+            m_recv_buf.clear();
+        }
     }
 }
 
 void QuicProxySession::on_stream_close() {
-    if (m_upstream_forwarding && !m_h3_handler) {
-        // TCP not yet connected - defer destroy until connection completes or timeout
-        m_stream_fin_received = true;
-        return;
-    }
     destroy();
 }
 
-void QuicProxySession::try_parse_request() {
+void QuicProxySession::try_parse_request(bool fin) {
     // Wait for at least the first CRLF (end of password) before deciding if it's Trojan.
     // This avoids premature fallback to h3_upstream if the password is split across packets.
     size_t first_crlf = m_recv_buf.find("\r\n");
@@ -103,7 +96,7 @@ void QuicProxySession::try_parse_request() {
                                     " no CRLF in " + tp::to_string(kMaxPasswordLineBytes) +
                                     " bytes, falling back to h3_upstream",
                                 Log::WARN);
-            forward_to_h3_upstream();
+            forward_to_h3_upstream(fin);
         }
         return;
     }
@@ -112,7 +105,7 @@ void QuicProxySession::try_parse_request() {
                                 " password line exceeds " + tp::to_string(kMaxPasswordLineBytes) +
                                 " bytes, falling back to h3_upstream",
                             Log::WARN);
-        forward_to_h3_upstream();
+        forward_to_h3_upstream(fin);
         return;
     }
 
@@ -123,7 +116,7 @@ void QuicProxySession::try_parse_request() {
         _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) +
                                 " parse failed, forwarding to h3_upstream",
                             Log::INFO);
-        forward_to_h3_upstream();
+        forward_to_h3_upstream(fin);
         return;
     }
     if (parsed == 0) {
@@ -137,7 +130,7 @@ void QuicProxySession::try_parse_request() {
                                 " invalid password, forwarding to h3_upstream",
                             Log::WARN);
         // m_recv_buf still holds the original raw bytes (not yet consumed), forward verbatim.
-        forward_to_h3_upstream();
+        forward_to_h3_upstream(fin);
         return;
     }
 
@@ -148,6 +141,17 @@ void QuicProxySession::try_parse_request() {
                         Log::INFO);
 
     m_request_parsed = true;
+
+    if (req.command == TrojanRequest::UDP_ASSOCIATE) {
+        m_is_udp = true;
+        if (!req.payload.empty()) {
+            m_udp_data_buf.append(req.payload.data(), req.payload.length());
+            out_udp_sent();
+        }
+        m_recv_buf.clear();
+        return;
+    }
+
     if (!req.payload.empty()) {
         write_to_target(tp::string(req.payload.data(), req.payload.length()));
     }
@@ -156,7 +160,7 @@ void QuicProxySession::try_parse_request() {
     connect_target(tp::string(req.address.address), req.address.port);
 }
 
-void QuicProxySession::forward_to_h3_upstream() {
+void QuicProxySession::forward_to_h3_upstream(bool fin) {
     const auto& h3 = m_config.get_quic().h3_upstream;
     tp::string host;
     tp::string port_str;
@@ -176,78 +180,31 @@ void QuicProxySession::forward_to_h3_upstream() {
         return;
     }
 
-    m_upstream_forwarding = true;
+    _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) +
+                             " falling back to h3_upstream " + host + ":" + port_str,
+                         Log::INFO);
 
-    auto self = this->shared_from_this();
-    m_resolver.async_resolve(
-        host, port_str,
-        [this, self, host, port_str](const boost::system::error_code& ec,
-                                     boost::asio::ip::tcp::resolver::results_type results) {
-            if (ec || m_destroyed) {
-                _log_with_date_time("QuicProxySession: h3_upstream TCP resolve failed: " +
-                                        tp::string(ec.message().c_str()),
-                                    Log::ERROR);
-                destroy();
-                return;
-            }
+    // Create H3 handler
+    auto locked_conn = m_conn.lock();
+    if (!locked_conn) return;
 
-            boost::asio::async_connect(
-                m_tcp_socket, results,
-                [this, self, host, port_str](const boost::system::error_code& ec2, const auto&) {
-                    if (ec2 || m_destroyed) {
-                        _log_with_date_time("QuicProxySession: h3_upstream TCP connect failed: " +
-                                                tp::string(ec2.message().c_str()),
-                                            Log::ERROR);
-                        destroy();
-                        return;
-                    }
+    auto h3_handler = TP_MAKE_SHARED(QuicUpstreamHandler, locked_conn, m_stream_id, m_config, m_io_ctx, host, port_str);
 
-                    _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) +
-                        " HTTP upstream connected to " + host + ":" + port_str, Log::INFO);
+    // Swap handler in connection map
+    locked_conn->set_stream_handler(m_stream_id, h3_handler);
 
-                    // Create H3 handler and flush any buffered data
-                    m_h3_handler = TP_MAKE_UNIQUE(H3UpstreamHandler,
-                        *this,
-                        [this](tp::string data, bool fin) { write_to_target(std::move(data), fin); },
-                        [this]() { destroy(); });
-
-                    if (!m_recv_buf.empty()) {
-                        m_h3_handler->feed_stream_data(
-                            reinterpret_cast<const uint8_t*>(m_recv_buf.data()),
-                            m_recv_buf.size(), m_stream_fin_received);
-                        // Data was either:
-                        //  (a) consumed by nghttp3 → callbacks (cb_end_headers etc.) fired m_write_cb
-                        //  (b) rejected by nghttp3 → feed_stream_data itself called m_write_cb raw
-                        // Either way, do NOT double-send m_recv_buf here (Issue 5 fix).
-                        m_recv_buf.clear();
-                    } else if (m_stream_fin_received) {
-                        // FIN arrived before TCP connected — feed FIN to H3 handler now.
-                        m_h3_handler->feed_stream_data(nullptr, 0, true);
-                    }
-                    tcp_read_from_upstream();
-                });
-        });
-}
-
-void QuicProxySession::tcp_read_from_upstream() {
-    if (m_destroyed || !m_tcp_socket.is_open()) {
-        return;
+    // Feed existing data
+    if (!m_recv_buf.empty()) {
+        h3_handler->on_stream_data(
+            reinterpret_cast<const uint8_t*>(m_recv_buf.data()),
+            m_recv_buf.size(), fin);
+        m_recv_buf.clear();
+    } else if (fin) {
+        h3_handler->on_stream_data(nullptr, 0, true);
     }
-    auto self = this->shared_from_this();
-    m_tcp_socket.async_read_some(
-        boost::asio::buffer(&m_tcp_buf[0], kTcpBufSize),
-        [this, self](const boost::system::error_code& ec, std::size_t bytes) {
-            if (m_destroyed) {
-                return;
-            }
-            if (ec) {
-                destroy();
-                return;
-            }
-            if (m_conn && !m_conn->is_closed()) {
-                flush_tcp_read_buf(0, bytes);
-            }
-        });
+
+    // Start TCP connection
+    h3_handler->start();
 }
 
 void QuicProxySession::connect_target(const tp::string& host, uint16_t port) {
@@ -361,25 +318,28 @@ void QuicProxySession::tcp_read() {
                                             tp::string(ec.message().c_str()),
                                         Log::WARN);
                 }
-                if (m_conn && !m_conn->is_closed()) {
-                    m_conn->send_stream_data(m_stream_id, nullptr, 0, true);
-                    m_conn->pump_write();
+                auto locked_conn = m_conn.lock();
+                if (locked_conn && !locked_conn->is_closed()) {
+                    locked_conn->send_stream_data(m_stream_id, nullptr, 0, true);
+                    locked_conn->pump_write();
                 }
                 destroy();
                 return;
             }
-            if (m_conn && !m_conn->is_closed()) {
+            auto locked_conn = m_conn.lock();
+            if (locked_conn && !locked_conn->is_closed()) {
                 flush_tcp_read_buf(0, bytes);
             }
         });
 }
 
 void QuicProxySession::flush_tcp_read_buf(std::size_t offset, std::size_t bytes) {
-    if (m_destroyed || !m_conn || m_conn->is_closed()) {
+    auto locked_conn = m_conn.lock();
+    if (m_destroyed || !locked_conn || locked_conn->is_closed()) {
         return;
     }
 
-    int64_t written = m_conn->send_stream_data(m_stream_id,
+    int64_t written = locked_conn->send_stream_data(m_stream_id,
                                                reinterpret_cast<const uint8_t*>(m_tcp_buf.data() + offset),
                                                bytes - offset, false);
     if (written < 0) {
@@ -387,7 +347,7 @@ void QuicProxySession::flush_tcp_read_buf(std::size_t offset, std::size_t bytes)
         return;
     }
 
-    m_conn->pump_write();
+    locked_conn->pump_write();
 
     offset += written;
     if (offset < bytes) {
@@ -409,261 +369,172 @@ void QuicProxySession::destroy() {
     }
     m_destroyed = true;
     m_resolver.cancel();
-    if (m_h3_handler) {
-        m_h3_handler->close();
-        m_h3_handler.reset();
-    }
+    m_udp_resolver.cancel();
     boost::system::error_code ec;
     if (m_tcp_socket.is_open()) {
         ec = m_tcp_socket.shutdown(boost::asio::socket_base::shutdown_both, ec);
         ec = m_tcp_socket.close(ec);
     }
-    if (m_conn && !m_conn->is_closed()) {
-        m_conn->send_stream_data(m_stream_id, nullptr, 0, true);
-        m_conn->pump_write();
+    if (m_udp_socket.is_open()) {
+        ec = m_udp_socket.cancel(ec);
+        ec = m_udp_socket.close(ec);
+    }
+    auto locked_conn = m_conn.lock();
+    if (locked_conn && !locked_conn->is_closed()) {
+        locked_conn->remove_stream_handler(m_stream_id);
+        locked_conn->send_stream_data(m_stream_id, nullptr, 0, true);
+        locked_conn->pump_write();
     }
     _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) + " closed",
                         Log::INFO);
 }
 
-// ============================================================================
-// H3UpstreamHandler - nghttp3 HTTP/3 decoder and h3→h1.1 converter
-// ============================================================================
+void QuicProxySession::out_udp_sent() {
+    if (m_destroyed || !m_is_udp) return;
 
-QuicProxySession::H3UpstreamHandler::H3UpstreamHandler(
-    QuicProxySession& parent, WriteCallback write_cb, CloseCallback close_cb)
-    : m_parent(parent),
-      m_write_cb(std::move(write_cb)),
-      m_close_cb(std::move(close_cb)),
-      m_conn(nullptr, nghttp3_conn_del),
-      m_valid(true) {
-
-    nghttp3_callbacks callbacks = {};
-    callbacks.begin_headers = &cb_begin_headers;
-    callbacks.recv_header = &cb_recv_header;
-    callbacks.end_headers = &cb_end_headers;
-    callbacks.recv_data = &cb_recv_data;
-    callbacks.end_stream = &cb_end_stream;
-    callbacks.stream_close = &cb_stream_close;
-
-    nghttp3_settings settings;
-    nghttp3_settings_default(&settings);
-    settings.max_field_section_size = (1ULL << 62) - 1;
-    settings.qpack_max_dtable_capacity = 4096;
-    settings.qpack_encoder_max_dtable_capacity = 4096;
-    settings.qpack_blocked_streams = 100;
-
-    nghttp3_conn* conn = nullptr;
-    auto* mem = nghttp3_mem_default();
-    int rv = nghttp3_conn_server_new(&conn, &callbacks, &settings, mem, this);
-    if (rv != 0) {
-        // nghttp3 init failed - fall back to raw byte forwarding
-        m_valid = false;
+    if (m_udp_data_buf.empty()) {
         return;
     }
-    m_conn.reset(conn);
-}
 
-QuicProxySession::H3UpstreamHandler::~H3UpstreamHandler() = default;
-
-void QuicProxySession::H3UpstreamHandler::feed_stream_data(const uint8_t* data, size_t len, bool fin) {
-    if (!m_valid) {
-        // Fallback to raw byte forwarding — send data and FIN separately
-        // so do_tcp_write() triggers shutdown(SHUT_WR) for the FIN entry.
-        if (len > 0) {
-            m_write_cb(tp::string(reinterpret_cast<const char*>(data), len), false);
-        }
-        if (fin) {
-            m_write_cb(tp::string(), true);
+    UDPPacket packet;
+    size_t packet_len = 0;
+    bool is_packet_valid = packet.parse(std::string_view(m_udp_data_buf.data(), m_udp_data_buf.size()), packet_len);
+    if (!is_packet_valid) {
+        if (m_udp_data_buf.size() > 65535) { // Drop stream if packet too large
+            _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) + " UDP packet too long", Log::ERROR);
+            destroy();
         }
         return;
     }
-    if (!m_conn) return;
 
-    auto consumed = nghttp3_conn_read_stream(
-        m_conn.get(), m_parent.m_stream_id,
-        data, len, fin ? 1 : 0);
-    if (consumed < 0 || (size_t)consumed < len) {
-        // nghttp3 decode failed or didn't consume all data - fall back to raw byte forwarding
-        m_valid = false;
-        if (len > 0) {
-            m_write_cb(tp::string(reinterpret_cast<const char*>(data), len), false);
+    auto cb = [this](const UDPPacket& packet, size_t packet_len, const boost::asio::ip::udp::endpoint& dst_endpoint) {
+        if (!m_udp_socket.is_open()) {
+            auto protocol = dst_endpoint.protocol();
+            boost::system::error_code ec;
+            m_udp_socket.open(protocol, ec);
+            if (ec) {
+                destroy();
+                return;
+            }
+            m_udp_socket.bind(boost::asio::ip::udp::endpoint(protocol, 0), ec);
+            if (ec) {
+                destroy();
+                return;
+            }
+            udp_read();
         }
-        if (fin) {
-            m_write_cb(tp::string(), true);
+
+        out_udp_async_write(packet.payload, dst_endpoint);
+        m_udp_data_buf.erase(0, packet_len);
+    };
+
+    if (packet.address.address_type == SOCKS5Address::DOMAINNAME) {
+        auto self = shared_from_this();
+        auto payload_tmp_buf = TP_MAKE_SHARED(tp::string, packet.payload);
+        packet.payload = *payload_tmp_buf;
+        
+        m_udp_resolver.async_resolve(packet.address.address, tp::to_string(packet.address.port),
+            [this, self, cb, payload_tmp_buf, packet, packet_len](const boost::system::error_code& error, const boost::asio::ip::udp::resolver::results_type& results) {
+                if (error || m_destroyed || results.empty()) {
+                    destroy();
+                    return;
+                }
+                auto iterator = results.begin();
+                if (m_config.get_tcp().prefer_ipv4) {
+                    for (auto it = results.begin(); it != results.end(); ++it) {
+                        if (it->endpoint().address().is_v4()) {
+                            iterator = it;
+                            break;
+                        }
+                    }
+                }
+                auto dst_endpoint = boost::asio::ip::udp::endpoint(iterator->endpoint().address(), packet.address.port);
+                cb(packet, packet_len, dst_endpoint);
+            });
+    } else {
+        boost::system::error_code ec;
+        auto dst_endpoint = boost::asio::ip::udp::endpoint(
+            boost::asio::ip::make_address(packet.address.address, ec), packet.address.port);
+        if (ec) {
+            destroy();
+            return;
         }
+        cb(packet, packet_len, dst_endpoint);
+    }
+}
+
+void QuicProxySession::out_udp_async_write(const std::string_view& data, const boost::asio::ip::udp::endpoint& endpoint) {
+    if (m_destroyed || !m_udp_socket.is_open()) return;
+
+    auto self = shared_from_this();
+    auto data_copy = TP_MAKE_SHARED(tp::string, data);
+    m_udp_socket.async_send_to(boost::asio::buffer(*data_copy), endpoint,
+        [this, self, data_copy](const boost::system::error_code& ec, std::size_t) {
+            if (m_destroyed) return;
+            if (ec) {
+                destroy();
+                return;
+            }
+            out_udp_sent();
+        });
+}
+
+void QuicProxySession::udp_read() {
+    if (m_destroyed || !m_udp_socket.is_open()) return;
+
+    auto self = shared_from_this();
+    m_udp_socket.async_receive_from(boost::asio::buffer(&m_udp_recv_buf[0], kTcpBufSize), m_udp_remote_endpoint,
+        [this, self](const boost::system::error_code& ec, std::size_t bytes) {
+            if (m_destroyed) return;
+            if (ec) {
+                if (ec != boost::asio::error::operation_aborted) {
+                    _log_with_date_time("QuicProxySession: udp read error: " + tp::string(ec.message().c_str()), Log::WARN);
+                }
+                destroy();
+                return;
+            }
+
+            tp::streambuf buf;
+            UDPPacket::generate(buf, m_udp_remote_endpoint, std::string_view(m_udp_recv_buf.data(), bytes));
+            
+            bool was_empty = m_udp_pending_stream_data.empty();
+            m_udp_pending_stream_data.append(streambuf_to_string_view(buf));
+            if (was_empty) {
+                flush_udp_stream_data(0);
+            }
+            udp_read();
+        });
+}
+
+void QuicProxySession::flush_udp_stream_data(std::size_t offset) {
+    auto locked_conn = m_conn.lock();
+    if (m_destroyed || !locked_conn || locked_conn->is_closed() || m_udp_pending_stream_data.empty()) {
         return;
     }
-}
 
-void QuicProxySession::H3UpstreamHandler::close() {
-    if (m_conn) {
-        m_conn.reset();
-    }
-}
-
-int QuicProxySession::H3UpstreamHandler::cb_begin_headers(
-    nghttp3_conn*, int64_t, void* user_data, void*) {
-    auto* handler = static_cast<H3UpstreamHandler*>(user_data);
-    handler->m_http1_request.clear();
-    handler->m_method.clear();
-    handler->m_scheme.clear();
-    handler->m_authority.clear();
-    handler->m_path.clear();
-    handler->m_regular_headers.clear();
-    handler->m_request_complete = false;
-    handler->m_chunked_body = false;
-    handler->m_has_content_length = false;
-    handler->m_fin_sent = false;
-    return 0;
-}
-
-int QuicProxySession::H3UpstreamHandler::cb_recv_header(
-    nghttp3_conn*, int64_t, int32_t, nghttp3_rcbuf* name,
-    nghttp3_rcbuf* value, uint8_t, void* user_data, void*) {
-    auto* handler = static_cast<H3UpstreamHandler*>(user_data);
-    auto name_vec = nghttp3_rcbuf_get_buf(name);
-    auto value_vec = nghttp3_rcbuf_get_buf(value);
-    tp::string name_str(reinterpret_cast<char*>(name_vec.base), name_vec.len);
-    tp::string value_str(reinterpret_cast<char*>(value_vec.base), value_vec.len);
-
-    // Defense-in-depth: active check for CRLF and NULL injection in header values to prevent request smuggling or corruption.
-    using namespace std::literals;
-    if (value_str.find_first_of("\r\n\0"sv) != tp::string::npos) {
-        return NGHTTP3_ERR_CALLBACK_FAILURE;
+    int64_t written = locked_conn->send_stream_data(m_stream_id,
+                                               reinterpret_cast<const uint8_t*>(m_udp_pending_stream_data.data() + offset),
+                                               m_udp_pending_stream_data.size() - offset, false);
+    if (written < 0) {
+        destroy();
+        return;
     }
 
-    // Track pseudo-headers for request line reconstruction
-    if (name_str == ":method") {
-        if (!handler->m_method.empty()) return NGHTTP3_ERR_CALLBACK_FAILURE;
-        handler->m_method = value_str;
-    } else if (name_str == ":scheme") {
-        if (!handler->m_scheme.empty()) return NGHTTP3_ERR_CALLBACK_FAILURE;
-        handler->m_scheme = value_str;
-    } else if (name_str == ":authority") {
-        if (!handler->m_authority.empty()) return NGHTTP3_ERR_CALLBACK_FAILURE;
-        handler->m_authority = value_str;
-    } else if (name_str == ":path") {
-        if (!handler->m_path.empty()) return NGHTTP3_ERR_CALLBACK_FAILURE;
-        handler->m_path = value_str;
-    } else {
-        if (name_str == "content-length") {
-            handler->m_has_content_length = true;
-        }
-        // RFC 9114 §4.2: HTTP/3 prohibited hop-by-hop headers and Host (redundant with :authority)
-        // are filtered to prevent potential Request Smuggling at the upstream.
-        static const std::initializer_list<std::string_view> kForbiddenH3Headers = {
-            "connection", "keep-alive", "proxy-connection",
-            "transfer-encoding", "upgrade", "host"
-        };
-        for (auto& h : kForbiddenH3Headers) {
-            if (name_str == h) return 0;
-        }
+    locked_conn->pump_write();
 
-        handler->m_regular_headers += name_str + ": " + value_str + "\r\n";
+    offset += written;
+    if (offset > 0) {
+        m_udp_pending_stream_data.erase(0, offset);
+        offset = 0;
     }
 
-    return 0;
-}
-
-int QuicProxySession::H3UpstreamHandler::cb_end_headers(
-    nghttp3_conn*, int64_t, int fin, void* user_data, void*) {
-    auto* handler = static_cast<H3UpstreamHandler*>(user_data);
-
-    // Validate mandatory HTTP/3 pseudo-headers. Standard methods require :path, while CONNECT requires :authority.
-    if (handler->m_method.empty()) {
-        return NGHTTP3_ERR_CALLBACK_FAILURE;
+    if (!m_udp_pending_stream_data.empty()) {
+        m_write_timer.expires_after(std::chrono::milliseconds(5));
+        auto self = this->shared_from_this();
+        m_write_timer.async_wait([this, self](const boost::system::error_code& ec) {
+            if (!ec) {
+                flush_udp_stream_data(0);
+            }
+        });
     }
-    if (handler->m_method == "CONNECT") {
-        if (handler->m_authority.empty()) return NGHTTP3_ERR_CALLBACK_FAILURE;
-    } else {
-        if (handler->m_path.empty()) return NGHTTP3_ERR_CALLBACK_FAILURE;
-    }
-
-    // Build HTTP/1.1 request line + headers in memory (small, bounded by header count).
-    if (handler->m_method == "CONNECT") {
-        handler->m_http1_request = "CONNECT " + handler->m_authority + " HTTP/1.1\r\n";
-    } else {
-        handler->m_http1_request = handler->m_method + " " + handler->m_path + " HTTP/1.1\r\n";
-    }
-    handler->m_http1_request += handler->m_regular_headers;
-
-    // For POST/PUT/PATCH without Content-Length, use HTTP/1.1 Chunked Transfer Encoding
-    // to ensure correct body framing for the upstream server.
-    if (!handler->m_has_content_length &&
-        (handler->m_method == "POST" || handler->m_method == "PUT" || handler->m_method == "PATCH")) {
-        handler->m_http1_request += "Transfer-Encoding: chunked\r\n";
-        handler->m_chunked_body = true;
-    }
-
-    if (!handler->m_authority.empty()) {
-        handler->m_http1_request += "Host: " + handler->m_authority + "\r\n";
-    }
-    // Issue 4 fix: force Connection: close so the upstream doesn't keep-alive,
-    // which would block the QUIC stream from receiving FIN until Nginx times out.
-    handler->m_http1_request += "Connection: close\r\n";
-    handler->m_http1_request += "\r\n";
-
-    handler->m_request_complete = true;
-
-    // Issue 3 fix: send headers immediately (streaming), never buffer the body.
-    // Always send headers with fin=false so the write queue entry stays consistent;
-    // if the H3 stream has no body (fin==1), enqueue a separate FIN-only item.
-    handler->m_write_cb(std::move(handler->m_http1_request), false);
-    handler->m_http1_request.clear();
-    if (fin) {
-        if (handler->m_chunked_body) {
-            handler->m_write_cb(tp::string("0\r\n\r\n"), false);
-        }
-        handler->m_write_cb(tp::string(), true);
-        handler->m_fin_sent = true;
-    }
-    return 0;
-}
-
-int QuicProxySession::H3UpstreamHandler::cb_recv_data(
-    nghttp3_conn*, int64_t, const uint8_t* data,
-    size_t datalen, void* user_data, void*) {
-    auto* handler = static_cast<H3UpstreamHandler*>(user_data);
-    // Wrap data in HTTP/1.1 chunks if the request is being converted to Chunked Transfer Encoding.
-    if (datalen > 0) {
-        if (handler->m_chunked_body) {
-            char hex[16];
-            int n = snprintf(hex, sizeof(hex), "%zx\r\n", datalen);
-            handler->m_write_cb(tp::string(hex, n), false);
-            handler->m_write_cb(tp::string(reinterpret_cast<const char*>(data), datalen), false);
-            handler->m_write_cb(tp::string("\r\n"), false);
-        } else {
-            handler->m_write_cb(tp::string(reinterpret_cast<const char*>(data), datalen), false);
-        }
-    }
-    return 0;
-}
-
-int QuicProxySession::H3UpstreamHandler::cb_end_stream(
-    nghttp3_conn*, int64_t, void* user_data, void*) {
-    auto* handler = static_cast<H3UpstreamHandler*>(user_data);
-    // Ensure FIN and chunked terminator are only sent once to the upstream.
-    if (handler->m_fin_sent) return 0;
-    // For chunked requests, send the terminating chunk "0\r\n\r\n" before closing the upstream write stream.
-    if (handler->m_chunked_body) {
-        handler->m_write_cb(tp::string("0\r\n\r\n"), false);
-    }
-    handler->m_write_cb(tp::string(), true);
-    handler->m_fin_sent = true;
-    return 0;
-}
-
-int QuicProxySession::H3UpstreamHandler::cb_stream_close(
-    nghttp3_conn*, int64_t, uint64_t, void* user_data, void*) {
-    auto* handler = static_cast<H3UpstreamHandler*>(user_data);
-    // Ensure FIN and chunked terminator are only sent once to the upstream.
-    if (handler->m_fin_sent) return 0;
-    // For chunked requests, send the terminating chunk "0\r\n\r\n" before closing the upstream write stream.
-    if (handler->m_chunked_body) {
-        handler->m_write_cb(tp::string("0\r\n\r\n"), false);
-    }
-    handler->m_write_cb(tp::string(), true);
-    handler->m_fin_sent = true;
-    return 0;
 }

@@ -101,38 +101,16 @@ void QuicServerEndpoint::on_packet(const uint8_t* data, std::size_t len,
 
     auto conn = TP_MAKE_SHARED(QuicConnection, *this, m_tls_ctx, src);
 
-    // Per-connection stream → session table.
-    typedef tp::unordered_map<int64_t, std::shared_ptr<QuicProxySession>> stream_session_type;
-    auto stream_sessions = TP_MAKE_SHARED(stream_session_type);
-
     // stream_open: create a QuicProxySession for each new bidi stream.
     auto weak_conn = std::weak_ptr<QuicConnection>(conn);
-    conn->on_stream_open_cb = [this, weak_conn, stream_sessions](int64_t stream_id) {
+    conn->on_stream_open_cb = [this, weak_conn](int64_t stream_id) {
         auto locked = weak_conn.lock();
         if (!locked) {
             return;
         }
         auto session = TP_MAKE_SHARED(QuicProxySession, locked, stream_id, m_config, m_io_context);
-        (*stream_sessions)[stream_id] = session;
+        locked->set_stream_handler(stream_id, session);
         session->start();
-    };
-
-    // stream_data: route to the correct session.
-    conn->on_stream_data_cb = [stream_sessions](int64_t stream_id, const uint8_t* data,
-                                                 std::size_t len, bool fin) {
-        auto it = stream_sessions->find(stream_id);
-        if (it != stream_sessions->end()) {
-            it->second->on_stream_data(data, len, fin);
-        }
-    };
-
-    // stream_close: clean up session.
-    conn->on_stream_close_cb = [stream_sessions](int64_t stream_id) {
-        auto it = stream_sessions->find(stream_id);
-        if (it != stream_sessions->end()) {
-            it->second->on_stream_close();
-            stream_sessions->erase(it);
-        }
     };
 
     // new connection ID generated: add it to the routing table.
@@ -165,7 +143,7 @@ void QuicServerEndpoint::on_packet(const uint8_t* data, std::size_t len,
     // the server's SCID (sv_scid), which the client uses as DCID for all
     // Handshake and 1-RTT packets after receiving the server's Initial.
     _log_with_date_time("QuicServerEndpoint: added initial DCID " + key, Log::INFO);
-    m_conns[key]                                              = conn;
+    m_conns[key] = conn;
     
     tp::string sv_key = dcid_key(sv_scid.data, sv_scid.datalen);
     _log_with_date_time("QuicServerEndpoint: added server SCID " + sv_key, Log::INFO);
