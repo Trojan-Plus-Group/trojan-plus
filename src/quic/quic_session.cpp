@@ -10,6 +10,7 @@
 
 #include "quic_session.h"
 #include "quic_session_upstream.h"
+#include "quic_to_http3_connect.h"
 #include <memory>
 #include <string_view>
 #include <initializer_list>
@@ -184,16 +185,25 @@ void QuicProxySession::forward_to_h3_upstream(bool fin) {
                              " falling back to h3_upstream " + host + ":" + port_str,
                          Log::INFO);
 
-    // Create H3 handler
     auto locked_conn = m_conn.lock();
     if (!locked_conn) return;
 
+    auto& h3_mgr = locked_conn->get_or_create_h3();
+    if (!h3_mgr.is_valid()) {
+        _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) +
+                                " h3 manager init failed, dropping",
+                            Log::ERROR);
+        destroy();
+        return;
+    }
+
     auto h3_handler = TP_MAKE_SHARED(QuicUpstreamHandler, locked_conn, m_stream_id, m_config, m_io_ctx, host, port_str);
 
-    // Swap handler in connection map
+    // Register with h3 BEFORE set_stream_handler so the first on_stream_data
+    // feed can already find the handler via QuicToHttp3Connect::m_streams.
+    h3_mgr.register_stream(m_stream_id, h3_handler.get());
     locked_conn->set_stream_handler(m_stream_id, h3_handler);
 
-    // Feed existing data
     if (!m_recv_buf.empty()) {
         h3_handler->on_stream_data(
             reinterpret_cast<const uint8_t*>(m_recv_buf.data()),
@@ -203,7 +213,6 @@ void QuicProxySession::forward_to_h3_upstream(bool fin) {
         h3_handler->on_stream_data(nullptr, 0, true);
     }
 
-    // Start TCP connection
     h3_handler->start();
 }
 

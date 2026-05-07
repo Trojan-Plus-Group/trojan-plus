@@ -9,12 +9,17 @@
  */
 
 #include "quic_session_upstream.h"
-#include "quic_connection.h"
-#include "core/log.h"
-#include <string_view>
+
 #include <initializer_list>
+#include <string_view>
+
 #include <boost/asio/connect.hpp>
 #include <boost/asio/write.hpp>
+#include <nghttp3/nghttp3.h>
+
+#include "core/log.h"
+#include "quic_connection.h"
+#include "quic_to_http3_connect.h"
 
 QuicUpstreamHandler::QuicUpstreamHandler(
     std::shared_ptr<QuicConnection> conn, int64_t stream_id,
@@ -24,7 +29,6 @@ QuicUpstreamHandler::QuicUpstreamHandler(
       m_stream_id(stream_id),
       m_config(config),
       m_io_ctx(io_ctx),
-      m_conn(nullptr, nghttp3_conn_del),
       m_valid(true),
       m_host(host),
       m_port_str(port_str),
@@ -32,30 +36,6 @@ QuicUpstreamHandler::QuicUpstreamHandler(
       m_resolver(io_ctx),
       m_write_timer(io_ctx) {
     m_tcp_buf.resize(kTcpBufSize, '\0');
-
-    nghttp3_callbacks callbacks = {};
-    callbacks.begin_headers = &cb_begin_headers;
-    callbacks.recv_header = &cb_recv_header;
-    callbacks.end_headers = &cb_end_headers;
-    callbacks.recv_data = &cb_recv_data;
-    callbacks.end_stream = &cb_end_stream;
-    callbacks.stream_close = &cb_stream_close;
-
-    nghttp3_settings settings;
-    nghttp3_settings_default(&settings);
-    settings.max_field_section_size = (1ULL << 62) - 1;
-    settings.qpack_max_dtable_capacity = 4096;
-    settings.qpack_encoder_max_dtable_capacity = 4096;
-    settings.qpack_blocked_streams = 100;
-
-    nghttp3_conn* h3_conn = nullptr;
-    auto* mem = nghttp3_mem_default();
-    int rv = nghttp3_conn_server_new(&h3_conn, &callbacks, &settings, mem, this);
-    if (rv != 0) {
-        m_valid = false;
-        return;
-    }
-    m_conn.reset(h3_conn);
 }
 
 QuicUpstreamHandler::~QuicUpstreamHandler() = default;
@@ -101,6 +81,9 @@ void QuicUpstreamHandler::start() {
 }
 
 void QuicUpstreamHandler::on_stream_data(const uint8_t* data, size_t len, bool fin) {
+    auto locked_conn = m_conn_ptr.lock();
+    if (!locked_conn || locked_conn->is_closed()) return;
+
     if (!m_valid) {
         if (len > 0) {
             write_to_upstream(tp::string(reinterpret_cast<const char*>(data), len), false);
@@ -110,11 +93,9 @@ void QuicUpstreamHandler::on_stream_data(const uint8_t* data, size_t len, bool f
         }
         return;
     }
-    if (!m_conn) return;
 
-    auto consumed = nghttp3_conn_read_stream(
-        m_conn.get(), m_stream_id,
-        data, len, fin ? 1 : 0);
+    auto& h3 = locked_conn->get_or_create_h3();
+    auto consumed = h3.feed_stream_data(m_stream_id, data, len, fin);
     if (consumed < 0 || (size_t)consumed < len) {
         m_valid = false;
         if (len > 0) {
@@ -123,7 +104,6 @@ void QuicUpstreamHandler::on_stream_data(const uint8_t* data, size_t len, bool f
         if (fin) {
             write_to_upstream(tp::string(), true);
         }
-        return;
     }
 }
 
@@ -136,16 +116,22 @@ void QuicUpstreamHandler::destroy() {
         return;
     }
     m_destroyed = true;
-    if (m_conn) {
-        m_conn.reset();
+
+    auto locked_conn = m_conn_ptr.lock();
+    if (locked_conn) {
+        // Unregister from h3 BEFORE remove_stream_handler drops the shared_ptr,
+        // so no pending nghttp3 callback can dereference a dangling raw pointer.
+        if (auto* h3 = locked_conn->h3_if_exists()) {
+            h3->unregister_stream(m_stream_id);
+        }
     }
+
     m_resolver.cancel();
     boost::system::error_code ec;
     if (m_tcp_socket.is_open()) {
         ec = m_tcp_socket.shutdown(boost::asio::socket_base::shutdown_both, ec);
         ec = m_tcp_socket.close(ec);
     }
-    auto locked_conn = m_conn_ptr.lock();
     if (locked_conn) {
         locked_conn->remove_stream_handler(m_stream_id);
     }
@@ -237,7 +223,7 @@ void QuicUpstreamHandler::flush_tcp_read_buf(std::size_t offset, std::size_t byt
         m_stream_id,
         reinterpret_cast<const uint8_t*>(m_tcp_buf.data() + offset),
         bytes - offset, false);
-    
+
     if (written < 0) {
         destroy();
         return;
@@ -259,148 +245,130 @@ void QuicUpstreamHandler::flush_tcp_read_buf(std::size_t offset, std::size_t byt
     }
 }
 
-int QuicUpstreamHandler::cb_begin_headers(
-    nghttp3_conn*, int64_t, void* user_data, void*) {
-    auto* handler = static_cast<QuicUpstreamHandler*>(user_data);
-    handler->m_http1_request.clear();
-    handler->m_method.clear();
-    handler->m_scheme.clear();
-    handler->m_authority.clear();
-    handler->m_path.clear();
-    handler->m_regular_headers.clear();
-    handler->m_request_complete = false;
-    handler->m_chunked_body = false;
-    handler->m_has_content_length = false;
-    handler->m_fin_sent = false;
+// ---- on_h3_* instance methods (migrated from old static cb_* callbacks) ----
+
+int QuicUpstreamHandler::on_h3_begin_headers() {
+    m_http1_request.clear();
+    m_method.clear();
+    m_scheme.clear();
+    m_authority.clear();
+    m_path.clear();
+    m_regular_headers.clear();
+    m_request_complete = false;
+    m_chunked_body     = false;
+    m_has_content_length = false;
+    m_fin_sent         = false;
     return 0;
 }
 
-int QuicUpstreamHandler::cb_recv_header(
-    nghttp3_conn*, int64_t, int32_t, nghttp3_rcbuf* name,
-    nghttp3_rcbuf* value, uint8_t, void* user_data, void*) {
-    auto* handler = static_cast<QuicUpstreamHandler*>(user_data);
-    auto name_vec = nghttp3_rcbuf_get_buf(name);
-    auto value_vec = nghttp3_rcbuf_get_buf(value);
-    tp::string name_str(reinterpret_cast<char*>(name_vec.base), name_vec.len);
-    tp::string value_str(reinterpret_cast<char*>(value_vec.base), value_vec.len);
-
+int QuicUpstreamHandler::on_h3_header(const tp::string& name, const tp::string& value) {
     using namespace std::literals;
-    if (value_str.find_first_of("\r\n\0"sv) != tp::string::npos) {
+    if (value.find_first_of("\r\n\0"sv) != tp::string::npos) {
         return NGHTTP3_ERR_CALLBACK_FAILURE;
     }
 
-    if (name_str == ":method") {
-        if (!handler->m_method.empty()) return NGHTTP3_ERR_CALLBACK_FAILURE;
-        handler->m_method = value_str;
-    } else if (name_str == ":scheme") {
-        if (!handler->m_scheme.empty()) return NGHTTP3_ERR_CALLBACK_FAILURE;
-        handler->m_scheme = value_str;
-    } else if (name_str == ":authority") {
-        if (!handler->m_authority.empty()) return NGHTTP3_ERR_CALLBACK_FAILURE;
-        handler->m_authority = value_str;
-    } else if (name_str == ":path") {
-        if (!handler->m_path.empty()) return NGHTTP3_ERR_CALLBACK_FAILURE;
-        handler->m_path = value_str;
+    if (name == ":method") {
+        if (!m_method.empty()) return NGHTTP3_ERR_CALLBACK_FAILURE;
+        m_method = value;
+    } else if (name == ":scheme") {
+        if (!m_scheme.empty()) return NGHTTP3_ERR_CALLBACK_FAILURE;
+        m_scheme = value;
+    } else if (name == ":authority") {
+        if (!m_authority.empty()) return NGHTTP3_ERR_CALLBACK_FAILURE;
+        m_authority = value;
+    } else if (name == ":path") {
+        if (!m_path.empty()) return NGHTTP3_ERR_CALLBACK_FAILURE;
+        m_path = value;
     } else {
-        if (name_str == "content-length") {
-            handler->m_has_content_length = true;
+        if (name == "content-length") {
+            m_has_content_length = true;
         }
         static const std::initializer_list<std::string_view> kForbiddenH3Headers = {
             "connection", "keep-alive", "proxy-connection",
             "transfer-encoding", "upgrade", "host"
         };
         for (auto& h : kForbiddenH3Headers) {
-            if (name_str == h) return 0;
+            if (name == h) return 0;
         }
-        handler->m_regular_headers += name_str + ": " + value_str + "\r\n";
+        m_regular_headers += name + ": " + value + "\r\n";
     }
 
     return 0;
 }
 
-int QuicUpstreamHandler::cb_end_headers(
-    nghttp3_conn*, int64_t, int fin, void* user_data, void*) {
-    auto* handler = static_cast<QuicUpstreamHandler*>(user_data);
-
-    if (handler->m_method.empty()) {
+int QuicUpstreamHandler::on_h3_end_headers(bool fin) {
+    if (m_method.empty()) {
         return NGHTTP3_ERR_CALLBACK_FAILURE;
     }
-    if (handler->m_method == "CONNECT") {
-        if (handler->m_authority.empty()) return NGHTTP3_ERR_CALLBACK_FAILURE;
+    if (m_method == "CONNECT") {
+        if (m_authority.empty()) return NGHTTP3_ERR_CALLBACK_FAILURE;
     } else {
-        if (handler->m_path.empty()) return NGHTTP3_ERR_CALLBACK_FAILURE;
+        if (m_path.empty()) return NGHTTP3_ERR_CALLBACK_FAILURE;
     }
 
-    if (handler->m_method == "CONNECT") {
-        handler->m_http1_request = "CONNECT " + handler->m_authority + " HTTP/1.1\r\n";
+    if (m_method == "CONNECT") {
+        m_http1_request = "CONNECT " + m_authority + " HTTP/1.1\r\n";
     } else {
-        handler->m_http1_request = handler->m_method + " " + handler->m_path + " HTTP/1.1\r\n";
+        m_http1_request = m_method + " " + m_path + " HTTP/1.1\r\n";
     }
-    handler->m_http1_request += handler->m_regular_headers;
+    m_http1_request += m_regular_headers;
 
-    if (!handler->m_has_content_length &&
-        (handler->m_method == "POST" || handler->m_method == "PUT" || handler->m_method == "PATCH")) {
-        handler->m_http1_request += "Transfer-Encoding: chunked\r\n";
-        handler->m_chunked_body = true;
+    if (!m_has_content_length &&
+        (m_method == "POST" || m_method == "PUT" || m_method == "PATCH")) {
+        m_http1_request += "Transfer-Encoding: chunked\r\n";
+        m_chunked_body = true;
     }
 
-    if (!handler->m_authority.empty()) {
-        handler->m_http1_request += "Host: " + handler->m_authority + "\r\n";
+    if (!m_authority.empty()) {
+        m_http1_request += "Host: " + m_authority + "\r\n";
     }
-    handler->m_http1_request += "Connection: close\r\n\r\n";
+    m_http1_request += "Connection: close\r\n\r\n";
 
-    handler->m_request_complete = true;
+    m_request_complete = true;
 
-    handler->write_to_upstream(std::move(handler->m_http1_request), false);
-    handler->m_http1_request.clear();
+    write_to_upstream(std::move(m_http1_request), false);
+    m_http1_request.clear();
     if (fin) {
-        if (handler->m_chunked_body) {
-            handler->write_to_upstream(tp::string("0\r\n\r\n"), false);
+        if (m_chunked_body) {
+            write_to_upstream(tp::string("0\r\n\r\n"), false);
         }
-        handler->write_to_upstream(tp::string(), true);
-        handler->m_fin_sent = true;
+        write_to_upstream(tp::string(), true);
+        m_fin_sent = true;
     }
     return 0;
 }
 
-int QuicUpstreamHandler::cb_recv_data(
-    nghttp3_conn*, int64_t, const uint8_t* data,
-    size_t datalen, void* user_data, void*) {
-    auto* handler = static_cast<QuicUpstreamHandler*>(user_data);
+int QuicUpstreamHandler::on_h3_data(const uint8_t* data, std::size_t datalen) {
     if (datalen > 0) {
-        if (handler->m_chunked_body) {
+        if (m_chunked_body) {
             char hex[16];
             int n = snprintf(hex, sizeof(hex), "%zx\r\n", datalen);
-            handler->write_to_upstream(tp::string(hex, n), false);
-            handler->write_to_upstream(tp::string(reinterpret_cast<const char*>(data), datalen), false);
-            handler->write_to_upstream(tp::string("\r\n"), false);
+            write_to_upstream(tp::string(hex, n), false);
+            write_to_upstream(tp::string(reinterpret_cast<const char*>(data), datalen), false);
+            write_to_upstream(tp::string("\r\n"), false);
         } else {
-            handler->write_to_upstream(tp::string(reinterpret_cast<const char*>(data), datalen), false);
+            write_to_upstream(tp::string(reinterpret_cast<const char*>(data), datalen), false);
         }
     }
     return 0;
 }
 
-int QuicUpstreamHandler::cb_end_stream(
-    nghttp3_conn*, int64_t, void* user_data, void*) {
-    auto* handler = static_cast<QuicUpstreamHandler*>(user_data);
-    if (handler->m_fin_sent) return 0;
-    if (handler->m_chunked_body) {
-        handler->write_to_upstream(tp::string("0\r\n\r\n"), false);
+int QuicUpstreamHandler::on_h3_end_stream() {
+    if (m_fin_sent) return 0;
+    if (m_chunked_body) {
+        write_to_upstream(tp::string("0\r\n\r\n"), false);
     }
-    handler->write_to_upstream(tp::string(), true);
-    handler->m_fin_sent = true;
+    write_to_upstream(tp::string(), true);
+    m_fin_sent = true;
     return 0;
 }
 
-int QuicUpstreamHandler::cb_stream_close(
-    nghttp3_conn*, int64_t, uint64_t, void* user_data, void*) {
-    auto* handler = static_cast<QuicUpstreamHandler*>(user_data);
-    if (handler->m_fin_sent) return 0;
-    if (handler->m_chunked_body) {
-        handler->write_to_upstream(tp::string("0\r\n\r\n"), false);
+int QuicUpstreamHandler::on_h3_stream_close(uint64_t /*app_error_code*/) {
+    if (m_fin_sent) return 0;
+    if (m_chunked_body) {
+        write_to_upstream(tp::string("0\r\n\r\n"), false);
     }
-    handler->write_to_upstream(tp::string(), true);
-    handler->m_fin_sent = true;
+    write_to_upstream(tp::string(), true);
+    m_fin_sent = true;
     return 0;
 }

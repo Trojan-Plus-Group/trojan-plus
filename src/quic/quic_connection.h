@@ -29,6 +29,7 @@
 class QuicEndpoint;
 class QuicTlsCtx;
 class QuicProxySession;
+class QuicToHttp3Connect;
 
 struct WOLFSSL;
 
@@ -76,6 +77,10 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     // Handler management
     void set_stream_handler(int64_t stream_id, std::shared_ptr<QuicStreamHandler> handler);
     void remove_stream_handler(int64_t stream_id);
+
+    // H3 manager — lazily created on first H3 stream; null until then.
+    QuicToHttp3Connect& get_or_create_h3();
+    [[nodiscard]] QuicToHttp3Connect* h3_if_exists() const { return m_h3.get(); }
 
     // Gracefully close the connection.
     void close();
@@ -150,6 +155,7 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     bool m_is_server{false};
 
     tp::unordered_map<int64_t, std::shared_ptr<QuicStreamHandler>> m_stream_handlers;
+    std::unique_ptr<QuicToHttp3Connect> m_h3;  // declared after m_stream_handlers, destroyed first
     tp::vector<uint8_t> m_write_buf;
 };
 

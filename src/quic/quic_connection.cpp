@@ -13,6 +13,8 @@
 #include <chrono>
 #include <cstring>
 
+#include "quic_to_http3_connect.h"
+
 #include <ngtcp2/ngtcp2_crypto_wolfssl.h>
 #include <wolfssl/options.h>
 #include <wolfssl/ssl.h>
@@ -528,7 +530,19 @@ int64_t QuicConnection::open_bidi_stream() {
 }
 
 void QuicConnection::set_stream_handler(int64_t stream_id, std::shared_ptr<QuicStreamHandler> handler) {
+    // Unregister any stale h3 mapping before overwriting, keeping m_streams consistent.
+    if (m_h3) {
+        m_h3->unregister_stream(stream_id);
+    }
     m_stream_handlers[stream_id] = std::move(handler);
+}
+
+QuicToHttp3Connect& QuicConnection::get_or_create_h3() {
+    if (!m_h3) {
+        m_h3 = std::make_unique<QuicToHttp3Connect>(*this);
+        (void)m_h3->init();
+    }
+    return *m_h3;
 }
 
 void QuicConnection::remove_stream_handler(int64_t stream_id) {

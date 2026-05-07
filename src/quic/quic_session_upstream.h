@@ -18,15 +18,15 @@
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/steady_timer.hpp>
 
-#include <nghttp3/nghttp3.h>
-
 #include "mem/memallocator.h"
 #include "quic_stream_handler.h"
 #include "quic_connection.h"
 
 class Config;
 
-// QuicUpstreamHandler: encapsulates nghttp3 HTTP/3 decoding and h3→h1.1 conversion
+// QuicUpstreamHandler: owns the TCP connection to the upstream HTTP/1.1 server
+// and performs the H3→H1.1 conversion. Decoded h3 events are delivered by
+// QuicToHttp3Connect via the on_h3_* methods below.
 class QuicUpstreamHandler : public QuicStreamHandler, public std::enable_shared_from_this<QuicUpstreamHandler> {
   public:
     QuicUpstreamHandler(std::shared_ptr<QuicConnection> conn, int64_t stream_id,
@@ -39,17 +39,17 @@ class QuicUpstreamHandler : public QuicStreamHandler, public std::enable_shared_
     void on_stream_close() override;
     void destroy();
 
-    [[nodiscard]] bool is_request_complete() const { return m_request_complete; }
     [[nodiscard]] bool is_valid() const { return m_valid; }
 
-  private:
-    static int cb_begin_headers(nghttp3_conn*, int64_t, void*, void*);
-    static int cb_recv_header(nghttp3_conn*, int64_t, int32_t, nghttp3_rcbuf*, nghttp3_rcbuf*, uint8_t, void*, void*);
-    static int cb_end_headers(nghttp3_conn*, int64_t, int, void*, void*);
-    static int cb_recv_data(nghttp3_conn*, int64_t, const uint8_t*, size_t, void*, void*);
-    static int cb_end_stream(nghttp3_conn*, int64_t, void*, void*);
-    static int cb_stream_close(nghttp3_conn*, int64_t, uint64_t, void*, void*);
+    // Called by QuicToHttp3Connect callbacks with already-decoded values.
+    int on_h3_begin_headers();
+    int on_h3_header(const tp::string& name, const tp::string& value);
+    int on_h3_end_headers(bool fin);
+    int on_h3_data(const uint8_t* data, std::size_t len);
+    int on_h3_end_stream();
+    int on_h3_stream_close(uint64_t app_error_code);
 
+  private:
     void write_to_upstream(tp::string data, bool fin = false);
     void do_tcp_write();
     void tcp_read_from_upstream();
@@ -60,7 +60,6 @@ class QuicUpstreamHandler : public QuicStreamHandler, public std::enable_shared_
     const Config& m_config;
     boost::asio::io_context& m_io_ctx;
 
-    std::unique_ptr<nghttp3_conn, decltype(&nghttp3_conn_del)> m_conn;
     tp::string m_http1_request;
     tp::string m_method;
     tp::string m_scheme;
