@@ -91,6 +91,9 @@ class QuicProxySession : public std::enable_shared_from_this<QuicProxySession> {
         tp::string m_regular_headers;
         bool m_request_complete{false};
         bool m_valid{true};
+        bool m_chunked_body{false};
+        bool m_has_content_length{false};
+        bool m_fin_sent{false};
     };
 
     std::shared_ptr<QuicConnection> m_conn;

@@ -10,6 +10,8 @@
 
 #include "quic_session.h"
 #include <memory>
+#include <string_view>
+#include <initializer_list>
 
 #include <boost/asio/connect.hpp>
 #include <boost/asio/write.hpp>
@@ -58,6 +60,8 @@ void QuicProxySession::on_stream_data(const uint8_t* data, std::size_t len, bool
     }
 
     if (m_upstream_forwarding) {
+        // If FIN arrives before the upstream TCP connection is established, preserve it for later use.
+        if (fin) m_stream_fin_received = true;
         if (m_h3_handler && !m_recv_buf.empty()) {
             m_h3_handler->feed_stream_data(
                 reinterpret_cast<const uint8_t*>(m_recv_buf.data()),
@@ -508,6 +512,9 @@ int QuicProxySession::H3UpstreamHandler::cb_begin_headers(
     handler->m_path.clear();
     handler->m_regular_headers.clear();
     handler->m_request_complete = false;
+    handler->m_chunked_body = false;
+    handler->m_has_content_length = false;
+    handler->m_fin_sent = false;
     return 0;
 }
 
@@ -520,31 +527,75 @@ int QuicProxySession::H3UpstreamHandler::cb_recv_header(
     tp::string name_str(reinterpret_cast<char*>(name_vec.base), name_vec.len);
     tp::string value_str(reinterpret_cast<char*>(value_vec.base), value_vec.len);
 
+    // Defense-in-depth: active check for CRLF and NULL injection in header values to prevent request smuggling or corruption.
+    using namespace std::literals;
+    if (value_str.find_first_of("\r\n\0"sv) != tp::string::npos) {
+        return NGHTTP3_ERR_CALLBACK_FAILURE;
+    }
+
     // Track pseudo-headers for request line reconstruction
     if (name_str == ":method") {
+        if (!handler->m_method.empty()) return NGHTTP3_ERR_CALLBACK_FAILURE;
         handler->m_method = value_str;
     } else if (name_str == ":scheme") {
+        if (!handler->m_scheme.empty()) return NGHTTP3_ERR_CALLBACK_FAILURE;
         handler->m_scheme = value_str;
     } else if (name_str == ":authority") {
+        if (!handler->m_authority.empty()) return NGHTTP3_ERR_CALLBACK_FAILURE;
         handler->m_authority = value_str;
     } else if (name_str == ":path") {
+        if (!handler->m_path.empty()) return NGHTTP3_ERR_CALLBACK_FAILURE;
         handler->m_path = value_str;
     } else {
-        // Regular headers: accumulate separately
+        if (name_str == "content-length") {
+            handler->m_has_content_length = true;
+        }
+        // RFC 9114 §4.2: HTTP/3 prohibited hop-by-hop headers and Host (redundant with :authority)
+        // are filtered to prevent potential Request Smuggling at the upstream.
+        static const std::initializer_list<std::string_view> kForbiddenH3Headers = {
+            "connection", "keep-alive", "proxy-connection",
+            "transfer-encoding", "upgrade", "host"
+        };
+        for (auto& h : kForbiddenH3Headers) {
+            if (name_str == h) return 0;
+        }
+
         handler->m_regular_headers += name_str + ": " + value_str + "\r\n";
     }
 
-    nghttp3_rcbuf_decref(name);
-    nghttp3_rcbuf_decref(value);
     return 0;
 }
 
 int QuicProxySession::H3UpstreamHandler::cb_end_headers(
     nghttp3_conn*, int64_t, int fin, void* user_data, void*) {
     auto* handler = static_cast<H3UpstreamHandler*>(user_data);
+
+    // Validate mandatory HTTP/3 pseudo-headers. Standard methods require :path, while CONNECT requires :authority.
+    if (handler->m_method.empty()) {
+        return NGHTTP3_ERR_CALLBACK_FAILURE;
+    }
+    if (handler->m_method == "CONNECT") {
+        if (handler->m_authority.empty()) return NGHTTP3_ERR_CALLBACK_FAILURE;
+    } else {
+        if (handler->m_path.empty()) return NGHTTP3_ERR_CALLBACK_FAILURE;
+    }
+
     // Build HTTP/1.1 request line + headers in memory (small, bounded by header count).
-    handler->m_http1_request = handler->m_method + " " + handler->m_path + " HTTP/1.1\r\n";
+    if (handler->m_method == "CONNECT") {
+        handler->m_http1_request = "CONNECT " + handler->m_authority + " HTTP/1.1\r\n";
+    } else {
+        handler->m_http1_request = handler->m_method + " " + handler->m_path + " HTTP/1.1\r\n";
+    }
     handler->m_http1_request += handler->m_regular_headers;
+
+    // For POST/PUT/PATCH without Content-Length, use HTTP/1.1 Chunked Transfer Encoding
+    // to ensure correct body framing for the upstream server.
+    if (!handler->m_has_content_length &&
+        (handler->m_method == "POST" || handler->m_method == "PUT" || handler->m_method == "PATCH")) {
+        handler->m_http1_request += "Transfer-Encoding: chunked\r\n";
+        handler->m_chunked_body = true;
+    }
+
     if (!handler->m_authority.empty()) {
         handler->m_http1_request += "Host: " + handler->m_authority + "\r\n";
     }
@@ -561,7 +612,11 @@ int QuicProxySession::H3UpstreamHandler::cb_end_headers(
     handler->m_write_cb(std::move(handler->m_http1_request), false);
     handler->m_http1_request.clear();
     if (fin) {
+        if (handler->m_chunked_body) {
+            handler->m_write_cb(tp::string("0\r\n\r\n"), false);
+        }
         handler->m_write_cb(tp::string(), true);
+        handler->m_fin_sent = true;
     }
     return 0;
 }
@@ -570,9 +625,17 @@ int QuicProxySession::H3UpstreamHandler::cb_recv_data(
     nghttp3_conn*, int64_t, const uint8_t* data,
     size_t datalen, void* user_data, void*) {
     auto* handler = static_cast<H3UpstreamHandler*>(user_data);
-    // Issue 3 fix: stream body chunks directly — never buffer in memory.
+    // Wrap data in HTTP/1.1 chunks if the request is being converted to Chunked Transfer Encoding.
     if (datalen > 0) {
-        handler->m_write_cb(tp::string(reinterpret_cast<const char*>(data), datalen), false);
+        if (handler->m_chunked_body) {
+            char hex[16];
+            int n = snprintf(hex, sizeof(hex), "%zx\r\n", datalen);
+            handler->m_write_cb(tp::string(hex, n), false);
+            handler->m_write_cb(tp::string(reinterpret_cast<const char*>(data), datalen), false);
+            handler->m_write_cb(tp::string("\r\n"), false);
+        } else {
+            handler->m_write_cb(tp::string(reinterpret_cast<const char*>(data), datalen), false);
+        }
     }
     return 0;
 }
@@ -580,15 +643,27 @@ int QuicProxySession::H3UpstreamHandler::cb_recv_data(
 int QuicProxySession::H3UpstreamHandler::cb_end_stream(
     nghttp3_conn*, int64_t, void* user_data, void*) {
     auto* handler = static_cast<H3UpstreamHandler*>(user_data);
-    // Body was already streamed in cb_recv_data; just send FIN now.
+    // Ensure FIN and chunked terminator are only sent once to the upstream.
+    if (handler->m_fin_sent) return 0;
+    // For chunked requests, send the terminating chunk "0\r\n\r\n" before closing the upstream write stream.
+    if (handler->m_chunked_body) {
+        handler->m_write_cb(tp::string("0\r\n\r\n"), false);
+    }
     handler->m_write_cb(tp::string(), true);
+    handler->m_fin_sent = true;
     return 0;
 }
 
 int QuicProxySession::H3UpstreamHandler::cb_stream_close(
     nghttp3_conn*, int64_t, uint64_t, void* user_data, void*) {
     auto* handler = static_cast<H3UpstreamHandler*>(user_data);
-    // Body was already streamed in cb_recv_data; just send FIN now.
+    // Ensure FIN and chunked terminator are only sent once to the upstream.
+    if (handler->m_fin_sent) return 0;
+    // For chunked requests, send the terminating chunk "0\r\n\r\n" before closing the upstream write stream.
+    if (handler->m_chunked_body) {
+        handler->m_write_cb(tp::string("0\r\n\r\n"), false);
+    }
     handler->m_write_cb(tp::string(), true);
+    handler->m_fin_sent = true;
     return 0;
 }

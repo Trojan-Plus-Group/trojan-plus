@@ -7,23 +7,23 @@
 
 ## 阶段一：致命 Bug（必须最先修复，不修则整条 fallback 路径不可用）
 
-### 1.1 修复 `nghttp3_rcbuf_decref` 未配对 incref 的 UAF 问题
+### 1.1 修复 `nghttp3_rcbuf_decref` 未配对 incref 的 UAF 问题 [DONE]
 
 - **文件**：`src/quic/quic_session.cpp`，`cb_recv_header` 回调
 - **问题**：在未调用 `nghttp3_rcbuf_incref` 的情况下直接调用 `nghttp3_rcbuf_decref(name)` 和 `nghttp3_rcbuf_decref(value)`，导致引用计数提前归零。nghttp3 后续再释放同一块内存时触发 double-free 或 UAF（use-after-free）。
 - **修复方案**：
-  - [ ] 删除 `cb_recv_header` 中的 `nghttp3_rcbuf_decref(name)` 和 `nghttp3_rcbuf_decref(value)` 两行。
+  - [x] 删除 `cb_recv_header` 中的 `nghttp3_rcbuf_decref(name)` 和 `nghttp3_rcbuf_decref(value)` 两行。
   - [ ] 如果未来需要异步保留 rcbuf 内容，改为先 `nghttp3_rcbuf_incref`，使用完毕后再 `nghttp3_rcbuf_decref`。
   - [ ] 回归验证：用 ASan 或 valgrind 跑一次带 H3 fallback 的请求，确认无 heap-use-after-free 报告。
 
 ---
 
-### 1.2 在 `on_stream_data` forwarding 分支补充 FIN 标记保存
+### 1.2 在 `on_stream_data` forwarding 分支补充 FIN 标记保存 [DONE]
 
 - **文件**：`src/quic/quic_session.cpp`，`on_stream_data` 函数约第 60–68 行
 - **问题**：当 `m_upstream_forwarding=true` 且 `m_h3_handler==nullptr`（TCP 还未连上）时，若此刻 `on_stream_data(..., fin=true)` 到来，`fin` 标志被静默丢弃，仅靠后续 `on_stream_close` 补救，但不同 `QuicConnection` 实现中不保证 1:1 触发。
 - **修复方案**：
-  - [ ] 在 `on_stream_data` 的 `if (m_upstream_forwarding)` 分支最开始补加：
+  - [x] 在 `on_stream_data` 的 `if (m_upstream_forwarding)` 分支最开始补加：
     ```cpp
     if (fin) m_stream_fin_received = true;
     ```
@@ -33,12 +33,12 @@
 
 ## 阶段二：协议转换正确性（伪头部转换）
 
-### 2.1 过滤 HTTP/3 禁止的"逐跳头部"（高危：可触发 HTTP Request Smuggling）
+### 2.1 过滤 HTTP/3 禁止的"逐跳头部"（高危：可触发 HTTP Request Smuggling） [DONE]
 
 - **文件**：`src/quic/quic_session.cpp`，`cb_recv_header` 回调
 - **问题**：RFC 9114 §4.2 明确禁止 HTTP/3 请求中携带 `Connection`、`Keep-Alive`、`Proxy-Connection`、`Transfer-Encoding`、`Upgrade`。当前代码将所有常规头无过滤透传，恶意客户端构造 `Transfer-Encoding: chunked` + `Content-Length: 0` 后可对下游 nginx（或其后串联的 fastcgi/uwsgi）发起 HTTP Request Smuggling 攻击。
 - **修复方案**：
-  - [ ] 在 `cb_recv_header` 的常规头处理分支（`else` 块）中，添加黑名单过滤：
+  - [x] 在 `cb_recv_header` 的常规头处理分支（`else` 块）中，添加黑名单过滤：
     ```cpp
     static const std::initializer_list<std::string_view> kForbiddenH3Headers = {
         "connection", "keep-alive", "proxy-connection",
@@ -49,60 +49,60 @@
         if (name_str == h) return 0;  // 静默丢弃
     }
     ```
-  - [ ] 同时过滤掉常规 `host` 头（H3 客户端不该发，但万一有则会与 `:authority` 产生重复 Host，见 2.3）。
+  - [x] 同时过滤掉常规 `host` 头（H3 客户端不该发，但万一有则会与 `:authority` 产生重复 Host，见 2.3）。
   - [ ] 验证：用 curl --http3 发带 `Connection: keep-alive` 的请求，确认 nginx 端收到的头中不含该字段。
 
 ---
 
-### 2.2 修复请求体缺少 HTTP/1.1 帧边界（POST/PUT 必现失败）
+### 2.2 修复请求体缺少 HTTP/1.1 帧边界（POST/PUT 必现失败） [DONE]
 
 - **文件**：`src/quic/quic_session.cpp`，`cb_end_headers` 和 `cb_recv_data`
 - **问题**：HTTP/1.1 请求体必须由 `Content-Length` 或 `Transfer-Encoding: chunked` 框定；当前代码直接透传 DATA frame 字节，无任何帧化处理。若客户端 H3 请求本身没有 `Content-Length`，nginx 对 POST/PUT 会返回 411 Length Required 或将 body 误判为下一个 HTTP 请求（走私面）。
 - **修复方案（推荐：chunked 包裹）**：
-  - [ ] 在 `cb_end_headers` 中，若方法为非幂等方法（`POST`/`PUT`/`PATCH`），且常规头中没有 `Content-Length`，则追加 `Transfer-Encoding: chunked\r\n`，并设置一个内部标志 `m_chunked_body = true`。
-  - [ ] 在 `cb_recv_data` 中，若 `m_chunked_body`，将每块数据用 chunked 格式包裹后再调 `m_write_cb`：
+  - [x] 在 `cb_end_headers` 中，若方法为非幂等方法（`POST`/`PUT`/`PATCH`），且常规头中没有 `Content-Length`，则追加 `Transfer-Encoding: chunked\r\n`，并设置一个内部标志 `m_chunked_body = true`。
+  - [x] 在 `cb_recv_data` 中，若 `m_chunked_body`，将每块数据用 chunked 格式包裹后再调 `m_write_cb`：
     ```
     {hex_len}\r\n{data}\r\n
     ```
-  - [ ] 在 `cb_end_stream` 中，若 `m_chunked_body`，发送终止块 `0\r\n\r\n`（之后再发 FIN）。
+  - [x] 在 `cb_end_stream` 中，若 `m_chunked_body`，发送终止块 `0\r\n\r\n`（之后再发 FIN）。
   - [ ] 备选方案（简单但需要缓冲）：缓冲全部 body，在 `cb_end_stream` 时补写 `Content-Length`，然后一次性发送。仅适合小 body，不推荐。
   - [ ] 验证：用 curl --http3 发 POST 带 body 的请求，确认 nginx 端正确收到请求体并返回 200/201。
 
 ---
 
-### 2.3 去重 `Host` 头（`:authority` 与常规 `host` 冲突）
+### 2.3 去重 `Host` 头（`:authority` 与常规 `host` 冲突） [DONE]
 
 - **文件**：`src/quic/quic_session.cpp`，`cb_recv_header` 和 `cb_end_headers`
 - **问题**：`cb_end_headers` 中无条件追加 `Host: {m_authority}`，若客户端同时携带了常规 `host` 头，且 2.1 中的过滤未覆盖它，nginx 会收到两个 `Host`，行为未定义。
 - **修复方案**：
-  - [ ] 在 2.1 的黑名单过滤中增加 `"host"` 字段（强制以 `:authority` 为准）。
+  - [x] 在 2.1 的黑名单过滤中增加 `"host"` 字段（强制以 `:authority` 为准）。
   - [ ] 验证：检查 nginx access log 中 Host 字段无重复。
 
 ---
 
-### 2.4 补充必备伪头部校验
+### 2.4 补充必备伪头部校验 [DONE]
 
 - **文件**：`src/quic/quic_session.cpp`，`cb_end_headers`
 - **问题**：`cb_end_headers` 时没有验证 `:method` / `:path` / `:scheme` 是否存在，缺失时会拼出 `" / HTTP/1.1\r\n"` 等残缺起始行。
 - **修复方案**：
-  - [ ] 在 `cb_end_headers` 开头添加校验：
+  - [x] 在 `cb_end_headers` 开头添加校验：
     ```cpp
     if (handler->m_method.empty() || handler->m_path.empty()) {
         // 返回错误码通知 nghttp3 终止解析
         return NGHTTP3_ERR_CALLBACK_FAILURE;
     }
     ```
-  - [ ] 伪头部重复出现时（`cb_recv_header` 中赋值前先检查是否已有值），同样返回 `NGHTTP3_ERR_CALLBACK_FAILURE`。
+  - [x] 伪头部重复出现时（`cb_recv_header` 中赋值前先检查是否已有值），同样返回 `NGHTTP3_ERR_CALLBACK_FAILURE`。
   - [ ] 验证：发缺少 `:method` 的畸形 H3 请求，确认 session 优雅关闭而不是发送残缺 HTTP/1.1。
 
 ---
 
-### 2.5 处理 `CONNECT` 方法的特殊转换
+### 2.5 处理 `CONNECT` 方法的特殊转换 [DONE]
 
 - **文件**：`src/quic/quic_session.cpp`，`cb_end_headers`
 - **问题**：`CONNECT` 方法在 HTTP/3 中没有 `:path` 和 `:scheme`，目标为 `:authority`。当前代码会拼出 `"CONNECT  HTTP/1.1\r\n"`（path 为空），是非法格式。
 - **修复方案**：
-  - [ ] 在 `cb_end_headers` 中对 `CONNECT` 单独分支：
+  - [x] 在 `cb_end_headers` 中对 `CONNECT` 单独分支：
     ```cpp
     if (handler->m_method == "CONNECT") {
         if (handler->m_authority.empty()) return NGHTTP3_ERR_CALLBACK_FAILURE;
@@ -116,29 +116,29 @@
 
 ---
 
-### 2.6 头部值 CRLF 注入防御
+### 2.6 头部值 CRLF 注入防御 [DONE]
 
 - **文件**：`src/quic/quic_session.cpp`，`cb_recv_header`
 - **问题**：虽然 nghttp3 通常拒绝含 `\r\n` 的头值，但作为纵深防御，应在写入 `m_regular_headers` 前主动检测。
 - **修复方案**：
-  - [ ] 在 `m_regular_headers += ...` 之前添加：
+  - [x] 在 `m_regular_headers += ...` 之前添加：
     ```cpp
     if (value_str.find_first_of("\r\n\0"sv) != tp::string::npos) {
         return NGHTTP3_ERR_CALLBACK_FAILURE;
     }
     ```
-  - [ ] 对 `m_method`、`m_path`、`m_authority` 赋值处同样添加检测（尤其 path，防止请求行注入）。
+  - [x] 对 `m_method`、`m_path`、`m_authority` 赋值处同样添加检测（尤其 path，防止请求行注入）。
 
 ---
 
-### 2.7 修复 `cb_end_stream` 与 `cb_stream_close` 双重发送 FIN
+### 2.7 修复 `cb_end_stream` 与 `cb_stream_close` 双重发送 FIN [DONE]
 
 - **文件**：`src/quic/quic_session.cpp`，`cb_end_stream` 和 `cb_stream_close`
 - **问题**：两个回调都调用 `m_write_cb(tp::string(), true)`，nghttp3 对同一流通常会顺序触发二者，导致 FIN 被入队两次，`do_tcp_write` 调用 `shutdown(SHUT_WR)` 两次（幂等但语义混乱，也多触发一次空 write_to_target）。
 - **修复方案**：
-  - [ ] 在 `H3UpstreamHandler` 中添加 `bool m_fin_sent{false}` 标志。
-  - [ ] 在 `cb_end_stream` 中发送 FIN 并设置 `m_fin_sent = true`。
-  - [ ] 在 `cb_stream_close` 中先检查 `m_fin_sent`，若已发则跳过。
+  - [x] 在 `H3UpstreamHandler` 中添加 `bool m_fin_sent{false}` 标志。
+  - [x] 在 `cb_end_stream` 中发送 FIN 并设置 `m_fin_sent = true`。
+  - [x] 在 `cb_stream_close` 中先检查 `m_fin_sent`，若已发则跳过。
 
 ---
 
