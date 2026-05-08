@@ -88,6 +88,19 @@ void QuicProxySession::on_stream_close() {
 }
 
 void QuicProxySession::try_parse_request(bool fin) {
+    if (!m_recv_buf.empty()) {
+        char first_char = m_recv_buf[0];
+        bool is_valid_hex = (first_char >= '0' && first_char <= '9') ||
+                            (first_char >= 'a' && first_char <= 'f');
+        if (!is_valid_hex) {
+            _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) +
+                                    " first byte not hex (" + tp::to_string((int)first_char) + "), falling back to h3_upstream",
+                                Log::INFO);
+            forward_to_h3_upstream(fin);
+            return;
+        }
+    }
+
     // Wait for at least the first CRLF (end of password) before deciding if it's Trojan.
     // This avoids premature fallback to h3_upstream if the password is split across packets.
     size_t first_crlf = m_recv_buf.find("\r\n");
@@ -199,10 +212,10 @@ void QuicProxySession::forward_to_h3_upstream(bool fin) {
 
     auto h3_handler = TP_MAKE_SHARED(QuicUpstreamHandler, locked_conn, m_stream_id, m_io_ctx, host, port_str);
 
-    // Register with h3 BEFORE set_stream_handler so the first on_stream_data
-    // feed can already find the handler via QuicToHttp3Connect::m_streams.
-    h3_mgr.register_stream(m_stream_id, h3_handler.get());
+    // Call set_stream_handler FIRST, because it performs stale mapping cleanup
+    // which includes calling h3_mgr->unregister_stream(m_stream_id).
     locked_conn->set_stream_handler(m_stream_id, h3_handler);
+    h3_mgr.register_stream(m_stream_id, h3_handler.get());
 
     if (!m_recv_buf.empty()) {
         h3_handler->on_stream_data(

@@ -591,7 +591,7 @@ QuicToHttp3Connect& QuicConnection::get_or_create_h3() {
             if (ctrl >= 0 && qenc >= 0 && qdec >= 0) {
                 m_h3->bind_control_streams(ctrl, qenc, qdec);
             }
-            pump_write();
+            pump_h3_response();
         }
     }
     return *m_h3;
@@ -642,6 +642,17 @@ void QuicConnection::on_handshake_completed_impl() {
                             tp::string(m_peer.address().to_string().c_str()) + ":" +
                             tp::to_string(m_peer.port()),
                         Log::INFO);
+
+    if (m_is_server && m_h3) {
+        int64_t ctrl = open_uni_stream();
+        int64_t qenc = open_uni_stream();
+        int64_t qdec = open_uni_stream();
+        if (ctrl >= 0 && qenc >= 0 && qdec >= 0) {
+            m_h3->bind_control_streams(ctrl, qenc, qdec);
+        }
+        pump_h3_response();
+    }
+
     if (on_handshake_completed_cb) {
         on_handshake_completed_cb();
     }

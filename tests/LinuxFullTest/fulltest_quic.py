@@ -481,7 +481,7 @@ def test_e2e_post_data(binary_path):
 
 
 def test_h3_upstream_fallback(binary_path):
-    """T4: Non-trojan traffic forwarded to h3_upstream (wrong password)."""
+    """T4: HTTP/3 traffic forwarded to h3_upstream."""
     print_time_log("[T4] h3_upstream_fallback: starting...")
 
     # Server with h3_upstream pointing to mock TCP server.
@@ -489,40 +489,99 @@ def test_h3_upstream_fallback(binary_path):
         "remote_port": HTTP_TARGET_PORT,
         "quic": {"enabled": True, "h3_upstream": f"127.0.0.1:{H3_UPSTREAM_PORT}"},
     })
-    # Client with CORRECT password — we will test fallback by sending non-trojan data.
-    cli_cfg = patch_quic_config("quic_client_config.json", {
-        "password": ["testpassword123"],
-    })
 
     mock = start_h3_upstream_mock()
     server, srv_log = start_trojan(binary_path, srv_cfg)
-    client, cli_log = start_trojan(binary_path, cli_cfg)
     dump = False
     try:
-        if not mock or not server or not client:
+        if not mock or not server:
             dump = True
             return False
 
-        if not wait_for_log(cli_log, r"QuicConnection: handshake completed", timeout=15):
-            print_time_log("[T4] FAIL: QUIC handshake not seen")
+        # Wait for QUIC server to be ready (UDP listener is up).
+        if not wait_for_log(srv_log, r"QuicServerEndpoint: listening on UDP", timeout=10):
+            print_time_log("[T4] FAIL: server QUIC endpoint not ready")
             dump = True
             return False
         time.sleep(1)
 
-        if not wait_for_port(QUIC_CLIENT_PROXY_PORT, timeout=5):
-            print_time_log("[T4] FAIL: proxy port not open")
-            dump = True
-            return False
+        # Run aioquic in a subprocess to simulate a real HTTP/3 browser client.
+        # This will send proper H3 frames (not Trojan protocol bytes) which
+        # QuicUpstreamHandler expects during fallback.
+        script_path = os.path.join(os.path.dirname(__file__), "_t4_aioquic_client.py")
+        with open(script_path, "w") as f:
+            f.write(f"""
+import asyncio
+import sys
+from aioquic.asyncio import connect as async_connect
+from aioquic.quic.configuration import QuicConfiguration
+from aioquic.asyncio.protocol import QuicConnectionProtocol
+from aioquic.h3.connection import H3Connection
+from aioquic.h3.events import HeadersReceived, DataReceived
 
-        # Send HTTP request — wrong password triggers h3_upstream forwarding.
-        # The mock echoes back "HTTP/1.1 200 OK ... H3 Upstream Fallback!" via TCP,
-        # which QuicProxySession::tcp_read_from_upstream() must relay back through the QUIC stream.
-        resp_body = None
-        try:
-            url = f"http://127.0.0.1:{HTTP_TARGET_PORT}/"
-            resp_body = http_get_via_socks5(url, QUIC_CLIENT_PROXY_PORT, timeout=8)
-        except Exception:
-            pass  # urllib may fail to parse an incomplete HTTP response; checked below.
+class H3ClientProtocol(QuicConnectionProtocol):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.h3 = H3Connection(self._quic)
+        self.response_data = b""
+        self.done = asyncio.Event()
+
+    def quic_event_received(self, event):
+        for h3_event in self.h3.handle_event(event):
+            if isinstance(h3_event, DataReceived):
+                self.response_data += h3_event.data
+            if getattr(h3_event, 'stream_ended', False):
+                self.done.set()
+
+async def main():
+    config = QuicConfiguration(alpn_protocols=["h3"], is_client=True)
+    config.verify_mode = 0
+    try:
+        async with async_connect(
+            "127.0.0.1",
+            {QUIC_SERVER_PORT},
+            configuration=config,
+            create_protocol=H3ClientProtocol,
+            wait_connected=True,
+        ) as protocol:
+            stream_id = protocol._quic.get_next_available_stream_id()
+            protocol.h3.send_headers(
+                stream_id=stream_id,
+                headers=[
+                    (b":method", b"GET"),
+                    (b":scheme", b"https"),
+                    (b":authority", b"127.0.0.1"),
+                    (b":path", b"/"),
+                    (b"user-agent", b"X" * 150),
+                ],
+                end_stream=True,
+            )
+            protocol.transmit()
+
+            try:
+                await asyncio.wait_for(protocol.done.wait(), timeout=5.0)
+                print("RESPONSE:", protocol.response_data.decode('utf-8', errors='replace'))
+            except asyncio.TimeoutError:
+                print("RESPONSE_TIMEOUT")
+    except Exception as e:
+        print(f"AIOQUIC_ERROR: {{e}}")
+
+asyncio.run(main())
+""")
+
+        result = __import__('subprocess').run(
+            [sys.executable, script_path],
+            capture_output=True, timeout=15
+        )
+        
+        stdout_str = result.stdout.decode('utf-8', errors='replace')
+        for line in stdout_str.splitlines():
+            if line.strip():
+                print_time_log(f"[T4] aioquic: {line}")
+        if result.stderr:
+            for line in result.stderr.decode('utf-8', errors='replace').splitlines():
+                if line.strip() and 'AIOQUIC_ERROR' not in line:
+                    print_time_log(f"[T4] aioquic stderr: {line}")
 
         # Verify server log shows HTTP upstream forwarding.
         m = wait_for_log(srv_log, r"HTTP upstream connected to", timeout=10)
@@ -548,11 +607,9 @@ def test_h3_upstream_fallback(binary_path):
             return False
 
         # Verify the response was relayed back through the QUIC stream to the client.
-        # The mock sends "HTTP/1.1 200 OK ... H3 Upstream Fallback!" as TCP;
-        # QuicProxySession::tcp_read_from_upstream() forwards it back via send_stream_data().
-        if resp_body is None or b"H3 Upstream Fallback!" not in resp_body:
+        if "H3 Upstream Fallback!" not in stdout_str:
             print_time_log(f"[T4] FAIL: mock response not relayed to client "
-                           f"(got {resp_body!r})")
+                           f"(got stdout: {stdout_str})")
             dump = True
             return False
 
@@ -563,7 +620,6 @@ def test_h3_upstream_fallback(binary_path):
         dump = True
         return False
     finally:
-        close_process(client, dump)
         close_process(server, dump)
         close_process(mock, dump)
 
@@ -1330,7 +1386,7 @@ async def main():
             wait_connected=False,
         ) as protocol:
             reader, writer = await protocol.create_stream()
-            writer.write(b"X" * 150)  # 150 bytes, no \r\n
+            writer.write(b"a" * 150)  # 150 bytes, no \r\n
             await writer.drain()
             writer.close()
             await asyncio.sleep(3)

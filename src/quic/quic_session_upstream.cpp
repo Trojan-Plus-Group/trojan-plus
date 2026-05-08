@@ -209,7 +209,6 @@ void QuicUpstreamHandler::tcp_read_from_upstream() {
                             h3->pump_h3_response();
                             locked_conn->pump_write();
                         }
-                        // if m_body_len > 0: on_read_data will see m_body_eof=true next call
                     }
                     close_tcp_only();
                     return;
@@ -230,7 +229,6 @@ void QuicUpstreamHandler::tcp_read_from_upstream() {
 void QuicUpstreamHandler::flush_tcp_read_buf(std::size_t bytes) {
     auto locked_conn = m_conn_ptr.lock();
     if (m_destroyed || !locked_conn || locked_conn->is_closed()) return;
-
 
     // H3 path: encode HTTP/1.1 response as HTTP/3 HEADERS + DATA frames.
     // Taken when the client sent valid H3 traffic (e.g. a real browser).
@@ -255,6 +253,7 @@ void QuicUpstreamHandler::flush_tcp_read_buf(std::size_t bytes) {
 
     if (m_resp_state == RespState::kParsingHeaders) {
         if (!m_resp_parser->is_header_done()) {
+            _log_with_date_time("QuicUpstreamHandler: flush_tcp_read_buf stream " + tp::to_string(m_stream_id) + " headers not done", Log::INFO);
             tcp_read_from_upstream();
             return;
         }
@@ -308,8 +307,7 @@ int QuicUpstreamHandler::submit_h3_response_headers() {
 
     unsigned status = msg.result_int();
     bool has_body = (m_method != "HEAD") &&
-                    (status != 204) && (status != 304) &&
-                    !m_resp_parser->is_done();
+                    (status != 204) && (status != 304);
 
     int rv = h3->submit_response(m_stream_id, hdrs, has_body);
     if (rv != 0) return rv;
@@ -380,9 +378,7 @@ void QuicUpstreamHandler::pump_h3_and_read() {
     }
 }
 
-nghttp3_ssize QuicUpstreamHandler::on_read_data(
-    nghttp3_vec* vec, std::size_t /*veccnt*/, uint32_t* pflags)
-{
+nghttp3_ssize QuicUpstreamHandler::on_read_data(nghttp3_vec* vec, std::size_t veccnt, uint32_t* pflags) {
     if (m_body_len == 0) {
         if (m_body_eof) {
             *pflags |= NGHTTP3_DATA_FLAG_EOF;
@@ -391,10 +387,14 @@ nghttp3_ssize QuicUpstreamHandler::on_read_data(
         m_reader_blocked = true;
         return NGHTTP3_ERR_WOULDBLOCK;
     }
+
+    std::size_t n = std::min(veccnt, std::size_t(1));
     vec[0].base = const_cast<uint8_t*>(m_body_ptr);
     vec[0].len  = m_body_len;
-    if (m_body_eof) *pflags |= NGHTTP3_DATA_FLAG_EOF;
-    m_reader_blocked = false;
+
+    if (m_body_eof) {
+        *pflags |= NGHTTP3_DATA_FLAG_EOF;
+    }
     return 1;
 }
 
@@ -478,6 +478,7 @@ int QuicUpstreamHandler::on_h3_header(const tp::string& name, const tp::string& 
 }
 
 int QuicUpstreamHandler::on_h3_end_headers(bool fin) {
+    _log_with_date_time("QuicUpstreamHandler: stream " + tp::to_string(m_stream_id) + " on_h3_end_headers called with fin=" + tp::to_string(fin), Log::INFO);
     if (m_method.empty()) {
         return NGHTTP3_ERR_CALLBACK_FAILURE;
     }
