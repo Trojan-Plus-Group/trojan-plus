@@ -68,8 +68,20 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     // Write pending stream data (call after every read or timer event).
     void pump_write();
 
+    // Drive the nghttp3→ngtcp2 pipeline for HTTP/3 responses.
+    void pump_h3_response();
+
     // Send data on an existing bidi stream. Returns false on error.
     int64_t send_stream_data(int64_t stream_id, const uint8_t* data, std::size_t datalen, bool fin);
+
+    // Send vectorised stream data sourced from nghttp3 (multi-vec variant).
+    // Returns pdatalen (bytes accepted by ngtcp2), 0 if flow-controlled, -1 on error.
+    int64_t send_stream_vecs(int64_t stream_id,
+                             const ngtcp2_vec* datav, std::size_t datavcnt, bool fin);
+
+    // Open a new server-initiated unidirectional stream (for H3 control/QPACK).
+    // Returns the stream ID, or -1 on error.
+    int64_t open_uni_stream();
 
     // Open a new client-initiated bidi stream. Returns -1 on error.
     int64_t open_bidi_stream();

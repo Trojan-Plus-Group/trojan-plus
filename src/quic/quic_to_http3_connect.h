@@ -34,6 +34,9 @@ class QuicToHttp3Connect {
     [[nodiscard]] bool init();
     [[nodiscard]] bool is_valid() const { return m_conn != nullptr; }
 
+    // Bind H3 server-initiated unidirectional streams (call once after handshake).
+    void bind_control_streams(int64_t ctrl_id, int64_t qenc_id, int64_t qdec_id);
+
     // Raw pointer — handler MUST call unregister_stream from destroy() before its
     // shared_ptr drops, while QuicConnection::m_stream_handlers still holds it.
     void register_stream(int64_t stream_id, QuicUpstreamHandler* handler);
@@ -43,6 +46,27 @@ class QuicToHttp3Connect {
     // on success) or a negative nghttp3 error code.
     nghttp3_ssize feed_stream_data(int64_t stream_id, const uint8_t* data,
                                    std::size_t len, bool fin);
+
+    // Submit an HTTP/3 response for stream_id.  headers must contain ":status"
+    // first.  Pass has_body=true to attach a streaming data_reader; false sends
+    // a header-only response with FIN.
+    int submit_response(int64_t stream_id,
+                        const tp::vector<std::pair<tp::string, tp::string>>& headers,
+                        bool has_body);
+
+    // Drive the nghttp3 write loop: pull encoded H3 frames and hand them to
+    // QuicConnection::send_stream_vecs, then call add_write_offset.
+    void pump_h3_response();
+
+    // Resume a stream that previously returned NGHTTP3_ERR_WOULDBLOCK from
+    // its data_reader, then immediately pump.
+    void resume_stream(int64_t stream_id);
+
+    // data_reader callback for nghttp3 — delegates to handler->on_read_data().
+    static nghttp3_ssize s_read_data(nghttp3_conn*, int64_t stream_id,
+                                     nghttp3_vec* vec, std::size_t veccnt,
+                                     uint32_t* pflags,
+                                     void* conn_user_data, void* stream_user_data);
 
   private:
     QuicUpstreamHandler* find_handler(int64_t stream_id);

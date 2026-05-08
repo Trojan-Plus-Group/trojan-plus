@@ -11,12 +11,16 @@
 #ifndef QUIC_SESSION_UPSTREAM_H
 #define QUIC_SESSION_UPSTREAM_H
 
+#include <limits>
 #include <memory>
 #include <cstdint>
 
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/steady_timer.hpp>
+#include <boost/beast/http.hpp>
+
+#include <nghttp3/nghttp3.h>
 
 #include "mem/memallocator.h"
 #include "quic_stream_handler.h"
@@ -24,11 +28,20 @@
 
 class Config;
 
+enum class RespState : uint8_t {
+    kParsingHeaders,
+    kStreamingBody,
+    kDone,
+    kError
+};
+
 // QuicUpstreamHandler: owns the TCP connection to the upstream HTTP/1.1 server
 // and performs the H3→H1.1 conversion. Decoded h3 events are delivered by
 // QuicToHttp3Connect via the on_h3_* methods below.
 class QuicUpstreamHandler : public QuicStreamHandler, public std::enable_shared_from_this<QuicUpstreamHandler> {
   public:
+    using H1RespParser = boost::beast::http::response_parser<boost::beast::http::buffer_body>;
+
     QuicUpstreamHandler(std::shared_ptr<QuicConnection> conn, int64_t stream_id,
                         const Config& config, boost::asio::io_context& io_ctx,
                         const tp::string& host, const tp::string& port_str);
@@ -49,11 +62,21 @@ class QuicUpstreamHandler : public QuicStreamHandler, public std::enable_shared_
     int on_h3_end_stream();
     int on_h3_stream_close(uint64_t app_error_code);
 
+    // Called by QuicToHttp3Connect::s_read_data (nghttp3 data_reader callback).
+    nghttp3_ssize on_read_data(nghttp3_vec* vec, std::size_t veccnt, uint32_t* pflags);
+    void notify_body_consumed(std::size_t n);
+
   private:
     void write_to_upstream(tp::string data, bool fin = false);
     void do_tcp_write();
     void tcp_read_from_upstream();
     void flush_tcp_read_buf(std::size_t offset, std::size_t bytes);
+
+    int  submit_h3_response_headers();
+    void process_body_chunk(std::size_t body_bytes, bool eof);
+    void pump_h3_and_read();
+    void handle_parse_error();
+    void close_tcp_only();
 
     std::weak_ptr<QuicConnection> m_conn_ptr;
     int64_t m_stream_id;
@@ -86,8 +109,19 @@ class QuicUpstreamHandler : public QuicStreamHandler, public std::enable_shared_
     tp::deque<TcpWriteBuffer> m_tcp_write_queue;
     bool m_is_writing_to_tcp{false};
 
-    tp::string m_tcp_buf;
+    tp::string m_tcp_buf;       // TCP read input (16 KB)
+    tp::string m_body_out_buf;  // Beast-decoded body output (16 KB)
     static constexpr std::size_t kTcpBufSize = 16 * 1024;
+
+    // HTTP/1.1 → HTTP/3 response conversion state
+    std::unique_ptr<H1RespParser> m_resp_parser;
+    RespState m_resp_state{RespState::kParsingHeaders};
+
+    // Body window for nghttp3 data_reader
+    const uint8_t* m_body_ptr{nullptr};
+    std::size_t    m_body_len{0};
+    bool           m_body_eof{false};
+    bool           m_reader_blocked{false};
 };
 
 #endif // QUIC_SESSION_UPSTREAM_H

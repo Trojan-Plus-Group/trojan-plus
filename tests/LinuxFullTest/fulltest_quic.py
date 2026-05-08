@@ -618,17 +618,25 @@ def test_idle_timeout(binary_path):
 
 
 def test_h3_upstream_unconfigured_drop(binary_path):
-    """T6: Non-trojan traffic with h3_upstream='' → session dropped cleanly, server stays alive."""
+    """T6: Non-trojan traffic with h3_upstream='' → server falls back to remote_addr (Trojan decoy), stays alive.
+
+    QuicProxySession::forward_to_h3_upstream() in src/quic/quic_session.cpp:
+      * h3_upstream non-empty           → forward there (covered by T4)
+      * h3_upstream empty, remote_addr  → fall back to remote_addr:remote_port
+                                          (classic Trojan decoy anti-probing)
+      * neither configured              → log "not configured, dropping" + destroy()
+
+    A real server config always has remote_addr set, so the implicit fallback
+    is the actual unconfigured-h3-upstream behavior to verify here.
+    """
     print_time_log("[T6] h3_upstream_unconfigured_drop: starting...")
 
-    # Server with h3_upstream explicitly empty (default config already has this,
-    # but we set it explicitly to make the test intent clear).
     srv_cfg = patch_quic_config("quic_server_config.json", {
         "remote_port": HTTP_TARGET_PORT,
         "quic": {"enabled": True, "h3_upstream": ""},
     })
     # Client with WRONG password so the server cannot authenticate the Trojan
-    # request and falls into forward_to_h3_upstream() → drop path.
+    # request and falls into forward_to_h3_upstream() → remote_addr fallback.
     cli_cfg = patch_quic_config("quic_client_config.json", {
         "password": ["wrongpassword_t6"],
     })
@@ -653,18 +661,25 @@ def test_h3_upstream_unconfigured_drop(binary_path):
             return False
 
         # Send a request – the wrong password causes an auth failure on the server,
-        # which triggers forward_to_h3_upstream() with an empty h3_upstream.
-        # The request will fail from the client's perspective; that is expected.
+        # which triggers forward_to_h3_upstream(). With h3_upstream empty, it
+        # falls back to remote_addr:remote_port (the configured HTTP target).
         try:
             url = f"http://127.0.0.1:{HTTP_TARGET_PORT}/"
             http_get_via_socks5(url, QUIC_CLIENT_PROXY_PORT, timeout=5)
         except Exception:
-            pass  # Connection will be dropped; client-side error is expected.
+            pass  # The wrong-password garbage won't be a valid HTTP request from
+                  # urllib's perspective; client-side parse failure is expected.
 
-        # The server must log the drop message from forward_to_h3_upstream().
-        m = wait_for_log(srv_log, r"h3_upstream not configured, dropping", timeout=10)
-        if not m:
-            print_time_log("[T6] FAIL: 'h3_upstream not configured, dropping' not found in server log")
+        # The server must log the invalid-password fallback.
+        if not wait_for_log(srv_log, r"invalid password, forwarding to h3_upstream", timeout=10):
+            print_time_log("[T6] FAIL: 'invalid password, forwarding to h3_upstream' not found in server log")
+            dump = True
+            return False
+
+        # And it must fall back to remote_addr:remote_port (the legacy Trojan decoy path).
+        fallback_pat = r"falling back to h3_upstream 127\.0\.0\.1:" + str(HTTP_TARGET_PORT)
+        if not wait_for_log(srv_log, fallback_pat, timeout=5):
+            print_time_log(f"[T6] FAIL: server did not fall back to remote_addr:{HTTP_TARGET_PORT}")
             dump = True
             return False
 

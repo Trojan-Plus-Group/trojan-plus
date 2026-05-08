@@ -36,6 +36,10 @@ QuicUpstreamHandler::QuicUpstreamHandler(
       m_resolver(io_ctx),
       m_write_timer(io_ctx) {
     m_tcp_buf.resize(kTcpBufSize, '\0');
+    m_body_out_buf.resize(kTcpBufSize, '\0');
+    m_resp_parser = std::make_unique<H1RespParser>();
+    m_resp_parser->eager(true);
+    m_resp_parser->body_limit((std::numeric_limits<uint64_t>::max)());
 }
 
 QuicUpstreamHandler::~QuicUpstreamHandler() = default;
@@ -200,6 +204,23 @@ void QuicUpstreamHandler::tcp_read_from_upstream() {
             }
             auto locked_conn = m_conn_ptr.lock();
             if (ec) {
+                if (locked_conn && !locked_conn->is_closed() &&
+                    m_resp_state == RespState::kStreamingBody) {
+                    m_body_eof = true;
+                    auto* h3 = locked_conn->h3_if_exists();
+                    if (h3) {
+                        if (m_reader_blocked) {
+                            m_reader_blocked = false;
+                            h3->resume_stream(m_stream_id);
+                        } else if (m_body_len == 0) {
+                            h3->pump_h3_response();
+                            locked_conn->pump_write();
+                        }
+                        // if m_body_len > 0: on_read_data will see m_body_eof=true next call
+                    }
+                    close_tcp_only();
+                    return;
+                }
                 if (locked_conn && !locked_conn->is_closed()) {
                     locked_conn->send_stream_data(m_stream_id, nullptr, 0, true);
                     locked_conn->pump_write();
@@ -215,33 +236,221 @@ void QuicUpstreamHandler::tcp_read_from_upstream() {
 
 void QuicUpstreamHandler::flush_tcp_read_buf(std::size_t offset, std::size_t bytes) {
     auto locked_conn = m_conn_ptr.lock();
-    if (m_destroyed || !locked_conn || locked_conn->is_closed()) {
+    if (m_destroyed || !locked_conn || locked_conn->is_closed()) return;
+
+    // When the incoming stream was not valid H3 (m_valid=false), forward raw
+    // response bytes back to the QUIC stream without H3 framing.
+    if (!m_valid) {
+        int64_t written = locked_conn->send_stream_data(
+            m_stream_id,
+            reinterpret_cast<const uint8_t*>(m_tcp_buf.data() + offset),
+            bytes - offset, false);
+        if (written < 0) { destroy(); return; }
+        locked_conn->pump_write();
+        offset += static_cast<std::size_t>(written);
+        if (offset < bytes) {
+            m_write_timer.expires_after(std::chrono::milliseconds(5));
+            auto self = shared_from_this();
+            m_write_timer.async_wait([this, self, offset, bytes](const boost::system::error_code& ec) {
+                if (!ec && !m_destroyed) flush_tcp_read_buf(offset, bytes);
+            });
+        } else {
+            tcp_read_from_upstream();
+        }
         return;
     }
 
-    int64_t written = locked_conn->send_stream_data(
-        m_stream_id,
-        reinterpret_cast<const uint8_t*>(m_tcp_buf.data() + offset),
-        bytes - offset, false);
+    // H3 path: encode HTTP/1.1 response as HTTP/3 HEADERS + DATA frames.
+    // Taken when the client sent valid H3 traffic (e.g. a real browser).
+    // Point Beast's body output at m_body_out_buf for this call.
+    auto& body = m_resp_parser->get().body();
+    body.data = static_cast<void*>(const_cast<char*>(m_body_out_buf.data()));
+    body.size = kTcpBufSize;
+    body.more = true;
 
-    if (written < 0) {
-        destroy();
+    boost::system::error_code ec;
+    m_resp_parser->put(boost::asio::buffer(m_tcp_buf.data(), bytes), ec);
+
+    if (ec && ec != boost::beast::http::error::need_more) {
+        _log_with_date_time("QuicUpstreamHandler: Beast parse error stream " +
+            tp::to_string(m_stream_id) + ": " + tp::string(ec.message().c_str()), Log::ERROR);
+        handle_parse_error();
         return;
     }
 
-    locked_conn->pump_write();
+    const std::size_t body_bytes = kTcpBufSize - body.size;
+    const bool resp_done = m_resp_parser->is_done();
 
-    offset += written;
-    if (offset < bytes) {
+    if (m_resp_state == RespState::kParsingHeaders) {
+        if (!m_resp_parser->is_header_done()) {
+            tcp_read_from_upstream();
+            return;
+        }
+
+        if (submit_h3_response_headers() != 0) {
+            handle_parse_error();
+            return;
+        }
+        // submit_h3_response_headers sets m_resp_state to kStreamingBody or kDone.
+        if (m_resp_state == RespState::kDone) return;
+
+        if (body_bytes > 0 || resp_done) {
+            process_body_chunk(body_bytes, resp_done);
+        } else {
+            tcp_read_from_upstream();
+        }
+        return;
+    }
+
+    if (m_resp_state == RespState::kStreamingBody) {
+        process_body_chunk(body_bytes, resp_done);
+    }
+}
+
+// ---- HTTP/1.1 → HTTP/3 response conversion helpers --------------------------
+
+int QuicUpstreamHandler::submit_h3_response_headers() {
+    auto locked_conn = m_conn_ptr.lock();
+    if (!locked_conn) return -1;
+    auto* h3 = locked_conn->h3_if_exists();
+    if (!h3) return -1;
+
+    auto& msg = m_resp_parser->get();
+
+    tp::vector<std::pair<tp::string, tp::string>> hdrs;
+    hdrs.reserve(8);
+    hdrs.push_back({":status", tp::to_string(static_cast<unsigned>(msg.result_int()))});
+
+    static const std::initializer_list<std::string_view> kSkip = {
+        "connection", "keep-alive", "transfer-encoding",
+        "proxy-connection", "upgrade", "te", "trailers"
+    };
+    for (auto const& f : msg) {
+        tp::string name(f.name_string().data(), f.name_string().size());
+        for (auto& c : name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        bool skip = false;
+        for (auto sv : kSkip) { if (name == sv) { skip = true; break; } }
+        if (skip) continue;
+        hdrs.push_back({std::move(name), tp::string(f.value().data(), f.value().size())});
+    }
+
+    unsigned status = msg.result_int();
+    bool has_body = (m_method != "HEAD") &&
+                    (status != 204) && (status != 304) &&
+                    !m_resp_parser->is_done();
+
+    int rv = h3->submit_response(m_stream_id, hdrs, has_body);
+    if (rv != 0) return rv;
+
+    // Pump to push the HEADERS frame (and FIN if no body) into ngtcp2.
+    // For has_body: pump triggers the first data_reader call; it returns
+    // WOULDBLOCK (m_body_len==0) setting m_reader_blocked=true.
+    locked_conn->pump_h3_response();
+    m_resp_state = has_body ? RespState::kStreamingBody : RespState::kDone;
+    return 0;
+}
+
+void QuicUpstreamHandler::process_body_chunk(std::size_t body_bytes, bool eof) {
+    auto locked_conn = m_conn_ptr.lock();
+    if (m_destroyed || !locked_conn || locked_conn->is_closed()) return;
+
+    m_body_eof = eof;
+
+    if (body_bytes > 0) {
+        m_body_ptr = reinterpret_cast<const uint8_t*>(m_body_out_buf.data());
+        m_body_len = body_bytes;
+    }
+
+    if (m_reader_blocked) {
+        // nghttp3 has this stream marked as blocked; must call resume_stream
+        // before it will invoke the data_reader again.
+        m_reader_blocked = false;
+        auto* h3 = locked_conn->h3_if_exists();
+        if (h3) h3->resume_stream(m_stream_id);
+        // resume_stream calls pump_h3_response internally; after returning,
+        // m_body_len reflects how much body data ngtcp2 accepted.
+        if (m_body_len == 0 && !m_body_eof) {
+            tcp_read_from_upstream();
+        } else if (m_body_len > 0) {
+            pump_h3_and_read();  // still pending, handle flow control
+        }
+        // if m_body_len==0 && m_body_eof: EOF was already signaled by on_read_data
+    } else if (body_bytes > 0 || eof) {
+        pump_h3_and_read();
+    } else {
+        // No decoded body bytes yet (pure chunked framing consumed); read more.
+        tcp_read_from_upstream();
+    }
+}
+
+void QuicUpstreamHandler::pump_h3_and_read() {
+    auto locked_conn = m_conn_ptr.lock();
+    if (!locked_conn || locked_conn->is_closed() || m_destroyed) return;
+
+    locked_conn->pump_h3_response();  // drives writev_stream → ngtcp2 → network
+
+    if (m_body_len > 0) {
+        // QUIC flow-control blocked; retry after a short delay.
         m_write_timer.expires_after(std::chrono::milliseconds(5));
         auto self = shared_from_this();
-        m_write_timer.async_wait([this, self, offset, bytes](const boost::system::error_code& ec) {
-            if (!ec && !m_destroyed) {
-                flush_tcp_read_buf(offset, bytes);
-            }
+        m_write_timer.async_wait([this, self](const boost::system::error_code& ec) {
+            if (!ec && !m_destroyed) pump_h3_and_read();
         });
-    } else {
+        return;
+    }
+
+    m_body_ptr = nullptr;
+
+    if (!m_body_eof && m_resp_state == RespState::kStreamingBody && !m_destroyed) {
         tcp_read_from_upstream();
+    } else if (m_body_eof) {
+        m_resp_state = RespState::kDone;
+    }
+}
+
+nghttp3_ssize QuicUpstreamHandler::on_read_data(
+    nghttp3_vec* vec, std::size_t /*veccnt*/, uint32_t* pflags)
+{
+    if (m_body_len == 0) {
+        if (m_body_eof) {
+            *pflags |= NGHTTP3_DATA_FLAG_EOF;
+            return 0;
+        }
+        m_reader_blocked = true;
+        return NGHTTP3_ERR_WOULDBLOCK;
+    }
+    vec[0].base = const_cast<uint8_t*>(m_body_ptr);
+    vec[0].len  = m_body_len;
+    if (m_body_eof) *pflags |= NGHTTP3_DATA_FLAG_EOF;
+    m_reader_blocked = false;
+    return 1;
+}
+
+void QuicUpstreamHandler::notify_body_consumed(std::size_t n) {
+    if (n >= m_body_len) {
+        m_body_ptr = nullptr;
+        m_body_len = 0;
+    } else {
+        m_body_ptr += n;
+        m_body_len -= n;
+    }
+}
+
+void QuicUpstreamHandler::handle_parse_error() {
+    auto locked_conn = m_conn_ptr.lock();
+    if (locked_conn && !locked_conn->is_closed()) {
+        locked_conn->send_stream_data(m_stream_id, nullptr, 0, true);
+        locked_conn->pump_write();
+    }
+    destroy();
+}
+
+void QuicUpstreamHandler::close_tcp_only() {
+    m_resolver.cancel();
+    boost::system::error_code ec;
+    if (m_tcp_socket.is_open()) {
+        ec = m_tcp_socket.shutdown(boost::asio::socket_base::shutdown_both, ec);
+        ec = m_tcp_socket.close(ec);
     }
 }
 

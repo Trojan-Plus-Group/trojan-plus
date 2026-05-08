@@ -36,47 +36,55 @@ try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 s.bind(('127.0.0.1', port))
-                s.listen(1)
+                s.listen(8)
                 print_time_log(f"h3_upstream TCP mock server listening on 127.0.0.1:{port}")
 
-                conn, addr = s.accept()
-                print_time_log(f"h3_upstream TCP mock server accepted connection from {addr}")
+                # Loop accepting connections so that spurious probes (e.g. SOCKS5
+                # port-readiness checks that reach the trojan client and trigger
+                # an empty upstream session) do not consume the single accept slot
+                # before the real request arrives.
+                while True:
+                    conn, addr = s.accept()
+                    print_time_log(f"h3_upstream TCP mock server accepted connection from {addr}")
+                    try:
+                        request = b""
+                        while b"\r\n\r\n" not in request:
+                            chunk = conn.recv(4096)
+                            if not chunk:
+                                break
+                            request += chunk
 
-                # Receive HTTP/1.1 request
-                request = b""
-                while b"\r\n\r\n" not in request:
-                    chunk = conn.recv(4096)
-                    if not chunk:
-                        break
-                    request += chunk
+                        print_time_log(f"h3_upstream TCP mock server received {len(request)} bytes from {addr}")
 
-                print_time_log(f"h3_upstream TCP mock server received {len(request)} bytes from {addr}")
+                        request_text = request.decode('utf-8', errors='replace')
+                        first_line = request_text.split("\r\n")[0]
 
-                # Verify HTTP/1.1 format (request line like "GET /path HTTP/1.1")
-                request_text = request.decode('utf-8', errors='replace')
-                first_line = request_text.split("\r\n")[0]
+                        valid_methods = ["GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH"]
+                        is_valid = any(first_line.startswith(m + " ") for m in valid_methods)
 
-                # Check for valid HTTP/1.1 request line
-                valid_methods = ["GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH"]
-                is_valid = any(first_line.startswith(m + " ") for m in valid_methods)
+                        if not is_valid:
+                            print_time_log(f"h3_upstream TCP mock server: invalid request line: {first_line}")
 
-                if not is_valid:
-                    print_time_log(f"h3_upstream TCP mock server: invalid request line: {first_line}")
-
-                # Send HTTP/1.1 response
-                response = (
-                    "HTTP/1.1 200 OK\r\n"
-                    "Content-Type: text/plain\r\n"
-                    "Content-Length: 21\r\n"
-                    "Connection: close\r\n"
-                    "\r\n"
-                    "H3 Upstream Fallback!"
-                )
-                conn.sendall(response.encode('utf-8'))
-                print_time_log(f"h3_upstream TCP mock server sent response to {addr}")
-
-                conn.close()
-                print_time_log(f"h3_upstream TCP mock server closed connection from {addr}")
+                        # Skip sending a response if the peer never sent any data —
+                        # such a connection is a stray probe and replying could
+                        # confuse the test's "sent response" log assertion.
+                        if len(request) > 0:
+                            response = (
+                                "HTTP/1.1 200 OK\r\n"
+                                "Content-Type: text/plain\r\n"
+                                "Content-Length: 21\r\n"
+                                "Connection: close\r\n"
+                                "\r\n"
+                                "H3 Upstream Fallback!"
+                            )
+                            conn.sendall(response.encode('utf-8'))
+                            print_time_log(f"h3_upstream TCP mock server sent response to {addr}")
+                    finally:
+                        try:
+                            conn.close()
+                        except Exception:
+                            pass
+                        print_time_log(f"h3_upstream TCP mock server closed connection from {addr}")
 
         except Exception as e:
             print_time_log(f"h3_upstream TCP mock server runtime error: {e}")

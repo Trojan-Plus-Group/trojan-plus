@@ -175,7 +175,7 @@ void QuicProxySession::forward_to_h3_upstream(bool fin) {
         port_str = tp::to_string(m_config.get_remote_port());
     } else {
         _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) +
-                                " no h3_upstream or remote_addr configured, dropping",
+                                " h3_upstream not configured, dropping",
                             Log::WARN);
         destroy();
         return;

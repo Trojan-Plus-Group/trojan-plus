@@ -397,6 +397,9 @@ void QuicConnection::on_packet(const uint8_t* data, std::size_t datalen,
         return;
     }
     pump_write();
+    if (m_h3) {
+        m_h3->pump_h3_response();
+    }
     reschedule_loss_timer();
 }
 
@@ -537,10 +540,59 @@ void QuicConnection::set_stream_handler(int64_t stream_id, std::shared_ptr<QuicS
     m_stream_handlers[stream_id] = std::move(handler);
 }
 
+int64_t QuicConnection::open_uni_stream() {
+    if (!m_conn) return -1;
+    int64_t id = -1;
+    if (ngtcp2_conn_open_uni_stream(m_conn, &id, nullptr) != 0) return -1;
+    return id;
+}
+
+int64_t QuicConnection::send_stream_vecs(int64_t stream_id,
+                                          const ngtcp2_vec* datav,
+                                          std::size_t datavcnt, bool fin) {
+    if (m_closed || !m_conn) return -1;
+
+    ngtcp2_path_storage ps;
+    ngtcp2_path_storage_zero(&ps);
+    ngtcp2_pkt_info pi{};
+    ngtcp2_ssize pdatalen = -1;
+
+    uint32_t flags = 0;
+    if (fin) flags |= NGTCP2_WRITE_STREAM_FLAG_FIN;
+
+    auto nwrite = ngtcp2_conn_writev_stream(
+        m_conn, &ps.path, &pi,
+        m_write_buf.data(), m_write_buf.size(),
+        &pdatalen, flags,
+        stream_id, datav, datavcnt, now_nanos());
+
+    if (nwrite == NGTCP2_ERR_STREAM_DATA_BLOCKED) return 0;
+    if (nwrite < 0) return -1;
+    if (nwrite > 0) {
+        m_endpoint.send_packet(m_peer, m_write_buf.data(), static_cast<std::size_t>(nwrite));
+    }
+    return pdatalen > 0 ? static_cast<int64_t>(pdatalen) : (fin ? 0 : 0);
+}
+
+void QuicConnection::pump_h3_response() {
+    if (m_h3) {
+        m_h3->pump_h3_response();
+    }
+    pump_write();
+}
+
 QuicToHttp3Connect& QuicConnection::get_or_create_h3() {
     if (!m_h3) {
         m_h3 = std::make_unique<QuicToHttp3Connect>(*this);
-        (void)m_h3->init();
+        if (m_h3->init() && m_handshake_done && m_is_server) {
+            int64_t ctrl = open_uni_stream();
+            int64_t qenc = open_uni_stream();
+            int64_t qdec = open_uni_stream();
+            if (ctrl >= 0 && qenc >= 0 && qdec >= 0) {
+                m_h3->bind_control_streams(ctrl, qenc, qdec);
+            }
+            pump_write();
+        }
     }
     return *m_h3;
 }
