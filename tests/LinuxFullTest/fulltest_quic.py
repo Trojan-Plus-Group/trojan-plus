@@ -1409,15 +1409,23 @@ ALL_TESTS = [
 ]
 
 
-def main(binary_path):
+def main(binary_path, test_tag='all'):
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
-    print_time_log("===== QUIC Integration Tests =====")
+    print_time_log(f"===== QUIC Integration Tests ({test_tag}) =====")
 
     # Ensure test files exist.
     if not os.path.isdir(TEST_FILES_DIR):
         print_time_log(f"Test files directory '{TEST_FILES_DIR}' not found. "
                        "Run with -g to generate test files first.")
         return 1
+
+    # Filter tests if a specific tag is requested
+    tests_to_run = ALL_TESTS
+    if test_tag and test_tag != 'all':
+        tests_to_run = [t for t in ALL_TESTS if t[0].upper() == test_tag.upper()]
+        if not tests_to_run:
+            print_time_log(f"Unknown QUIC test tag: {test_tag}")
+            return 1
 
     # Kill any leftover processes on our ports.
     if not is_windows_system():
@@ -1433,7 +1441,7 @@ def main(binary_path):
     passed = 0
     failed = 0
     try:
-        for tag, fn in ALL_TESTS:
+        for tag, fn in tests_to_run:
             print_time_log(f"--- Running {tag} ---")
             try:
                 if fn(binary_path):
@@ -1455,7 +1463,8 @@ def main(binary_path):
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:
-        print(f"Usage: {sys.argv[0]} <trojan-binary-path>")
+        print(f"Usage: {sys.argv[0]} <trojan-binary-path> [test-tag]")
         sys.exit(1)
     binary = os.path.abspath(sys.argv[1])
-    sys.exit(main(binary))
+    tag = sys.argv[2] if len(sys.argv) > 2 else 'all'
+    sys.exit(main(binary, tag))
