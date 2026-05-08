@@ -91,6 +91,7 @@ class QuicUpstreamHandler : public QuicStreamHandler, public std::enable_shared_
     bool m_has_content_length{false};
     bool m_fin_sent{false};
     bool m_destroyed{false};
+    std::size_t m_unacked_stream_bytes{0};
 
     tp::string m_host;
     tp::string m_port_str;
@@ -100,6 +101,7 @@ class QuicUpstreamHandler : public QuicStreamHandler, public std::enable_shared_
 
     struct TcpWriteBuffer {
         tp::string data;
+        std::size_t stream_bytes{0};
         bool fin{false};
     };
     tp::deque<TcpWriteBuffer> m_tcp_write_queue;

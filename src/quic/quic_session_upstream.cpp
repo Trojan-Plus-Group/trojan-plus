@@ -86,6 +86,7 @@ void QuicUpstreamHandler::on_stream_data(const uint8_t* data, size_t len, bool f
     if (!locked_conn || locked_conn->is_closed()) return;
 
     auto& h3 = locked_conn->get_or_create_h3();
+    m_unacked_stream_bytes += len;
     auto consumed = h3.feed_stream_data(m_stream_id, data, len, fin);
     if (consumed < 0) {
         _log_with_date_time("QuicUpstreamHandler: H3 protocol error on stream " +
@@ -137,7 +138,8 @@ void QuicUpstreamHandler::write_to_upstream(tp::string data, bool fin) {
     if (data.empty() && !fin) {
         return;
     }
-    m_tcp_write_queue.push_back({std::move(data), fin});
+    m_tcp_write_queue.push_back({std::move(data), m_unacked_stream_bytes, fin});
+    m_unacked_stream_bytes = 0;
     if (!m_is_writing_to_tcp && m_tcp_socket.is_open()) {
         do_tcp_write();
     }
@@ -162,12 +164,13 @@ void QuicUpstreamHandler::do_tcp_write() {
     }
 
     auto buf = TP_MAKE_SHARED(tp::string, std::move(front.data));
+    std::size_t stream_bytes = front.stream_bytes;
     bool fin = front.fin;
     m_tcp_write_queue.pop_front();
 
     boost::asio::async_write(
         m_tcp_socket, boost::asio::buffer(*buf),
-        [this, self, buf, fin](const boost::system::error_code& ec, std::size_t) {
+        [this, self, buf, fin, stream_bytes](const boost::system::error_code& ec, std::size_t) {
             if (m_destroyed) {
                 return;
             }
@@ -175,6 +178,12 @@ void QuicUpstreamHandler::do_tcp_write() {
                 destroy();
                 return;
             }
+
+            auto locked_conn = m_conn_ptr.lock();
+            if (locked_conn) {
+                locked_conn->extend_window(m_stream_id, stream_bytes);
+            }
+
             if (fin && buf->empty()) {
                 boost::system::error_code ec2;
                 ec2 = m_tcp_socket.shutdown(boost::asio::socket_base::shutdown_send, ec2);
@@ -204,7 +213,6 @@ void QuicUpstreamHandler::tcp_read_from_upstream() {
                     auto* h3 = locked_conn->h3_if_exists();
                     if (h3) {
                         h3->resume_stream(m_stream_id);
-                        h3->pump_h3_response();
                         locked_conn->pump_write();
                     }
                     close_tcp_only();

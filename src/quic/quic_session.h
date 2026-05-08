@@ -83,12 +83,14 @@ class QuicProxySession : public QuicStreamHandler, public std::enable_shared_fro
 
     bool m_request_parsed{false};
     bool m_destroyed{false};
+    std::size_t m_unacked_stream_bytes{0};
 
     static constexpr std::size_t kTcpBufSize = 16 * 1024;
     boost::asio::steady_timer m_write_timer;
 
     struct TcpWriteBuffer {
         tp::string data;
+        std::size_t stream_bytes{0};
         bool fin{false};
     };
     tp::deque<TcpWriteBuffer> m_tcp_write_queue;

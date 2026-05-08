@@ -85,12 +85,14 @@ int QuicConnection::cb_recv_stream_data(ngtcp2_conn* conn, uint32_t flags, int64
     if (it != self->m_stream_handlers.end()) {
         auto handler = it->second;
         handler->on_stream_data(data, datalen, fin);
+        // Manual flow control: handler must call extend_window() when data is consumed.
     } else if (self->on_stream_data_cb) {
         self->on_stream_data_cb(stream_id, data, datalen, fin);
+        // Default behavior for simple callbacks: extend window immediately.
+        ngtcp2_conn_extend_max_stream_offset(conn, stream_id, datalen);
+        ngtcp2_conn_extend_max_offset(conn, datalen);
     }
 
-    ngtcp2_conn_extend_max_stream_offset(conn, stream_id, datalen);
-    ngtcp2_conn_extend_max_offset(conn, datalen);
     return 0;
 }
 
@@ -744,4 +746,11 @@ void QuicConnection::reschedule_loss_timer() {
         pump_write();
         reschedule_loss_timer();
     });
+}
+
+void QuicConnection::extend_window(int64_t stream_id, std::size_t n) {
+    if (m_conn && !m_closed && n > 0) {
+        ngtcp2_conn_extend_max_stream_offset(m_conn, stream_id, n);
+        ngtcp2_conn_extend_max_offset(m_conn, n);
+    }
 }

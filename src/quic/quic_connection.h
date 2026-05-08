@@ -100,6 +100,10 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     // Gracefully close the connection with an optional application error code.
     void close(uint64_t app_error_code = 0);
 
+    // Manually extend the QUIC flow control window for a stream.
+    // Call this after the application has processed/sent received data.
+    void extend_window(int64_t stream_id, std::size_t n);
+
     [[nodiscard]] bool is_closed() const { return m_closed; }
     [[nodiscard]] bool is_handshake_done() const { return m_handshake_done; }
     [[nodiscard]] const boost::asio::ip::udp::endpoint& peer() const { return m_peer; }

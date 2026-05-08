@@ -53,6 +53,7 @@ void QuicProxySession::on_stream_data(const uint8_t* data, std::size_t len, bool
     if (m_destroyed) {
         return;
     }
+    m_unacked_stream_bytes += len;
     m_recv_buf.append(reinterpret_cast<const char*>(data), len);
 
     if (Log::level == Log::ALL) {
@@ -231,7 +232,8 @@ void QuicProxySession::write_to_target(tp::string data, bool fin) {
     if (data.empty() && !fin) {
         return;
     }
-    m_tcp_write_queue.push_back({std::move(data), fin});
+    m_tcp_write_queue.push_back({std::move(data), m_unacked_stream_bytes, fin});
+    m_unacked_stream_bytes = 0;
     if (!m_is_writing_to_tcp && m_tcp_socket.is_open()) {
         do_tcp_write();
     }
@@ -257,12 +259,13 @@ void QuicProxySession::do_tcp_write() {
     }
 
     auto buf = TP_MAKE_SHARED(tp::string, std::move(front.data));
+    std::size_t stream_bytes = front.stream_bytes;
     bool fin = front.fin;
     m_tcp_write_queue.pop_front();
 
     boost::asio::async_write(
         m_tcp_socket, boost::asio::buffer(*buf),
-        [this, self, buf, fin](const boost::system::error_code& ec, std::size_t) {
+        [this, self, buf, fin, stream_bytes](const boost::system::error_code& ec, std::size_t) {
             if (m_destroyed) {
                 return;
             }
@@ -270,6 +273,12 @@ void QuicProxySession::do_tcp_write() {
                 destroy();
                 return;
             }
+
+            auto locked_conn = m_conn.lock();
+            if (locked_conn) {
+                locked_conn->extend_window(m_stream_id, stream_bytes);
+            }
+
             // Only shutdown send if there's no data (FIN-only case)
             // If we sent data with fin=true, wait for response before closing
             if (fin && buf->empty()) {
@@ -447,13 +456,22 @@ void QuicProxySession::out_udp_async_write(const std::string_view& data, const b
 
     auto self = shared_from_this();
     auto data_copy = TP_MAKE_SHARED(tp::string, data);
+    std::size_t stream_bytes = m_unacked_stream_bytes;
+    m_unacked_stream_bytes = 0;
+
     m_udp_socket.async_send_to(boost::asio::buffer(*data_copy), endpoint,
-        [this, self, data_copy](const boost::system::error_code& ec, std::size_t) {
+        [this, self, data_copy, stream_bytes](const boost::system::error_code& ec, std::size_t) {
             if (m_destroyed) return;
             if (ec) {
                 destroy();
                 return;
             }
+            
+            auto locked_conn = m_conn.lock();
+            if (locked_conn) {
+                locked_conn->extend_window(m_stream_id, stream_bytes);
+            }
+            
             out_udp_sent();
         });
 }
