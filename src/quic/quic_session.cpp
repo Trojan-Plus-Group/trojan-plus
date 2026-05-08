@@ -197,7 +197,7 @@ void QuicProxySession::forward_to_h3_upstream(bool fin) {
         return;
     }
 
-    auto h3_handler = TP_MAKE_SHARED(QuicUpstreamHandler, locked_conn, m_stream_id, m_config, m_io_ctx, host, port_str);
+    auto h3_handler = TP_MAKE_SHARED(QuicUpstreamHandler, locked_conn, m_stream_id, m_io_ctx, host, port_str);
 
     // Register with h3 BEFORE set_stream_handler so the first on_stream_data
     // feed can already find the handler via QuicToHttp3Connect::m_streams.

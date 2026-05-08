@@ -43,7 +43,7 @@ class QuicUpstreamHandler : public QuicStreamHandler, public std::enable_shared_
     using H1RespParser = boost::beast::http::response_parser<boost::beast::http::buffer_body>;
 
     QuicUpstreamHandler(std::shared_ptr<QuicConnection> conn, int64_t stream_id,
-                        const Config& config, boost::asio::io_context& io_ctx,
+                        boost::asio::io_context& io_ctx,
                         const tp::string& host, const tp::string& port_str);
     ~QuicUpstreamHandler() override;
 
@@ -52,7 +52,6 @@ class QuicUpstreamHandler : public QuicStreamHandler, public std::enable_shared_
     void on_stream_close() override;
     void destroy();
 
-    [[nodiscard]] bool is_valid() const { return m_valid; }
 
     // Called by QuicToHttp3Connect callbacks with already-decoded values.
     int on_h3_begin_headers();
@@ -70,7 +69,7 @@ class QuicUpstreamHandler : public QuicStreamHandler, public std::enable_shared_
     void write_to_upstream(tp::string data, bool fin = false);
     void do_tcp_write();
     void tcp_read_from_upstream();
-    void flush_tcp_read_buf(std::size_t offset, std::size_t bytes);
+    void flush_tcp_read_buf(std::size_t bytes);
 
     int  submit_h3_response_headers();
     void process_body_chunk(std::size_t body_bytes, bool eof);
@@ -80,8 +79,6 @@ class QuicUpstreamHandler : public QuicStreamHandler, public std::enable_shared_
 
     std::weak_ptr<QuicConnection> m_conn_ptr;
     int64_t m_stream_id;
-    const Config& m_config;
-    boost::asio::io_context& m_io_ctx;
 
     tp::string m_http1_request;
     tp::string m_method;
@@ -90,7 +87,6 @@ class QuicUpstreamHandler : public QuicStreamHandler, public std::enable_shared_
     tp::string m_path;
     tp::string m_regular_headers;
     bool m_request_complete{false};
-    bool m_valid{true};
     bool m_chunked_body{false};
     bool m_has_content_length{false};
     bool m_fin_sent{false};

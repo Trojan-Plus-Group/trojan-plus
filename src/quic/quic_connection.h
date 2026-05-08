@@ -94,8 +94,8 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     QuicToHttp3Connect& get_or_create_h3();
     [[nodiscard]] QuicToHttp3Connect* h3_if_exists() const { return m_h3.get(); }
 
-    // Gracefully close the connection.
-    void close();
+    // Gracefully close the connection with an optional application error code.
+    void close(uint64_t app_error_code = 0);
 
     [[nodiscard]] bool is_closed() const { return m_closed; }
     [[nodiscard]] bool is_handshake_done() const { return m_handshake_done; }

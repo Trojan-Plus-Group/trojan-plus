@@ -603,7 +603,7 @@ void QuicConnection::remove_stream_handler(int64_t stream_id) {
 
 // ---- close ------------------------------------------------------------------
 
-void QuicConnection::close() {
+void QuicConnection::close(uint64_t app_error_code) {
     if (m_closed) {
         return;
     }
@@ -614,9 +614,19 @@ void QuicConnection::close() {
         ngtcp2_path_storage_zero(&ps);
         ngtcp2_pkt_info pi{};
         ngtcp2_ccerr    ccerr;
-        ngtcp2_ccerr_default(&ccerr);
-        ngtcp2_conn_write_connection_close(m_conn, &ps.path, &pi, m_write_buf.data(), m_write_buf.size(), &ccerr,
-                                          now_nanos());
+        if (app_error_code == 0) {
+            ngtcp2_ccerr_default(&ccerr);
+        } else {
+            ccerr.type       = NGTCP2_CCERR_TYPE_APPLICATION;
+            ccerr.error_code = app_error_code;
+            ccerr.reasonlen  = 0;
+            ccerr.reason     = nullptr;
+        }
+        auto nwrite = ngtcp2_conn_write_connection_close(m_conn, &ps.path, &pi, m_write_buf.data(),
+                                                         m_write_buf.size(), &ccerr, now_nanos());
+        if (nwrite > 0) {
+            m_endpoint.send_packet(m_peer, m_write_buf.data(), static_cast<std::size_t>(nwrite));
+        }
     }
 }
 

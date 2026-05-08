@@ -23,13 +23,11 @@
 
 QuicUpstreamHandler::QuicUpstreamHandler(
     std::shared_ptr<QuicConnection> conn, int64_t stream_id,
-    const Config& config, boost::asio::io_context& io_ctx,
+    boost::asio::io_context& io_ctx,
     const tp::string& host, const tp::string& port_str)
     : m_conn_ptr(conn),
       m_stream_id(stream_id),
-      m_config(config),
-      m_io_ctx(io_ctx),
-      m_valid(true),
+      m_destroyed(false),
       m_host(host),
       m_port_str(port_str),
       m_tcp_socket(io_ctx),
@@ -88,26 +86,21 @@ void QuicUpstreamHandler::on_stream_data(const uint8_t* data, size_t len, bool f
     auto locked_conn = m_conn_ptr.lock();
     if (!locked_conn || locked_conn->is_closed()) return;
 
-    if (!m_valid) {
-        if (len > 0) {
-            write_to_upstream(tp::string(reinterpret_cast<const char*>(data), len), false);
-        }
-        if (fin) {
-            write_to_upstream(tp::string(), true);
-        }
+    auto& h3 = locked_conn->get_or_create_h3();
+    auto consumed = h3.feed_stream_data(m_stream_id, data, len, fin);
+    if (consumed < 0) {
+        _log_with_date_time("QuicUpstreamHandler: H3 protocol error on stream " +
+                                tp::to_string(m_stream_id),
+                            Log::WARN);
+        locked_conn->close(NGHTTP3_H3_FRAME_ERROR);
         return;
     }
 
-    auto& h3 = locked_conn->get_or_create_h3();
-    auto consumed = h3.feed_stream_data(m_stream_id, data, len, fin);
-    if (consumed < 0 || (size_t)consumed < len) {
-        m_valid = false;
-        if (len > 0) {
-            write_to_upstream(tp::string(reinterpret_cast<const char*>(data), len), false);
-        }
-        if (fin) {
-            write_to_upstream(tp::string(), true);
-        }
+    if ((size_t)consumed < len && !fin) {
+        _log_with_date_time("QuicUpstreamHandler: H3 consumption error on stream " +
+                                tp::to_string(m_stream_id) + ", closing",
+                            Log::WARN);
+        destroy();
     }
 }
 
@@ -229,36 +222,15 @@ void QuicUpstreamHandler::tcp_read_from_upstream() {
                 return;
             }
             if (locked_conn && !locked_conn->is_closed()) {
-                flush_tcp_read_buf(0, bytes);
+                flush_tcp_read_buf(bytes);
             }
         });
 }
 
-void QuicUpstreamHandler::flush_tcp_read_buf(std::size_t offset, std::size_t bytes) {
+void QuicUpstreamHandler::flush_tcp_read_buf(std::size_t bytes) {
     auto locked_conn = m_conn_ptr.lock();
     if (m_destroyed || !locked_conn || locked_conn->is_closed()) return;
 
-    // When the incoming stream was not valid H3 (m_valid=false), forward raw
-    // response bytes back to the QUIC stream without H3 framing.
-    if (!m_valid) {
-        int64_t written = locked_conn->send_stream_data(
-            m_stream_id,
-            reinterpret_cast<const uint8_t*>(m_tcp_buf.data() + offset),
-            bytes - offset, false);
-        if (written < 0) { destroy(); return; }
-        locked_conn->pump_write();
-        offset += static_cast<std::size_t>(written);
-        if (offset < bytes) {
-            m_write_timer.expires_after(std::chrono::milliseconds(5));
-            auto self = shared_from_this();
-            m_write_timer.async_wait([this, self, offset, bytes](const boost::system::error_code& ec) {
-                if (!ec && !m_destroyed) flush_tcp_read_buf(offset, bytes);
-            });
-        } else {
-            tcp_read_from_upstream();
-        }
-        return;
-    }
 
     // H3 path: encode HTTP/1.1 response as HTTP/3 HEADERS + DATA frames.
     // Taken when the client sent valid H3 traffic (e.g. a real browser).
