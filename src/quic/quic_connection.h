@@ -94,6 +94,9 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     QuicToHttp3Connect& get_or_create_h3();
     [[nodiscard]] QuicToHttp3Connect* h3_if_exists() const { return m_h3.get(); }
 
+    // Forward a stream to HTTP/3 upstream. Returns true on success.
+    bool forward_to_h3_upstream(int64_t stream_id, const uint8_t* data, std::size_t len, bool fin);
+
     // Gracefully close the connection with an optional application error code.
     void close(uint64_t app_error_code = 0);
 

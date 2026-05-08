@@ -72,7 +72,7 @@ class QuicUpstreamHandler : public QuicStreamHandler, public std::enable_shared_
     void flush_tcp_read_buf(std::size_t bytes);
 
     int  submit_h3_response_headers();
-    void process_body_chunk(std::size_t body_bytes, bool eof);
+    void process_body_chunk(bool eof);
     void pump_h3_and_read();
     void handle_parse_error();
     void close_tcp_only();
@@ -106,18 +106,21 @@ class QuicUpstreamHandler : public QuicStreamHandler, public std::enable_shared_
     bool m_is_writing_to_tcp{false};
 
     tp::string m_tcp_buf;       // TCP read input (16 KB)
-    tp::string m_body_out_buf;  // Beast-decoded body output (16 KB)
     static constexpr std::size_t kTcpBufSize = 16 * 1024;
 
     // HTTP/1.1 → HTTP/3 response conversion state
     std::unique_ptr<H1RespParser> m_resp_parser;
     RespState m_resp_state{RespState::kParsingHeaders};
+    tp::string m_parse_buf; // for buffer_body target
 
     // Body window for nghttp3 data_reader
-    const uint8_t* m_body_ptr{nullptr};
-    std::size_t    m_body_len{0};
+    tp::list<tp::string> m_body_out_chunks;
+    std::size_t    m_chunk_consumed{0}; // offset into front chunk that is ACKed
+    std::size_t    m_given_offset{0};   // offset from m_chunk_consumed of next byte to give
     bool           m_body_eof{false};
     bool           m_reader_blocked{false};
+
+    std::size_t body_bytes_available() const;
 };
 
 #endif // QUIC_SESSION_UPSTREAM_H

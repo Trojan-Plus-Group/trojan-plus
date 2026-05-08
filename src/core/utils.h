@@ -651,4 +651,24 @@ using FILE_LOCK_HANDLE = HANDLE;
 FILE_LOCK_HANDLE get_file_lock(const char* filename);
 void close_file_lock(FILE_LOCK_HANDLE& file_fd);
 
+/**
+ * @brief Checks if a QUIC stream ID refers to a client-initiated unidirectional stream.
+ *
+ * In QUIC (RFC 9000), the two least significant bits of the stream ID indicate:
+ * - Bit 0: Initiator (0 for client, 1 for server)
+ * - Bit 1: Directionality (0 for bidirectional, 1 for unidirectional)
+ *
+ * Therefore:
+ * - 0x0 (00): Client-Initiated Bidirectional
+ * - 0x1 (01): Server-Initiated Bidirectional
+ * - 0x2 (10): Client-Initiated Unidirectional
+ * - 0x3 (11): Server-Initiated Unidirectional
+ *
+ * This function returns true if the stream ID corresponds to 0x2 (Client-Initiated Unidirectional).
+ *
+ * @param stream_id The QUIC stream ID to check.
+ * @return true if it is a client-initiated unidirectional stream.
+ */
+[[nodiscard]] bool is_quic_client_uni_stream(int64_t stream_id);
+
 #endif //_TROJAN_UTILS_H_

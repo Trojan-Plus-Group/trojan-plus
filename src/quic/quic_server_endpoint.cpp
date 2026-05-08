@@ -21,6 +21,8 @@
 #include "core/log.h"
 #include "quic_session.h"
 #include "quic_tls_ctx.h"
+#include "quic_to_http3_connect.h"
+#include "core/utils.h"
 
 QuicServerEndpoint::QuicServerEndpoint(boost::asio::io_context& io_ctx, const Config& config,
                                        std::shared_ptr<QuicTlsCtx> tls_ctx)
@@ -108,9 +110,16 @@ void QuicServerEndpoint::on_packet(const uint8_t* data, std::size_t len,
         if (!locked) {
             return;
         }
-        auto session = TP_MAKE_SHARED(QuicProxySession, locked, stream_id, m_config, m_io_context);
-        locked->set_stream_handler(stream_id, session);
-        session->start();
+
+        if (is_quic_client_uni_stream(stream_id)) {
+            // Trojan quic_client_endpoint only creates bidirectional streams. Any client-initiated 
+            // unidirectional streams must be for H3, so we can directly initialize H3 upstream.
+            locked->forward_to_h3_upstream(stream_id, nullptr, 0, false);
+        } else {
+            auto session = TP_MAKE_SHARED(QuicProxySession, locked, stream_id, m_config, m_io_context);
+            locked->set_stream_handler(stream_id, session);
+            session->start();
+        }
     };
 
     // new connection ID generated: add it to the routing table.

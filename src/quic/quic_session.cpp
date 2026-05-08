@@ -175,58 +175,15 @@ void QuicProxySession::try_parse_request(bool fin) {
 }
 
 void QuicProxySession::forward_to_h3_upstream(bool fin) {
-    const auto& h3 = m_config.get_quic().h3_upstream;
-    tp::string host;
-    tp::string port_str;
-
-    if (!h3.empty()) {
-        auto colon_pos = h3.rfind(':');
-        host = (colon_pos == tp::string::npos) ? h3 : h3.substr(0, colon_pos);
-        port_str = (colon_pos == tp::string::npos) ? "80" : h3.substr(colon_pos + 1);
-    } else if (!m_config.get_remote_addr().empty()) {
-        host = m_config.get_remote_addr();
-        port_str = tp::to_string(m_config.get_remote_port());
-    } else {
-        _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) +
-                                " h3_upstream not configured, dropping",
-                            Log::WARN);
-        destroy();
-        return;
-    }
-
-    _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) +
-                             " falling back to h3_upstream " + host + ":" + port_str,
-                         Log::INFO);
-
     auto locked_conn = m_conn.lock();
     if (!locked_conn) return;
 
-    auto& h3_mgr = locked_conn->get_or_create_h3();
-    if (!h3_mgr.is_valid()) {
-        _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) +
-                                " h3 manager init failed, dropping",
-                            Log::ERROR);
+    if (!locked_conn->forward_to_h3_upstream(m_stream_id, 
+                                            reinterpret_cast<const uint8_t*>(m_recv_buf.data()), 
+                                            m_recv_buf.size(), fin)) {
         destroy();
-        return;
     }
-
-    auto h3_handler = TP_MAKE_SHARED(QuicUpstreamHandler, locked_conn, m_stream_id, m_io_ctx, host, port_str);
-
-    // Call set_stream_handler FIRST, because it performs stale mapping cleanup
-    // which includes calling h3_mgr->unregister_stream(m_stream_id).
-    locked_conn->set_stream_handler(m_stream_id, h3_handler);
-    h3_mgr.register_stream(m_stream_id, h3_handler.get());
-
-    if (!m_recv_buf.empty()) {
-        h3_handler->on_stream_data(
-            reinterpret_cast<const uint8_t*>(m_recv_buf.data()),
-            m_recv_buf.size(), fin);
-        m_recv_buf.clear();
-    } else if (fin) {
-        h3_handler->on_stream_data(nullptr, 0, true);
-    }
-
-    h3_handler->start();
+    m_recv_buf.clear();
 }
 
 void QuicProxySession::connect_target(const tp::string& host, uint16_t port) {

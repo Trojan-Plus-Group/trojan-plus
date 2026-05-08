@@ -34,8 +34,7 @@ QuicUpstreamHandler::QuicUpstreamHandler(
       m_resolver(io_ctx),
       m_write_timer(io_ctx) {
     m_tcp_buf.resize(kTcpBufSize, '\0');
-    m_body_out_buf.resize(kTcpBufSize, '\0');
-    m_resp_parser = std::make_unique<H1RespParser>();
+    m_resp_parser = std::make_unique<boost::beast::http::response_parser<boost::beast::http::buffer_body>>();
     m_resp_parser->eager(true);
     m_resp_parser->body_limit((std::numeric_limits<uint64_t>::max)());
 }
@@ -90,7 +89,7 @@ void QuicUpstreamHandler::on_stream_data(const uint8_t* data, size_t len, bool f
     auto consumed = h3.feed_stream_data(m_stream_id, data, len, fin);
     if (consumed < 0) {
         _log_with_date_time("QuicUpstreamHandler: H3 protocol error on stream " +
-                                tp::to_string(m_stream_id),
+                                tp::to_string(m_stream_id) + ": " + tp::string(nghttp3_strerror(static_cast<int>(consumed))),
                             Log::WARN);
         locked_conn->close(NGHTTP3_H3_FRAME_ERROR);
         return;
@@ -197,18 +196,16 @@ void QuicUpstreamHandler::tcp_read_from_upstream() {
             }
             auto locked_conn = m_conn_ptr.lock();
             if (ec) {
-                if (locked_conn && !locked_conn->is_closed() &&
-                    m_resp_state == RespState::kStreamingBody) {
+                if (locked_conn && !locked_conn->is_closed()) {
                     m_body_eof = true;
+                    if (m_resp_state == RespState::kParsingHeaders) {
+                        m_resp_state = RespState::kStreamingBody;
+                    }
                     auto* h3 = locked_conn->h3_if_exists();
                     if (h3) {
-                        if (m_reader_blocked) {
-                            m_reader_blocked = false;
-                            h3->resume_stream(m_stream_id);
-                        } else if (m_body_len == 0) {
-                            h3->pump_h3_response();
-                            locked_conn->pump_write();
-                        }
+                        h3->resume_stream(m_stream_id);
+                        h3->pump_h3_response();
+                        locked_conn->pump_write();
                     }
                     close_tcp_only();
                     return;
@@ -230,52 +227,75 @@ void QuicUpstreamHandler::flush_tcp_read_buf(std::size_t bytes) {
     auto locked_conn = m_conn_ptr.lock();
     if (m_destroyed || !locked_conn || locked_conn->is_closed()) return;
 
-    // H3 path: encode HTTP/1.1 response as HTTP/3 HEADERS + DATA frames.
-    // Taken when the client sent valid H3 traffic (e.g. a real browser).
-    // Point Beast's body output at m_body_out_buf for this call.
-    auto& body = m_resp_parser->get().body();
-    body.data = static_cast<void*>(const_cast<char*>(m_body_out_buf.data()));
-    body.size = kTcpBufSize;
-    body.more = true;
-
     boost::system::error_code ec;
-    m_resp_parser->put(boost::asio::buffer(m_tcp_buf.data(), bytes), ec);
-
-    if (ec && ec != boost::beast::http::error::need_more) {
-        _log_with_date_time("QuicUpstreamHandler: Beast parse error stream " +
-            tp::to_string(m_stream_id) + ": " + tp::string(ec.message().c_str()), Log::ERROR);
-        handle_parse_error();
-        return;
-    }
-
-    const std::size_t body_bytes = kTcpBufSize - body.size;
-    const bool resp_done = m_resp_parser->is_done();
-
-    if (m_resp_state == RespState::kParsingHeaders) {
-        if (!m_resp_parser->is_header_done()) {
-            _log_with_date_time("QuicUpstreamHandler: flush_tcp_read_buf stream " + tp::to_string(m_stream_id) + " headers not done", Log::INFO);
-            tcp_read_from_upstream();
-            return;
-        }
-
-        if (submit_h3_response_headers() != 0) {
-            handle_parse_error();
-            return;
-        }
-        // submit_h3_response_headers sets m_resp_state to kStreamingBody or kDone.
-        if (m_resp_state == RespState::kDone) return;
-
-        if (body_bytes > 0 || resp_done) {
-            process_body_chunk(body_bytes, resp_done);
+    std::size_t consumed = 0;
+    
+    while (consumed < bytes) {
+        if (m_resp_state == RespState::kParsingHeaders) {
+            // Buffer headers until done
+            m_resp_parser->get().body().data = nullptr;
+            m_resp_parser->get().body().size = 0;
+            
+            std::size_t n = m_resp_parser->put(boost::asio::buffer(m_tcp_buf.data() + consumed, bytes - consumed), ec);
+            consumed += n;
+            if (ec && ec != boost::beast::http::error::need_buffer) {
+                _log_with_date_time("QuicUpstreamHandler: Beast header parse error stream " +
+                    tp::to_string(m_stream_id) + ": " + tp::string(ec.message().c_str()), Log::ERROR);
+                handle_parse_error();
+                return;
+            }
+            if (m_resp_parser->is_header_done()) {
+                if (submit_h3_response_headers() != 0) return;
+                m_resp_state = RespState::kStreamingBody;
+            }
+        } else if (m_resp_state == RespState::kStreamingBody) {
+            // Parse body chunks
+            m_parse_buf.resize(8192);
+            m_resp_parser->get().body().data = &m_parse_buf[0];
+            m_resp_parser->get().body().size = m_parse_buf.size();
+            
+            std::size_t n = m_resp_parser->put(boost::asio::buffer(m_tcp_buf.data() + consumed, bytes - consumed), ec);
+            consumed += n;
+            
+            std::size_t body_bytes = m_parse_buf.size() - m_resp_parser->get().body().size;
+            if (body_bytes > 0) {
+                tp::string chunk_data = m_parse_buf.substr(0, body_bytes);
+                m_body_out_chunks.push_back(chunk_data);
+                
+                tp::string hex;
+                for (size_t i = 0; i < (std::min)(chunk_data.size(), size_t(16)); ++i) {
+                    char buf[3];
+                    snprintf(buf, sizeof(buf), "%02x", static_cast<unsigned char>(chunk_data[i]));
+                    hex += buf;
+                }
+                _log_with_date_time("QuicUpstreamHandler: stream " + tp::to_string(m_stream_id) +
+                                         " pushed chunk " + tp::to_string(body_bytes) + " bytes, hex=" + hex,
+                                     Log::INFO);
+            }
+            
+            if (ec && ec != boost::beast::http::error::need_buffer) {
+                if (ec == boost::beast::http::error::end_of_stream) {
+                    m_body_eof = true;
+                    m_resp_state = RespState::kDone;
+                    _log_with_date_time("QuicUpstreamHandler: stream " + tp::to_string(m_stream_id) +
+                                             " reached body EOF", Log::INFO);
+                } else {
+                    _log_with_date_time("QuicUpstreamHandler: Beast body parse error stream " +
+                        tp::to_string(m_stream_id) + ": " + tp::string(ec.message().c_str()), Log::ERROR);
+                    handle_parse_error();
+                    return;
+                }
+            }
+            if (m_resp_parser->is_done()) {
+                m_body_eof = true;
+                m_resp_state = RespState::kDone;
+            }
         } else {
-            tcp_read_from_upstream();
+            break;
         }
-        return;
     }
-
-    if (m_resp_state == RespState::kStreamingBody) {
-        process_body_chunk(body_bytes, resp_done);
-    }
+    
+    process_body_chunk(m_body_eof);
 }
 
 // ---- HTTP/1.1 → HTTP/3 response conversion helpers --------------------------
@@ -287,6 +307,9 @@ int QuicUpstreamHandler::submit_h3_response_headers() {
     if (!h3) return -1;
 
     auto& msg = m_resp_parser->get();
+    _log_with_date_time("QuicUpstreamHandler: stream " + tp::to_string(m_stream_id) +
+                             " submitting H3 response status=" + tp::to_string(static_cast<unsigned>(msg.result_int())),
+                         Log::INFO);
 
     tp::vector<std::pair<tp::string, tp::string>> hdrs;
     hdrs.reserve(8);
@@ -307,48 +330,37 @@ int QuicUpstreamHandler::submit_h3_response_headers() {
 
     unsigned status = msg.result_int();
     bool has_body = (m_method != "HEAD") &&
-                    (status != 204) && (status != 304);
+                    (status != 204 && status != 304 && (status < 100 || status > 199));
 
     int rv = h3->submit_response(m_stream_id, hdrs, has_body);
     if (rv != 0) return rv;
 
-    // Pump to push the HEADERS frame (and FIN if no body) into ngtcp2.
-    // For has_body: pump triggers the first data_reader call; it returns
-    // WOULDBLOCK (m_body_len==0) setting m_reader_blocked=true.
+    // Pump to push the HEADERS frame into ngtcp2.
     locked_conn->pump_h3_response();
-    m_resp_state = has_body ? RespState::kStreamingBody : RespState::kDone;
+    locked_conn->pump_write();
+
     return 0;
 }
 
-void QuicUpstreamHandler::process_body_chunk(std::size_t body_bytes, bool eof) {
+void QuicUpstreamHandler::process_body_chunk(bool eof) {
     auto locked_conn = m_conn_ptr.lock();
     if (m_destroyed || !locked_conn || locked_conn->is_closed()) return;
 
     m_body_eof = eof;
 
-    if (body_bytes > 0) {
-        m_body_ptr = reinterpret_cast<const uint8_t*>(m_body_out_buf.data());
-        m_body_len = body_bytes;
-    }
-
     if (m_reader_blocked) {
-        // nghttp3 has this stream marked as blocked; must call resume_stream
-        // before it will invoke the data_reader again.
         m_reader_blocked = false;
         auto* h3 = locked_conn->h3_if_exists();
         if (h3) h3->resume_stream(m_stream_id);
-        // resume_stream calls pump_h3_response internally; after returning,
-        // m_body_len reflects how much body data ngtcp2 accepted.
-        if (m_body_len == 0 && !m_body_eof) {
+        
+        if (body_bytes_available() == 0 && !m_body_eof) {
             tcp_read_from_upstream();
-        } else if (m_body_len > 0) {
-            pump_h3_and_read();  // still pending, handle flow control
+        } else if (body_bytes_available() > 0) {
+            pump_h3_and_read();
         }
-        // if m_body_len==0 && m_body_eof: EOF was already signaled by on_read_data
-    } else if (body_bytes > 0 || eof) {
+    } else if (body_bytes_available() > 0 || eof) {
         pump_h3_and_read();
     } else {
-        // No decoded body bytes yet (pure chunked framing consumed); read more.
         tcp_read_from_upstream();
     }
 }
@@ -359,7 +371,7 @@ void QuicUpstreamHandler::pump_h3_and_read() {
 
     locked_conn->pump_h3_response();  // drives writev_stream → ngtcp2 → network
 
-    if (m_body_len > 0) {
+    if (body_bytes_available() > 0) {
         // QUIC flow-control blocked; retry after a short delay.
         m_write_timer.expires_after(std::chrono::milliseconds(5));
         auto self = shared_from_this();
@@ -369,8 +381,6 @@ void QuicUpstreamHandler::pump_h3_and_read() {
         return;
     }
 
-    m_body_ptr = nullptr;
-
     if (!m_body_eof && m_resp_state == RespState::kStreamingBody && !m_destroyed) {
         tcp_read_from_upstream();
     } else if (m_body_eof) {
@@ -379,33 +389,102 @@ void QuicUpstreamHandler::pump_h3_and_read() {
 }
 
 nghttp3_ssize QuicUpstreamHandler::on_read_data(nghttp3_vec* vec, std::size_t veccnt, uint32_t* pflags) {
-    if (m_body_len == 0) {
+    auto total_avail = body_bytes_available();
+    
+    _log_with_date_time("QuicUpstreamHandler: stream " + tp::to_string(m_stream_id) +
+                             " on_read_data start: given=" + tp::to_string(m_given_offset) + 
+                             " consumed=" + tp::to_string(m_chunk_consumed) +
+                             " avail=" + tp::to_string(total_avail) + 
+                             " chunks=" + tp::to_string(m_body_out_chunks.size()),
+                         Log::ALL);
+
+    if (m_given_offset >= total_avail) {
         if (m_body_eof) {
             *pflags |= NGHTTP3_DATA_FLAG_EOF;
+            _log_with_date_time("QuicUpstreamHandler: stream " + tp::to_string(m_stream_id) + " on_read_data EOF", Log::INFO);
             return 0;
         }
         m_reader_blocked = true;
         return NGHTTP3_ERR_WOULDBLOCK;
     }
 
-    std::size_t n = std::min(veccnt, std::size_t(1));
-    vec[0].base = const_cast<uint8_t*>(m_body_ptr);
-    vec[0].len  = m_body_len;
+    std::size_t skip = m_given_offset;
+    std::size_t chunk_idx = 0;
+    std::size_t chunk_start_offset = m_chunk_consumed;
+
+    auto it = m_body_out_chunks.begin();
+    while (it != m_body_out_chunks.end()) {
+        auto& chunk = *it;
+        std::size_t chunk_len = chunk.size() - chunk_start_offset;
+        if (skip < chunk_len) {
+            std::size_t final_start = chunk_start_offset + skip;
+            std::size_t to_give = chunk.size() - final_start;
+            
+            vec[0].base = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(chunk.data()) + final_start);
+            vec[0].len = to_give;
+            m_given_offset += to_give;
+            
+            _log_with_date_time("QuicUpstreamHandler: stream " + tp::to_string(m_stream_id) + 
+                                     " on_read_data giving " + tp::to_string(to_give) + 
+                                     " bytes from chunk " + tp::to_string(chunk_idx) + 
+                                     " (new given=" + tp::to_string(m_given_offset) + ")",
+                                 Log::ALL);
+
+            if (m_body_eof && m_given_offset == total_avail) {
+                *pflags |= NGHTTP3_DATA_FLAG_EOF;
+                _log_with_date_time("QuicUpstreamHandler: stream " + tp::to_string(m_stream_id) + " on_read_data EOF (with data)", Log::INFO);
+            }
+            return 1;
+        }
+        skip -= chunk_len;
+        it++;
+        chunk_idx++;
+        chunk_start_offset = 0;
+    }
 
     if (m_body_eof) {
         *pflags |= NGHTTP3_DATA_FLAG_EOF;
+        _log_with_date_time("QuicUpstreamHandler: stream " + tp::to_string(m_stream_id) + " on_read_data EOF (fallback)", Log::INFO);
     }
-    return 1;
+    return 0;
 }
 
 void QuicUpstreamHandler::notify_body_consumed(std::size_t n) {
-    if (n >= m_body_len) {
-        m_body_ptr = nullptr;
-        m_body_len = 0;
+    if (n > m_given_offset) {
+        _log_with_date_time("QuicUpstreamHandler: stream " + tp::to_string(m_stream_id) +
+                                 " error: notify_body_consumed " + tp::to_string(n) + " > given " + tp::to_string(m_given_offset),
+                             Log::ERROR);
+        m_given_offset = 0;
     } else {
-        m_body_ptr += n;
-        m_body_len -= n;
+        m_given_offset -= n;
     }
+
+    while (n > 0 && !m_body_out_chunks.empty()) {
+        auto& chunk = m_body_out_chunks.front();
+        std::size_t avail = chunk.size() - m_chunk_consumed;
+        if (n >= avail) {
+            n -= avail;
+            m_body_out_chunks.pop_front();
+            m_chunk_consumed = 0;
+        } else {
+            m_chunk_consumed += n;
+            n = 0;
+        }
+    }
+}
+
+std::size_t QuicUpstreamHandler::body_bytes_available() const {
+    std::size_t total = 0;
+    if (!m_body_out_chunks.empty()) {
+        auto it = m_body_out_chunks.begin();
+        total = it->size() - m_chunk_consumed;
+        ++it;
+        while (it != m_body_out_chunks.end()) {
+            total += it->size();
+            ++it;
+        }
+    }
+    return total;
 }
 
 void QuicUpstreamHandler::handle_parse_error() {

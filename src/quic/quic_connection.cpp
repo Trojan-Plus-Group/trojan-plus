@@ -14,6 +14,8 @@
 #include <cstring>
 
 #include "quic_to_http3_connect.h"
+#include "quic_session_upstream.h"
+#include "core/config.h"
 
 #include <ngtcp2/ngtcp2_crypto_wolfssl.h>
 #include <wolfssl/options.h>
@@ -22,6 +24,7 @@
 #include "core/log.h"
 #include "quic_endpoint.h"
 #include "quic_tls_ctx.h"
+#include "core/utils.h"
 
 // ---- helpers ----------------------------------------------------------------
 
@@ -601,6 +604,55 @@ void QuicConnection::remove_stream_handler(int64_t stream_id) {
     m_stream_handlers.erase(stream_id);
 }
 
+bool QuicConnection::forward_to_h3_upstream(int64_t stream_id, const uint8_t* data, std::size_t len, bool fin) {
+    const auto& config = m_endpoint.config();
+    const auto& h3_cfg = config.get_quic().h3_upstream;
+    tp::string host;
+    tp::string port_str;
+
+    if (!h3_cfg.empty()) {
+        auto colon_pos = h3_cfg.rfind(':');
+        host = (colon_pos == tp::string::npos) ? h3_cfg : h3_cfg.substr(0, colon_pos);
+        port_str = (colon_pos == tp::string::npos) ? "80" : h3_cfg.substr(colon_pos + 1);
+    } else if (!config.get_remote_addr().empty()) {
+        host = config.get_remote_addr();
+        port_str = tp::to_string(config.get_remote_port());
+    } else {
+        _log_with_date_time("QuicConnection: stream " + tp::to_string(stream_id) +
+                                " h3_upstream not configured, dropping",
+                            Log::WARN);
+        return false;
+    }
+
+    _log_with_date_time("QuicConnection: stream " + tp::to_string(stream_id) +
+                             " forwarding to h3_upstream " + host + ":" + port_str,
+                         Log::INFO);
+
+    auto& h3_mgr = get_or_create_h3();
+    if (!h3_mgr.is_valid()) {
+        _log_with_date_time("QuicConnection: stream " + tp::to_string(stream_id) +
+                                " h3 manager init failed, dropping",
+                            Log::ERROR);
+        return false;
+    }
+
+    auto h3_handler = TP_MAKE_SHARED(QuicUpstreamHandler, shared_from_this(), stream_id, m_endpoint.io_context(), host, port_str);
+
+    // Call set_stream_handler FIRST, because it performs stale mapping cleanup
+    // which includes calling h3_mgr->unregister_stream(stream_id).
+    set_stream_handler(stream_id, h3_handler);
+    h3_mgr.register_stream(stream_id, h3_handler.get());
+
+    if (data && len > 0) {
+        h3_handler->on_stream_data(data, len, fin);
+    } else if (fin) {
+        h3_handler->on_stream_data(nullptr, 0, true);
+    }
+
+    h3_handler->start();
+    return true;
+}
+
 // ---- close ------------------------------------------------------------------
 
 void QuicConnection::close(uint64_t app_error_code) {
@@ -637,21 +689,19 @@ void QuicConnection::on_handshake_completed_impl() {
         return;
     }
     m_handshake_done = true;
+    const unsigned char* alpn = nullptr;
+    unsigned int alpnlen = 0;
+    wolfSSL_get0_alpn_selected(m_ssl, &alpn, &alpnlen);
+    tp::string alpn_str = alpn ? tp::string(reinterpret_cast<const char*>(alpn), alpnlen) : "none";
+
     _log_with_date_time("QuicConnection: handshake completed (role=" +
                             tp::string(m_is_server ? "server" : "client") + ", peer=" +
                             tp::string(m_peer.address().to_string().c_str()) + ":" +
-                            tp::to_string(m_peer.port()),
+                            tp::to_string(m_peer.port()) + ", alpn=" + alpn_str + ")",
                         Log::INFO);
 
-    if (m_is_server && m_h3) {
-        int64_t ctrl = open_uni_stream();
-        int64_t qenc = open_uni_stream();
-        int64_t qdec = open_uni_stream();
-        if (ctrl >= 0 && qenc >= 0 && qdec >= 0) {
-            m_h3->bind_control_streams(ctrl, qenc, qdec);
-        }
-        pump_h3_response();
-    }
+    (void)alpn;
+    (void)alpnlen;
 
     if (on_handshake_completed_cb) {
         on_handshake_completed_cb();

@@ -682,6 +682,10 @@ void close_file_lock(FILE_LOCK_HANDLE& file_fd) {
     _unguard;
 }
 
+bool is_quic_client_uni_stream(int64_t stream_id) {
+    return (stream_id & 0x3) == 2;
+}
+
 #ifndef _WIN32 // nat mode does not support in windows platform
 // copied from shadowsocks-libev udpreplay.c
 static int get_dstaddr(struct msghdr* msg, struct sockaddr_storage* dstaddr) {
