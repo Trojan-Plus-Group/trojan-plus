@@ -627,8 +627,9 @@ bool QuicConnection::forward_to_h3_upstream(int64_t stream_id, const uint8_t* da
     }
 
     _log_with_date_time("QuicConnection: stream " + tp::to_string(stream_id) +
-                             " forwarding to h3_upstream " + host + ":" + port_str,
-                         Log::INFO);
+                            " " + (h3_cfg.empty() ? "falling back to " : "forwarding to ") 
+                            + "h3_upstream " + host + ":" + port_str,
+                        Log::INFO);
 
     auto& h3_mgr = get_or_create_h3();
     if (!h3_mgr.is_valid()) {
@@ -752,5 +753,16 @@ void QuicConnection::extend_window(int64_t stream_id, std::size_t n) {
     if (m_conn && !m_closed && n > 0) {
         ngtcp2_conn_extend_max_stream_offset(m_conn, stream_id, n);
         ngtcp2_conn_extend_max_offset(m_conn, n);
+    }
+}
+
+void QuicConnection::reset_stream(int64_t stream_id, uint64_t app_error_code) {
+    if (m_conn && !m_closed) {
+        int rv = ngtcp2_conn_shutdown_stream(m_conn, 0, stream_id, app_error_code);
+        if (rv != 0 && rv != NGTCP2_ERR_STREAM_NOT_FOUND) {
+            _log_with_date_time("QuicConnection: ngtcp2_conn_shutdown_stream failed for stream " + 
+                                tp::to_string(stream_id) + ": " + tp::string(ngtcp2_strerror(rv)), Log::WARN);
+        }
+        pump_write();
     }
 }

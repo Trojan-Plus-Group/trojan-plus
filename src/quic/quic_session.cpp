@@ -182,7 +182,7 @@ void QuicProxySession::forward_to_h3_upstream(bool fin) {
     if (!locked_conn->forward_to_h3_upstream(m_stream_id, 
                                             reinterpret_cast<const uint8_t*>(m_recv_buf.data()), 
                                             m_recv_buf.size(), fin)) {
-        destroy();
+        destroy(true, NGHTTP3_H3_INTERNAL_ERROR);
     }
     m_recv_buf.clear();
 }
@@ -351,7 +351,7 @@ void QuicProxySession::flush_tcp_read_buf(std::size_t offset, std::size_t bytes)
     }
 }
 
-void QuicProxySession::destroy() {
+void QuicProxySession::destroy(bool reset, uint64_t app_error_code) {
     if (m_destroyed) {
         return;
     }
@@ -370,7 +370,11 @@ void QuicProxySession::destroy() {
     auto locked_conn = m_conn.lock();
     if (locked_conn && !locked_conn->is_closed()) {
         locked_conn->remove_stream_handler(m_stream_id);
-        locked_conn->send_stream_data(m_stream_id, nullptr, 0, true);
+        if (reset) {
+            locked_conn->reset_stream(m_stream_id, app_error_code);
+        } else {
+            locked_conn->send_stream_data(m_stream_id, nullptr, 0, true);
+        }
         locked_conn->pump_write();
     }
     _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) + " closed",

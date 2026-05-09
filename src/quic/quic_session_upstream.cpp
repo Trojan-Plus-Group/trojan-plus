@@ -193,13 +193,20 @@ void QuicUpstreamHandler::do_tcp_write() {
 }
 
 void QuicUpstreamHandler::tcp_read_from_upstream() {
-    if (!m_tcp_socket.is_open()) {
+    if (m_destroyed || m_body_eof || m_tcp_read_in_progress || !m_tcp_socket.is_open()) {
         return;
     }
+    
+    if (body_bytes_available() > kMaxBufferedBytes) {
+        return;
+    }
+
+    m_tcp_read_in_progress = true;
     auto self = shared_from_this();
     m_tcp_socket.async_read_some(
         boost::asio::buffer(&m_tcp_buf[0], kTcpBufSize),
         [this, self](const boost::system::error_code& ec, std::size_t bytes) {
+            m_tcp_read_in_progress = false;
             if (m_destroyed) {
                 return;
             }
@@ -360,17 +367,9 @@ void QuicUpstreamHandler::process_body_chunk(bool eof) {
         m_reader_blocked = false;
         auto* h3 = locked_conn->h3_if_exists();
         if (h3) h3->resume_stream(m_stream_id);
-        
-        if (body_bytes_available() == 0 && !m_body_eof) {
-            tcp_read_from_upstream();
-        } else if (body_bytes_available() > 0) {
-            pump_h3_and_read();
-        }
-    } else if (body_bytes_available() > 0 || eof) {
-        pump_h3_and_read();
-    } else {
-        tcp_read_from_upstream();
     }
+    
+    pump_h3_and_read();
 }
 
 void QuicUpstreamHandler::pump_h3_and_read() {
@@ -379,8 +378,8 @@ void QuicUpstreamHandler::pump_h3_and_read() {
 
     locked_conn->pump_h3_response();  // drives writev_stream → ngtcp2 → network
 
-    if (body_bytes_available() > 0) {
-        // QUIC flow-control blocked; retry after a short delay.
+    if (body_bytes_available() > kMaxBufferedBytes) {
+        // QUIC flow-control blocked or window is full; retry after a short delay.
         m_write_timer.expires_after(std::chrono::milliseconds(5));
         auto self = shared_from_this();
         m_write_timer.async_wait([this, self](const boost::system::error_code& ec) {
@@ -478,6 +477,10 @@ void QuicUpstreamHandler::notify_body_consumed(std::size_t n) {
             m_chunk_consumed += n;
             n = 0;
         }
+    }
+
+    if (body_bytes_available() < kMaxBufferedBytes) {
+        tcp_read_from_upstream();
     }
 }
 

@@ -109,6 +109,8 @@ class QuicUpstreamHandler : public QuicStreamHandler, public std::enable_shared_
 
     tp::string m_tcp_buf;       // TCP read input (16 KB)
     static constexpr std::size_t kTcpBufSize = 16 * 1024;
+    static constexpr std::size_t kMaxBufferedBytes = 64 * 1024;
+    bool m_tcp_read_in_progress{false};
 
     // HTTP/1.1 → HTTP/3 response conversion state
     std::unique_ptr<H1RespParser> m_resp_parser;

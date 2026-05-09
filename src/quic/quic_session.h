@@ -55,7 +55,7 @@ class QuicProxySession : public QuicStreamHandler, public std::enable_shared_fro
     void flush_tcp_read_buf(std::size_t offset, std::size_t bytes);
     void write_to_target(tp::string data, bool fin = false);
     void do_tcp_write();
-    void destroy();
+    void destroy(bool reset = false, uint64_t app_error_code = 0);
 
     std::weak_ptr<QuicConnection> m_conn;
     int64_t m_stream_id;
