@@ -50,6 +50,7 @@ class QuicUpstreamHandler : public QuicStreamHandler, public std::enable_shared_
     void start();
     void on_stream_data(const uint8_t* data, size_t len, bool fin) override;
     void on_stream_close() override;
+    void on_connection_pump() override;
     void destroy();
 
 
@@ -74,6 +75,7 @@ class QuicUpstreamHandler : public QuicStreamHandler, public std::enable_shared_
     int  submit_h3_response_headers();
     void process_body_chunk(bool eof);
     void pump_h3_and_read();
+    void retry_feed_h3();
     void handle_parse_error();
     void close_tcp_only();
 
@@ -92,6 +94,9 @@ class QuicUpstreamHandler : public QuicStreamHandler, public std::enable_shared_
     bool m_fin_sent{false};
     bool m_destroyed{false};
     std::size_t m_unacked_stream_bytes{0};
+
+    tp::string m_h3_in_buf;
+    bool m_h3_in_fin{false};
 
     tp::string m_host;
     tp::string m_port_str;

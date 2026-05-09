@@ -1272,17 +1272,12 @@ def test_multiple_quic_connections(binary_path):
 
 
 def test_no_crlf_fallback(binary_path):
-    """T15: kMaxPasswordLineBytes boundary — >128 bytes with no CRLF → h3_upstream fallback.
-
-    QuicProxySession::try_parse_request() falls back to h3_upstream when the
-    receive buffer exceeds kMaxPasswordLineBytes (128 bytes, equal to
-    Config::MAX_PASSWORD_LENGTH) and still has no \\r\\n.  The normal trojan
-    client always injects CRLF, so this boundary is never hit through the
-    standard proxy path.  We use aioquic to send a raw QUIC stream with >128
-    bytes of contiguous non-CRLF data, then verify:
-      1. The server falls back to h3_upstream (log message contains "no CRLF in");
-      2. The h3_upstream mock receives the data (log shows "received N bytes");
-      3. The server process stays alive (no crash).
+    """
+    T15: test_no_crlf_fallback
+    This test verifies that if non-Trojan traffic is sent (no CRLF), the server
+    falls back to H3. If that traffic is also invalid H3 (garbage), the server
+    must close the connection with H3_FRAME_ERROR and NOT forward any data
+    to the h3_upstream mock.
     """
     print_time_log("[T15] test_no_crlf_fallback: starting...")
 
@@ -1326,6 +1321,12 @@ def test_no_crlf_fallback(binary_path):
                 if line.strip() and 'CLIENT_EXPECTED_ERROR' not in line:
                     print_time_log(f"[T15] aioquic stderr: {line}")
 
+        if 'CLIENT_EXPECTED_ERROR' not in combined_out:
+            print_time_log("[T15] FAIL: aioquic client did not report expected error")
+            dump = True
+            return False
+        print_time_log("[T15] aioquic client reported expected error")
+
         # 1. Verify server fell back to h3_upstream (log message contains "no CRLF in").
         m = wait_for_log(srv_log, r"no CRLF in", timeout=10)
         if not m:
@@ -1335,13 +1336,24 @@ def test_no_crlf_fallback(binary_path):
         print_time_log("[T15] server fallback triggered (no CRLF in 128 bytes)")
 
         # 2. Verify server reported H3_FRAME_ERROR as expected.
-        # We allow a bit more time as H3 handshake and error detection might take a second.
         m2 = wait_for_log(srv_log, r"H3 protocol error.*H3_FRAME_ERROR", timeout=10)
         if not m2:
             print_time_log("[T15] FAIL: H3 protocol error not found in server log")
             dump = True
             return False
         print_time_log("[T15] Standard H3 error handling verified (H3_FRAME_ERROR logged)")
+
+        # 3. Verify h3_upstream mock DID NOT receive any data.
+        # We check the mock log for "received" or "accepted connection".
+        mock_log_path = "config/quic_h3mock.output"
+        if os.path.exists(mock_log_path):
+            with open(mock_log_path, "r") as f:
+                content = f.read()
+                if "accepted connection" in content or "received" in content:
+                    print_time_log("[T15] FAIL: h3_upstream mock received connection/data unexpectedly")
+                    dump = True
+                    return False
+        print_time_log("[T15] h3_upstream mock remained idle as expected")
 
         # Server must stay alive.
         if server.poll() is not None:

@@ -19,6 +19,7 @@ public:
     virtual ~QuicStreamHandler() = default;
     virtual void on_stream_data(const uint8_t* data, std::size_t len, bool fin) = 0;
     virtual void on_stream_close() = 0;
+    virtual void on_connection_pump() {}
 };
 
 #endif // QUIC_STREAM_HANDLER_H

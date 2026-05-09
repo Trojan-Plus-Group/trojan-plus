@@ -18,6 +18,7 @@
 #include <nghttp3/nghttp3.h>
 
 #include "core/log.h"
+#include "core/utils.h"
 #include "quic_connection.h"
 #include "quic_to_http3_connect.h"
 
@@ -42,6 +43,9 @@ QuicUpstreamHandler::QuicUpstreamHandler(
 QuicUpstreamHandler::~QuicUpstreamHandler() = default;
 
 void QuicUpstreamHandler::start() {
+    if (m_destroyed) {
+        return;
+    }
     auto self = shared_from_this();
     m_resolver.async_resolve(
         m_host, m_port_str,
@@ -82,12 +86,32 @@ void QuicUpstreamHandler::start() {
 }
 
 void QuicUpstreamHandler::on_stream_data(const uint8_t* data, size_t len, bool fin) {
+    if (m_destroyed) return;
+    if (len > 0) {
+        m_h3_in_buf.append(reinterpret_cast<const char*>(data), len);
+    }
+    if (fin) {
+        m_h3_in_fin = true;
+    }
+    retry_feed_h3();
+}
+
+void QuicUpstreamHandler::on_connection_pump() {
+    retry_feed_h3();
+}
+
+void QuicUpstreamHandler::retry_feed_h3() {
+    if (m_destroyed) return;
+    if (m_h3_in_buf.empty() && !m_h3_in_fin) return;
+
     auto locked_conn = m_conn_ptr.lock();
     if (!locked_conn || locked_conn->is_closed()) return;
 
     auto& h3 = locked_conn->get_or_create_h3();
-    m_unacked_stream_bytes += len;
-    auto consumed = h3.feed_stream_data(m_stream_id, data, len, fin);
+    auto consumed = h3.feed_stream_data(m_stream_id,
+                                        reinterpret_cast<const uint8_t*>(m_h3_in_buf.data()),
+                                        m_h3_in_buf.size(),
+                                        m_h3_in_fin);
     if (consumed < 0) {
         _log_with_date_time("QuicUpstreamHandler: H3 protocol error on stream " +
                                 tp::to_string(m_stream_id) + ": " + tp::string(nghttp3_strerror(static_cast<int>(consumed))),
@@ -96,11 +120,23 @@ void QuicUpstreamHandler::on_stream_data(const uint8_t* data, size_t len, bool f
         return;
     }
 
-    if ((size_t)consumed < len && !fin) {
-        _log_with_date_time("QuicUpstreamHandler: H3 consumption error on stream " +
-                                tp::to_string(m_stream_id) + ", closing",
-                            Log::WARN);
-        destroy();
+    if (consumed > 0 || (m_h3_in_buf.empty() && m_h3_in_fin)) {
+        std::size_t n = static_cast<std::size_t>(consumed);
+        m_unacked_stream_bytes += n;
+        if (n > 0) {
+            m_h3_in_buf.erase(0, n);
+        }
+
+        // If it's a unidirectional stream (Control/QPACK), extend window immediately
+        // because these streams never trigger write_to_upstream().
+        if (is_quic_uni_stream(m_stream_id)) {
+            locked_conn->extend_window(m_stream_id, m_unacked_stream_bytes);
+            m_unacked_stream_bytes = 0;
+        }
+
+        if (m_h3_in_buf.empty() && m_h3_in_fin) {
+            m_h3_in_fin = false; // Reset so we don't keep feeding fin
+        }
     }
 }
 

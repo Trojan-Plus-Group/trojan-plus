@@ -670,5 +670,6 @@ void close_file_lock(FILE_LOCK_HANDLE& file_fd);
  * @return true if it is a client-initiated unidirectional stream.
  */
 [[nodiscard]] bool is_quic_client_uni_stream(int64_t stream_id);
+[[nodiscard]] bool is_quic_uni_stream(int64_t stream_id);
 
 #endif //_TROJAN_UTILS_H_

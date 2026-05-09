@@ -405,6 +405,13 @@ void QuicConnection::on_packet(const uint8_t* data, std::size_t datalen,
     if (m_h3) {
         m_h3->pump_h3_response();
     }
+
+    // Give handlers a chance to retry buffered data (e.g. if QPACK was unblocked)
+    auto handlers = m_stream_handlers; 
+    for (auto& [id, handler] : handlers) {
+        handler->on_connection_pump();
+    }
+
     reschedule_loss_timer();
 }
 
@@ -652,7 +659,10 @@ bool QuicConnection::forward_to_h3_upstream(int64_t stream_id, const uint8_t* da
         h3_handler->on_stream_data(nullptr, 0, true);
     }
 
-    h3_handler->start();
+    if (!is_closed()) {
+        // data is error so that handler is destroyed in h3_handler->on_stream_data
+        h3_handler->start();
+    }
     return true;
 }
 
