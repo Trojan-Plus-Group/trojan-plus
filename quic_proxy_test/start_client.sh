@@ -1,3 +1,4 @@
 #!/bin/bash
 # Start trojan client with client.json
-../build/Release/trojan -c client.json
+cd "$(dirname "$0")"
+../build/trojan -c client.json

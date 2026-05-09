@@ -30,6 +30,18 @@
 #include <memory>
 #include "mem/memallocator.h"
 
+static constexpr const char* get_filename(const char* path) {
+    const char* file = path;
+    while (*path) {
+        if (*path == '/' || *path == '\\') {
+            file = path + 1;
+        }
+        path++;
+    }
+    return file;
+}
+#define __STRIPPED_FILE__ get_filename(__FILE__)
+
 #ifdef ERROR // windows.h
 #undef ERROR
 #endif // ERROR
@@ -82,14 +94,14 @@ extern tp::tj_unique_ptr<char[]> __debug_str_buf;
 #define _log_with_date_time_DEBUG(...)                                                                                 \
     do {                                                                                                               \
         if (Log::level <= Log::ALL) {                                                                                  \
-            Log::log_with_date_time(__VA_ARGS__, Log::ALL);                                                            \
+            Log::log_with_date_time(tp::string("[") + __STRIPPED_FILE__ + ":" + tp::to_string(__LINE__) + "] " + __VA_ARGS__, Log::ALL); \
         }                                                                                                              \
     } while (false)
 
-#define _log_with_endpoint_DEBUG(...)                                                                                  \
+#define _log_with_endpoint_DEBUG(endpoint, ...)                                                                        \
     do {                                                                                                               \
         if (Log::level <= Log::ALL) {                                                                                  \
-            Log::log_with_endpoint(__VA_ARGS__);                                                                       \
+            Log::log_with_endpoint(endpoint, tp::string("[") + __STRIPPED_FILE__ + ":" + tp::to_string(__LINE__) + "] " + __VA_ARGS__); \
         }                                                                                                              \
     } while (false)
 #else
@@ -105,35 +117,35 @@ extern tp::tj_unique_ptr<char[]> __debug_str_buf;
 #define _log_with_date_time_ALL(...)                                                                                   \
     do {                                                                                                               \
         if (Log::level <= Log::ALL) {                                                                                  \
-            Log::log_with_date_time(tp::string("") + __VA_ARGS__, Log::ALL);                                           \
+            Log::log_with_date_time(tp::string("[") + __STRIPPED_FILE__ + ":" + tp::to_string(__LINE__) + "] " + __VA_ARGS__, Log::ALL); \
         }                                                                                                              \
     } while (false)
 
-#define _log_with_endpoint_ALL(...)                                                                                    \
+#define _log_with_endpoint_ALL(endpoint, ...)                                                                          \
     do {                                                                                                               \
         if (Log::level <= Log::ALL) {                                                                                  \
-            Log::log_with_endpoint(__VA_ARGS__, Log::ALL);                                                             \
+            Log::log_with_endpoint(endpoint, tp::string("[") + __STRIPPED_FILE__ + ":" + tp::to_string(__LINE__) + "] " + __VA_ARGS__, Log::ALL); \
         }                                                                                                              \
     } while (false)
 
 #define _log_with_date_time(...)                                                                                       \
     do {                                                                                                               \
         if (Log::level != Log::OFF) {                                                                                  \
-            Log::log_with_date_time(tp::string("") + __VA_ARGS__);                                                     \
+            Log::log_with_date_time(tp::string("[") + __STRIPPED_FILE__ + ":" + tp::to_string(__LINE__) + "] " + __VA_ARGS__); \
         }                                                                                                              \
     } while (false)
 
-#define _log_with_endpoint(...)                                                                                        \
+#define _log_with_endpoint(endpoint, ...)                                                                              \
     do {                                                                                                               \
         if (Log::level != Log::OFF) {                                                                                  \
-            Log::log_with_endpoint(__VA_ARGS__);                                                                       \
+            Log::log_with_endpoint(endpoint, tp::string("[") + __STRIPPED_FILE__ + ":" + tp::to_string(__LINE__) + "] " + __VA_ARGS__); \
         }                                                                                                              \
     } while (false)
 
 #define _log(...)                                                                                                      \
     do {                                                                                                               \
         if (Log::level != Log::OFF) {                                                                                  \
-            Log::log(tp::string("") + __VA_ARGS__);                                                                    \
+            Log::log(tp::string("[") + __STRIPPED_FILE__ + ":" + tp::to_string(__LINE__) + "] " + __VA_ARGS__);        \
         }                                                                                                              \
     } while (false)
 
@@ -142,8 +154,8 @@ extern tp::tj_unique_ptr<char[]> __debug_str_buf;
         if (Log::level <= Log::INFO) {                                                                                 \
             Log::log_with_date_time(                                                                                   \
               tp::string(__debug_str_buf.get(),                                                                        \
-                snprintf(__debug_str_buf.get(), __max_debug_str_buf_size, "%s:%d-<%s> ec:%s", (const char*)__FILE__,   \
-                  __LINE__, (const char*)__FUNCTION__, (ec.message().c_str()))),                                       \
+                snprintf(__debug_str_buf.get(), __max_debug_str_buf_size, "%s:%d-<%s> ec:%s",                          \
+                  (const char*)__STRIPPED_FILE__, __LINE__, (const char*)__FUNCTION__, (ec.message().c_str()))),       \
               Log::INFO);                                                                                              \
         }                                                                                                              \
     } while (false)
@@ -153,14 +165,14 @@ extern tp::tj_unique_ptr<char[]> __debug_str_buf;
         if (Log::level <= Log::INFO) {                                                                                 \
             Log::log_with_date_time(tp::string(__debug_str_buf.get(),                                                  \
                                       snprintf(__debug_str_buf.get(), __max_debug_str_buf_size, "%s:%d-<%s>",          \
-                                        (const char*)__FILE__, __LINE__, (const char*)__FUNCTION__)),                  \
+                                        (const char*)__STRIPPED_FILE__, __LINE__, (const char*)__FUNCTION__)),         \
               Log::INFO);                                                                                              \
         }                                                                                                              \
     } while (false)
 
 #else
 
-#define _log_with_date_time_ALL(...)   
+#define _log_with_date_time_ALL(...)                                                                                   \
     {}
 #define _log_with_endpoint_ALL(...)                                                                                    \
     {}
@@ -175,6 +187,7 @@ extern tp::tj_unique_ptr<char[]> __debug_str_buf;
 #define output_debug_info()                                                                                            \
     {}
 #endif // NO_ANY_LOGS
+
 
 
 #define _assert(exp)                                                                                                   \
