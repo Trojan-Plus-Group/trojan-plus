@@ -114,7 +114,9 @@ void QuicEndpoint::send_packet(const boost::asio::ip::udp::endpoint& dest,
     boost::system::error_code ec;
     m_socket.send_to(boost::asio::buffer(data, len), dest, 0, ec);
     if (ec) {
-        _log_with_date_time("QuicEndpoint::send_packet: " + tp::string(ec.message().c_str()), Log::WARN);
+        _log_with_date_time("QuicEndpoint::send_packet to " + dest.address().to_string() + ":" +
+                              tp::to_string(dest.port()) + " failed: " + tp::string(ec.message().c_str()),
+                            Log::WARN);
     }
 }
 

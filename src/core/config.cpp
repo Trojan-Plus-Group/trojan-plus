@@ -76,6 +76,19 @@ void Config::load(const tp::string& filename) {
     ptree tree;
     read_json(filename.c_str(), tree);
     populate(tree);
+
+    // fix relative paths
+    size_t pos = filename.find_last_of("\\/");
+    if (pos != tp::string::npos) {
+        tp::string prefix = filename.substr(0, pos + 1);
+        if (!ssl.cert.empty() && ssl.cert.find_first_of("\\/") == tp::string::npos) {
+            ssl.cert = prefix + ssl.cert;
+        }
+        if (!ssl.key.empty() && ssl.key.find_first_of("\\/") == tp::string::npos) {
+            ssl.key = prefix + ssl.key;
+        }
+    }
+
     _unguard;
 }
 
@@ -113,6 +126,8 @@ void Config::populate(const ptree& tree) {
     } else {
         throw std::runtime_error(tp::string("wrong run_type in config file").c_str());
     }
+    bool is_server = (run_type == SERVER || run_type == SERVERT_TUN);
+
     local_addr  = tree.get("local_addr", std::string()).c_str();
     local_port  = tree.get("local_port", uint16_t());
     remote_addr = tree.get("remote_addr", std::string()).c_str();
@@ -216,11 +231,12 @@ void Config::populate(const ptree& tree) {
     quic.retry_connect_timeout_ms = tree.get("quic.retry_connect_timeout_ms", 0U);
     quic.alpn_token             = tree.get("quic.alpn_token", std::string("h3")).c_str();
     quic.max_idle_timeout_ms    = tree.get("quic.max_idle_timeout_ms", 60000U);
-    quic.max_concurrent_streams = tree.get("quic.max_concurrent_streams", 100U);
+    quic.max_concurrent_streams = tree.get("quic.max_concurrent_streams", is_server ? 1000U : 100U);
     quic.max_datagram_size      = tree.get("quic.max_datagram_size", 1200U);
     quic.recv_buffer_size       = tree.get("quic.recv_buffer_size", quic.max_datagram_size * 64U);
     quic.send_buffer_size       = tree.get("quic.send_buffer_size", quic.max_datagram_size * 64U);
     quic.h3_upstream            = tree.get("quic.h3_upstream", std::string()).c_str();
+    quic.debug_disable_tcp      = tree.get("quic.debug_disable_tcp", false);
 
 #ifndef ENABLE_QUIC
     if (quic.enabled) {

@@ -46,12 +46,6 @@
     },
     "quic": {
         "enabled": false,
-        "alpn_token": "h3",
-        "max_idle_timeout_ms": 30000,
-        "max_concurrent_streams": 100,
-        "max_datagram_size": 1200,
-        "recv_buffer_size": 76800,
-        "send_buffer_size": 76800,
-        "h3_upstream": ""
+        "alpn_token": "h3"
     }
 }

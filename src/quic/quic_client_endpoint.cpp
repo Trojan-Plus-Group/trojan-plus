@@ -90,6 +90,10 @@ void QuicClientEndpoint::connect_to_server() {
                 }
             };
 
+            m_conn->on_stream_close_cb = [this](int64_t stream_id) {
+                m_stream_handlers.erase(stream_id);
+            };
+
             if (!m_conn->init_client(local_endpoint(), m_server_ep)) {
                 _log_with_date_time("QuicClientEndpoint: init_client failed", Log::ERROR);
                 m_conn = nullptr;
@@ -107,6 +111,12 @@ void QuicClientEndpoint::on_packet(const uint8_t* data, std::size_t len,
 
 bool QuicClientEndpoint::is_connected() const {
     return m_conn && !m_conn->is_closed() && m_conn->is_handshake_done();
+}
+
+void QuicClientEndpoint::extend_window(int64_t stream_id, std::size_t n) {
+    if (m_conn) {
+        m_conn->extend_window(stream_id, n);
+    }
 }
 
 void QuicClientEndpoint::mark_unreachable() {
@@ -132,11 +142,14 @@ void QuicClientEndpoint::mark_unreachable() {
 int64_t QuicClientEndpoint::open_bidi_stream(
     std::function<void(int64_t)> on_stream_ready) {
     if (!m_conn || m_conn->is_closed()) {
+        if (on_stream_ready) {
+            on_stream_ready(-1);
+        }
         return -1;
     }
     if (m_conn->is_handshake_done()) {
         auto sid = m_conn->open_bidi_stream();
-        if (sid >= 0 && on_stream_ready) {
+        if (on_stream_ready) {
             on_stream_ready(sid);
         }
         return sid;

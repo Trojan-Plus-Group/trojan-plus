@@ -435,15 +435,17 @@ void ClientSession::request_remote() {
         out_async_write(streambuf_to_string_view(out_write_buf));
     };
 
-    const bool pipeline_assigned = get_pipeline_component().is_using_pipeline();
+    bool pipeline_assigned = get_pipeline_component().is_using_pipeline();
 
 #ifdef ENABLE_QUIC
     auto*      quic_client    = get_service()->get_quic_client();
-    const bool try_quic_first = (quic_client != nullptr) &&
-                                get_config().get_quic().enabled &&
-                                get_config().get_quic().prefer_quic &&
-                                quic_client->is_connected() &&
+    const bool try_quic_first = (quic_client != nullptr) && get_config().get_quic().enabled &&
+                                get_config().get_quic().prefer_quic && quic_client->is_connected() &&
                                 !quic_client->is_known_unreachable();
+
+    if (get_config().get_quic().debug_disable_tcp) {
+        pipeline_assigned = try_quic_first;
+    }
 #else
     constexpr bool try_quic_first = false;
 #endif
