@@ -70,7 +70,7 @@ void QuicClientEndpoint::connect_to_server() {
             m_conn = TP_MAKE_SHARED(QuicConnection, *this, m_tls_ctx, m_server_ep);
 
             // Route incoming stream data to registered handlers.
-            m_conn->on_stream_data_cb = [this](int64_t stream_id, const uint8_t* data,
+            m_conn->on_stream_data_cb = [this, self](int64_t stream_id, const uint8_t* data,
                                                std::size_t len, bool fin) {
                 auto it = m_stream_handlers.find(stream_id);
                 if (it != m_stream_handlers.end()) {
@@ -90,7 +90,7 @@ void QuicClientEndpoint::connect_to_server() {
                 }
             };
 
-            m_conn->on_stream_close_cb = [this](int64_t stream_id) {
+            m_conn->on_stream_close_cb = [this, self](int64_t stream_id) {
                 m_stream_handlers.erase(stream_id);
             };
 

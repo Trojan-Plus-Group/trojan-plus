@@ -101,11 +101,12 @@ void QuicServerEndpoint::on_packet(const uint8_t* data, std::size_t len,
         return;
     }
 
+    auto self = shared_from_this();
     auto conn = TP_MAKE_SHARED(QuicConnection, *this, m_tls_ctx, src);
 
     // stream_open: create a QuicProxySession for each new bidi stream.
     auto weak_conn = std::weak_ptr<QuicConnection>(conn);
-    conn->on_stream_open_cb = [this, weak_conn](int64_t stream_id) {
+    conn->on_stream_open_cb = [this, self, weak_conn](int64_t stream_id) {
         auto locked = weak_conn.lock();
         if (!locked) {
             return;
@@ -125,7 +126,7 @@ void QuicServerEndpoint::on_packet(const uint8_t* data, std::size_t len,
     };
 
     // new connection ID generated: add it to the routing table.
-    conn->on_new_connection_id_cb = [this, weak_conn](const ngtcp2_cid* cid) {
+    conn->on_new_connection_id_cb = [this, self, weak_conn](const ngtcp2_cid* cid) {
         auto locked = weak_conn.lock();
         if (locked) {
             tp::string ckey = dcid_key(cid->data, cid->datalen);

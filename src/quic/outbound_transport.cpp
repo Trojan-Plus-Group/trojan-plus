@@ -178,9 +178,10 @@ class QuicStreamTransport : public OutboundTransport,
                        std::function<void()> on_error) override {
         // Register data handler before opening the stream so we never miss data.
         // We use a sentinel stream_id = -2 until the real sid is assigned.
-        auto sid = m_endpoint->open_bidi_stream(
-            [this, on_success = std::move(on_success),
-                   on_error_deferred = on_error](int64_t sid) mutable {
+        auto self = shared_from_this();
+        auto sid  = m_endpoint->open_bidi_stream(
+            [this, self, on_success = std::move(on_success),
+             on_error_deferred = on_error](int64_t sid) mutable {
                 if (sid < 0) {
                     // Endpoint returned failure inside the deferred callback.
                     boost::asio::post(m_io_ctx, std::move(on_error_deferred));
@@ -188,7 +189,7 @@ class QuicStreamTransport : public OutboundTransport,
                 }
                 m_stream_id = sid;
                 m_endpoint->set_stream_data_handler(
-                    sid, [this](const uint8_t* data, std::size_t len, bool fin) {
+                    sid, [this, self](const uint8_t* data, std::size_t len, bool fin) {
                         on_data(data, len, fin);
                     });
                 // Post to avoid potential re-entrancy if called synchronously.
