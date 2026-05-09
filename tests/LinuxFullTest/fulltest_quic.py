@@ -1383,15 +1383,18 @@ async def main():
             "127.0.0.1",
             {QUIC_SERVER_PORT},
             configuration=config,
-            wait_connected=False,
+            wait_connected=True,
         ) as protocol:
             reader, writer = await protocol.create_stream()
-            writer.write(b"a" * 150)  # 150 bytes, no \r\n
+            writer.write(b"a" * 150)
             await writer.drain()
+            # The server (now in H3 mode) should close the connection due to garbage
+            await asyncio.sleep(2)
             writer.close()
-            await asyncio.sleep(3)
+            await writer.wait_closed()
     except Exception as e:
-        print(f"AIOQUIC_ERROR: {{e}}")
+        # We expect a QuicConnectionError with H3_FRAME_ERROR (0x104) or similar
+        print(f"CLIENT_EXPECTED_ERROR: {{e}}")
 
 asyncio.run(main())
 """)
@@ -1400,16 +1403,20 @@ asyncio.run(main())
             [sys.executable, script_path],
             capture_output=True, timeout=15
         )
-        if result.stdout:
-            for line in result.stdout.decode('utf-8', errors='replace').splitlines():
+        stdout_str = result.stdout.decode('utf-8', errors='replace')
+        stderr_str = result.stderr.decode('utf-8', errors='replace')
+        combined_out = stdout_str + stderr_str
+
+        if stdout_str:
+            for line in stdout_str.splitlines():
                 if line.strip():
                     print_time_log(f"[T15] aioquic: {line}")
-        if result.stderr:
-            for line in result.stderr.decode('utf-8', errors='replace').splitlines():
-                if line.strip() and 'AIOQUIC_ERROR' not in line:
+        if stderr_str:
+            for line in stderr_str.splitlines():
+                if line.strip() and 'CLIENT_EXPECTED_ERROR' not in line:
                     print_time_log(f"[T15] aioquic stderr: {line}")
 
-        # Verify server fell back to h3_upstream (log message contains "no CRLF in").
+        # 1. Verify server fell back to h3_upstream (log message contains "no CRLF in").
         m = wait_for_log(srv_log, r"no CRLF in", timeout=10)
         if not m:
             print_time_log("[T15] FAIL: 'no CRLF in' not found in server log")
@@ -1417,13 +1424,14 @@ asyncio.run(main())
             return False
         print_time_log("[T15] server fallback triggered (no CRLF in 128 bytes)")
 
-        # Verify h3_upstream mock received the data.
-        m2 = wait_for_log("config/quic_h3mock.output", r"received \d+ bytes", timeout=5)
+        # 2. Verify server reported H3_FRAME_ERROR as expected.
+        # We allow a bit more time as H3 handshake and error detection might take a second.
+        m2 = wait_for_log(srv_log, r"H3 protocol error.*H3_FRAME_ERROR", timeout=10)
         if not m2:
-            print_time_log("[T15] FAIL: h3_upstream mock did not receive data")
+            print_time_log("[T15] FAIL: H3 protocol error not found in server log")
             dump = True
             return False
-        print_time_log("[T15] h3_upstream mock received forwarded data")
+        print_time_log("[T15] Standard H3 error handling verified (H3_FRAME_ERROR logged)")
 
         # Server must stay alive.
         if server.poll() is not None:
