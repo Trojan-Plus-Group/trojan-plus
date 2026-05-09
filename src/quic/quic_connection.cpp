@@ -674,6 +674,13 @@ void QuicConnection::close(uint64_t app_error_code) {
     }
     m_closed = true;
     m_loss_timer.cancel();
+    
+    _log_with_date_time("QuicConnection: closing connection with error code " + 
+                            tp::to_string(app_error_code) + " to peer " + 
+                            tp::string(m_peer.address().to_string().c_str()) + ":" + 
+                            tp::to_string(m_peer.port()),
+                        Log::INFO);
+
     if (m_conn) {
         ngtcp2_path_storage ps;
         ngtcp2_path_storage_zero(&ps);

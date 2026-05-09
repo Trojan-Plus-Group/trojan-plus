@@ -5,3 +5,4 @@
 *.tmpb.json
 *.tmpjson
 _t*_aioquic_client.py
+*.log
