@@ -508,69 +508,9 @@ def test_h3_upstream_fallback(binary_path):
         # Run aioquic in a subprocess to simulate a real HTTP/3 browser client.
         # This will send proper H3 frames (not Trojan protocol bytes) which
         # QuicUpstreamHandler expects during fallback.
-        script_path = os.path.join(os.path.dirname(__file__), "_t4_aioquic_client.py")
-        with open(script_path, "w") as f:
-            f.write(f"""
-import asyncio
-import sys
-from aioquic.asyncio import connect as async_connect
-from aioquic.quic.configuration import QuicConfiguration
-from aioquic.asyncio.protocol import QuicConnectionProtocol
-from aioquic.h3.connection import H3Connection
-from aioquic.h3.events import HeadersReceived, DataReceived
-
-class H3ClientProtocol(QuicConnectionProtocol):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.h3 = H3Connection(self._quic)
-        self.response_data = b""
-        self.done = asyncio.Event()
-
-    def quic_event_received(self, event):
-        for h3_event in self.h3.handle_event(event):
-            if isinstance(h3_event, DataReceived):
-                self.response_data += h3_event.data
-            if getattr(h3_event, 'stream_ended', False):
-                self.done.set()
-
-async def main():
-    config = QuicConfiguration(alpn_protocols=["h3"], is_client=True)
-    config.verify_mode = 0
-    try:
-        async with async_connect(
-            "127.0.0.1",
-            {QUIC_SERVER_PORT},
-            configuration=config,
-            create_protocol=H3ClientProtocol,
-            wait_connected=True,
-        ) as protocol:
-            stream_id = protocol._quic.get_next_available_stream_id()
-            protocol.h3.send_headers(
-                stream_id=stream_id,
-                headers=[
-                    (b":method", b"GET"),
-                    (b":scheme", b"https"),
-                    (b":authority", b"127.0.0.1"),
-                    (b":path", b"/"),
-                    (b"user-agent", b"X" * 150),
-                ],
-                end_stream=True,
-            )
-            protocol.transmit()
-
-            try:
-                await asyncio.wait_for(protocol.done.wait(), timeout=5.0)
-                print("RESPONSE:", protocol.response_data.decode('utf-8', errors='replace'))
-            except asyncio.TimeoutError:
-                print("RESPONSE_TIMEOUT")
-    except Exception as e:
-        print(f"AIOQUIC_ERROR: {{e}}")
-
-asyncio.run(main())
-""")
-
+        script_path = os.path.join(os.path.dirname(__file__), "quic_t4_aioquic_client.py")
         result = __import__('subprocess').run(
-            [sys.executable, script_path],
+            [sys.executable, "-u", script_path, str(QUIC_SERVER_PORT)],
             capture_output=True, timeout=15
         )
         
@@ -1368,39 +1308,9 @@ def test_no_crlf_fallback(binary_path):
 
         # Run aioquic in a subprocess to avoid event-loop conflicts with the
         # SOCKS socket monkey-patching done by other test functions.
-        script_path = os.path.join(os.path.dirname(__file__), "_t15_aioquic_client.py")
-        with open(script_path, "w") as f:
-            f.write(f"""
-import asyncio
-from aioquic.asyncio import connect as async_connect
-from aioquic.quic.configuration import QuicConfiguration
-
-async def main():
-    config = QuicConfiguration(alpn_protocols=["h3"], is_client=True)
-    config.verify_mode = 0
-    try:
-        async with async_connect(
-            "127.0.0.1",
-            {QUIC_SERVER_PORT},
-            configuration=config,
-            wait_connected=True,
-        ) as protocol:
-            reader, writer = await protocol.create_stream()
-            writer.write(b"a" * 150)
-            await writer.drain()
-            # The server (now in H3 mode) should close the connection due to garbage
-            await asyncio.sleep(2)
-            writer.close()
-            await writer.wait_closed()
-    except Exception as e:
-        # We expect a QuicConnectionError with H3_FRAME_ERROR (0x104) or similar
-        print(f"CLIENT_EXPECTED_ERROR: {{e}}")
-
-asyncio.run(main())
-""")
-
+        script_path = os.path.join(os.path.dirname(__file__), "quic_t15_aioquic_client.py")
         result = __import__('subprocess').run(
-            [sys.executable, script_path],
+            [sys.executable, "-u", script_path, str(QUIC_SERVER_PORT)],
             capture_output=True, timeout=15
         )
         stdout_str = result.stdout.decode('utf-8', errors='replace')
@@ -1530,7 +1440,7 @@ def test_quic_load_test(binary_path):
         print_time_log(f"[T16] Starting {len(test_files)} H3 fallback requests in parallel...")
         
         # Run the external aioquic client
-        aio_proc = Popen([sys.executable, "_t16_aioquic_client.py", str(QUIC_SERVER_PORT)] + test_files,
+        aio_proc = Popen([sys.executable, "-u", "quic_t16_aioquic_client.py", str(QUIC_SERVER_PORT)] + test_files,
                           stdout=PIPE, stderr=PIPE, universal_newlines=True)
         stdout, stderr = aio_proc.communicate(timeout=60)
         
