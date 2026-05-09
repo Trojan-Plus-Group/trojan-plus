@@ -235,12 +235,12 @@ bool QuicConnection::init_server(const uint8_t* data, std::size_t datalen,
 
     ngtcp2_transport_params params;
     ngtcp2_transport_params_default(&params);
-    params.initial_max_stream_data_bidi_local  = 256 * 1024;
-    params.initial_max_stream_data_bidi_remote = 256 * 1024;
-    params.initial_max_data                    = 4 * 1024 * 1024;
-    params.initial_max_streams_bidi            = 100;
-    params.initial_max_stream_data_uni         = 32 * 1024;
-    params.initial_max_streams_uni             = 3;
+    params.initial_max_stream_data_bidi_local  = 4 * 1024 * 1024;
+    params.initial_max_stream_data_bidi_remote = 4 * 1024 * 1024;
+    params.initial_max_data                    = 32 * 1024 * 1024;
+    params.initial_max_streams_bidi            = 1000;
+    params.initial_max_stream_data_uni         = 64 * 1024;
+    params.initial_max_streams_uni             = 200;
     params.max_idle_timeout = static_cast<ngtcp2_duration>(
         m_endpoint.config().get_quic().max_idle_timeout_ms) * 1'000'000ULL;
     params.original_dcid         = *dcid;
@@ -343,14 +343,12 @@ bool QuicConnection::init_client(const boost::asio::ip::udp::endpoint& local_ep,
 
     ngtcp2_transport_params params;
     ngtcp2_transport_params_default(&params);
-    params.initial_max_stream_data_bidi_local  = 256 * 1024;
-    params.initial_max_stream_data_bidi_remote = 256 * 1024;
-    params.initial_max_data                    = 4 * 1024 * 1024;
-    params.initial_max_streams_bidi            = 0;
-    params.initial_max_stream_data_uni         = 32 * 1024;
+    params.initial_max_data                    = 32 * 1024 * 1024;
+    params.initial_max_streams_bidi            = 100;
+    params.initial_max_stream_data_uni         = 64 * 1024;
     params.initial_max_streams_uni             = 100;
-    params.initial_max_stream_data_bidi_local  = 512 * 1024;
-    params.initial_max_stream_data_bidi_remote = 0;
+    params.initial_max_stream_data_bidi_local  = 4 * 1024 * 1024;
+    params.initial_max_stream_data_bidi_remote = 4 * 1024 * 1024;
     params.max_idle_timeout = static_cast<ngtcp2_duration>(
         m_endpoint.config().get_quic().max_idle_timeout_ms) * 1'000'000ULL;
 
@@ -523,8 +521,9 @@ int64_t QuicConnection::send_stream_data(int64_t stream_id, const uint8_t* data,
             break;
         }
 
-        if (nwrite == 0 && pdatalen <= 0) {
-            // Flow control or congestion control blocked. Data may be lost if not buffered.
+        if (pdatalen <= 0) {
+            // Flow control, congestion control, or no more data for this stream in current packets.
+            // DO NOT loop if we didn't send any stream data, to avoid infinite loop on connection-level frames.
             break;
         }
     }

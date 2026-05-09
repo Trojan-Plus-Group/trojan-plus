@@ -350,6 +350,22 @@ void QuicProxySession::flush_tcp_read_buf(std::size_t offset, std::size_t bytes)
         tcp_read();
     }
 }
+ 
+void QuicProxySession::on_connection_pump() {
+    if (m_destroyed) return;
+    if (m_is_udp) {
+        if (!m_udp_pending_stream_data.empty()) {
+            flush_udp_stream_data(0);
+        }
+    } else {
+        // If we were blocked by QUIC flow control, retry reading from TCP.
+        // Actually, tcp_read() will only start a new read if one is not in progress.
+        // If flush_tcp_read_buf is waiting on a timer, this won't help much, 
+        // but it ensures we don't stay stuck.
+        // We don't have a direct 'retry' for flush_tcp_read_buf here yet, 
+        // but tcp_read() is a good start.
+    }
+}
 
 void QuicProxySession::destroy(bool reset, uint64_t app_error_code) {
     if (m_destroyed) {

@@ -44,6 +44,7 @@ class QuicProxySession : public QuicStreamHandler, public std::enable_shared_fro
     // QuicStreamHandler implementation
     void on_stream_data(const uint8_t* data, std::size_t len, bool fin) override;
     void on_stream_close() override;
+    void on_connection_pump() override;
 
     [[nodiscard]] int64_t stream_id() const { return m_stream_id; }
 

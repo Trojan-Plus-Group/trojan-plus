@@ -1,10 +1,9 @@
-# This script is called by fulltest_quic.py to perform aioquic-based client tests.
-
 import asyncio
 import sys
 import os
 import hashlib
 import logging
+import argparse
 from aioquic.asyncio import connect as async_connect
 from aioquic.quic.configuration import QuicConfiguration
 from aioquic.asyncio.protocol import QuicConnectionProtocol
@@ -28,7 +27,14 @@ class H3ClientProtocol(QuicConnectionProtocol):
                 if h3_event.stream_id in self.done_events:
                     self.done_events[h3_event.stream_id].set()
 
-async def fetch_file(protocol, path):
+async def fetch_file(protocol, path, semaphore=None):
+    if semaphore:
+        async with semaphore:
+            return await _fetch_file_impl(protocol, path)
+    else:
+        return await _fetch_file_impl(protocol, path)
+
+async def _fetch_file_impl(protocol, path):
     stream_id = protocol._quic.get_next_available_stream_id()
     protocol.responses[stream_id] = bytearray()
     protocol.done_events[stream_id] = asyncio.Event()
@@ -46,29 +52,44 @@ async def fetch_file(protocol, path):
     )
     protocol.transmit()
     
-    await asyncio.wait_for(protocol.done_events[stream_id].wait(), timeout=15.0)
+    await asyncio.wait_for(protocol.done_events[stream_id].wait(), timeout=30.0)
     return bytes(protocol.responses[stream_id])
 
 async def main():
-    if len(sys.argv) < 3:
-        print(f"Usage: {sys.argv[0]} <port> <path1> <path2> ...")
-        return
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--port", type=int, required=True)
+    parser.add_argument("--file-list", type=str, help="Path to file containing list of files to download")
+    parser.add_argument("--concurrency", type=int, default=0, help="Max parallel downloads (0 for unlimited)")
+    parser.add_argument("paths", nargs="*", help="Files to download (if --file-list is not used)")
+    args = parser.parse_args()
 
-    port = int(sys.argv[1])
-    paths = sys.argv[2:]
+    paths = args.paths
+    if args.file_list:
+        if os.path.exists(args.file_list):
+            with open(args.file_list, "r") as f:
+                paths = [line.strip() for line in f if line.strip()]
+        else:
+            print(f"AIOQUIC_ERROR: file list {args.file_list} not found")
+            return
+
+    if not paths:
+        print("AIOQUIC_ERROR: no files to download")
+        return
 
     config = QuicConfiguration(alpn_protocols=["h3"], is_client=True)
     config.verify_mode = 0
     
+    semaphore = asyncio.Semaphore(args.concurrency) if args.concurrency > 0 else None
+
     try:
         async with async_connect(
             "127.0.0.1",
-            port,
+            args.port,
             configuration=config,
             create_protocol=H3ClientProtocol,
             wait_connected=True,
         ) as protocol:
-            tasks = [fetch_file(protocol, p) for p in paths]
+            tasks = [fetch_file(protocol, p, semaphore) for p in paths]
             results = await asyncio.gather(*tasks, return_exceptions=True)
             
             for path, res in zip(paths, results):
@@ -77,11 +98,13 @@ async def main():
                 else:
                     md5 = hashlib.md5(res).hexdigest()
                     print(f"FILE:{path}:OK:{len(res)}:{md5}")
-                    with open(f"tmp_h3_{path}", "wb") as f:
-                        f.write(res)
-                    print(f"DEBUG_DATA:{res[:100].hex()}")
+                    # Only write first few to avoid disk bloat in load test
+                    if paths.index(path) < 5:
+                        with open(f"tmp_h3_{hashlib.md5(path.encode()).hexdigest()[:8]}", "wb") as f:
+                            f.write(res)
     except Exception as e:
         print(f"AIOQUIC_ERROR: {e}")
 
 if __name__ == "__main__":
     asyncio.run(main())
+

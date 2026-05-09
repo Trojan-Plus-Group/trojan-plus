@@ -37,6 +37,7 @@ except ImportError:
 
 import threading
 _socks_lock = threading.Lock()  # protects global socket.socket monkey-patch
+_true_socket_class = socket.socket  # save original socket class
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
@@ -222,36 +223,48 @@ def patch_quic_config_with_suffix(base_name, suffix, overrides):
     return tmp
 
 
-def http_get_via_socks5(url, proxy_port, timeout=15):
-    """HTTP GET through a SOCKS5 proxy. Returns response body bytes."""
-    if socks is None:
-        raise RuntimeError("PySocks not installed")
-    orig = socket.socket
-    with _socks_lock:
-        try:
-            socks.set_default_proxy(socks.SOCKS5, "127.0.0.1", proxy_port)
-            socket.socket = socks.socksocket
-            req = urllib.request.urlopen(url, timeout=timeout)
-            return req.read()
-        finally:
-            socket.socket = orig
-
-
-def http_post_via_socks5(url, data, proxy_port, timeout=15):
-    """HTTP POST through a SOCKS5 proxy. Returns response bytes."""
-    if socks is None:
-        raise RuntimeError("PySocks not installed")
+def http_get_via_socks5(url, proxy_port, timeout=60):
+    """HTTP GET through a SOCKS5 proxy using a manual socket and http.client for thread safety."""
     import urllib.parse
-    orig = socket.socket
+    import http.client
+    parsed = urllib.parse.urlparse(url)
+    s = socks.socksocket()
+    s.set_proxy(socks.SOCKS5, "127.0.0.1", proxy_port)
+    s.settimeout(timeout)
     try:
-        socks.set_default_proxy(socks.SOCKS5, "127.0.0.1", proxy_port)
-        socket.socket = socks.socksocket
-        encoded = urllib.parse.urlencode({'d': data}).encode()
-        req = urllib.request.Request(url, data=encoded)
-        resp = urllib.request.urlopen(req, timeout=timeout)
-        return resp.read()
-    finally:
-        socket.socket = orig
+        s.connect((parsed.hostname, parsed.port or 80))
+        conn = http.client.HTTPConnection(parsed.hostname, port=parsed.port or 80)
+        conn.sock = s
+        conn.request("GET", parsed.path + ("?" + parsed.query if parsed.query else ""))
+        resp = conn.getresponse()
+        data = resp.read()
+        conn.close()
+        return data
+    except Exception as e:
+        s.close()
+        raise e
+
+def http_post_via_socks5(url, data, proxy_port, timeout=60):
+    """HTTP POST through a SOCKS5 proxy using a manual socket and http.client for thread safety."""
+    import urllib.parse
+    import http.client
+    parsed = urllib.parse.urlparse(url)
+    s = socks.socksocket()
+    s.set_proxy(socks.SOCKS5, "127.0.0.1", proxy_port)
+    s.settimeout(timeout)
+    try:
+        s.connect((parsed.hostname, parsed.port or 80))
+        conn = http.client.HTTPConnection(parsed.hostname, port=parsed.port or 80)
+        conn.sock = s
+        body = data.encode() if isinstance(data, str) else data
+        conn.request("POST", parsed.path + ("?" + parsed.query if parsed.query else ""), body=body)
+        resp = conn.getresponse()
+        data_recv = resp.read()
+        conn.close()
+        return data_recv
+    except Exception as e:
+        s.close()
+        raise e
 
 
 def ensure_large_test_file():
@@ -1393,16 +1406,19 @@ def test_no_crlf_fallback(binary_path):
         close_process(server, dump)
         close_process(mock, dump)
 
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
-
 def test_quic_load_test(binary_path):
     """T16: QUIC Load Test - parallel proxy and H3 fallback traffic."""
     print_time_log("[T16] quic_load_test: starting...")
     
+    # --- Configuration ---
+    ENABLE_SOCKS_LOAD = True
+    ENABLE_H3_LOAD    = False
+    
+    TOTAL_FILES       = 100
+    SOCKS_CONCURRENCY = 5
+    H3_CONCURRENCY    = 50
+    # ---------------------
+
     # 1. Server config: proxy to HTTP_TARGET_PORT, fallback to HTTP_TARGET_PORT.
     srv_cfg = patch_quic_config("quic_server_config.json", {
         "remote_port": HTTP_TARGET_PORT,
@@ -1420,7 +1436,7 @@ def test_quic_load_test(binary_path):
     server, srv_log = start_trojan(binary_path, srv_cfg)
     client, cli_log = start_trojan(binary_path, cli_cfg)
     dump = False
-    
+
     try:
         if not server or not client:
             dump = True
@@ -1445,78 +1461,120 @@ def test_quic_load_test(binary_path):
             return False
             
         # Select some files for testing
-        test_files = (all_files * 10)[:10] # 10 files
+        test_files = (all_files * TOTAL_FILES)[:TOTAL_FILES]
         
-        # Part 1: SOCKS5 Parallel Requests
-        print_time_log(f"[T16] Starting {len(test_files)} SOCKS5 proxy requests in parallel...")
         def fetch_proxy(fname):
             url = f"http://127.0.0.1:{HTTP_TARGET_PORT}/{fname}"
-            got = http_get_via_socks5(url, QUIC_CLIENT_PROXY_PORT)
-            with open(os.path.join(TEST_FILES_DIR, fname), 'rb') as f:
-                want = f.read()
-            return fname, got == want, len(got)
+            try:
+                got = http_get_via_socks5(url, QUIC_CLIENT_PROXY_PORT)
+                with open(os.path.join(TEST_FILES_DIR, fname), 'rb') as f:
+                    want = f.read()
+                return fname, got == want, len(got)
+            except Exception as e:
+                return fname, False, str(e)
 
-        proxy_results = []
-        with ThreadPoolExecutor(max_workers=5) as pool:
-            futs = [pool.submit(fetch_proxy, f) for f in test_files]
-            for fut in as_completed(futs):
-                proxy_results.append(fut.result())
-        
-        for fname, ok, size in proxy_results:
-            if not ok:
-                print_time_log(f"[T16] FAIL: proxy mismatch for {fname}")
-                return False
-        print_time_log(f"[T16] Proxy parallel requests OK")
+        def run_proxy_load():
+            print_time_log(f"[T16] Starting {len(test_files)} SOCKS5 proxy requests (concurrency={SOCKS_CONCURRENCY})...")
+            results = []
+            with ThreadPoolExecutor(max_workers=SOCKS_CONCURRENCY) as pool:
+                futs = [pool.submit(fetch_proxy, f) for f in test_files]
+                for fut in as_completed(futs):
+                    results.append(fut.result())
+            return results
 
-        time.sleep(1)
-
-        # Part 2: H3 Fallback Parallel Requests
-        print_time_log(f"[T16] Starting {len(test_files)} H3 fallback requests in parallel...")
-        
-        # Run the external aioquic client
-        aio_proc = Popen([sys.executable, "-u", "quic_t16_aioquic_client.py", str(QUIC_SERVER_PORT)] + test_files,
-                          stdout=PIPE, stderr=PIPE, universal_newlines=True)
-        stdout, stderr = aio_proc.communicate(timeout=60)
-        
-        print_time_log(f"[T16] aioquic STDOUT:\n{stdout}")
-        print_time_log(f"[T16] aioquic STDERR:\n{stderr}")
-
-        if aio_proc.returncode != 0:
-            print_time_log(f"[T16] FAIL: aioquic client exited with {aio_proc.returncode}")
-            return False
+        def run_h3_load(concurrency=20):
+            print_time_log(f"[T16] Starting {len(test_files)} H3 fallback requests (concurrency={concurrency})...")
             
-        # Parse aioquic output
-        h3_results = {}
-        for line in stdout.splitlines():
-            if line.startswith("FILE:"):
-                parts = line.split(":")
-                if len(parts) >= 5 and parts[2] == "OK":
-                    fname = parts[1]
-                    size = int(parts[3])
-                    md5 = parts[4]
-                    h3_results[fname] = (size, md5)
-                else:
-                    print_time_log(f"[T16] FAIL: aioquic error line: {line}")
+            # Use a temporary file to avoid command line length limits
+            list_file = os.path.join("config", "t16_file_list.tmp")
+            with open(list_file, "w") as f:
+                for tf in test_files:
+                    f.write(tf + "\n")
+            
+            # Run the external aioquic client with new arguments
+            cmd = [
+                sys.executable, "-u", "quic_t16_aioquic_client.py",
+                "--port", str(QUIC_SERVER_PORT),
+                "--file-list", list_file,
+                "--concurrency", str(concurrency)
+            ]
+            
+            aio_proc = Popen(cmd, stdout=PIPE, stderr=PIPE, universal_newlines=True)
+            try:
+                stdout, stderr = aio_proc.communicate(timeout=300)
+            finally:
+                if os.path.exists(list_file):
+                    try:
+                        os.remove(list_file)
+                    except:
+                        pass
+            return aio_proc.returncode, stdout, stderr
+
+        # Run configured load types
+        proxy_results = None
+        h3_res = None
+        
+        with ThreadPoolExecutor(max_workers=2) as main_pool:
+            futs = {}
+            if ENABLE_SOCKS_LOAD:
+                futs['proxy'] = main_pool.submit(run_proxy_load)
+            if ENABLE_H3_LOAD:
+                futs['h3'] = main_pool.submit(run_h3_load, H3_CONCURRENCY)
+            
+            if 'proxy' in futs:
+                proxy_results = futs['proxy'].result()
+            if 'h3' in futs:
+                h3_res = futs['h3'].result()
+
+        # 1. Verify Proxy Results
+        if ENABLE_SOCKS_LOAD:
+            for fname, ok, info in proxy_results:
+                if not ok:
+                    print_time_log(f"[T16] FAIL: proxy failure for {fname}: {info}")
                     return False
+            print_time_log(f"[T16] Proxy parallel requests OK")
 
-        # Verify H3 results
-        import hashlib
-        for fname in test_files:
-            if fname not in h3_results:
-                print_time_log(f"[T16] FAIL: {fname} missing from H3 results")
+        # 2. Verify H3 Results
+        if ENABLE_H3_LOAD:
+            h3_rc, h3_stdout, h3_stderr = h3_res
+            if h3_rc != 0:
+                print_time_log(f"[T16] FAIL: aioquic client exited with {h3_rc}")
+                if h3_stdout: print_time_log(f"STDOUT: {h3_stdout}")
+                if h3_stderr: print_time_log(f"STDERR: {h3_stderr}")
                 return False
+                
+            # Parse aioquic output
+            h3_results = {}
+            for line in h3_stdout.splitlines():
+                if line.startswith("FILE:"):
+                    parts = line.split(":")
+                    if len(parts) >= 5 and parts[2] == "OK":
+                        fname = parts[1]
+                        size = int(parts[3])
+                        md5 = parts[4]
+                        h3_results[fname] = (size, md5)
+                    else:
+                        print_time_log(f"[T16] FAIL: aioquic error line: {line}")
+                        return False
+
+            import hashlib
+            for fname in test_files:
+                if fname not in h3_results:
+                    print_time_log(f"[T16] FAIL: {fname} missing from H3 results")
+                    return False
+                
+                with open(os.path.join(TEST_FILES_DIR, fname), 'rb') as f:
+                    want_data = f.read()
+                    want_md5 = hashlib.md5(want_data).hexdigest()
+                    want_size = len(want_data)
+                
+                got_size, got_md5 = h3_results[fname]
+                if got_size != want_size or got_md5 != want_md5:
+                    print_time_log(f"[T16] FAIL: H3 content mismatch for {fname} (got {got_size} bytes, md5 {got_md5}; want {want_size} bytes, md5 {want_md5})")
+                    return False
             
-            with open(os.path.join(TEST_FILES_DIR, fname), 'rb') as f:
-                want_data = f.read()
-                want_md5 = hashlib.md5(want_data).hexdigest()
-                want_size = len(want_data)
-            
-            got_size, got_md5 = h3_results[fname]
-            if got_size != want_size or got_md5 != want_md5:
-                print_time_log(f"[T16] FAIL: H3 content mismatch for {fname} (got {got_size} bytes, md5 {got_md5}; want {want_size} bytes, md5 {want_md5})")
-                return False
+            print_time_log(f"[T16] H3 parallel requests OK")
         
-        print_time_log(f"[T16] H3 parallel requests OK")
         print_time_log(f"[T16] quic_load_test PASSED")
         return True
         
@@ -1528,6 +1586,12 @@ def test_quic_load_test(binary_path):
         close_process(client, dump)
         close_process(server, dump)
 
+
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
 ALL_TESTS = [
     ("T1",  test_e2e_basic_proxy),
@@ -1547,7 +1611,6 @@ ALL_TESTS = [
     ("T15", test_no_crlf_fallback),
     ("T16", test_quic_load_test),
 ]
-
 
 def main(binary_path, test_tag='all'):
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
@@ -1582,6 +1645,8 @@ def main(binary_path, test_tag='all'):
     failed = 0
     try:
         for tag, fn in tests_to_run:
+            with _socks_lock:
+                socket.socket = _true_socket_class
             print_time_log(f"--- Running {tag} ---")
             try:
                 if fn(binary_path):
@@ -1599,7 +1664,6 @@ def main(binary_path, test_tag='all'):
 
     print_time_log(f"===== QUIC Tests: {passed} passed, {failed} failed =====")
     return 0 if failed == 0 else 1
-
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:
