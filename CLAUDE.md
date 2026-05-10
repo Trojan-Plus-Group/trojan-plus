@@ -52,8 +52,6 @@ For consistent builds and testing:
 
 ## Testing
 
-### Full Integration Tests
-
 Located in `tests/LinuxFullTest/`, requires Python 3 with PySocks, psutil, dnspython.
 
 **Linux**:
@@ -87,6 +85,7 @@ py -3 fulltest_main.py /path/to/build/trojan.exe -g -n -d 5333
 - **src/proto/**: Protocol handlers (TrojanRequest, SOCKS5Address, UDPPacket, PipelineRequest, DNS/ICMP/IPv4/IPv6 headers)
 - **src/ssl/**: SSL/TLS session management
 - **src/tun/**: TUN device handling with lwip integration, DNS server, UDP forwarder
+- **src/quic/**: QUIC transport implementation via ngtcp2 + nghttp3 + wolfSSL + boost.beast(http protocol parsing) 
 - **src/mem/**: Custom memory allocator system
 
 ### Session Architecture
@@ -149,11 +148,13 @@ See `docs/config.md` for full configuration documentation.
 - **badvpn**: Provides lwip (lightweight IP stack) for TUN device handling
 - **GSL**: Microsoft's Guidelines Support Library for modern C++ patterns
 - **mimalloc**: Microsoft's high-performance memory allocator (bundled, compiled from source)
+- **ngtcp2**: QUIC transport protocol (patched in `build/ngtcp2_patched/` for MSVC `_Generic` compatibility)
+- **nghttp3**: HTTP/3 implementation used by QUIC transport
 
 ### External Libraries
 
-- **Boost**: Uses program_options, asio (io_context, ssl, timers, sockets)
-- **wolfSSL**: SSL/TLS implementation
+- **Boost**: Uses program_options, asio (io_context, ssl, timers, sockets), beast (HTTP protocol parsing)
+- **wolfSSL**: SSL/TLS implementation, integrated with ngtcp2 via `SSL_set_quic_method` for QUIC TLS
 
 ## Running
 
@@ -162,11 +163,3 @@ See `docs/config.md` for full configuration documentation.
 ./trojan -t -c /path/to/config.json  # Test config
 ./trojan -v                          # Print version
 ```
-
-## Recent Architectural Changes
-
-- **Custom Allocator Refactoring**: Migrated entire codebase from std:: to tp:: containers with custom allocator integration
-- **mimalloc Integration**: Bundled and statically linked for improved multi-threaded performance
-- **Asio Modernization**: Removed deprecated null_buffers() pattern, using async_wait()
-- **Security Hardening**: Replaced sprintf with snprintf throughout
-- **macOS Compatibility**: Fixed wolfSSL compatibility, suppressed SecKeychain deprecation warnings
