@@ -712,6 +712,11 @@ void Service::reload_cert() {
         _log_with_date_time("reloading certificate and private key. . . ", Log::WARN);
         ssl_context.use_certificate_chain_file(config.get_ssl().cert.c_str());
         ssl_context.use_private_key_file(config.get_ssl().key.c_str(), context::pem);
+#ifdef ENABLE_QUIC
+        if (m_quic_tls_ctx) {
+            m_quic_tls_ctx->reload_cert(config);
+        }
+#endif
         boost::system::error_code ec;
         socket_acceptor.cancel(ec);
         async_accept();

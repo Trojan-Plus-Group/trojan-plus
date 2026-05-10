@@ -650,7 +650,7 @@ bool QuicConnection::forward_to_h3_upstream(int64_t stream_id, const uint8_t* da
     // Call set_stream_handler FIRST, because it performs stale mapping cleanup
     // which includes calling h3_mgr->unregister_stream(stream_id).
     set_stream_handler(stream_id, h3_handler);
-    h3_mgr.register_stream(stream_id, h3_handler.get());
+    h3_mgr.register_stream(stream_id, h3_handler);
 
     if (data && len > 0) {
         h3_handler->on_stream_data(data, len, fin);

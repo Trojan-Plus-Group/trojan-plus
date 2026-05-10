@@ -33,6 +33,9 @@ class QuicTlsCtx {
     // Caller owns the returned handle and must call wolfSSL_free() on it.
     [[nodiscard]] WOLFSSL* create_ssl() const;
 
+    // Reload certificate chain and private key from configuration.
+    bool reload_cert(const Config& config);
+
     [[nodiscard]] WOLFSSL_CTX* native_handle() const { return m_ctx; }
     [[nodiscard]] Role role() const { return m_role; }
     [[nodiscard]] const tp::string& alpn_token() const { return m_alpn_token; }

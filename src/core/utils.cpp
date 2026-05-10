@@ -42,11 +42,19 @@ size_t streambuf_append(
     if (n == 0) {
         return 0;
     }
-    auto* dest      = static_cast<uint8_t*>(boost::asio::buffer_sequence_begin(target.prepare(n))->data());
-    const auto* src = static_cast<const uint8_t*>(boost::asio::buffer_sequence_begin(append_buf.data())->data()) + start;
-    std::memcpy(dest, src, n);
-    target.commit(n);
-    return n;
+    auto dest_buffers = target.prepare(n);
+    auto src_buffers  = append_buf.data();
+
+    // Use a temporary merged buffer for the source to handle fragmentation with offset
+    static thread_local tp::string src_merge_buf;
+    if (src_merge_buf.size() < append_buf.size()) {
+        src_merge_buf.resize(append_buf.size());
+    }
+    boost::asio::buffer_copy(boost::asio::buffer(&src_merge_buf[0], append_buf.size()), src_buffers);
+
+    auto copied = boost::asio::buffer_copy(dest_buffers, boost::asio::buffer(src_merge_buf.data() + start, n));
+    target.commit(copied);
+    return copied;
 }
 
 size_t streambuf_append(tp::streambuf& target, const char* append_str) {
@@ -108,10 +116,13 @@ size_t streambuf_append(tp::streambuf& target, const tp::string& append_data) {
 
 std::string_view streambuf_to_string_view(const tp::streambuf& target) {
     _guard;
-    if (target.size() == 0) {
+    auto buffers = target.data();
+    if (boost::asio::buffer_size(buffers) == 0) {
         return std::string_view();
     }
-    return std::string_view(static_cast<const char*>(boost::asio::buffer_sequence_begin(target.data())->data()), target.size());
+    // boost::asio::streambuf (and basic_streambuf) is guaranteed to be contiguous for its input sequence.
+    auto it = boost::asio::buffer_sequence_begin(buffers);
+    return std::string_view(static_cast<const char*>(it->data()), it->size());
     _unguard;
 }
 

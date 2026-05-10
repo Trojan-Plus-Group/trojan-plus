@@ -39,7 +39,7 @@ class QuicToHttp3Connect {
 
     // Raw pointer — handler MUST call unregister_stream from destroy() before its
     // shared_ptr drops, while QuicConnection::m_stream_handlers still holds it.
-    void register_stream(int64_t stream_id, QuicUpstreamHandler* handler);
+    void register_stream(int64_t stream_id, std::shared_ptr<QuicUpstreamHandler> handler);
     void unregister_stream(int64_t stream_id);
 
     // Feed raw QUIC stream bytes into nghttp3. Returns consumed byte count (== len
@@ -69,7 +69,7 @@ class QuicToHttp3Connect {
                                      void* conn_user_data, void* stream_user_data);
 
   private:
-    QuicUpstreamHandler* find_handler(int64_t stream_id);
+    std::shared_ptr<QuicUpstreamHandler> find_handler(int64_t stream_id);
 
     static int cb_begin_headers(nghttp3_conn*, int64_t stream_id,
                                 void* conn_user_data, void* stream_user_data);
@@ -90,7 +90,7 @@ class QuicToHttp3Connect {
 
     QuicConnection& m_owner;
     nghttp3_conn* m_conn{nullptr};
-    tp::unordered_map<int64_t, QuicUpstreamHandler*> m_streams;
+    tp::unordered_map<int64_t, std::weak_ptr<QuicUpstreamHandler>> m_streams;
 };
 
 #endif // _QUIC_TO_HTTP3_CONNECT_H_

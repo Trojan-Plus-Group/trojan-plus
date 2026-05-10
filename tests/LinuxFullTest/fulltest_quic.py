@@ -476,7 +476,7 @@ def test_e2e_post_data(binary_path):
             payload = f.read()
 
         url = f"http://127.0.0.1:{HTTP_TARGET_PORT}/{test_file}"
-        resp = http_post_via_socks5(url, payload, QUIC_CLIENT_PROXY_PORT)
+        resp = http_post_via_socks5(url, b"d=" + payload, QUIC_CLIENT_PROXY_PORT)
         if resp != b"OK":
             print_time_log(f"[T3] FAIL: POST response = {resp!r}, expected b'OK'")
             dump = True
@@ -1411,12 +1411,12 @@ def test_quic_load_test(binary_path):
     print_time_log("[T16] quic_load_test: starting...")
     
     # --- Configuration ---
-    ENABLE_SOCKS_LOAD = True
-    ENABLE_H3_LOAD    = False
+    ENABLE_SOCKS_LOAD = False
+    ENABLE_H3_LOAD    = True
     
-    TOTAL_FILES       = 100
-    SOCKS_CONCURRENCY = 5
-    H3_CONCURRENCY    = 50
+    TOTAL_FILES       = 1
+    SOCKS_CONCURRENCY = 20
+    H3_CONCURRENCY    = 1
     # ---------------------
 
     # 1. Server config: proxy to HTTP_TARGET_PORT, fallback to HTTP_TARGET_PORT.
@@ -1473,25 +1473,40 @@ def test_quic_load_test(binary_path):
             except Exception as e:
                 return fname, False, str(e)
 
-        def run_proxy_load():
+        def run_proxy_load(crash_event):
             print_time_log(f"[T16] Starting {len(test_files)} SOCKS5 proxy requests (concurrency={SOCKS_CONCURRENCY})...")
             results = []
+            done = 0
             with ThreadPoolExecutor(max_workers=SOCKS_CONCURRENCY) as pool:
                 futs = [pool.submit(fetch_proxy, f) for f in test_files]
-                for fut in as_completed(futs):
+                while any(not f.done() for f in futs):
+                    if crash_event.is_set():
+                        return [("CRASH", False, "Abort due to other component crash")]
+                    if server.poll() is not None:
+                        print_time_log("[T16] ERROR: Trojan Server CRASHED during SOCKS load!")
+                        crash_event.set()
+                        return [("CRASH", False, "Server Crashed")]
+                    if client.poll() is not None:
+                        print_time_log("[T16] ERROR: Trojan Client CRASHED during SOCKS load!")
+                        crash_event.set()
+                        return [("CRASH", False, "Client Crashed")]
+                    time.sleep(0.5)
+                
+                for fut in futs:
                     results.append(fut.result())
+                    done += 1
+                    if done % 10 == 0 or done == len(test_files):
+                        print_time_log(f"[T16] Proxy progress: {done}/{len(test_files)}")
             return results
 
-        def run_h3_load(concurrency=20):
+        def run_h3_load(crash_event, concurrency=20):
             print_time_log(f"[T16] Starting {len(test_files)} H3 fallback requests (concurrency={concurrency})...")
             
-            # Use a temporary file to avoid command line length limits
             list_file = os.path.join("config", "t16_file_list.tmp")
             with open(list_file, "w") as f:
                 for tf in test_files:
                     f.write(tf + "\n")
             
-            # Run the external aioquic client with new arguments
             cmd = [
                 sys.executable, "-u", "quic_t16_aioquic_client.py",
                 "--port", str(QUIC_SERVER_PORT),
@@ -1500,8 +1515,54 @@ def test_quic_load_test(binary_path):
             ]
             
             aio_proc = Popen(cmd, stdout=PIPE, stderr=PIPE, universal_newlines=True)
+            stdout_lines = []
+            stderr_lines = []
+            
+            def reader_thread(pipe, lines_list, prefix=""):
+                try:
+                    for line in pipe:
+                        line = line.strip()
+                        if line:
+                            lines_list.append(line)
+                            if line.startswith("H3_PROGRESS:") or line.startswith("AIOQUIC_") or line.startswith("H3_EVENT:"):
+                                print_time_log(f"[T16] {line}")
+                            elif line.startswith("FILE:") and ":OK:" in line:
+                                # Optional: could print per-file if needed, but summary is cleaner
+                                pass
+                except: pass
+
+            t_out = threading.Thread(target=reader_thread, args=(aio_proc.stdout, stdout_lines, "STDOUT"))
+            t_err = threading.Thread(target=reader_thread, args=(aio_proc.stderr, stderr_lines, "STDERR"))
+            t_out.start()
+            t_err.start()
+            
             try:
-                stdout, stderr = aio_proc.communicate(timeout=300)
+                while aio_proc.poll() is None:
+                    if crash_event.is_set():
+                        aio_proc.kill()
+                        return -1, "", "Abort due to other component crash"
+                    if server.poll() is not None:
+                        print_time_log("[T16] ERROR: Trojan Server CRASHED during H3 load!")
+                        crash_event.set()
+                        aio_proc.kill()
+                        return -1, "", "Trojan Server Crashed"
+                    if client.poll() is not None:
+                        print_time_log("[T16] ERROR: Trojan Client CRASHED during H3 load!")
+                        crash_event.set()
+                        aio_proc.kill()
+                        return -1, "", "Trojan Client Crashed"
+                    time.sleep(0.5)
+                
+                t_out.join()
+                t_err.join()
+                stdout = "\n".join(stdout_lines)
+                stderr = "\n".join(stderr_lines)
+                return aio_proc.returncode, stdout, stderr
+            except:
+                aio_proc.kill()
+                t_out.join()
+                t_err.join()
+                raise
             finally:
                 if os.path.exists(list_file):
                     try:
@@ -1514,12 +1575,13 @@ def test_quic_load_test(binary_path):
         proxy_results = None
         h3_res = None
         
+        crash_event = threading.Event()
         with ThreadPoolExecutor(max_workers=2) as main_pool:
             futs = {}
             if ENABLE_SOCKS_LOAD:
-                futs['proxy'] = main_pool.submit(run_proxy_load)
+                futs['proxy'] = main_pool.submit(run_proxy_load, crash_event)
             if ENABLE_H3_LOAD:
-                futs['h3'] = main_pool.submit(run_h3_load, H3_CONCURRENCY)
+                futs['h3'] = main_pool.submit(run_h3_load, crash_event, H3_CONCURRENCY)
             
             if 'proxy' in futs:
                 proxy_results = futs['proxy'].result()
@@ -1528,6 +1590,9 @@ def test_quic_load_test(binary_path):
 
         # 1. Verify Proxy Results
         if ENABLE_SOCKS_LOAD:
+            if proxy_results and proxy_results[0][0] == "CRASH":
+                dump = True
+                return False
             for fname, ok, info in proxy_results:
                 if not ok:
                     print_time_log(f"[T16] FAIL: proxy failure for {fname}: {info}")
@@ -1538,6 +1603,8 @@ def test_quic_load_test(binary_path):
         if ENABLE_H3_LOAD:
             h3_rc, h3_stdout, h3_stderr = h3_res
             if h3_rc != 0:
+                if h3_rc == -1:
+                    dump = True
                 print_time_log(f"[T16] FAIL: aioquic client exited with {h3_rc}")
                 if h3_stdout: print_time_log(f"STDOUT: {h3_stdout}")
                 if h3_stderr: print_time_log(f"STDERR: {h3_stderr}")

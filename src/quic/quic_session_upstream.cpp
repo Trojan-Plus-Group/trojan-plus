@@ -127,9 +127,12 @@ void QuicUpstreamHandler::retry_feed_h3() {
             m_h3_in_buf.erase(0, n);
         }
 
-        // If it's a unidirectional stream (Control/QPACK), extend window immediately
-        // because these streams never trigger write_to_upstream().
-        if (is_quic_uni_stream(m_stream_id)) {
+        // Extend window immediately for all stream types.
+        // For uni streams (Control/QPACK): they never trigger write_to_upstream(),
+        //   so consumed bytes would leak without this.
+        // For bidi streams: write_to_upstream() captures m_unacked_stream_bytes
+        //   BEFORE this increment, so the first batch of consumed bytes also leaks.
+        if (m_unacked_stream_bytes > 0) {
             locked_conn->extend_window(m_stream_id, m_unacked_stream_bytes);
             m_unacked_stream_bytes = 0;
         }
@@ -312,6 +315,7 @@ void QuicUpstreamHandler::flush_tcp_read_buf(std::size_t bytes) {
             if (body_bytes > 0) {
                 tp::string chunk_data = m_parse_buf.substr(0, body_bytes);
                 m_body_out_chunks.push_back(chunk_data);
+                m_buffered_bytes += body_bytes;
                 
                 tp::string hex;
                 for (size_t i = 0; i < (std::min)(chunk_data.size(), size_t(16)); ++i) {
@@ -402,7 +406,10 @@ void QuicUpstreamHandler::process_body_chunk(bool eof) {
     if (m_reader_blocked) {
         m_reader_blocked = false;
         auto* h3 = locked_conn->h3_if_exists();
-        if (h3) h3->resume_stream(m_stream_id);
+        if (h3) {
+            _log_with_date_time("QuicUpstreamHandler: stream " + tp::to_string(m_stream_id) + " resuming H3 stream", Log::ALL);
+            h3->resume_stream(m_stream_id);
+        }
     }
     
     pump_h3_and_read();
@@ -435,103 +442,66 @@ nghttp3_ssize QuicUpstreamHandler::on_read_data(nghttp3_vec* vec, std::size_t ve
     auto total_avail = body_bytes_available();
     
     _log_with_date_time("QuicUpstreamHandler: stream " + tp::to_string(m_stream_id) +
-                             " on_read_data start: given=" + tp::to_string(m_given_offset) + 
-                             " consumed=" + tp::to_string(m_chunk_consumed) +
-                             " avail=" + tp::to_string(total_avail) + 
+                             " on_read_data entry: avail=" + tp::to_string(total_avail) + 
                              " chunks=" + tp::to_string(m_body_out_chunks.size()),
                          Log::ALL);
 
-    if (m_given_offset >= total_avail) {
+    if (m_body_out_chunks.empty()) {
         if (m_body_eof) {
             *pflags |= NGHTTP3_DATA_FLAG_EOF;
             _log_with_date_time("QuicUpstreamHandler: stream " + tp::to_string(m_stream_id) + " on_read_data EOF", Log::INFO);
             return 0;
         }
         m_reader_blocked = true;
+        _log_with_date_time("QuicUpstreamHandler: stream " + tp::to_string(m_stream_id) + " on_read_data blocked", Log::ALL);
         return NGHTTP3_ERR_WOULDBLOCK;
     }
 
-    std::size_t skip = m_given_offset;
-    std::size_t chunk_idx = 0;
-    std::size_t chunk_start_offset = m_chunk_consumed;
-
-    auto it = m_body_out_chunks.begin();
-    while (it != m_body_out_chunks.end()) {
-        auto& chunk = *it;
-        std::size_t chunk_len = chunk.size() - chunk_start_offset;
-        if (skip < chunk_len) {
-            std::size_t final_start = chunk_start_offset + skip;
-            std::size_t to_give = chunk.size() - final_start;
-            
-            vec[0].base = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(chunk.data()) + final_start);
-            vec[0].len = to_give;
-            m_given_offset += to_give;
-            
-            _log_with_date_time("QuicUpstreamHandler: stream " + tp::to_string(m_stream_id) + 
-                                     " on_read_data giving " + tp::to_string(to_give) + 
-                                     " bytes from chunk " + tp::to_string(chunk_idx) + 
-                                     " (new given=" + tp::to_string(m_given_offset) + ")",
-                                 Log::ALL);
-
-            if (m_body_eof && m_given_offset == total_avail) {
-                *pflags |= NGHTTP3_DATA_FLAG_EOF;
-                _log_with_date_time("QuicUpstreamHandler: stream " + tp::to_string(m_stream_id) + " on_read_data EOF (with data)", Log::INFO);
-            }
-            return 1;
-        }
-        skip -= chunk_len;
-        it++;
-        chunk_idx++;
-        chunk_start_offset = 0;
+    std::size_t nvec = 0;
+    for (auto& chunk : m_body_out_chunks) {
+        if (nvec >= veccnt) break;
+        vec[nvec].base = reinterpret_cast<uint8_t*>(const_cast<char*>(chunk.data()));
+        vec[nvec].len  = chunk.size();
+        nvec++;
     }
 
-    if (m_body_eof) {
+    if (m_body_out_chunks.empty() && m_body_eof) {
         *pflags |= NGHTTP3_DATA_FLAG_EOF;
-        _log_with_date_time("QuicUpstreamHandler: stream " + tp::to_string(m_stream_id) + " on_read_data EOF (fallback)", Log::INFO);
     }
-    return 0;
+
+    return static_cast<nghttp3_ssize>(nvec);
 }
 
 void QuicUpstreamHandler::notify_body_consumed(std::size_t n) {
-    if (n > m_given_offset) {
-        _log_with_date_time("QuicUpstreamHandler: stream " + tp::to_string(m_stream_id) +
-                                 " error: notify_body_consumed " + tp::to_string(n) + " > given " + tp::to_string(m_given_offset),
-                             Log::ERROR);
-        m_given_offset = 0;
-    } else {
-        m_given_offset -= n;
-    }
-
-    while (n > 0 && !m_body_out_chunks.empty()) {
+    if (n == 0) return;
+    
+    std::size_t remaining_to_pop = n;
+    while (remaining_to_pop > 0 && !m_body_out_chunks.empty()) {
         auto& chunk = m_body_out_chunks.front();
-        std::size_t avail = chunk.size() - m_chunk_consumed;
-        if (n >= avail) {
-            n -= avail;
+        if (chunk.size() <= remaining_to_pop) {
+            remaining_to_pop -= chunk.size();
             m_body_out_chunks.pop_front();
-            m_chunk_consumed = 0;
         } else {
-            m_chunk_consumed += n;
-            n = 0;
+            chunk.erase(0, remaining_to_pop);
+            remaining_to_pop = 0;
         }
     }
 
-    if (body_bytes_available() < kMaxBufferedBytes) {
+    m_buffered_bytes -= (std::min)(n, m_buffered_bytes);
+    
+    _log_with_date_time("QuicUpstreamHandler: stream " + tp::to_string(m_stream_id) +
+                             " notify_body_consumed " + tp::to_string(n) + " (remaining=" + tp::to_string(m_buffered_bytes) + ")",
+                         Log::ALL);
+
+    if (m_buffered_bytes < kMaxBufferedBytes) {
         tcp_read_from_upstream();
     }
 }
 
 std::size_t QuicUpstreamHandler::body_bytes_available() const {
-    std::size_t total = 0;
-    if (!m_body_out_chunks.empty()) {
-        auto it = m_body_out_chunks.begin();
-        total = it->size() - m_chunk_consumed;
-        ++it;
-        while (it != m_body_out_chunks.end()) {
-            total += it->size();
-            ++it;
-        }
-    }
-    return total;
+    std::size_t n = 0;
+    for (const auto& chunk : m_body_out_chunks) n += chunk.size();
+    return n;
 }
 
 void QuicUpstreamHandler::handle_parse_error() {

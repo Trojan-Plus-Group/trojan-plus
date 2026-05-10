@@ -74,49 +74,14 @@ QuicTlsCtx::QuicTlsCtx(const Config& config, Role role)
         return;
     }
 
-    const auto& ssl_cfg = config.get_ssl();
-
-    if (role == Role::Server) {
-        // Load certificate chain and private key.
-        if (!ssl_cfg.cert.empty() && !ssl_cfg.key.empty()) {
-            if (wolfSSL_CTX_use_certificate_chain_file(m_ctx, ssl_cfg.cert.c_str()) != WOLFSSL_SUCCESS) {
-                _log_with_date_time("QuicTlsCtx: failed to load certificate: " + ssl_cfg.cert, Log::FATAL);
-                wolfSSL_CTX_free(m_ctx);
-                m_ctx = nullptr;
-                return;
-            }
-            if (wolfSSL_CTX_use_PrivateKey_file(m_ctx, ssl_cfg.key.c_str(), SSL_FILETYPE_PEM) != WOLFSSL_SUCCESS) {
-                _log_with_date_time("QuicTlsCtx: failed to load private key: " + ssl_cfg.key, Log::FATAL);
-                wolfSSL_CTX_free(m_ctx);
-                m_ctx = nullptr;
-                return;
-            }
-        }
-        // ALPN select callback – never rejects, prefers our configured token.
-        // m_alpn_token is kept alive as long as QuicTlsCtx exists.
-        wolfSSL_CTX_set_alpn_select_cb(m_ctx, alpn_select_cb,
-                                       const_cast<char*>(m_alpn_token.c_str()));
-    } else {
-        // Client: advertise the configured ALPN token as a wire-encoded list.
-        // Wire format: <len><bytes> (no null terminator).
-        if (!m_alpn_token.empty() && m_alpn_token.size() <= 255) {
-            auto len = static_cast<uint8_t>(m_alpn_token.size());
-            tp::vector<uint8_t> wire(1 + len);
-            wire[0] = len;
-            memcpy(wire.data() + 1, m_alpn_token.c_str(), len);
-            wolfSSL_CTX_set_alpn_protos(m_ctx, wire.data(), 1u + len);
-        }
-
-        // Certificate verification.
-        if (!ssl_cfg.verify) {
-            wolfSSL_CTX_set_verify(m_ctx, WOLFSSL_VERIFY_NONE, nullptr);
-        } else {
-            wolfSSL_CTX_set_default_verify_paths(m_ctx);
-            if (!ssl_cfg.cert.empty()) {
-                wolfSSL_CTX_load_verify_locations(m_ctx, ssl_cfg.cert.c_str(), nullptr);
-            }
-        }
+    // Load certificates and keys.
+    if (!reload_cert(config)) {
+        wolfSSL_CTX_free(m_ctx);
+        m_ctx = nullptr;
+        return;
     }
+
+    const auto& ssl_cfg = config.get_ssl();
 
     // Cipher suites (TLS 1.3 names).
     if (!ssl_cfg.cipher_tls13.empty()) {
@@ -138,6 +103,61 @@ QuicTlsCtx::~QuicTlsCtx() {
     if (m_ctx) {
         wolfSSL_CTX_free(m_ctx);
     }
+}
+
+bool QuicTlsCtx::reload_cert(const Config& config) {
+    if (!m_ctx) {
+        return false;
+    }
+
+    const auto& ssl_cfg = config.get_ssl();
+
+    if (m_role == Role::Server) {
+        // Load certificate chain and private key.
+        if (!ssl_cfg.cert.empty() && !ssl_cfg.key.empty()) {
+            if (wolfSSL_CTX_use_certificate_chain_file(m_ctx, ssl_cfg.cert.c_str()) != WOLFSSL_SUCCESS) {
+                _log_with_date_time("QuicTlsCtx: failed to load certificate: " + ssl_cfg.cert, Log::ERROR);
+                return false;
+            }
+            if (wolfSSL_CTX_use_PrivateKey_file(m_ctx, ssl_cfg.key.c_str(), SSL_FILETYPE_PEM) != WOLFSSL_SUCCESS) {
+                _log_with_date_time("QuicTlsCtx: failed to load private key: " + ssl_cfg.key, Log::ERROR);
+                return false;
+            }
+            _log_with_date_time("QuicTlsCtx: server certificate and key loaded", Log::INFO);
+        }
+        
+        // ALPN select callback – never rejects, prefers our configured token.
+        // m_alpn_token is kept alive as long as QuicTlsCtx exists.
+        wolfSSL_CTX_set_alpn_select_cb(m_ctx, alpn_select_cb,
+                                       const_cast<char*>(m_alpn_token.c_str()));
+    
+    } else {
+        // Client: Certificate verification and CA locations.
+        if (!ssl_cfg.verify) {
+            wolfSSL_CTX_set_verify(m_ctx, WOLFSSL_VERIFY_NONE, nullptr);
+        } else {
+            wolfSSL_CTX_set_default_verify_paths(m_ctx);
+            if (!ssl_cfg.cert.empty()) {
+                if (wolfSSL_CTX_load_verify_locations(m_ctx, ssl_cfg.cert.c_str(), nullptr) != WOLFSSL_SUCCESS) {
+                    _log_with_date_time("QuicTlsCtx: failed to load verify locations: " + ssl_cfg.cert, Log::ERROR);
+                    return false;
+                }
+            }
+            wolfSSL_CTX_set_verify(m_ctx, WOLFSSL_VERIFY_PEER, nullptr);
+        }
+
+        // Client: advertise the configured ALPN token as a wire-encoded list.
+        if (!m_alpn_token.empty() && m_alpn_token.size() <= 255) {
+            auto len = static_cast<uint8_t>(m_alpn_token.size());
+            tp::vector<uint8_t> wire(1 + len);
+            wire[0] = len;
+            memcpy(wire.data() + 1, m_alpn_token.c_str(), len);
+            wolfSSL_CTX_set_alpn_protos(m_ctx, wire.data(), 1u + len);
+        }
+        _log_with_date_time("QuicTlsCtx: client verification and ALPN settings updated", Log::INFO);
+    }
+
+    return true;
 }
 
 WOLFSSL* QuicTlsCtx::create_ssl() const {

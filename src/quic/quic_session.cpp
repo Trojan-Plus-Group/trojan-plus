@@ -106,10 +106,10 @@ void QuicProxySession::try_parse_request(bool fin) {
     // This avoids premature fallback to h3_upstream if the password is split across packets.
     size_t first_crlf = m_recv_buf.find("\r\n");
     if (first_crlf == tp::string::npos) {
-        if (m_recv_buf.length() > kMaxPasswordLineBytes) {
+        if (m_recv_buf.length() > kMaxPasswordLineBytes || fin) {
             _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) +
                                     " no CRLF in " + tp::to_string(kMaxPasswordLineBytes) +
-                                    " bytes, falling back to h3_upstream",
+                                    " bytes" + tp::to_string(fin ? " (fin)" : "") + ", falling back to h3_upstream",
                                 Log::WARN);
             forward_to_h3_upstream(fin);
         }
@@ -168,7 +168,7 @@ void QuicProxySession::try_parse_request(bool fin) {
     }
 
     if (!req.payload.empty()) {
-        write_to_target(tp::string(req.payload.data(), req.payload.length()));
+        write_to_target(tp::string(req.payload.data(), req.payload.length()), fin);
     }
     m_recv_buf.clear();
 
@@ -279,9 +279,9 @@ void QuicProxySession::do_tcp_write() {
                 locked_conn->extend_window(m_stream_id, stream_bytes);
             }
 
-            // Only shutdown send if there's no data (FIN-only case)
-            // If we sent data with fin=true, wait for response before closing
-            if (fin && buf->empty()) {
+            // If we received a FIN from QUIC, we should shut down the TCP send side
+            // after all data is written.
+            if (fin) {
                 boost::system::error_code ec2;
                 ec2 = m_tcp_socket.shutdown(boost::asio::socket_base::shutdown_send, ec2);
             }

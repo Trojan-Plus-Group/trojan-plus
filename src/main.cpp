@@ -67,12 +67,32 @@ void signal_async_wait(signal_set& sig, Service& service, bool& restart) {
     }));
 }
 
+#ifndef _WIN32
+#include <execinfo.h>
+#include <signal.h>
+#include <unistd.h>
+
+void crash_handler(int sig) {
+    void* array[50];
+    size_t size = backtrace(array, 50);
+    fprintf(stderr, "Error: signal %d:\n", sig);
+    backtrace_symbols_fd(array, size, STDERR_FILENO);
+    exit(1);
+}
+#endif
+
 // global service to avoid calling Service::~Service for Android,
 // to speed up Android VPN disconnection. io_context::~io_context might hang for 30 - 50 sec
 // after disconnection, the whole process will be killed in Android
 static std::shared_ptr<Service> g_service;
 
 int main_impl(int argc, const char* argv[]) {
+#ifndef _WIN32
+    signal(SIGSEGV, crash_handler);
+    signal(SIGABRT, crash_handler);
+    signal(SIGILL,  crash_handler);
+    signal(SIGFPE,  crash_handler);
+#endif
     try {
         Log::log("Trojan Plus v" + Version::get_version() + " starts.", Log::FATAL);
         tp::string config_file;

@@ -21,18 +21,24 @@ class H3ClientProtocol(QuicConnectionProtocol):
 
     def quic_event_received(self, event):
         for h3_event in self.h3.handle_event(event):
+            if isinstance(h3_event, HeadersReceived):
+                print(f"H3_EVENT: HeadersReceived stream={h3_event.stream_id}")
             if isinstance(h3_event, DataReceived):
+                print(f"H3_EVENT: DataReceived stream={h3_event.stream_id} len={len(h3_event.data)}")
                 self.responses[h3_event.stream_id] += h3_event.data
             if getattr(h3_event, 'stream_ended', False):
+                print(f"H3_EVENT: StreamEnded stream={h3_event.stream_id}")
                 if h3_event.stream_id in self.done_events:
                     self.done_events[h3_event.stream_id].set()
 
 async def fetch_file(protocol, path, semaphore=None):
     if semaphore:
         async with semaphore:
-            return await _fetch_file_impl(protocol, path)
+            res = await _fetch_file_impl(protocol, path)
+            return path, res
     else:
-        return await _fetch_file_impl(protocol, path)
+        res = await _fetch_file_impl(protocol, path)
+    return path, res
 
 async def _fetch_file_impl(protocol, path):
     stream_id = protocol._quic.get_next_available_stream_id()
@@ -52,7 +58,7 @@ async def _fetch_file_impl(protocol, path):
     )
     protocol.transmit()
     
-    await asyncio.wait_for(protocol.done_events[stream_id].wait(), timeout=30.0)
+    await asyncio.wait_for(protocol.done_events[stream_id].wait(), timeout=5.0)
     return bytes(protocol.responses[stream_id])
 
 async def main():
@@ -81,6 +87,7 @@ async def main():
     
     semaphore = asyncio.Semaphore(args.concurrency) if args.concurrency > 0 else None
 
+    print(f"AIOQUIC_STARTING: connecting to 127.0.0.1:{args.port}...")
     try:
         async with async_connect(
             "127.0.0.1",
@@ -89,19 +96,21 @@ async def main():
             create_protocol=H3ClientProtocol,
             wait_connected=True,
         ) as protocol:
+            print("AIOQUIC_CONNECTED")
             tasks = [fetch_file(protocol, p, semaphore) for p in paths]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
             
-            for path, res in zip(paths, results):
-                if isinstance(res, Exception):
-                    print(f"FILE:{path}:ERROR:{res}")
-                else:
+            done_count = 0
+            for fut in asyncio.as_completed(tasks):
+                try:
+                    path, res = await fut
+                    done_count += 1
                     md5 = hashlib.md5(res).hexdigest()
                     print(f"FILE:{path}:OK:{len(res)}:{md5}")
-                    # Only write first few to avoid disk bloat in load test
-                    if paths.index(path) < 5:
-                        with open(f"tmp_h3_{hashlib.md5(path.encode()).hexdigest()[:8]}", "wb") as f:
-                            f.write(res)
+                    if done_count % 1 == 0 or done_count == len(paths):
+                        print(f"H3_PROGRESS: {done_count}/{len(paths)}")
+                except Exception as e:
+                    print(f"H3_FILE_ERROR: {e}")
+                    done_count += 1
     except Exception as e:
         print(f"AIOQUIC_ERROR: {e}")
 

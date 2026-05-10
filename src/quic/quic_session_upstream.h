@@ -124,8 +124,7 @@ class QuicUpstreamHandler : public QuicStreamHandler, public std::enable_shared_
 
     // Body window for nghttp3 data_reader
     tp::list<tp::string> m_body_out_chunks;
-    std::size_t    m_chunk_consumed{0}; // offset into front chunk that is ACKed
-    std::size_t    m_given_offset{0};   // offset from m_chunk_consumed of next byte to give
+    std::size_t    m_buffered_bytes{0};
     bool           m_body_eof{false};
     bool           m_reader_blocked{false};
 

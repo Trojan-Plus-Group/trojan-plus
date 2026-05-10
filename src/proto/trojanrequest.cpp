@@ -39,11 +39,18 @@ int TrojanRequest::parse(const std::string_view& data) {
     command            = static_cast<Command>(payload[0]);
     size_t address_len = 0;
     bool is_addr_valid = address.parse(payload.substr(1), address_len);
-    if (!is_addr_valid || payload.length() < address_len + 3 || payload.substr(address_len + 1, 2) != "\r\n") {
+    if (!is_addr_valid) {
         return -1;
     }
+    if (payload.length() < address_len + 3) {
+        return 0; // Need more bytes for the CRLF
+    }
+    if (payload.substr(address_len + 1, 2) != "\r\n") {
+        return -1;
+    }
+    size_t header_len = first + 2 + address_len + 3;
     payload = payload.substr(address_len + 3);
-    return (int)data.length();
+    return (int)header_len;
 
     _unguard;
 }
