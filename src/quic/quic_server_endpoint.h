@@ -32,6 +32,11 @@ class QuicServerEndpoint : public QuicEndpoint {
     tp::unordered_map<tp::string, std::shared_ptr<QuicConnection>> m_conns;
 
     static tp::string dcid_key(const uint8_t* dcid, std::size_t dcidlen);
+
+    // Send a Stateless Reset packet to |dest| for the given DCID.
+    // Used when a Short Header packet arrives for an unknown connection.
+    void send_stateless_reset(const uint8_t* dcid, std::size_t dcidlen,
+                              const boost::asio::ip::udp::endpoint& dest);
 };
 
 #endif // _QUIC_SERVER_ENDPOINT_H_

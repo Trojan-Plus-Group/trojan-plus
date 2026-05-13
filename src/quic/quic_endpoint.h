@@ -19,6 +19,9 @@
 
 #include "mem/memallocator.h"
 
+// Length of the per-process Stateless Reset secret (256-bit).
+constexpr std::size_t kStatelessResetSecretLen = 32;
+
 class Config;
 class QuicConnection;
 class QuicTlsCtx;
@@ -40,6 +43,10 @@ class QuicEndpoint : public std::enable_shared_from_this<QuicEndpoint> {
     boost::asio::io_context& io_context() { return m_io_context; }
     const Config& config() const { return m_config; }
 
+    // Per-process secret for deterministic Stateless Reset token derivation.
+    // Generated once at endpoint construction, shared across all connections.
+    const uint8_t* stateless_reset_secret() const { return m_stateless_reset_secret; }
+
     // Send a UDP datagram to the given remote endpoint (called by QuicConnection::pump_write).
     void send_packet(const boost::asio::ip::udp::endpoint& dest,
                      const uint8_t* data, std::size_t len);
@@ -60,6 +67,8 @@ class QuicEndpoint : public std::enable_shared_from_this<QuicEndpoint> {
     boost::asio::ip::udp::endpoint m_recv_endpoint;
     tp::vector<uint8_t> m_recv_buf;
     bool m_running;
+    // 256-bit secret randomised once per process lifetime.
+    uint8_t m_stateless_reset_secret[kStatelessResetSecretLen];
 };
 
 #endif // _QUIC_ENDPOINT_H_

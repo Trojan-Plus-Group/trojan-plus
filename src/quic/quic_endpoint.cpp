@@ -11,6 +11,8 @@
 #include "quic_endpoint.h"
 
 #include <boost/asio/socket_base.hpp>
+#include <wolfssl/options.h>
+#include <wolfssl/ssl.h>
 
 #include "core/config.h"
 #include "core/log.h"
@@ -27,7 +29,14 @@ QuicEndpoint::QuicEndpoint(boost::asio::io_context& io_ctx, const Config& config
       m_tls_ctx(std::move(tls_ctx)),
       m_socket(io_ctx),
       m_recv_buf(kRecvBufBytes, 0),
-      m_running(false) {}
+      m_running(false) {
+    // Generate a per-process random secret for deterministic Stateless Reset
+    // token derivation.  The same secret is used in cb_get_new_connection_id
+    // (advertised to peer via NEW_CONNECTION_ID) and send_stateless_reset
+    // (reconstructed from DCID + secret), so the token will match.
+    wolfSSL_RAND_bytes(m_stateless_reset_secret,
+                       static_cast<int>(kStatelessResetSecretLen));
+}
 
 QuicEndpoint::~QuicEndpoint() {
     boost::system::error_code ec;

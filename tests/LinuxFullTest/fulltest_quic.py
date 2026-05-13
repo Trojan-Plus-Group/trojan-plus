@@ -1654,6 +1654,147 @@ def test_quic_load_test(binary_path):
         close_process(server, dump)
 
 
+def test_stateless_reset(binary_path):
+    """T17: Stateless Reset scenario after server restart.
+
+    Flow:
+      1. Client + server establish QUIC connection; proxy a file via SOCKS5 → verify success.
+      2. Kill server; restart server (new process → new random secret → new Stateless Reset tokens).
+      3. Client retries proxy request → verify failure (connection is dead).
+      4. Verify server log shows 'sending Stateless Reset for unknown CID' for the stale CIDs.
+      5. Verify client log shows connection closed / error (idle close or on_packet error).
+
+    Background: After server restart, the new server has a freshly-generated
+    per-process secret.  When the still-live client sends 1-RTT packets using
+    the old server SCID, the new server finds no matching connection and emits a
+    Stateless Reset (RFC 9000 §10.3).  Because the token is derived from the
+    new secret (HKDF(new_secret, old_CID)), the client cannot match it to any
+    previously-advertised token and the connection eventually idles out.
+    """
+    print_time_log("[T17] stateless_reset: starting...")
+
+    # Use a short idle timeout so the client detects the dead connection quickly.
+    IDLE_MS = 5000
+
+    srv_cfg = patch_quic_config_with_suffix("quic_server_config.json", ".tmp.json.T17.srv", {
+        "remote_port": HTTP_TARGET_PORT,
+        "quic": {"enabled": True, "max_idle_timeout_ms": IDLE_MS},
+    })
+    cli_cfg = patch_quic_config_with_suffix("quic_client_config.json", ".tmp.json.T17.cli", {
+        "quic": {"enabled": True, "prefer_quic": True,
+                 "max_idle_timeout_ms": IDLE_MS,
+                 "retry_connect_timeout_ms": 0},   # no auto-retry
+    })
+
+    server, srv_log = start_trojan(binary_path, srv_cfg)
+    client, cli_log = start_trojan(binary_path, cli_cfg)
+    dump = False
+    try:
+        if not server or not client:
+            dump = True
+            return False
+
+        # ── Step 1: establish connection and verify a file transfer succeeds ──
+        if not wait_for_log(cli_log, r"QuicConnection: handshake completed", timeout=15):
+            print_time_log("[T17] FAIL: QUIC handshake not seen")
+            dump = True
+            return False
+        time.sleep(1)   # let QuicStreamTransport become preferred
+
+        if not wait_for_port(QUIC_CLIENT_PROXY_PORT, timeout=5):
+            print_time_log("[T17] FAIL: client proxy port not open")
+            dump = True
+            return False
+
+        url_base = f"http://127.0.0.1:{HTTP_TARGET_PORT}/"
+        index = http_get_via_socks5(url_base, QUIC_CLIENT_PROXY_PORT).decode("utf-8")
+        files = [f for f in index.splitlines() if f.strip()]
+        if not files:
+            print_time_log("[T17] FAIL: no test files listed")
+            dump = True
+            return False
+
+        test_file = files[0]
+        url = f"http://127.0.0.1:{HTTP_TARGET_PORT}/{test_file}"
+        got = http_get_via_socks5(url, QUIC_CLIENT_PROXY_PORT)
+        with open(os.path.join(TEST_FILES_DIR, test_file), "rb") as f:
+            want = f.read()
+        if got != want:
+            print_time_log(f"[T17] FAIL: first request content mismatch ({len(got)} vs {len(want)} bytes)")
+            dump = True
+            return False
+        print_time_log("[T17] Step 1 OK – first proxy request succeeded")
+
+        # ── Step 2: kill server and restart it ──
+        close_process(server, False)
+        server = None
+        print_time_log("[T17] Server killed – restarting with a new secret...")
+        time.sleep(0.5)
+
+        # Write a fresh config so the new output log is separate.
+        srv_cfg2 = patch_quic_config_with_suffix("quic_server_config.json", ".tmp.json.T17.srv2", {
+            "remote_port": HTTP_TARGET_PORT,
+            "quic": {"enabled": True, "max_idle_timeout_ms": IDLE_MS},
+        })
+        server, srv_log2 = start_trojan(binary_path, srv_cfg2)
+        if not server:
+            print_time_log("[T17] FAIL: server restart failed")
+            dump = True
+            return False
+
+        if not wait_for_log(srv_log2, r"QuicServerEndpoint: listening on UDP", timeout=10):
+            print_time_log("[T17] FAIL: restarted server not ready")
+            dump = True
+            return False
+        print_time_log("[T17] Step 2 OK – server restarted")
+
+        # ── Step 3: client retries proxy request → must fail ──
+        # The client still has the old QUIC connection; the new server knows nothing
+        # about its CIDs and will send Stateless Reset packets.
+        request_ok = False
+        try:
+            got2 = http_get_via_socks5(url, QUIC_CLIENT_PROXY_PORT, timeout=8)
+            if got2 == want:
+                request_ok = True   # unexpected: should have failed
+        except Exception as e:
+            print_time_log(f"[T17] Step 3 – second proxy request failed as expected: {type(e).__name__}")
+
+        if request_ok:
+            print_time_log("[T17] FAIL: second proxy request succeeded – server restart did not break connection")
+            dump = True
+            return False
+        print_time_log("[T17] Step 3 OK – second proxy request failed as expected")
+
+        # ── Step 4: verify new server sent Stateless Reset ──
+        sr_pattern = r"QuicServerEndpoint: sending Stateless Reset for unknown CID"
+        if not wait_for_log(srv_log2, sr_pattern, timeout=IDLE_MS // 1000 + 3):
+            print_time_log("[T17] FAIL: Stateless Reset not logged by restarted server")
+            dump = True
+            return False
+        print_time_log("[T17] Step 4 OK – server logged Stateless Reset for stale CID")
+
+        # ── Step 5: verify client detected a connection problem ──
+        # The client will log either an on_packet error or an idle close.
+        cli_error_pattern = (r"QuicConnection::on_packet: ngtcp2_conn_read_pkt"
+                             r"|IDLE_CLOSE|idle.*close|QuicClientEndpoint.*retry"
+                             r"|QuicClientEndpoint.*unreachable|QuicConnection.*clos")
+        if not wait_for_log(cli_log, cli_error_pattern, timeout=IDLE_MS // 1000 + 3):
+            print_time_log("[T17] FAIL: client did not log any connection error after server restart")
+            dump = True
+            return False
+        print_time_log("[T17] Step 5 OK – client logged connection error / close")
+
+        print_time_log("[T17] stateless_reset PASSED")
+        return True
+    except Exception:
+        traceback.print_exc()
+        dump = True
+        return False
+    finally:
+        close_process(client, dump)
+        close_process(server, dump)
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -1677,6 +1818,7 @@ ALL_TESTS = [
     ("T14", test_multiple_quic_connections),
     ("T15", test_no_crlf_fallback),
     ("T16", test_quic_load_test),
+    ("T17", test_stateless_reset),
 ]
 
 def main(binary_path, test_tag='all'):

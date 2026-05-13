@@ -16,6 +16,9 @@
 
 #include <boost/asio/ip/address.hpp>
 #include <ngtcp2/ngtcp2.h>
+#include <ngtcp2/ngtcp2_crypto.h>
+#include <wolfssl/options.h>
+#include <wolfssl/ssl.h>
 
 #include "core/config.h"
 #include "core/log.h"
@@ -64,6 +67,51 @@ tp::string QuicServerEndpoint::dcid_key(const uint8_t* dcid, std::size_t dcidlen
     return oss.str();
 }
 
+void QuicServerEndpoint::send_stateless_reset(const uint8_t* dcid, std::size_t dcidlen,
+                                              const boost::asio::ip::udp::endpoint& dest) {
+    // Derive a deterministic Stateless Reset token using HKDF from the
+    // per-process endpoint secret and the received DCID.  This is identical to
+    // the derivation used in cb_get_new_connection_id, so a client that was
+    // previously issued this token via NEW_CONNECTION_ID will recognise it.
+    ngtcp2_cid cid_c{};
+    cid_c.datalen = dcidlen;
+    std::memcpy(cid_c.data, dcid, dcidlen);
+
+    ngtcp2_stateless_reset_token token{};
+    if (ngtcp2_crypto_generate_stateless_reset_token(
+            token.data, stateless_reset_secret(), kStatelessResetSecretLen,
+            &cid_c) != 0) {
+        _log_with_date_time(
+            "QuicServerEndpoint: ngtcp2_crypto_generate_stateless_reset_token failed",
+            Log::WARN);
+        return;
+    }
+
+    // Random padding bytes preceding the token (RFC 9000 minimum is 5).
+    constexpr std::size_t kRandLen = NGTCP2_MIN_STATELESS_RESET_RANDLEN + 16;
+    uint8_t rand_bytes[kRandLen];
+    wolfSSL_RAND_bytes(rand_bytes, static_cast<int>(kRandLen));
+
+    uint8_t buf[NGTCP2_MAX_UDP_PAYLOAD_SIZE];
+    auto nwrite = ngtcp2_pkt_write_stateless_reset2(buf, sizeof(buf), &token,
+                                                    rand_bytes, kRandLen);
+    if (nwrite < 0) {
+        _log_with_date_time(
+            "QuicServerEndpoint: ngtcp2_pkt_write_stateless_reset2 failed: " +
+                tp::string(ngtcp2_strerror(static_cast<int>(nwrite))),
+            Log::WARN);
+        return;
+    }
+
+    tp::string dcid_hex = dcid_key(dcid, dcidlen);
+    _log_with_date_time(
+        "QuicServerEndpoint: sending Stateless Reset for unknown CID " + dcid_hex +
+            " to " + tp::string(dest.address().to_string().c_str()) + ":" +
+            tp::to_string(dest.port()),
+        Log::INFO);
+    send_packet(dest, buf, static_cast<std::size_t>(nwrite));
+}
+
 void QuicServerEndpoint::on_packet(const uint8_t* data, std::size_t len,
                                    const boost::asio::ip::udp::endpoint& src) {
     if (len == 0) {
@@ -82,6 +130,17 @@ void QuicServerEndpoint::on_packet(const uint8_t* data, std::size_t len,
     auto it = m_conns.find(key);
     if (it != m_conns.end()) {
         it->second->on_packet(data, len, local_endpoint(), src);
+        return;
+    }
+
+    // vc.version == 0 means Short Header (1-RTT) packet – this is a post-handshake
+    // packet for an unknown connection.  Send a Stateless Reset per RFC 9000 §10.3.
+    if (vc.version == 0) {
+        _log_with_date_time(
+            "QuicServerEndpoint: Short Header packet for unknown CID " + key +
+                ", sending Stateless Reset",
+            Log::INFO);
+        send_stateless_reset(vc.dcid, vc.dcidlen, src);
         return;
     }
 

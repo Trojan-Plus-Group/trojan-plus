@@ -18,6 +18,7 @@
 #include "core/config.h"
 
 #include <ngtcp2/ngtcp2_crypto_wolfssl.h>
+#include <ngtcp2/ngtcp2_crypto.h>
 #include <wolfssl/options.h>
 #include <wolfssl/ssl.h>
 
@@ -130,13 +131,26 @@ int QuicConnection::cb_get_new_connection_id(ngtcp2_conn* /*conn*/, ngtcp2_cid* 
                                              size_t cidlen, void* user_data) {
     cid->datalen = cidlen;
     wolfSSL_RAND_bytes(cid->data, static_cast<int>(cidlen));
-    wolfSSL_RAND_bytes(reinterpret_cast<uint8_t*>(token), NGTCP2_STATELESS_RESET_TOKENLEN);
-    
+
     auto* self = static_cast<QuicConnection*>(user_data);
+
+    // Derive a deterministic Stateless Reset token from the new CID and the
+    // per-process endpoint secret.  This token is advertised to the peer via
+    // NEW_CONNECTION_ID, so when we later send a Stateless Reset (using the
+    // same derivation), the peer will recognise and honour it.
+    const uint8_t* secret = self->m_endpoint.stateless_reset_secret();
+    if (ngtcp2_crypto_generate_stateless_reset_token(
+            reinterpret_cast<uint8_t*>(token),
+            secret, kStatelessResetSecretLen, cid) != 0) {
+        // Fallback to random on unexpected failure (should never happen).
+        wolfSSL_RAND_bytes(reinterpret_cast<uint8_t*>(token),
+                           NGTCP2_STATELESS_RESET_TOKENLEN);
+    }
+
     if (self->on_new_connection_id_cb) {
         self->on_new_connection_id_cb(cid);
     }
-    
+
     return 0;
 }
 
