@@ -1676,11 +1676,11 @@ def test_stateless_reset(binary_path):
     # Use a short idle timeout so the client detects the dead connection quickly.
     IDLE_MS = 5000
 
-    srv_cfg = patch_quic_config_with_suffix("quic_server_config.json", ".tmp.json.T17.srv", {
+    srv_cfg = patch_quic_config_with_suffix("quic_server_config.json", "T17.tmp.json", {
         "remote_port": HTTP_TARGET_PORT,
         "quic": {"enabled": True, "max_idle_timeout_ms": IDLE_MS},
     })
-    cli_cfg = patch_quic_config_with_suffix("quic_client_config.json", ".tmp.json.T17.cli", {
+    cli_cfg = patch_quic_config_with_suffix("quic_client_config.json", "T17.tmp.json", {
         "quic": {"enabled": True, "prefer_quic": True,
                  "max_idle_timeout_ms": IDLE_MS,
                  "retry_connect_timeout_ms": 0},   # no auto-retry
@@ -1732,7 +1732,7 @@ def test_stateless_reset(binary_path):
         time.sleep(0.5)
 
         # Write a fresh config so the new output log is separate.
-        srv_cfg2 = patch_quic_config_with_suffix("quic_server_config.json", ".tmp.json.T17.srv2", {
+        srv_cfg2 = patch_quic_config_with_suffix("quic_server_config.json", "T17.svr2.tmp.json", {
             "remote_port": HTTP_TARGET_PORT,
             "quic": {"enabled": True, "max_idle_timeout_ms": IDLE_MS},
         })
