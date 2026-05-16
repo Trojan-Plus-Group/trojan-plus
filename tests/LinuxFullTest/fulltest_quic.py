@@ -1784,6 +1784,29 @@ def test_stateless_reset(binary_path):
             return False
         print_time_log("[T17] Step 5 OK – client logged connection error / close")
 
+        # ── Step 6: wait 1s and retry proxy request → must succeed (reconnect) ──
+        time.sleep(1.5)  # Wait for reconnection to settle
+        print_time_log("[T17] Step 6 – trying third proxy request (expecting reconnect)...")
+        try:
+            got3 = http_get_via_socks5(url, QUIC_CLIENT_PROXY_PORT, timeout=10)
+            if got3 != want:
+                print_time_log(f"[T17] FAIL: third proxy request returned wrong data: {got3}")
+                dump = True
+                return False
+        except Exception as e:
+            print_time_log(f"[T17] FAIL: third proxy request failed after 1s: {e}")
+            dump = True
+            return False
+        
+        # Verify reconnection log
+        recon_pattern = r"reconnect quic client!"
+        if not wait_for_log(cli_log, recon_pattern, timeout=2):
+            print_time_log("[T17] FAIL: client did not log 'reconnect quic client!'")
+            dump = True
+            return False
+
+        print_time_log("[T17] Step 6 OK – third proxy request succeeded via reconnected QUIC client")
+
         print_time_log("[T17] stateless_reset PASSED")
         return True
     except Exception:

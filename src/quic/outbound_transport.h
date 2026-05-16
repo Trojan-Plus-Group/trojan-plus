@@ -67,6 +67,6 @@ std::shared_ptr<OutboundTransport> create_outbound_transport(
     boost::asio::ssl::context&     ssl_ctx,
     const Config&                  config,
     boost::asio::ip::tcp::endpoint in_ep,
-    QuicClientEndpoint*            quic_client);
+    std::shared_ptr<QuicClientEndpoint> quic_client);
 
 #endif // _OUTBOUND_TRANSPORT_H_

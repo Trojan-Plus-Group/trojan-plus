@@ -249,9 +249,9 @@ bool QuicConnection::init_server(const uint8_t* data, std::size_t datalen,
 
     ngtcp2_transport_params params;
     ngtcp2_transport_params_default(&params);
-    params.initial_max_stream_data_bidi_local  = 4 * 1024 * 1024;
+    params.initial_max_stream_data_bidi_local  = 4 * 1024 * 1024; // max cache size in one stream
     params.initial_max_stream_data_bidi_remote = 4 * 1024 * 1024;
-    params.initial_max_data                    = 32 * 1024 * 1024;
+    params.initial_max_data                    = 32 * 1024 * 1024; // max cache size in all streams
     params.initial_max_streams_bidi            = 1000;
     params.initial_max_stream_data_uni         = 64 * 1024;
     params.initial_max_streams_uni             = 200;
@@ -357,12 +357,12 @@ bool QuicConnection::init_client(const boost::asio::ip::udp::endpoint& local_ep,
 
     ngtcp2_transport_params params;
     ngtcp2_transport_params_default(&params);
-    params.initial_max_data                    = 32 * 1024 * 1024;
+    params.initial_max_data                    = 32 * 1024 * 1024; // max cache size in all streams
     params.initial_max_streams_bidi            = 100;
     params.initial_max_stream_data_uni         = 64 * 1024;
     params.initial_max_streams_uni             = 100;
-    params.initial_max_stream_data_bidi_local  = 4 * 1024 * 1024;
-    params.initial_max_stream_data_bidi_remote = 4 * 1024 * 1024;
+    params.initial_max_stream_data_bidi_local  = 4 * 1024 * 1024;  // max cache size in one stream
+    params.initial_max_stream_data_bidi_remote = 4 * 1024 * 1024;  // max cache size in one stream
     params.max_idle_timeout = static_cast<ngtcp2_duration>(
         m_endpoint.config().get_quic().max_idle_timeout_ms) * 1'000'000ULL;
 
@@ -427,7 +427,7 @@ void QuicConnection::on_packet(const uint8_t* data, std::size_t datalen,
     reschedule_loss_timer();
 }
 
-// ---- pump_write -------------------------------------------------------------
+// ---- pump_write : send ACK/Control/handshake packet without stream id --------------------------
 
 void QuicConnection::pump_write() {
     if (m_closed || !m_conn) {
@@ -769,7 +769,7 @@ void QuicConnection::reschedule_loss_timer() {
             _log_with_date_time(
                 "QuicConnection: ngtcp2_conn_handle_expiry: " + tp::string(ngtcp2_strerror(rv)),
                 Log::WARN);
-            if (rv == NGTCP2_ERR_IDLE_CLOSE) {
+            if (rv == NGTCP2_ERR_IDLE_CLOSE || rv == NGTCP2_ERR_DROP_CONN) {
                 close();
                 return;
             }

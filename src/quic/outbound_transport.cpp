@@ -19,6 +19,7 @@
 #include <boost/asio/post.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/write.hpp>
+#include <memory>
 
 #include "core/config.h"
 #include "core/log.h"
@@ -168,7 +169,7 @@ class QuicStreamTransport : public OutboundTransport,
                           public std::enable_shared_from_this<QuicStreamTransport> {
   public:
     QuicStreamTransport(boost::asio::io_context& io_ctx,
-                        QuicClientEndpoint*      endpoint)
+                        std::shared_ptr<QuicClientEndpoint>      endpoint)
         : m_io_ctx(io_ctx), m_endpoint(endpoint), m_write_timer(io_ctx) {}
 
     // host/port are the trojan server coordinates but ignored here – the QUIC
@@ -176,19 +177,26 @@ class QuicStreamTransport : public OutboundTransport,
     void async_connect(const tp::string& /*host*/, uint16_t /*port*/,
                        std::function<void()> on_success,
                        std::function<void()> on_error) override {
+        auto ep = m_endpoint.lock();
+        if (!ep) {
+            boost::asio::post(m_io_ctx, std::move(on_error));
+            return;
+        }
+
         // Register data handler before opening the stream so we never miss data.
         // We use a sentinel stream_id = -2 until the real sid is assigned.
         auto self = shared_from_this();
-        auto sid  = m_endpoint->open_bidi_stream(
+        auto sid  = ep->open_bidi_stream(
             [this, self, on_success = std::move(on_success),
              on_error_deferred = on_error](int64_t sid) mutable {
-                if (sid < 0) {
+                auto ep = m_endpoint.lock();
+                if (sid < 0 || !ep) {
                     // Endpoint returned failure inside the deferred callback.
                     boost::asio::post(m_io_ctx, std::move(on_error_deferred));
                     return;
                 }
                 m_stream_id = sid;
-                m_endpoint->set_stream_data_handler(
+                ep->set_stream_data_handler(
                     sid, [this, self](const uint8_t* data, std::size_t len, bool fin) {
                         on_data(data, len, fin);
                     });
@@ -198,7 +206,7 @@ class QuicStreamTransport : public OutboundTransport,
 
         // If open_bidi_stream returned -1 immediately (endpoint not connected
         // and nothing was deferred), fire the error callback now.
-        if (sid < 0 && !m_endpoint->is_connected()) {
+        if (sid < 0 && !ep->is_connected()) {
             boost::asio::post(m_io_ctx, std::move(on_error));
         }
     }
@@ -234,7 +242,16 @@ class QuicStreamTransport : public OutboundTransport,
             });
             return;
         }
-        int64_t written = m_endpoint->send_stream_data(
+
+        auto ep = m_endpoint.lock();
+        if (!ep) {
+            boost::asio::post(m_io_ctx, [handler = std::move(handler)]() mutable {
+                handler(boost::asio::error::broken_pipe, 0);
+            });
+            return;
+        }
+
+        int64_t written = ep->send_stream_data(
             m_stream_id,
             reinterpret_cast<const uint8_t*>(buf->data() + offset),
             buf->size() - offset,
@@ -270,8 +287,11 @@ class QuicStreamTransport : public OutboundTransport,
     }
 
     void close() override {
-        if (m_stream_id >= 0) {
-            m_endpoint->send_stream_data(m_stream_id, nullptr, 0, true);
+        if (auto ep = m_endpoint.lock()) {
+            if (m_stream_id >= 0) {
+                ep->remove_stream_data_handler(m_stream_id);
+                ep->send_stream_data(m_stream_id, nullptr, 0, true);
+            }
         }
     }
 
@@ -296,7 +316,7 @@ class QuicStreamTransport : public OutboundTransport,
     }
 
     boost::asio::io_context& m_io_ctx;
-    QuicClientEndpoint*      m_endpoint;
+    std::weak_ptr<QuicClientEndpoint> m_endpoint;
     int64_t                  m_stream_id{-1};
 
     tp::string               m_recv_buf;
@@ -316,7 +336,7 @@ std::shared_ptr<OutboundTransport> create_outbound_transport(
     boost::asio::ssl::context&     ssl_ctx,
     const Config&                  config,
     boost::asio::ip::tcp::endpoint in_ep,
-    QuicClientEndpoint*            quic_client) {
+    std::shared_ptr<QuicClientEndpoint> quic_client) {
 
 #ifdef ENABLE_QUIC
     if (quic_client != nullptr &&

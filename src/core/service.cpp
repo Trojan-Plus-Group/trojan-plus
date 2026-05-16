@@ -554,6 +554,26 @@ Pipeline* Service::search_default_pipeline() {
     return pipeline;
     _unguard;
 }
+
+#ifdef ENABLE_QUIC
+void Service::reconnect_quic_client(){
+    _guard;
+    if(config.get_run_type() == Config::SERVER){
+        _log_with_date_time("server run_type can't reconnect quic client!");
+        return;
+    }
+    
+    _log_with_date_time("reconnect quic client!");
+    if(m_quic_client){
+        m_quic_client->stop();
+    }
+    
+    m_quic_client = TP_MAKE_SHARED(QuicClientEndpoint, std::ref(io_context), config, m_quic_tls_ctx);
+    m_quic_client->start();
+    _unguard;
+}
+#endif
+
 void Service::async_accept() {
     _guard;
 

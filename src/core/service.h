@@ -111,9 +111,10 @@ class Service {
     SendingDataAllocator& get_sending_data_allocator() { return m_sending_data_allocator; }
 
 #ifdef ENABLE_QUIC
-    QuicClientEndpoint* get_quic_client() const { return m_quic_client.get(); }
+    std::shared_ptr<QuicClientEndpoint> get_quic_client() const { return m_quic_client; }
+    void reconnect_quic_client();
 #else
-    QuicClientEndpoint* get_quic_client() const { return nullptr; }
+    std::shared_ptr<QuicClientEndpoint> get_quic_client() const { return nullptr; }
 #endif
 };
 #endif // _SERVICE_H_

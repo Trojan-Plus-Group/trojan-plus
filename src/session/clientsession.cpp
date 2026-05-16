@@ -436,18 +436,26 @@ void ClientSession::request_remote() {
     };
 
     bool pipeline_assigned = get_pipeline_component().is_using_pipeline();
+    bool try_quic_first = false;
 
 #ifdef ENABLE_QUIC
-    auto*      quic_client    = get_service()->get_quic_client();
-    const bool try_quic_first = (quic_client != nullptr) && get_config().get_quic().enabled &&
-                                get_config().get_quic().prefer_quic && quic_client->is_connected() &&
-                                !quic_client->is_known_unreachable();
-
-    if (get_config().get_quic().debug_disable_tcp) {
+    auto& quic_config = get_config().get_quic();
+    if(quic_config.enabled){
+        auto quic_client = get_service()->get_quic_client();
+        if(quic_client){
+            if(quic_client->is_connected()){
+                try_quic_first = quic_config.prefer_quic;
+            }else{
+                if(!quic_client->is_known_unreachable()){
+                    get_service()->reconnect_quic_client();
+                }
+            }
+        }
+    }
+    
+    if (quic_config.debug_disable_tcp) {
         pipeline_assigned = try_quic_first;
     }
-#else
-    constexpr bool try_quic_first = false;
 #endif
 
     if (try_quic_first) {

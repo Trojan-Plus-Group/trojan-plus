@@ -177,3 +177,7 @@ void QuicClientEndpoint::set_stream_data_handler(
     int64_t stream_id, std::function<void(const uint8_t*, std::size_t, bool)> handler) {
     m_stream_handlers[stream_id] = std::move(handler);
 }
+
+void QuicClientEndpoint::remove_stream_data_handler(int64_t stream_id) {
+    m_stream_handlers.erase(stream_id);
+}

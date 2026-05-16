@@ -38,6 +38,9 @@ class QuicClientEndpoint : public QuicEndpoint {
     void set_stream_data_handler(int64_t stream_id,
                                  std::function<void(const uint8_t*, std::size_t, bool)> handler);
 
+    // Remove a per-stream data handler.
+    void remove_stream_data_handler(int64_t stream_id);
+
     // Extend QUIC flow control window for a stream (call after consuming data).
     void extend_window(int64_t stream_id, std::size_t n);
 
