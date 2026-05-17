@@ -50,7 +50,7 @@ class QuicProxySession : public QuicStreamHandler, public std::enable_shared_fro
 
   private:
     void try_parse_request(bool fin);
-    void forward_to_h3_upstream(bool fin);
+    void forward_to_h1_upstream(bool fin);
     void connect_target(const tp::string& host, uint16_t port);
     void tcp_read();
     void flush_tcp_read_buf(std::size_t offset, std::size_t bytes);

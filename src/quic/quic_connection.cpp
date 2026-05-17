@@ -11,6 +11,7 @@
 #include "quic_connection.h"
 
 #include <chrono>
+#include <cstddef>
 #include <cstring>
 
 #include "quic_to_http3_connect.h"
@@ -76,7 +77,7 @@ int QuicConnection::cb_handshake_completed(ngtcp2_conn* /*conn*/, void* user_dat
     return 0;
 }
 
-int QuicConnection::cb_recv_stream_data(ngtcp2_conn* conn, uint32_t flags, int64_t stream_id,
+int QuicConnection::cb_recv_stream_data(ngtcp2_conn* /*conn*/, uint32_t flags, int64_t stream_id,
                                         uint64_t /*offset*/, const uint8_t* data, size_t datalen,
                                         void* user_data, void* /*stream_user_data*/) {
     auto* self = static_cast<QuicConnection*>(user_data);
@@ -89,11 +90,14 @@ int QuicConnection::cb_recv_stream_data(ngtcp2_conn* conn, uint32_t flags, int64
         // Manual flow control: handler must call extend_window() when data is consumed.
     } else if (self->on_stream_data_cb) {
         self->on_stream_data_cb(stream_id, data, datalen, fin);
-        // Default behavior for simple callbacks: extend window immediately.
-        ngtcp2_conn_extend_max_stream_offset(conn, stream_id, datalen);
-        ngtcp2_conn_extend_max_offset(conn, datalen);
     }
 
+    return 0;
+}
+
+int QuicConnection::cb_acked_stream_data_offset(ngtcp2_conn* /*conn*/, int64_t /*stream_id*/,
+                                                uint64_t /*offset*/, uint64_t /*datalen*/,
+                                                void* /*user_data*/, void* /*stream_user_data*/) {
     return 0;
 }
 
@@ -242,6 +246,7 @@ bool QuicConnection::init_server(const uint8_t* data, std::size_t datalen,
     callbacks.version_negotiation      = ngtcp2_crypto_version_negotiation_cb;
     callbacks.get_new_connection_id2   = cb_get_new_connection_id;
     callbacks.get_path_challenge_data2 = ngtcp2_crypto_get_path_challenge_data2_cb;
+    callbacks.acked_stream_data_offset = cb_acked_stream_data_offset;
 
     ngtcp2_settings settings;
     ngtcp2_settings_default(&settings);
@@ -350,6 +355,7 @@ bool QuicConnection::init_client(const boost::asio::ip::udp::endpoint& local_ep,
     callbacks.version_negotiation           = ngtcp2_crypto_version_negotiation_cb;
     callbacks.get_new_connection_id2        = cb_get_new_connection_id;
     callbacks.get_path_challenge_data2      = ngtcp2_crypto_get_path_challenge_data2_cb;
+    callbacks.acked_stream_data_offset      = cb_acked_stream_data_offset;
 
     ngtcp2_settings settings;
     ngtcp2_settings_default(&settings);
@@ -410,17 +416,21 @@ void QuicConnection::on_packet(const uint8_t* data, std::size_t datalen,
         }
         if (rv == NGTCP2_ERR_DRAINING || rv == NGTCP2_ERR_CRYPTO) {
             close();
+            return;
         }
-        return;
     }
+}
+
+void QuicConnection::on_pump_write() {
+    
     pump_write();
+
     if (m_h3) {
         m_h3->pump_h3_response();
     }
 
     // Give handlers a chance to retry buffered data (e.g. if QPACK was unblocked)
-    auto handlers = m_stream_handlers; 
-    for (auto& [id, handler] : handlers) {
+    for (auto& [id, handler] : m_stream_handlers) {
         handler->on_connection_pump();
     }
 
@@ -599,13 +609,6 @@ int64_t QuicConnection::send_stream_vecs(int64_t stream_id,
     return pdatalen > 0 ? static_cast<int64_t>(pdatalen) : (fin ? 0 : 0);
 }
 
-void QuicConnection::pump_h3_response() {
-    if (m_h3) {
-        m_h3->pump_h3_response();
-    }
-    pump_write();
-}
-
 QuicToHttp3Connect& QuicConnection::get_or_create_h3() {
     if (!m_h3) {
         m_h3 = std::make_unique<QuicToHttp3Connect>(*this);
@@ -616,7 +619,8 @@ QuicToHttp3Connect& QuicConnection::get_or_create_h3() {
             if (ctrl >= 0 && qenc >= 0 && qdec >= 0) {
                 m_h3->bind_control_streams(ctrl, qenc, qdec);
             }
-            pump_h3_response();
+            m_h3->pump_h3_response();
+            pump_write();
         }
     }
     return *m_h3;
@@ -626,17 +630,12 @@ void QuicConnection::remove_stream_handler(int64_t stream_id) {
     m_stream_handlers.erase(stream_id);
 }
 
-bool QuicConnection::forward_to_h3_upstream(int64_t stream_id, const uint8_t* data, std::size_t len, bool fin) {
+bool QuicConnection::forward_to_h1_upstream(int64_t stream_id, const uint8_t* data, std::size_t len, bool fin) {
     const auto& config = m_endpoint.config();
-    const auto& h3_cfg = config.get_quic().h3_upstream;
     tp::string host;
     tp::string port_str;
 
-    if (!h3_cfg.empty()) {
-        auto colon_pos = h3_cfg.rfind(':');
-        host = (colon_pos == tp::string::npos) ? h3_cfg : h3_cfg.substr(0, colon_pos);
-        port_str = (colon_pos == tp::string::npos) ? "80" : h3_cfg.substr(colon_pos + 1);
-    } else if (!config.get_remote_addr().empty()) {
+    if (!config.get_remote_addr().empty()) {
         host = config.get_remote_addr();
         port_str = tp::to_string(config.get_remote_port());
     } else {
@@ -646,10 +645,8 @@ bool QuicConnection::forward_to_h3_upstream(int64_t stream_id, const uint8_t* da
         return false;
     }
 
-    _log_with_date_time("QuicConnection: stream " + tp::to_string(stream_id) +
-                            " " + (h3_cfg.empty() ? "falling back to " : "forwarding to ") 
-                            + "h3_upstream " + host + ":" + port_str,
-                        Log::INFO);
+    _log_with_date_time("QuicConnection: stream " + tp::to_string(stream_id) + 
+        " forwarding to " + host + ":" + port_str, Log::INFO);
 
     auto& h3_mgr = get_or_create_h3();
     if (!h3_mgr.is_valid()) {
@@ -774,8 +771,8 @@ void QuicConnection::reschedule_loss_timer() {
                 return;
             }
         }
-        pump_write();
-        reschedule_loss_timer();
+
+        on_pump_write();
     });
 }
 

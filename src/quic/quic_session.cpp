@@ -97,7 +97,7 @@ void QuicProxySession::try_parse_request(bool fin) {
             _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) +
                                     " first byte not hex (" + tp::to_string((int)first_char) + "), falling back to h3_upstream",
                                 Log::INFO);
-            forward_to_h3_upstream(fin);
+            forward_to_h1_upstream(fin);
             return;
         }
     }
@@ -111,7 +111,7 @@ void QuicProxySession::try_parse_request(bool fin) {
                                     " no CRLF in " + tp::to_string(kMaxPasswordLineBytes) +
                                     " bytes" + tp::to_string(fin ? " (fin)" : "") + ", falling back to h3_upstream",
                                 Log::WARN);
-            forward_to_h3_upstream(fin);
+            forward_to_h1_upstream(fin);
         }
         return;
     }
@@ -120,7 +120,7 @@ void QuicProxySession::try_parse_request(bool fin) {
                                 " password line exceeds " + tp::to_string(kMaxPasswordLineBytes) +
                                 " bytes, falling back to h3_upstream",
                             Log::WARN);
-        forward_to_h3_upstream(fin);
+        forward_to_h1_upstream(fin);
         return;
     }
 
@@ -131,7 +131,7 @@ void QuicProxySession::try_parse_request(bool fin) {
         _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) +
                                 " parse failed, forwarding to h3_upstream",
                             Log::INFO);
-        forward_to_h3_upstream(fin);
+        forward_to_h1_upstream(fin);
         return;
     }
     if (parsed == 0) {
@@ -145,7 +145,7 @@ void QuicProxySession::try_parse_request(bool fin) {
                                 " invalid password, forwarding to h3_upstream",
                             Log::WARN);
         // m_recv_buf still holds the original raw bytes (not yet consumed), forward verbatim.
-        forward_to_h3_upstream(fin);
+        forward_to_h1_upstream(fin);
         return;
     }
 
@@ -175,11 +175,11 @@ void QuicProxySession::try_parse_request(bool fin) {
     connect_target(tp::string(req.address.address), req.address.port);
 }
 
-void QuicProxySession::forward_to_h3_upstream(bool fin) {
+void QuicProxySession::forward_to_h1_upstream(bool fin) {
     auto locked_conn = m_conn.lock();
     if (!locked_conn) return;
 
-    if (!locked_conn->forward_to_h3_upstream(m_stream_id, 
+    if (!locked_conn->forward_to_h1_upstream(m_stream_id, 
                                             reinterpret_cast<const uint8_t*>(m_recv_buf.data()), 
                                             m_recv_buf.size(), fin)) {
         destroy(true, NGHTTP3_H3_INTERNAL_ERROR);
@@ -309,7 +309,7 @@ void QuicProxySession::tcp_read() {
                 auto locked_conn = m_conn.lock();
                 if (locked_conn && !locked_conn->is_closed()) {
                     locked_conn->send_stream_data(m_stream_id, nullptr, 0, true);
-                    locked_conn->pump_write();
+                    locked_conn->on_pump_write();
                 }
                 destroy();
                 return;
@@ -335,7 +335,7 @@ void QuicProxySession::flush_tcp_read_buf(std::size_t offset, std::size_t bytes)
         return;
     }
 
-    locked_conn->pump_write();
+    locked_conn->on_pump_write();
 
     offset += written;
     if (offset < bytes) {
@@ -391,7 +391,7 @@ void QuicProxySession::destroy(bool reset, uint64_t app_error_code) {
         } else {
             locked_conn->send_stream_data(m_stream_id, nullptr, 0, true);
         }
-        locked_conn->pump_write();
+        locked_conn->on_pump_write();
     }
     _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) + " closed",
                         Log::INFO);
@@ -421,12 +421,19 @@ void QuicProxySession::out_udp_sent() {
             boost::system::error_code ec;
             m_udp_socket.open(protocol, ec);
             if (ec) {
+                _log_with_date_time("open : " + tp::string(ec.message().c_str()), Log::ERROR);
                 destroy();
                 return;
             }
             m_udp_socket.bind(boost::asio::ip::udp::endpoint(protocol, 0), ec);
             if (ec) {
+                _log_with_date_time("bind : " + tp::string(ec.message().c_str()), Log::ERROR);
                 destroy();
+                return;
+            }
+            m_udp_socket.non_blocking(true, ec);
+            if(ec){
+                _log_with_date_time("set_option: " + tp::string(ec.message().c_str()), Log::ERROR);
                 return;
             }
             udp_read();
@@ -537,7 +544,7 @@ void QuicProxySession::flush_udp_stream_data(std::size_t offset) {
         return;
     }
 
-    locked_conn->pump_write();
+    locked_conn->on_pump_write();
 
     offset += written;
     if (offset > 0) {

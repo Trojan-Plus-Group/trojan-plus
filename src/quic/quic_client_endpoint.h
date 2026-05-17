@@ -53,6 +53,7 @@ class QuicClientEndpoint : public QuicEndpoint {
   protected:
     void on_packet(const uint8_t* data, std::size_t len,
                    const boost::asio::ip::udp::endpoint& src) override;
+    void on_pump_write() override;
 
   private:
     void connect_to_server();
@@ -64,7 +65,7 @@ class QuicClientEndpoint : public QuicEndpoint {
 
     // Per-stream data handlers: stream_id → handler.
     tp::unordered_map<int64_t, std::function<void(const uint8_t*, std::size_t, bool)>>
-        m_stream_handlers;
+        m_stream_data_cb;
 
     // Deferred stream-open requests (waiting for handshake).
     tp::vector<std::function<void(int64_t)>> m_pending_stream_opens;

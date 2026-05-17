@@ -16,6 +16,7 @@
 
 #include "core/config.h"
 #include "core/log.h"
+#include "mem/memallocator.h"
 #include "quic_tls_ctx.h"
 
 namespace {
@@ -76,6 +77,12 @@ void QuicEndpoint::open_socket(const boost::asio::ip::udp::endpoint& bind_ep,
             boost::asio::socket_base::send_buffer_size(static_cast<int>(q.send_buffer_size)), ec);
     }
 
+    m_socket.non_blocking(true, ec);
+    if(ec){
+        _log_with_date_time("QuicEndpoint: set_option " + tp::string(ec.message().c_str()), Log::ERROR);
+        return;
+    }
+
     _log_with_date_time("QuicEndpoint: bound UDP " +
                         tp::string(bind_ep.address().to_string().c_str()) + ":" +
                         tp::to_string(bind_ep.port()),
@@ -87,23 +94,61 @@ void QuicEndpoint::async_recv() {
         return;
     }
     auto self = shared_from_this();
-    m_socket.async_receive_from(
-        boost::asio::buffer(m_recv_buf.data(), m_recv_buf.size()),
-        m_recv_endpoint,
-        [this, self](const boost::system::error_code& ec, std::size_t bytes) {
-            if (ec) {
-                if (m_running) {
-                    _log_with_date_time("QuicEndpoint: async_receive_from error: " +
-                                        tp::string(ec.message().c_str()),
-                                        Log::WARN);
+    m_socket.async_wait(boost::asio::ip::udp::socket::wait_read,
+        [self, this](boost::system::error_code /*ec*/) {
+            bool need_flush = false;
+
+
+            int read_count = 0;
+            const int MAX_READS_PER_EVENT = 64; // 或者 128, 256，视业务而定
+
+            // ==========================================
+            // 阶段 1：疯狂吸干网卡缓冲区 (The Drain Loop)
+            // ==========================================
+            while (read_count++ < MAX_READS_PER_EVENT) {
+                boost::system::error_code read_ec;
+                // 使用同步非阻塞模式读取！
+                size_t bytes_recvd = m_socket.receive_from(
+                    boost::asio::buffer(m_recv_buf.data(), m_recv_buf.size()), 
+                    m_recv_endpoint, 
+                    0, // flags
+                    read_ec
+                );
+
+                if (read_ec) {
+                    if (read_ec == boost::asio::error::would_block || 
+                        read_ec == boost::asio::error::try_again) {
+                        break; // 正常吸干
+                    }
+                    // 发生了真正的错误 (如 connection_reset)
+                    // 记录日志，或者终止当前连接
+                    // log_error(read_ec);
+                    if (m_running) {
+                        _log_with_date_time("QuicEndpoint: async_receive_from error: " +
+                                            tp::string(read_ec.message().c_str()),
+                                            Log::WARN);
+                    }
+                    break;
                 }
-                return;
+
+                if (bytes_recvd > 0) {
+                    // on_packet will set the quic connection stream offset
+                    on_packet(m_recv_buf.data(), bytes_recvd, m_recv_endpoint);
+                    need_flush = true; // 状态改变，一会儿需要检查是否发包
+                }
             }
-            if (bytes > 0) {
-                on_packet(m_recv_buf.data(), bytes, m_recv_endpoint);
+
+            // ==========================================
+            // 阶段 2：发送累积的数据 (The Send Phase)
+            // ==========================================
+            if (need_flush) {
+                on_pump_write();
             }
-            async_recv();
-        });
+
+            if (m_running) {
+                async_recv();
+            }
+    });
 }
 
 void QuicEndpoint::stop() {

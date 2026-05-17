@@ -629,7 +629,7 @@ def test_idle_timeout(binary_path):
 def test_h3_upstream_unconfigured_drop(binary_path):
     """T6: Non-trojan traffic with h3_upstream='' → server falls back to remote_addr (Trojan decoy), stays alive.
 
-    QuicProxySession::forward_to_h3_upstream() in src/quic/quic_session.cpp:
+    QuicProxySession::forward_to_h1_upstream() in src/quic/quic_session.cpp:
       * h3_upstream non-empty           → forward there (covered by T4)
       * h3_upstream empty, remote_addr  → fall back to remote_addr:remote_port
                                           (classic Trojan decoy anti-probing)
@@ -645,7 +645,7 @@ def test_h3_upstream_unconfigured_drop(binary_path):
         "quic": {"enabled": True, "h3_upstream": ""},
     })
     # Client with WRONG password so the server cannot authenticate the Trojan
-    # request and falls into forward_to_h3_upstream() → remote_addr fallback.
+    # request and falls into forward_to_h1_upstream() → remote_addr fallback.
     cli_cfg = patch_quic_config("quic_client_config.json", {
         "password": ["wrongpassword_t6"],
     })
@@ -670,7 +670,7 @@ def test_h3_upstream_unconfigured_drop(binary_path):
             return False
 
         # Send a request – the wrong password causes an auth failure on the server,
-        # which triggers forward_to_h3_upstream(). With h3_upstream empty, it
+        # which triggers forward_to_h1_upstream(). With h3_upstream empty, it
         # falls back to remote_addr:remote_port (the configured HTTP target).
         try:
             url = f"http://127.0.0.1:{HTTP_TARGET_PORT}/"
@@ -1125,7 +1125,7 @@ def test_large_file_transfer(binary_path):
 def test_h3_upstream_dns_failure(binary_path):
     """T13: h3_upstream hostname doesn't resolve → session destroyed, server stays alive.
 
-    QuicProxySession::forward_to_h3_upstream() calls async_resolve on the
+    QuicProxySession::forward_to_h1_upstream() calls async_resolve on the
     h3_upstream address.  If DNS fails, the error is logged and destroy() is
     called.  The server process must not crash.
     """
@@ -1136,7 +1136,7 @@ def test_h3_upstream_dns_failure(binary_path):
         "remote_port": HTTP_TARGET_PORT,
         "quic": {"enabled": True, "h3_upstream": "quic-test-h3-upstream.invalid:443"},
     })
-    # Wrong password forces the server into forward_to_h3_upstream().
+    # Wrong password forces the server into forward_to_h1_upstream().
     cli_cfg = patch_quic_config("quic_client_config.json", {
         "password": ["wrongpassword_t13"],
     })
@@ -1160,7 +1160,7 @@ def test_h3_upstream_dns_failure(binary_path):
             dump = True
             return False
 
-        # Trigger the wrong-password → forward_to_h3_upstream() → DNS failure path.
+        # Trigger the wrong-password → forward_to_h1_upstream() → DNS failure path.
         try:
             url = f"http://127.0.0.1:{HTTP_TARGET_PORT}/"
             http_get_via_socks5(url, QUIC_CLIENT_PROXY_PORT, timeout=5)

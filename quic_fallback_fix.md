@@ -223,7 +223,7 @@
 
 ### 5.1 为 h3_upstream TCP 连接添加超时
 
-- **文件**：`src/quic/quic_session.cpp`，`forward_to_h3_upstream`
+- **文件**：`src/quic/quic_session.cpp`，`forward_to_h1_upstream`
 - **问题**：`async_connect` 没有 deadline，上游不可达时 QUIC stream 及 session 资源最长泄漏 60–120s（内核 SYN 重传超时）。
 - **修复方案**：
   - [ ] 在 `async_resolve`/`async_connect` 之前，启动 `m_write_timer`（已有此成员）设置超时（建议 10s）：

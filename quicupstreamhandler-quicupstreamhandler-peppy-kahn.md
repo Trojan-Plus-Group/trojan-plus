@@ -15,7 +15,7 @@
 ## 设计要点（已与用户确认）
 
 1. **归属**：每个 `QuicConnection` 一个 `QuicToHttp3Connect`，作为 `std::unique_ptr` 成员持有；不放在 `QuicServerEndpoint`。
-2. **懒加载**：`QuicProxySession::forward_to_h3_upstream` 第一次需要 H3 时通过 `QuicConnection::get_or_create_h3()` 创建。
+2. **懒加载**：`QuicProxySession::forward_to_h1_upstream` 第一次需要 H3 时通过 `QuicConnection::get_or_create_h3()` 创建。
 3. **职责拆分**：
    - `QuicToHttp3Connect`：拥有 `nghttp3_conn`、6 个静态回调、按 stream_id 路由解码事件。
    - `QuicUpstreamHandler`：保留 TCP socket 生命周期、写队列、H3→H1 转换（chunked / CONNECT / 头部）；新增 `on_h3_*` 实例方法接收已解码事件。
@@ -234,11 +234,11 @@ void QuicUpstreamHandler::destroy() {
 ### 降级策略
 
 - 单 stream 帧损坏 → `feed_stream_data` 返回负值 → 该 handler `m_valid=false`，本流走 raw 透传，不影响同 connection 其它流。
-- `nghttp3_conn_server_new` 失败（OOM）→ 整个 connection 不可用 → 在 `forward_to_h3_upstream` 处检测 `!h3.is_valid()`，记录错误并 destroy 该 stream（见 §4）。
+- `nghttp3_conn_server_new` 失败（OOM）→ 整个 connection 不可用 → 在 `forward_to_h1_upstream` 处检测 `!h3.is_valid()`，记录错误并 destroy 该 stream（见 §4）。
 
 ---
 
-## 4. `QuicProxySession::forward_to_h3_upstream` 改动
+## 4. `QuicProxySession::forward_to_h1_upstream` 改动
 
 替换 [quic_session.cpp:187-207](trojan-plus/src/quic/quic_session.cpp#L187) 段：
 
@@ -306,7 +306,7 @@ src/quic/quic_to_http3_connect.cpp
 - 修改 `trojan-plus/src/quic/quic_connection.cpp`（include、方法实现、`set_stream_handler` 内 unregister）
 - 修改 `trojan-plus/src/quic/quic_session_upstream.h`（移除 nghttp3 成员/静态回调，新增 `on_h3_*` 接口）
 - 修改 `trojan-plus/src/quic/quic_session_upstream.cpp`（构造函数瘦身、`on_stream_data` 委托、`destroy` 调用 unregister、回调方法体迁移）
-- 修改 `trojan-plus/src/quic/quic_session.cpp`（`forward_to_h3_upstream` 走新流程）
+- 修改 `trojan-plus/src/quic/quic_session.cpp`（`forward_to_h1_upstream` 走新流程）
 - 修改 `trojan-plus/CMakeLists.txt`
 
 ---

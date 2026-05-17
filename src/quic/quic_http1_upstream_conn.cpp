@@ -145,8 +145,8 @@ void Http1UpstreamConn::do_tcp_write() {
     // Pure-FIN entry: shutdown send half, no async_write.
     if (front.data.empty() && front.fin) {
         boost::system::error_code ec;
-        ec                       = m_tcp_socket.shutdown(boost::asio::socket_base::shutdown_send, ec);
-        std::size_t credit       = front.stream_bytes;
+        ec = m_tcp_socket.shutdown(boost::asio::socket_base::shutdown_send, ec);
+        std::size_t credit = front.stream_bytes;
         m_write_queue.pop_front();
         if (credit > 0 && m_observer) m_observer->on_h1_stream_credit(credit);
         do_tcp_write();

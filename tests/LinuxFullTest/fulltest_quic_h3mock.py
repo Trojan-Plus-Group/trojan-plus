@@ -1,7 +1,7 @@
 """
 Mock TCP HTTP server for QUIC h3_upstream fallback testing.
 
-In trojan-plus, QuicProxySession::forward_to_h3_upstream() now:
+In trojan-plus, QuicProxySession::forward_to_h1_upstream() now:
 1. Uses nghttp3 to decode HTTP/3 frames from QUIC streams
 2. Converts h3 to HTTP/1.1 format
 3. Forwards via TCP to this mock server

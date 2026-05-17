@@ -65,11 +65,7 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
                    const boost::asio::ip::udp::endpoint& local_ep,
                    const boost::asio::ip::udp::endpoint& remote_ep);
 
-    // Write pending stream data (call after every read or timer event).
-    void pump_write();
-
-    // Drive the nghttp3→ngtcp2 pipeline for HTTP/3 responses.
-    void pump_h3_response();
+    void on_pump_write();
 
     // Send data on an existing bidi stream. Returns false on error.
     int64_t send_stream_data(int64_t stream_id, const uint8_t* data, std::size_t datalen, bool fin);
@@ -95,7 +91,7 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     [[nodiscard]] QuicToHttp3Connect* h3_if_exists() const { return m_h3.get(); }
 
     // Forward a stream to HTTP/3 upstream. Returns true on success.
-    [[nodiscard]] bool forward_to_h3_upstream(int64_t stream_id, const uint8_t* data, std::size_t len, bool fin);
+    [[nodiscard]] bool forward_to_h1_upstream(int64_t stream_id, const uint8_t* data, std::size_t len, bool fin);
 
     // Gracefully close the connection with an optional application error code.
     void close(uint64_t app_error_code = 0);
@@ -134,6 +130,9 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     static int cb_recv_stream_data(ngtcp2_conn*, uint32_t flags, int64_t stream_id,
                                    uint64_t offset, const uint8_t* data, std::size_t datalen,
                                    void* user_data, void* stream_user_data);
+    static int cb_acked_stream_data_offset(ngtcp2_conn* conn, int64_t stream_id,
+                                           uint64_t offset, uint64_t datalen,
+                                           void* user_data, void* stream_user_data);
     static int cb_stream_open(ngtcp2_conn*, int64_t stream_id, void* user_data);
     static int cb_stream_close(ngtcp2_conn*, uint32_t flags, int64_t stream_id,
                                uint64_t app_error_code, void* user_data, void* stream_user_data);
@@ -156,6 +155,10 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
                           const boost::asio::ip::udp::endpoint& remote_ep);
     void reschedule_loss_timer();
     void on_handshake_completed_impl();
+
+    // Write pending stream data (call after every read or timer event).
+    void pump_write();
+
 
     QuicEndpoint& m_endpoint;
     std::shared_ptr<QuicTlsCtx> m_tls_ctx;

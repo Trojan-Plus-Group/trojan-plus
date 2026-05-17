@@ -59,6 +59,7 @@ class QuicEndpoint : public std::enable_shared_from_this<QuicEndpoint> {
     void async_recv();
     virtual void on_packet(const uint8_t* data, std::size_t len,
                            const boost::asio::ip::udp::endpoint& src) = 0;
+    virtual void on_pump_write() = 0;
 
     boost::asio::io_context& m_io_context;
     const Config& m_config;

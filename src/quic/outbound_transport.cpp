@@ -216,13 +216,23 @@ class QuicStreamTransport : public OutboundTransport,
             std::size_t n = std::min(m_recv_buf.size(), buf.size());
             std::memcpy(buf.data(), m_recv_buf.data(), n);
             m_recv_buf.erase(0, n);
-            boost::asio::post(m_io_ctx, [handler = std::move(handler), n]() mutable {
+
+            auto ep = m_endpoint.lock();
+            if (!ep) {
+                boost::asio::post(m_io_ctx, tp::bind_mem_alloc([handler = std::move(handler)]() mutable {
+                    handler(boost::asio::error::broken_pipe, 0);
+                }));
+                return;
+            }
+            ep->extend_window(m_stream_id, n);
+
+            boost::asio::post(m_io_ctx, tp::bind_mem_alloc([handler = std::move(handler), n]() mutable {
                 handler({}, n);
-            });
+            }));
         } else if (m_fin_received) {
-            boost::asio::post(m_io_ctx, [handler = std::move(handler)]() mutable {
+            boost::asio::post(m_io_ctx, tp::bind_mem_alloc([handler = std::move(handler)]() mutable {
                 handler(boost::asio::error::eof, 0);
-            });
+            }));
         } else {
             m_pending_buf     = buf;
             m_pending_handler = std::move(handler);
@@ -237,17 +247,17 @@ class QuicStreamTransport : public OutboundTransport,
 
     void do_write(std::shared_ptr<tp::string> buf, std::size_t offset, IoHandler handler) {
         if (offset >= buf->size()) {
-            boost::asio::post(m_io_ctx, [handler = std::move(handler), len = buf->size()]() mutable {
+            boost::asio::post(m_io_ctx, tp::bind_mem_alloc([handler = std::move(handler), len = buf->size()]() mutable {
                 handler({}, len);
-            });
+            }));
             return;
         }
 
         auto ep = m_endpoint.lock();
         if (!ep) {
-            boost::asio::post(m_io_ctx, [handler = std::move(handler)]() mutable {
+            boost::asio::post(m_io_ctx, tp::bind_mem_alloc([handler = std::move(handler)]() mutable {
                 handler(boost::asio::error::broken_pipe, 0);
-            });
+            }));
             return;
         }
 
@@ -258,16 +268,17 @@ class QuicStreamTransport : public OutboundTransport,
             false);
 
         if (written < 0) {
-            boost::asio::post(m_io_ctx, [handler = std::move(handler)]() mutable {
+            boost::asio::post(m_io_ctx, tp::bind_mem_alloc([handler = std::move(handler)]() mutable {
                 handler(boost::asio::error::broken_pipe, 0);
-            });
+            }));
             return;
         }
 
         offset += written;
         if (offset < buf->size()) {
             m_write_timer.expires_after(std::chrono::milliseconds(5));
-            m_write_timer.async_wait([this, self = shared_from_this(), buf, offset, h = std::move(handler)](const boost::system::error_code& ec) mutable {
+            m_write_timer.async_wait([this, self = shared_from_this(), buf, offset, h = std::move(handler)]
+                                    (const boost::system::error_code& ec) mutable {
                 if (!ec) {
                     do_write(buf, offset, std::move(h));
                 } else {
@@ -275,9 +286,9 @@ class QuicStreamTransport : public OutboundTransport,
                 }
             });
         } else {
-            boost::asio::post(m_io_ctx, [handler = std::move(handler), len = buf->size()]() mutable {
+            boost::asio::post(m_io_ctx, tp::bind_mem_alloc([handler = std::move(handler), len = buf->size()]() mutable {
                 handler({}, len);
-            });
+            }));
         }
     }
 
@@ -305,6 +316,15 @@ class QuicStreamTransport : public OutboundTransport,
             m_has_pending       = false;
             std::size_t n       = std::min(len, m_pending_buf.size());
             std::memcpy(m_pending_buf.data(), data, n);
+            auto ep = m_endpoint.lock();
+            if (!ep) {
+                boost::asio::post(m_io_ctx, tp::bind_mem_alloc([handler = std::move(m_pending_handler)]() mutable {
+                    handler(boost::asio::error::broken_pipe, 0);
+                }));
+                return;
+            }
+            ep->extend_window(m_stream_id, n);
+
             if (n < len) {
                 m_recv_buf.append(reinterpret_cast<const char*>(data + n), len - n);
             }

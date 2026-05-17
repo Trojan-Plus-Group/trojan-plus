@@ -56,8 +56,8 @@ void QuicUpstreamHandler::retry_feed_h3() {
     auto locked_conn = m_conn_ptr.lock();
     if (!locked_conn || locked_conn->is_closed()) return;
 
-    auto&         h3       = locked_conn->get_or_create_h3();
-    auto          consumed = h3.feed_stream_data(m_stream_id,
+    auto& h3 = locked_conn->get_or_create_h3();
+    auto consumed = h3.feed_stream_data(m_stream_id,
                                         reinterpret_cast<const uint8_t*>(m_h3_in_buf.data()),
                                         m_h3_in_buf.size(),
                                         m_h3_in_fin);
@@ -168,8 +168,7 @@ void QuicUpstreamHandler::pump_h3_response() {
     if (m_destroyed) return;
     auto locked_conn = m_conn_ptr.lock();
     if (!locked_conn || locked_conn->is_closed()) return;
-    locked_conn->pump_h3_response();
-    locked_conn->pump_write();
+    locked_conn->on_pump_write();
 }
 
 // ---- nghttp3 data_reader / consume notification -------------------------
@@ -253,7 +252,7 @@ void QuicUpstreamHandler::on_h1_error(const boost::system::error_code& /*ec*/) {
     auto locked_conn = m_conn_ptr.lock();
     if (locked_conn && !locked_conn->is_closed()) {
         locked_conn->send_stream_data(m_stream_id, nullptr, 0, true);
-        locked_conn->pump_write();
+        locked_conn->on_pump_write();
     }
     destroy();
 }

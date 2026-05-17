@@ -235,7 +235,6 @@ void Config::populate(const ptree& tree) {
     quic.max_datagram_size      = tree.get("quic.max_datagram_size", 1200U);
     quic.recv_buffer_size       = tree.get("quic.recv_buffer_size", quic.max_datagram_size * 64U);
     quic.send_buffer_size       = tree.get("quic.send_buffer_size", quic.max_datagram_size * 64U);
-    quic.h3_upstream            = tree.get("quic.h3_upstream", std::string()).c_str();
     quic.debug_disable_tcp      = tree.get("quic.debug_disable_tcp", false);
 
 #ifndef ENABLE_QUIC
@@ -243,9 +242,6 @@ void Config::populate(const ptree& tree) {
         _log_with_date_time("quic.enabled=true but ENABLE_QUIC was OFF at build time", Log::FATAL);
     }
 #endif
-    if (quic.enabled && !quic.h3_upstream.empty()) {
-        _log_with_date_time("quic.h3_upstream is configured; full HTTP/3 fallback is implemented in Phase 3", Log::WARN);
-    }
     if (quic.enabled && experimental.pipeline_num > 0 && quic.prefer_quic) {
         _log_with_date_time(
             "quic.prefer_quic=true with pipeline_num>0: QUIC will be tried first per session, "

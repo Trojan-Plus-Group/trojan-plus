@@ -13,6 +13,7 @@
 #include <chrono>
 
 #include <boost/asio/ip/address.hpp>
+#include <cstddef>
 
 #include "core/config.h"
 #include "core/log.h"
@@ -72,8 +73,8 @@ void QuicClientEndpoint::connect_to_server() {
             // Route incoming stream data to registered handlers.
             m_conn->on_stream_data_cb = [this, self](int64_t stream_id, const uint8_t* data,
                                                std::size_t len, bool fin) {
-                auto it = m_stream_handlers.find(stream_id);
-                if (it != m_stream_handlers.end()) {
+                auto it = m_stream_data_cb.find(stream_id);
+                if (it != m_stream_data_cb.end()) {
                     it->second(data, len, fin);
                 }
             };
@@ -91,7 +92,7 @@ void QuicClientEndpoint::connect_to_server() {
             };
 
             m_conn->on_stream_close_cb = [this, self](int64_t stream_id) {
-                m_stream_handlers.erase(stream_id);
+                m_stream_data_cb.erase(stream_id);
             };
 
             if (!m_conn->init_client(local_endpoint(), m_server_ep)) {
@@ -106,6 +107,12 @@ void QuicClientEndpoint::on_packet(const uint8_t* data, std::size_t len,
                                    const boost::asio::ip::udp::endpoint& src) {
     if (m_conn && !m_conn->is_closed()) {
         m_conn->on_packet(data, len, local_endpoint(), src);
+    }
+}
+
+void QuicClientEndpoint::on_pump_write() {
+    if (m_conn && !m_conn->is_closed()) {
+        m_conn->on_pump_write();
     }
 }
 
@@ -168,16 +175,16 @@ int64_t QuicClientEndpoint::send_stream_data(int64_t stream_id, const uint8_t* d
     }
     int64_t written = m_conn->send_stream_data(stream_id, data, len, fin);
     if (written >= 0) {
-        m_conn->pump_write();
+        m_conn->on_pump_write();
     }
     return written;
 }
 
 void QuicClientEndpoint::set_stream_data_handler(
     int64_t stream_id, std::function<void(const uint8_t*, std::size_t, bool)> handler) {
-    m_stream_handlers[stream_id] = std::move(handler);
+    m_stream_data_cb[stream_id] = std::move(handler);
 }
 
 void QuicClientEndpoint::remove_stream_data_handler(int64_t stream_id) {
-    m_stream_handlers.erase(stream_id);
+    m_stream_data_cb.erase(stream_id);
 }

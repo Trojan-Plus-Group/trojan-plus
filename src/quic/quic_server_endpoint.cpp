@@ -130,6 +130,7 @@ void QuicServerEndpoint::on_packet(const uint8_t* data, std::size_t len,
     auto it = m_conns.find(key);
     if (it != m_conns.end()) {
         it->second->on_packet(data, len, local_endpoint(), src);
+        m_pumping_conn.push_back(key);
         return;
     }
 
@@ -174,7 +175,7 @@ void QuicServerEndpoint::on_packet(const uint8_t* data, std::size_t len,
         if (is_quic_client_uni_stream(stream_id)) {
             // Trojan quic_client_endpoint only creates bidirectional streams. Any client-initiated 
             // unidirectional streams must be for H3, so we can directly initialize H3 upstream.
-            if (!locked->forward_to_h3_upstream(stream_id, nullptr, 0, false)) {
+            if (!locked->forward_to_h1_upstream(stream_id, nullptr, 0, false)) {
                 locked->reset_stream(stream_id, NGHTTP3_H3_INTERNAL_ERROR);
             }
         } else {
@@ -219,4 +220,17 @@ void QuicServerEndpoint::on_packet(const uint8_t* data, std::size_t len,
     tp::string sv_key = dcid_key(sv_scid.data, sv_scid.datalen);
     _log_with_date_time("QuicServerEndpoint: added server SCID " + sv_key, Log::INFO);
     m_conns[sv_key] = std::move(conn);
+
+    m_pumping_conn.push_back(key);
+}
+
+void QuicServerEndpoint::on_pump_write(){
+    for(const auto& key : m_pumping_conn){
+        auto it = m_conns.find(key);
+        if(it != m_conns.end()){
+            it->second->on_pump_write();
+        }
+    }
+
+    m_pumping_conn.clear();
 }

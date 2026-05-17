@@ -26,6 +26,7 @@ class QuicServerEndpoint : public QuicEndpoint {
   protected:
     void on_packet(const uint8_t* data, std::size_t len,
                    const boost::asio::ip::udp::endpoint& src) override;
+    void on_pump_write() override;
 
   private:
     // Connection table: hex-encoded DCID → QuicConnection.
@@ -37,6 +38,8 @@ class QuicServerEndpoint : public QuicEndpoint {
     // Used when a Short Header packet arrives for an unknown connection.
     void send_stateless_reset(const uint8_t* dcid, std::size_t dcidlen,
                               const boost::asio::ip::udp::endpoint& dest);
+
+    tp::vector<tp::string> m_pumping_conn;
 };
 
 #endif // _QUIC_SERVER_ENDPOINT_H_
