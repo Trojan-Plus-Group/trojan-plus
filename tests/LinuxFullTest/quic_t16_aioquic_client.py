@@ -18,13 +18,16 @@ class H3ClientProtocol(QuicConnectionProtocol):
         self.h3 = H3Connection(self._quic)
         self.responses = {} # stream_id -> bytearray
         self.done_events = {} # stream_id -> asyncio.Event
+        self.recv_size = 0
 
     def quic_event_received(self, event):
         for h3_event in self.h3.handle_event(event):
             if isinstance(h3_event, HeadersReceived):
                 print(f"H3_EVENT: HeadersReceived stream={h3_event.stream_id}")
             if isinstance(h3_event, DataReceived):
-                print(f"H3_EVENT: DataReceived stream={h3_event.stream_id} len={len(h3_event.data)}")
+                size = len(h3_event.data)
+                self.recv_size += size  
+                print(f"H3_EVENT: DataReceived stream={h3_event.stream_id} len={size} recv_size={self.recv_size}")
                 self.responses[h3_event.stream_id] += h3_event.data
             if getattr(h3_event, 'stream_ended', False):
                 print(f"H3_EVENT: StreamEnded stream={h3_event.stream_id}")
