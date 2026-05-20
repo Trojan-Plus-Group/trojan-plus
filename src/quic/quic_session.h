@@ -81,6 +81,7 @@ class QuicProxySession : public QuicStreamHandler, public std::enable_shared_fro
     tp::string m_udp_data_buf; // receives from QUIC stream
     tp::string m_udp_pending_stream_data; // pending data to be sent to QUIC stream
     bool m_is_udp{false};
+    bool m_udp_fin_received{false};
 
     bool m_request_parsed{false};
     bool m_destroyed{false};

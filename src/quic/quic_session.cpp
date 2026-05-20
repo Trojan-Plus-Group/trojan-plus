@@ -76,6 +76,7 @@ void QuicProxySession::on_stream_data(const uint8_t* data, std::size_t len, bool
         if (m_is_udp) {
             m_udp_data_buf += std::move(m_recv_buf);
             m_recv_buf.clear();
+            if (fin) m_udp_fin_received = true;
             out_udp_sent();
         } else {
             write_to_target(std::move(m_recv_buf), fin);
@@ -401,6 +402,7 @@ void QuicProxySession::out_udp_sent() {
     if (m_destroyed || !m_is_udp) return;
 
     if (m_udp_data_buf.empty()) {
+        if (m_udp_fin_received) destroy();
         return;
     }
 
@@ -544,13 +546,13 @@ void QuicProxySession::flush_udp_stream_data(std::size_t offset) {
         return;
     }
 
-    locked_conn->on_pump_write();
-
     offset += written;
     if (offset > 0) {
         m_udp_pending_stream_data.erase(0, offset);
         offset = 0;
     }
+
+    locked_conn->on_pump_write(); // erase before pump so on_connection_pump re-entry sees empty buf
 
     if (!m_udp_pending_stream_data.empty()) {
         m_write_timer.expires_after(std::chrono::milliseconds(5));

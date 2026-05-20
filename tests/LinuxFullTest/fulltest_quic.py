@@ -16,6 +16,7 @@ Test cases:
   T12: large_file_transfer          - 300 KB file exercises QUIC flow-control back-pressure
   T13: h3_upstream_dns_failure      - h3_upstream with invalid hostname → resolve error, no crash
   T14: multiple_quic_connections    - two independent QUIC clients connect to same server concurrently
+  T18: bidirectional_stream_close   - TCP and UDP proxy streams close cleanly via FIN (log-confirmed)
 """
 
 import json
@@ -54,6 +55,7 @@ QUIC_CLIENT_PROXY_PORT_2 = 10622   # second client for T14
 HTTP_TARGET_PORT        = 18083    # dedicated target HTTP server for QUIC tests
 H3_UPSTREAM_PORT        = 18182
 DEAD_TARGET_PORT        = 19993    # nothing listens here (used by T11)
+UDP_ECHO_PORT           = 19911    # local UDP echo server (used by T18)
 
 TEST_FILES_DIR   = 'html'
 LARGE_FILE_NAME  = 'quic_large_test.bin'
@@ -1821,6 +1823,216 @@ def test_stateless_reset(binary_path):
 
 
 # ---------------------------------------------------------------------------
+# T18 helpers
+# ---------------------------------------------------------------------------
+
+def _get_log_offset(log_path):
+    """Return current byte size of log_path, or 0 if it doesn't exist."""
+    try:
+        return os.path.getsize(log_path)
+    except OSError:
+        return 0
+
+
+def _wait_for_log_after(log_path, pattern, offset, timeout=10):
+    """Return True if *pattern* appears in log_path after *offset* bytes within *timeout* s."""
+    deadline = time.time() + timeout
+    compiled = re.compile(pattern)
+    while time.time() < deadline:
+        if os.path.exists(log_path):
+            with open(log_path, 'r', errors='replace') as f:
+                f.seek(offset)
+                for line in f:
+                    if compiled.search(line):
+                        return True
+        time.sleep(0.3)
+    return False
+
+
+def _start_udp_echo_server(port):
+    """Start a UDP echo server on 127.0.0.1:port.  Returns (socket, stop_event)."""
+    import threading
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.bind(('127.0.0.1', port))
+    s.settimeout(0.3)
+    stop = threading.Event()
+
+    def _run():
+        while not stop.is_set():
+            try:
+                data, addr = s.recvfrom(4096)
+                s.sendto(data, addr)
+            except socket.timeout:
+                continue
+
+    threading.Thread(target=_run, daemon=True).start()
+    return s, stop
+
+
+def _socks5_udp_send(proxy_host, proxy_port, target_host, target_port, data, timeout=5):
+    """Send one UDP datagram via SOCKS5 UDP-ASSOCIATE and return echoed bytes (or None).
+
+    Closing the TCP control connection at the end signals the trojan client to
+    send FIN on the associated QUIC stream, which is what T18-PartB relies on.
+    """
+    import struct
+
+    ctrl = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    ctrl.settimeout(timeout)
+    try:
+        ctrl.connect((proxy_host, proxy_port))
+
+        # No-auth handshake
+        ctrl.sendall(b'\x05\x01\x00')
+        r = ctrl.recv(2)
+        if r != b'\x05\x00':
+            raise Exception(f"SOCKS5 auth handshake: {r!r}")
+
+        # UDP ASSOCIATE (client bind 0.0.0.0:0)
+        ctrl.sendall(b'\x05\x03\x00\x01\x00\x00\x00\x00\x00\x00')
+        rep = b''
+        while len(rep) < 10:
+            chunk = ctrl.recv(10 - len(rep))
+            if not chunk:
+                break
+            rep += chunk
+        if len(rep) < 10 or rep[1] != 0x00:
+            raise Exception(f"SOCKS5 UDP ASSOCIATE failed: {rep!r}")
+
+        relay_ip = socket.inet_ntoa(rep[4:8])
+        relay_port = struct.unpack('>H', rep[8:10])[0]
+        if relay_ip == '0.0.0.0':
+            relay_ip = proxy_host
+
+        udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        udp.settimeout(timeout)
+        try:
+            # SOCKS5 UDP request header: RSV(2)+FRAG(1)+ATYP=IPv4(1)+DST.ADDR(4)+DST.PORT(2)
+            hdr = b'\x00\x00\x00\x01' + socket.inet_aton(target_host) + struct.pack('>H', target_port)
+            udp.sendto(hdr + data, (relay_ip, relay_port))
+            try:
+                raw, _ = udp.recvfrom(65535)
+                return raw[10:]  # strip SOCKS5 UDP response header
+            except socket.timeout:
+                return None
+        finally:
+            udp.close()
+    finally:
+        ctrl.close()  # closing ctrl triggers FIN on the QUIC stream
+
+
+# ---------------------------------------------------------------------------
+# Test case  T18
+# ---------------------------------------------------------------------------
+
+def test_bidirectional_stream_close(binary_path):
+    """T18: TCP and UDP proxy streams both close cleanly after their sessions end.
+
+    Part A – TCP close:
+      HTTP GET through QUIC proxy.  After the response the HTTP server closes
+      the upstream TCP socket.  QuicProxySession::destroy() runs and logs
+      "stream X closed".  Also exercises cb_stream_close::extend_max_streams_bidi.
+
+    Part B – UDP close:
+      A local UDP echo server is started.  One datagram is sent via SOCKS5
+      UDP-ASSOCIATE through the QUIC proxy; then the SOCKS5 TCP control socket
+      is closed.  This causes the trojan client to send FIN on the QUIC stream.
+      The server sets m_udp_fin_received=true; once the UDP send queue drains
+      destroy() is called and "stream X closed" is logged.
+    """
+    print_time_log("[T18] bidirectional_stream_close: starting...")
+
+    srv_cfg = patch_quic_config("quic_server_config.json",
+                                {"remote_port": HTTP_TARGET_PORT})
+    cli_cfg = patch_quic_config("quic_client_config.json", {})
+
+    server, srv_log = start_trojan(binary_path, srv_cfg)
+    client, cli_log = start_trojan(binary_path, cli_cfg)
+    dump = False
+    udp_echo_sock = None
+    udp_stop = None
+    try:
+        if not server or not client:
+            dump = True
+            return False
+
+        if not wait_for_log(cli_log, r"QuicConnection: handshake completed", timeout=15):
+            print_time_log("[T18] FAIL: QUIC handshake not seen")
+            dump = True
+            return False
+        time.sleep(1)
+
+        if not wait_for_port(QUIC_CLIENT_PROXY_PORT, timeout=5):
+            print_time_log("[T18] FAIL: client proxy port not open")
+            dump = True
+            return False
+
+        # ── Part A: TCP stream close ─────────────────────────────────────────
+        print_time_log("[T18] Part A: TCP proxy stream close")
+        log_offset_a = _get_log_offset(srv_log)
+
+        url_base = f"http://127.0.0.1:{HTTP_TARGET_PORT}/"
+        index = http_get_via_socks5(url_base, QUIC_CLIENT_PROXY_PORT).decode('utf-8')
+        files = [f for f in index.splitlines() if f.strip()]
+        if not files:
+            print_time_log("[T18] FAIL Part A: no test files")
+            dump = True
+            return False
+
+        test_file = files[0]
+        url = f"http://127.0.0.1:{HTTP_TARGET_PORT}/{test_file}"
+        got = http_get_via_socks5(url, QUIC_CLIENT_PROXY_PORT)
+        with open(os.path.join(TEST_FILES_DIR, test_file), 'rb') as f:
+            want = f.read()
+        if got != want:
+            print_time_log("[T18] FAIL Part A: content mismatch")
+            dump = True
+            return False
+
+        if not _wait_for_log_after(srv_log, r"QuicProxySession: stream \d+ closed",
+                                   log_offset_a, timeout=8):
+            print_time_log("[T18] FAIL Part A: 'stream X closed' not seen after TCP session")
+            dump = True
+            return False
+        print_time_log("[T18] Part A PASSED: TCP stream closed cleanly")
+
+        # ── Part B: UDP stream close via m_udp_fin_received ──────────────────
+        print_time_log("[T18] Part B: UDP proxy stream close")
+        udp_echo_sock, udp_stop = _start_udp_echo_server(UDP_ECHO_PORT)
+        log_offset_b = _get_log_offset(srv_log)
+
+        echo = _socks5_udp_send("127.0.0.1", QUIC_CLIENT_PROXY_PORT,
+                                "127.0.0.1", UDP_ECHO_PORT,
+                                b"t18-udp-ping", timeout=5)
+        print_time_log(f"[T18] UDP echo response: {echo!r}")
+        # echo may be None on timeout (UDP is best-effort); closing ctrl is what matters.
+
+        if not _wait_for_log_after(srv_log, r"QuicProxySession: stream \d+ closed",
+                                   log_offset_b, timeout=10):
+            print_time_log("[T18] FAIL Part B: 'stream X closed' not seen after UDP FIN")
+            dump = True
+            return False
+        print_time_log("[T18] Part B PASSED: UDP stream closed via m_udp_fin_received path")
+
+        print_time_log("[T18] bidirectional_stream_close PASSED")
+        return True
+    except Exception:
+        traceback.print_exc()
+        dump = True
+        return False
+    finally:
+        if udp_stop:
+            udp_stop.set()
+        if udp_echo_sock:
+            try:
+                udp_echo_sock.close()
+            except Exception:
+                pass
+        close_process(client, dump)
+        close_process(server, dump)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -1842,6 +2054,7 @@ ALL_TESTS = [
     ("T15", test_no_crlf_fallback),
     ("T16", test_quic_load_test),
     ("T17", test_stateless_reset),
+    ("T18", test_bidirectional_stream_close),
 ]
 
 def main(binary_path, test_tag='all'):
@@ -1873,8 +2086,8 @@ def main(binary_path, test_tag='all'):
     if not http_target:
         return 1
 
-    passed = 0
-    failed = 0
+    passed_tests = []
+    failed_tests = []
     try:
         for tag, fn in tests_to_run:
             with _socks_lock:
@@ -1882,19 +2095,23 @@ def main(binary_path, test_tag='all'):
             print_time_log(f"--- Running {tag} ---")
             try:
                 if fn(binary_path):
-                    passed += 1
+                    passed_tests.append(tag)
                 else:
-                    failed += 1
+                    failed_tests.append(tag)
                     print_time_log(f"--- {tag} FAILED ---")
             except Exception:
                 traceback.print_exc()
-                failed += 1
+                failed_tests.append(tag)
             # Brief cooldown between tests.
             time.sleep(2)
     finally:
-        close_process(http_target, failed > 0)
+        close_process(http_target, len(failed_tests) > 0)
 
-    print_time_log(f"===== QUIC Tests: {passed} passed, {failed} failed =====")
+    passed = len(passed_tests)
+    failed = len(failed_tests)
+    passed_str = f" ({' '.join(passed_tests)})" if passed_tests else ""
+    failed_str = f" ({' '.join(failed_tests)})" if failed_tests else ""
+    print_time_log(f"===== QUIC Tests: {passed} passed{passed_str}, {failed} failed{failed_str} =====")
     return 0 if failed == 0 else 1
 
 if __name__ == '__main__':

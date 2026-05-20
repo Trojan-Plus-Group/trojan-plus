@@ -235,6 +235,7 @@ void Config::populate(const ptree& tree) {
     quic.max_datagram_size      = tree.get("quic.max_datagram_size", 1200U);
     quic.recv_buffer_size       = tree.get("quic.recv_buffer_size", quic.max_datagram_size * 64U);
     quic.send_buffer_size       = tree.get("quic.send_buffer_size", quic.max_datagram_size * 64U);
+    quic.h3_upstream            = tree.get("quic.h3_upstream", std::string()).c_str();
     quic.debug_disable_tcp      = tree.get("quic.debug_disable_tcp", false);
 
 #ifndef ENABLE_QUIC

@@ -424,6 +424,7 @@ void ClientSession::request_remote() {
                 udp_socket.cancel(ec);
             }
             status = UDP_FORWARD;
+            in_async_read(); // detect ctrl TCP close → destroy() → FIN on QUIC stream
         } else {
             if (!first_packet_recv) {
                 in_socket.cancel(ec);

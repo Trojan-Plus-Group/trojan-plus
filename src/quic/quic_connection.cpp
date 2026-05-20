@@ -85,10 +85,11 @@ int QuicConnection::cb_recv_stream_data(ngtcp2_conn* /*conn*/, uint32_t flags, i
 
     auto it = self->m_stream_handlers.find(stream_id);
     if (it != self->m_stream_handlers.end()) {
+        // server will use handlers
         auto handler = it->second;
         handler->on_stream_data(data, datalen, fin);
-        // Manual flow control: handler must call extend_window() when data is consumed.
     } else if (self->on_stream_data_cb) {
+        // client will use cb 
         self->on_stream_data_cb(stream_id, data, datalen, fin);
     }
 
@@ -121,6 +122,14 @@ int QuicConnection::cb_stream_close(ngtcp2_conn* /*conn*/, uint32_t /*flags*/, i
         self->m_stream_handlers.erase(stream_id);
     } else if (self->on_stream_close_cb) {
         self->on_stream_close_cb(stream_id);
+    }
+
+    if (!ngtcp2_conn_is_local_stream2(self->m_conn, stream_id)) {
+        if (ngtcp2_is_bidi_stream(stream_id)) {
+            ngtcp2_conn_extend_max_streams_bidi(self->m_conn, 1);
+        } else {
+            ngtcp2_conn_extend_max_streams_uni(self->m_conn, 1);
+        }
     }
 
     return 0;
@@ -632,10 +641,15 @@ void QuicConnection::remove_stream_handler(int64_t stream_id) {
 
 bool QuicConnection::forward_to_h1_upstream(int64_t stream_id, const uint8_t* data, std::size_t len, bool fin) {
     const auto& config = m_endpoint.config();
+    const auto& h3_cfg = config.get_quic().h3_upstream;
     tp::string host;
     tp::string port_str;
 
-    if (!config.get_remote_addr().empty()) {
+    if (!h3_cfg.empty()) {
+        auto colon_pos = h3_cfg.rfind(':');
+        host = (colon_pos == tp::string::npos) ? h3_cfg : h3_cfg.substr(0, colon_pos);
+        port_str = (colon_pos == tp::string::npos) ? "80" : h3_cfg.substr(colon_pos + 1);
+    } else if (!config.get_remote_addr().empty()) {
         host = config.get_remote_addr();
         port_str = tp::to_string(config.get_remote_port());
     } else {
@@ -645,8 +659,10 @@ bool QuicConnection::forward_to_h1_upstream(int64_t stream_id, const uint8_t* da
         return false;
     }
 
-    _log_with_date_time("QuicConnection: stream " + tp::to_string(stream_id) + 
-        " forwarding to " + host + ":" + port_str, Log::INFO);
+    _log_with_date_time("QuicConnection: stream " + tp::to_string(stream_id) +
+                            " " + (h3_cfg.empty() ? "falling back to " : "forwarding to ") 
+                            + "h3_upstream " + host + ":" + port_str,
+                        Log::INFO);
 
     auto& h3_mgr = get_or_create_h3();
     if (!h3_mgr.is_valid()) {
