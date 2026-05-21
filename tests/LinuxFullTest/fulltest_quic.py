@@ -46,6 +46,41 @@ if current_dir not in sys.path:
 
 from fulltest_utils import print_time_log, is_windows_system
 
+try:
+    import psutil
+except ImportError:
+    psutil = None
+
+def get_process_memory(pid):
+    """Get the RSS memory of a process in bytes."""
+    if psutil is not None:
+        try:
+            process = psutil.Process(pid)
+            return process.memory_info().rss
+        except Exception:
+            pass
+
+    # Fallback 1: UNIX 'ps' command
+    try:
+        import subprocess
+        out = subprocess.check_output(["ps", "-o", "rss=", "-p", str(pid)])
+        rss_kb = int(out.strip())
+        return rss_kb * 1024
+    except Exception:
+        pass
+
+    # Fallback 2: Linux /proc/pid/statm
+    try:
+        with open(f"/proc/{pid}/statm", "r") as f:
+            pages = int(f.read().split()[1])
+            import resource
+            page_size = resource.getpagesize()
+            return pages * page_size
+    except Exception:
+        pass
+
+    return 0
+
 # ---------------------------------------------------------------------------
 # Port assignments (must not collide with existing tests)
 # ---------------------------------------------------------------------------
@@ -1454,6 +1489,11 @@ def test_quic_load_test(binary_path):
             dump = True
             return False
 
+        # Get initial memory usage
+        srv_mem_before = get_process_memory(server.pid)
+        cli_mem_before = get_process_memory(client.pid)
+        print_time_log(f"[T16] Initial memory - Server PID {server.pid}: {srv_mem_before / 1024 / 1024:.2f} MB, Client PID {client.pid}: {cli_mem_before / 1024 / 1024:.2f} MB")
+
         # Get list of files from target server
         url_base = f"http://127.0.0.1:{HTTP_TARGET_PORT}/"
         index = http_get_via_socks5(url_base, QUIC_CLIENT_PROXY_PORT).decode('utf-8')
@@ -1644,6 +1684,38 @@ def test_quic_load_test(binary_path):
             
             print_time_log(f"[T16] H3 parallel requests OK")
         
+        # Wait a short cooldown for connections to completely close and clear from memory.
+        print_time_log("[T16] Waiting 3 seconds for connections to tear down and memory recovery...")
+        time.sleep(3)
+
+        # Get final memory usage and check for memory leaks
+        srv_mem_after = get_process_memory(server.pid)
+        cli_mem_after = get_process_memory(client.pid)
+        print_time_log(f"[T16] Final memory - Server PID {server.pid}: {srv_mem_after / 1024 / 1024:.2f} MB, Client PID {client.pid}: {cli_mem_after / 1024 / 1024:.2f} MB")
+
+        leak_detected = False
+
+        if srv_mem_before > 0:
+            srv_ratio = (srv_mem_after - srv_mem_before) / srv_mem_before
+            print_time_log(f"[T16] Server memory change: {srv_ratio * 100:.2f}%")
+            if srv_ratio > 0.35:
+                print_time_log(f"[T16] FAIL: Server memory grew by {srv_ratio * 100:.2f}%, exceeding 35% threshold (possible memory leak)")
+                leak_detected = True
+        else:
+            print_time_log("[T16] WARN: Could not retrieve server initial memory")
+
+        if cli_mem_before > 0:
+            cli_ratio = (cli_mem_after - cli_mem_before) / cli_mem_before
+            print_time_log(f"[T16] Client memory change: {cli_ratio * 100:.2f}%")
+            if cli_ratio > 0.35:
+                print_time_log(f"[T16] FAIL: Client memory grew by {cli_ratio * 100:.2f}%, exceeding 35% threshold (possible memory leak)")
+                leak_detected = True
+        else:
+            print_time_log("[T16] WARN: Could not retrieve client initial memory")
+
+        if leak_detected:
+            return False
+
         print_time_log(f"[T16] quic_load_test PASSED")
         return True
         
