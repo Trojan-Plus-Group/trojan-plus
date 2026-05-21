@@ -19,8 +19,8 @@
 #include "core/log.h"
 #include "quic_tls_ctx.h"
 
-QuicClientEndpoint::QuicClientEndpoint(boost::asio::io_context& io_ctx, const Config& config,
-                                       std::shared_ptr<QuicTlsCtx> tls_ctx)
+QuicClientEndpoint::QuicClientEndpoint(
+  boost::asio::io_context& io_ctx, const Config& config, std::shared_ptr<QuicTlsCtx> tls_ctx)
     : QuicEndpoint(io_ctx, config, std::move(tls_ctx)), m_retry_timer(io_ctx) {}
 
 void QuicClientEndpoint::start() {
@@ -38,8 +38,8 @@ void QuicClientEndpoint::start() {
     m_running = true;
     async_recv();
     _log_with_date_time("QuicClientEndpoint: ready (server " + m_config.get_remote_addr() + ":" +
-                            tp::to_string(m_config.get_remote_port()) + ")",
-                        Log::INFO);
+                          tp::to_string(m_config.get_remote_port()) + ")",
+      Log::INFO);
 
     connect_to_server();
 }
@@ -53,58 +53,52 @@ void QuicClientEndpoint::connect_to_server() {
     // Resolve the server address.
     auto self     = shared_from_this();
     auto resolver = TP_MAKE_SHARED(boost::asio::ip::udp::resolver, m_io_context);
-    resolver->async_resolve(
-        tp::string(m_config.get_remote_addr().c_str()),
-        tp::to_string(m_config.get_remote_port()).c_str(),
-        [this, self, resolver](const boost::system::error_code& ec,
-                               boost::asio::ip::udp::resolver::results_type results) {
-            m_connecting = false;
-            if (ec || !m_running) {
-                _log_with_date_time("QuicClientEndpoint: server resolve failed: " +
-                                        tp::string(ec.message().c_str()),
-                                    Log::WARN);
-                mark_unreachable();
-                return;
-            }
-            m_server_ep = results.begin()->endpoint();
+    resolver->async_resolve(tp::string(m_config.get_remote_addr().c_str()),
+      tp::to_string(m_config.get_remote_port()).c_str(),
+      [this, self, resolver](
+        const boost::system::error_code& ec, boost::asio::ip::udp::resolver::results_type results) {
+          m_connecting = false;
+          if (ec || !m_running) {
+              _log_with_date_time(
+                "QuicClientEndpoint: server resolve failed: " + tp::string(ec.message().c_str()), Log::WARN);
+              mark_unreachable();
+              return;
+          }
+          m_server_ep = results.begin()->endpoint();
 
-            m_conn = TP_MAKE_SHARED(QuicConnection, *this, m_tls_ctx, m_server_ep);
+          m_conn = TP_MAKE_SHARED(QuicConnection, *this, m_tls_ctx, m_server_ep);
 
-            // Route incoming stream data to registered handlers.
-            m_conn->on_stream_data_cb = [this, self](int64_t stream_id, const uint8_t* data,
-                                               std::size_t len, bool fin) {
-                auto it = m_stream_data_cb.find(stream_id);
-                if (it != m_stream_data_cb.end()) {
-                    it->second(data, len, fin);
-                }
-            };
+          // Route incoming stream data to registered handlers.
+          m_conn->on_stream_data_cb = [this, self](int64_t stream_id, const uint8_t* data, std::size_t len, bool fin) {
+              auto it = m_stream_data_cb.find(stream_id);
+              if (it != m_stream_data_cb.end()) {
+                  it->second(data, len, fin);
+              }
+          };
 
-            // On handshake completion, fulfil deferred stream-open requests.
-            m_conn->on_handshake_completed_cb = [this, self]() {
-                auto pending = std::move(m_pending_stream_opens);
-                m_pending_stream_opens.clear();
-                for (auto& cb : pending) {
-                    auto sid = m_conn->open_bidi_stream();
-                    if (sid >= 0) {
-                        cb(sid);
-                    }
-                }
-            };
+          // On handshake completion, fulfil deferred stream-open requests.
+          m_conn->on_handshake_completed_cb = [this, self]() {
+              auto pending = std::move(m_pending_stream_opens);
+              m_pending_stream_opens.clear();
+              for (auto& cb : pending) {
+                  auto sid = m_conn->open_bidi_stream();
+                  if (sid >= 0) {
+                      cb(sid);
+                  }
+              }
+          };
 
-            m_conn->on_stream_close_cb = [this, self](int64_t stream_id) {
-                m_stream_data_cb.erase(stream_id);
-            };
+          m_conn->on_stream_close_cb = [this, self](int64_t stream_id) { m_stream_data_cb.erase(stream_id); };
 
-            if (!m_conn->init_client(local_endpoint(), m_server_ep)) {
-                _log_with_date_time("QuicClientEndpoint: init_client failed", Log::ERROR);
-                m_conn = nullptr;
-                mark_unreachable();
-            }
-        });
+          if (!m_conn->init_client(local_endpoint(), m_server_ep)) {
+              _log_with_date_time("QuicClientEndpoint: init_client failed", Log::ERROR);
+              m_conn = nullptr;
+              mark_unreachable();
+          }
+      });
 }
 
-void QuicClientEndpoint::on_packet(const uint8_t* data, std::size_t len,
-                                   const boost::asio::ip::udp::endpoint& src) {
+void QuicClientEndpoint::on_packet(const uint8_t* data, std::size_t len, const boost::asio::ip::udp::endpoint& src) {
     if (m_conn && !m_conn->is_closed()) {
         m_conn->on_packet(data, len, local_endpoint(), src);
     }
@@ -116,9 +110,7 @@ void QuicClientEndpoint::on_pump_write() {
     }
 }
 
-bool QuicClientEndpoint::is_connected() const {
-    return m_conn && !m_conn->is_closed() && m_conn->is_handshake_done();
-}
+bool QuicClientEndpoint::is_connected() const { return m_conn && !m_conn->is_closed() && m_conn->is_handshake_done(); }
 
 void QuicClientEndpoint::extend_window(int64_t stream_id, std::size_t n) {
     if (m_conn) {
@@ -138,16 +130,13 @@ void QuicClientEndpoint::mark_unreachable() {
         if (ec || !m_running) {
             return;
         }
-        _log_with_date_time("QuicClientEndpoint: retrying QUIC connection to " +
-                                m_config.get_remote_addr(),
-                            Log::INFO);
+        _log_with_date_time("QuicClientEndpoint: retrying QUIC connection to " + m_config.get_remote_addr(), Log::INFO);
         m_known_unreachable = false;
         connect_to_server();
     });
 }
 
-int64_t QuicClientEndpoint::open_bidi_stream(
-    std::function<void(int64_t)> on_stream_ready) {
+int64_t QuicClientEndpoint::open_bidi_stream(std::function<void(int64_t)> on_stream_ready) {
     if (!m_conn || m_conn->is_closed()) {
         if (on_stream_ready) {
             on_stream_ready(-1);
@@ -168,8 +157,7 @@ int64_t QuicClientEndpoint::open_bidi_stream(
     return -1;
 }
 
-int64_t QuicClientEndpoint::send_stream_data(int64_t stream_id, const uint8_t* data,
-                                              std::size_t len, bool fin) {
+int64_t QuicClientEndpoint::send_stream_data(int64_t stream_id, const uint8_t* data, std::size_t len, bool fin) {
     if (!m_conn || m_conn->is_closed()) {
         return -1;
     }
@@ -181,10 +169,8 @@ int64_t QuicClientEndpoint::send_stream_data(int64_t stream_id, const uint8_t* d
 }
 
 void QuicClientEndpoint::set_stream_data_handler(
-    int64_t stream_id, std::function<void(const uint8_t*, std::size_t, bool)> handler) {
+  int64_t stream_id, std::function<void(const uint8_t*, std::size_t, bool)> handler) {
     m_stream_data_cb[stream_id] = std::move(handler);
 }
 
-void QuicClientEndpoint::remove_stream_data_handler(int64_t stream_id) {
-    m_stream_data_cb.erase(stream_id);
-}
+void QuicClientEndpoint::remove_stream_data_handler(int64_t stream_id) { m_stream_data_cb.erase(stream_id); }

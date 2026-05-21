@@ -25,12 +25,13 @@ QuicToHttp3Connect::~QuicToHttp3Connect() {
 
 bool QuicToHttp3Connect::init() {
     nghttp3_callbacks callbacks = {};
-    callbacks.begin_headers = &cb_begin_headers;
-    callbacks.recv_header   = &cb_recv_header;
-    callbacks.end_headers   = &cb_end_headers;
-    callbacks.recv_data     = &cb_recv_data;
-    callbacks.end_stream    = &cb_end_stream;
-    callbacks.stream_close  = &cb_stream_close;
+    callbacks.begin_headers     = &cb_begin_headers;
+    callbacks.recv_header       = &cb_recv_header;
+    callbacks.end_headers       = &cb_end_headers;
+    callbacks.recv_data         = &cb_recv_data;
+    callbacks.end_stream        = &cb_end_stream;
+    callbacks.stream_close      = &cb_stream_close;
+    callbacks.acked_stream_data = &cb_acked_stream_data;
 
     nghttp3_settings settings;
     nghttp3_settings_default(&settings);
@@ -140,13 +141,16 @@ void QuicToHttp3Connect::pump_h3_response() {
             // error or QUIC flow-control blocked
             break;
         }
-
-        // Notify the handler so it can advance m_body_ptr
-        if (consumed > 0) {
-            auto h = find_handler(sid);
-            if (h) h->notify_body_consumed(static_cast<std::size_t>(consumed));
-        }
     }
+}
+
+int QuicToHttp3Connect::acked_stream_data(int64_t stream_id, std::size_t datalen) {
+    if (!m_conn) return NGHTTP3_ERR_INVALID_STATE;
+    int rv = nghttp3_conn_add_ack_offset(m_conn, stream_id, datalen);
+    if (rv != 0) {
+        _log_with_date_time("QuicToHttp3Connect::acked_stream_data stream " + tp::to_string(stream_id) + " failed: " + tp::string(nghttp3_strerror(rv)), Log::WARN);
+    }
+    return rv;
 }
 
 void QuicToHttp3Connect::resume_stream(int64_t stream_id) {
@@ -244,4 +248,16 @@ int QuicToHttp3Connect::cb_stream_close(nghttp3_conn*, int64_t stream_id,
     auto h = self->find_handler(stream_id);
     if (!h) return 0;
     return h->on_h3_stream_close(app_error_code);
+}
+
+int QuicToHttp3Connect::cb_acked_stream_data(nghttp3_conn*, int64_t stream_id,
+                                             uint64_t datalen, void* conn_user_data,
+                                             void*) {
+    auto* self = static_cast<QuicToHttp3Connect*>(conn_user_data);
+    auto h = self->find_handler(stream_id);
+    if (h) {
+        _log_with_date_time("QuicToHttp3Connect: acked " + tp::to_string(datalen) + " body bytes on stream " + tp::to_string(stream_id), Log::ALL);
+        h->notify_body_consumed(static_cast<std::size_t>(datalen));
+    }
+    return 0;
 }

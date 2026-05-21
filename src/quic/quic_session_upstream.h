@@ -76,6 +76,8 @@ class QuicUpstreamHandler : public QuicStreamHandler,
     void on_h1_error(const boost::system::error_code& ec) override;
     void on_h1_stream_credit(std::size_t bytes) override;
 
+    std::shared_ptr<Http1UpstreamConn> get_h1_conn() const { return m_h1_conn; }
+
   private:
     void retry_feed_h3();
     int  submit_h3_response_headers(Http1UpstreamConn::H1RespParser& parser);

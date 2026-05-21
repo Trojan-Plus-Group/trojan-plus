@@ -1413,12 +1413,12 @@ def test_quic_load_test(binary_path):
     print_time_log("[T16] quic_load_test: starting...")
     
     # --- Configuration ---
-    ENABLE_SOCKS_LOAD = False
+    ENABLE_SOCKS_LOAD = True
     ENABLE_H3_LOAD    = True
     
-    TOTAL_FILES       = 1
+    TOTAL_FILES       = 100
     SOCKS_CONCURRENCY = 20
-    H3_CONCURRENCY    = 1
+    H3_CONCURRENCY    = 20
     # ---------------------
 
     # 1. Server config: proxy to HTTP_TARGET_PORT, fallback to HTTP_TARGET_PORT.

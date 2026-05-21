@@ -10,6 +10,7 @@
 
 #include "quic_http1_upstream_conn.h"
 
+#include <algorithm>
 #include <limits>
 #include <utility>
 
@@ -103,24 +104,41 @@ void Http1UpstreamConn::set_read_state(ReadState s) {
 void Http1UpstreamConn::buffer_chunk_append(tp::string chunk) {
     if (chunk.empty()) return;
     m_buffered_bytes += chunk.size();
+    _log_with_date_time("buffer_chunk_append: chunk size=" + tp::to_string(chunk.size()) + " data_ptr=" + tp::to_string(reinterpret_cast<uintptr_t>(chunk.data())), Log::ALL);
     m_body_out_chunks.push_back(std::move(chunk));
 }
 
 void Http1UpstreamConn::buffer_chunk_drop_front(std::size_t n) {
-    while (n > 0 && !m_body_out_chunks.empty()) {
+    _log_with_date_time("buffer_chunk_drop_front: n=" + tp::to_string(n) + " m_front_chunk_offset=" + tp::to_string(m_front_chunk_offset) + " m_body_read_offset=" + tp::to_string(m_body_read_offset) + " m_body_out_chunks.size()=" + tp::to_string(m_body_out_chunks.size()), Log::ALL);
+    if (m_buffered_bytes >= n) {
+        m_buffered_bytes -= n;
+    } else {
+        m_buffered_bytes = 0;
+    }
+
+    m_front_chunk_offset += n;
+    while (!m_body_out_chunks.empty()) {
         auto& chunk = m_body_out_chunks.front();
-        if (chunk.size() <= n) {
-            n -= chunk.size();
-            m_buffered_bytes -= chunk.size();
+        if (m_front_chunk_offset >= chunk.size()) {
+            _log_with_date_time("buffer_chunk_drop_front: popping chunk size=" + tp::to_string(chunk.size()) + " data_ptr=" + tp::to_string(reinterpret_cast<uintptr_t>(chunk.data())), Log::ALL);
+            m_front_chunk_offset -= chunk.size();
             m_body_out_chunks.pop_front();
         } else {
-            chunk.erase(0, n);
-            m_buffered_bytes -= n;
-            n = 0;
+            break;
         }
     }
-    // Trailing n>0 (caller reported more consumed than buffered, e.g. nghttp3
-    // framing overhead) is silently absorbed — matches pre-refactor semantics.
+
+    if (m_body_read_offset >= n) {
+        m_body_read_offset -= n;
+    } else {
+        m_body_read_offset = 0;
+    }
+
+    if (m_body_out_chunks.empty()) {
+        m_front_chunk_offset = 0;
+        m_body_read_offset = 0;
+    }
+    _log_with_date_time("buffer_chunk_drop_front: done. new m_front_chunk_offset=" + tp::to_string(m_front_chunk_offset) + " m_body_read_offset=" + tp::to_string(m_body_read_offset) + " m_body_out_chunks.size()=" + tp::to_string(m_body_out_chunks.size()), Log::ALL);
 }
 
 // ---- write side ---------------------------------------------------------
@@ -312,8 +330,6 @@ void Http1UpstreamConn::parse_tcp_data(std::size_t bytes) {
     if (any_body_added && m_observer) m_observer->on_h1_body_data_available();
 }
 
-// ---- pull / consume -----------------------------------------------------
-
 nghttp3_ssize Http1UpstreamConn::pull_body_chunks(nghttp3_vec* vec, std::size_t veccnt,
                                                   bool& eof_flag) {
     eof_flag = false;
@@ -325,13 +341,56 @@ nghttp3_ssize Http1UpstreamConn::pull_body_chunks(nghttp3_vec* vec, std::size_t 
         return NGHTTP3_ERR_WOULDBLOCK;
     }
 
+    std::size_t skip = m_body_read_offset;
     std::size_t nvec = 0;
+    bool is_first = true;
+
     for (auto& chunk : m_body_out_chunks) {
+        std::size_t chunk_avail = chunk.size();
+        const uint8_t* chunk_ptr = reinterpret_cast<const uint8_t*>(chunk.data());
+
+        if (is_first) {
+            chunk_avail -= m_front_chunk_offset;
+            chunk_ptr += m_front_chunk_offset;
+            is_first = false;
+        }
+
+        if (skip >= chunk_avail) {
+            skip -= chunk_avail;
+            continue;
+        }
+
+        std::size_t len = chunk_avail - skip;
+        const uint8_t* base = chunk_ptr + skip;
+        skip = 0;
+
         if (nvec >= veccnt) break;
-        vec[nvec].base = reinterpret_cast<uint8_t*>(const_cast<char*>(chunk.data()));
-        vec[nvec].len  = chunk.size();
+
+        vec[nvec].base = const_cast<uint8_t*>(base);
+        vec[nvec].len  = len;
+
+        _log_with_date_time("pull_body_chunks: vec[" + tp::to_string(nvec) + "] base=" + 
+                            tp::to_string(reinterpret_cast<uintptr_t>(vec[nvec].base)) + 
+                            " len=" + tp::to_string(vec[nvec].len) + " (offset from chunk start: " +
+                            tp::to_string(base - reinterpret_cast<const uint8_t*>(chunk.data())) + ")", Log::ALL);
         ++nvec;
     }
+
+    if (nvec == 0) {
+        if (m_read_state == ReadState::Eof) {
+            eof_flag = true;
+            return 0;
+        }
+        return NGHTTP3_ERR_WOULDBLOCK;
+    }
+
+    std::size_t bytes_read = 0;
+    for (std::size_t i = 0; i < nvec; ++i) {
+        bytes_read += vec[i].len;
+    }
+    m_body_read_offset += bytes_read;
+    _log_with_date_time("pull_body_chunks: pulled " + tp::to_string(bytes_read) + " bytes, new m_body_read_offset=" + tp::to_string(m_body_read_offset), Log::ALL);
+
     return static_cast<nghttp3_ssize>(nvec);
 }
 

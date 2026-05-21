@@ -62,6 +62,9 @@ class QuicToHttp3Connect {
     // its data_reader, then immediately pump.
     void resume_stream(int64_t stream_id);
 
+    // Notify H3 of data acknowledged on stream
+    int acked_stream_data(int64_t stream_id, std::size_t datalen);
+
     // data_reader callback for nghttp3 — delegates to handler->on_read_data().
     static nghttp3_ssize s_read_data(nghttp3_conn*, int64_t stream_id,
                                      nghttp3_vec* vec, std::size_t veccnt,
@@ -87,6 +90,9 @@ class QuicToHttp3Connect {
     static int cb_stream_close(nghttp3_conn*, int64_t stream_id,
                                uint64_t app_error_code,
                                void* conn_user_data, void* stream_user_data);
+    static int cb_acked_stream_data(nghttp3_conn* conn, int64_t stream_id,
+                                    uint64_t datalen, void* conn_user_data,
+                                    void* stream_user_data);
 
     QuicConnection& m_owner;
     nghttp3_conn* m_conn{nullptr};

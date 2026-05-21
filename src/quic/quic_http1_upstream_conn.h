@@ -132,6 +132,8 @@ class Http1UpstreamConn : public std::enable_shared_from_this<Http1UpstreamConn>
     bool                          m_headers_delivered{false};
     tp::string                    m_parse_buf;
     tp::list<tp::string>          m_body_out_chunks;
+    std::size_t                   m_front_chunk_offset{0};
+    std::size_t                   m_body_read_offset{0};
     std::size_t                   m_buffered_bytes{0};
     ReadState                     m_read_state{ReadState::Reading};
     bool                          m_read_in_progress{false};

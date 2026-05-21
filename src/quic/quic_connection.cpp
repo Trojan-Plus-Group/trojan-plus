@@ -96,9 +96,13 @@ int QuicConnection::cb_recv_stream_data(ngtcp2_conn* /*conn*/, uint32_t flags, i
     return 0;
 }
 
-int QuicConnection::cb_acked_stream_data_offset(ngtcp2_conn* /*conn*/, int64_t /*stream_id*/,
-                                                uint64_t /*offset*/, uint64_t /*datalen*/,
-                                                void* /*user_data*/, void* /*stream_user_data*/) {
+int QuicConnection::cb_acked_stream_data_offset(ngtcp2_conn* /*conn*/, int64_t stream_id,
+                                                uint64_t /*offset*/, uint64_t datalen,
+                                                void* user_data, void* /*stream_user_data*/) {
+    auto* self = static_cast<QuicConnection*>(user_data);
+    if (self->m_h3) {
+        self->m_h3->acked_stream_data(stream_id, datalen);
+    }
     return 0;
 }
 
