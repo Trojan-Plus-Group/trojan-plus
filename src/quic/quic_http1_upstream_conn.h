@@ -31,7 +31,7 @@
 // polling timers.
 class Http1UpstreamConn : public std::enable_shared_from_this<Http1UpstreamConn> {
   public:
-    using H1RespParser = boost::beast::http::response_parser<boost::beast::http::buffer_body>;
+    using H1RespParser = boost::beast::http::response_parser<boost::beast::http::buffer_body, tp::tp_std_allocator<char>>;
 
     // TCP read state machine (response direction).
     enum class ReadState : uint8_t {
@@ -128,7 +128,7 @@ class Http1UpstreamConn : public std::enable_shared_from_this<Http1UpstreamConn>
 
     // Read side
     tp::string                    m_tcp_read_buf;
-    std::unique_ptr<H1RespParser> m_resp_parser;
+    tp::tj_unique_ptr<H1RespParser> m_resp_parser;
     bool                          m_headers_delivered{false};
     tp::string                    m_parse_buf;
     tp::list<tp::string>          m_body_out_chunks;

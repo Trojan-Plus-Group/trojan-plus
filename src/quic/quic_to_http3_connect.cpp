@@ -11,6 +11,40 @@
 #include "quic_to_http3_connect.h"
 
 #include "core/log.h"
+#include "mem/memallocator.h"
+
+static void *tj_nghttp3_malloc(size_t size, void *user_data) {
+    (void)user_data;
+    return tp::get_tj_mem_allocator().malloc(size, "nghttp3", 0);
+}
+
+static void tj_nghttp3_free(void *ptr, void *user_data) {
+    (void)user_data;
+    tp::get_tj_mem_allocator().free(ptr);
+}
+
+static void *tj_nghttp3_calloc(size_t nmemb, size_t size, void *user_data) {
+    (void)user_data;
+    size_t real_size = nmemb * size;
+    void *ptr = tp::get_tj_mem_allocator().malloc(real_size, "nghttp3", 0);
+    if (ptr) {
+        std::memset(ptr, 0, real_size);
+    }
+    return ptr;
+}
+
+static void *tj_nghttp3_realloc(void *ptr, size_t size, void *user_data) {
+    (void)user_data;
+    return tp::get_tj_mem_allocator().realloc(ptr, size, "nghttp3", 0);
+}
+
+static const nghttp3_mem tj_nghttp3_mem = {
+    nullptr,
+    tj_nghttp3_malloc,
+    tj_nghttp3_free,
+    tj_nghttp3_calloc,
+    tj_nghttp3_realloc
+};
 #include "quic_session_upstream.h"
 
 QuicToHttp3Connect::QuicToHttp3Connect(QuicConnection& owner)
@@ -42,7 +76,7 @@ bool QuicToHttp3Connect::init() {
 
     nghttp3_conn* conn = nullptr;
     int rv = nghttp3_conn_server_new(&conn, &callbacks, &settings,
-                                    nghttp3_mem_default(), this);
+                                    &tj_nghttp3_mem, this);
     if (rv != 0) {
         _log_with_date_time(
             "QuicToHttp3Connect::init: nghttp3_conn_server_new failed: " +

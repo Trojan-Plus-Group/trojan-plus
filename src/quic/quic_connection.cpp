@@ -11,6 +11,40 @@
 #include "quic_connection.h"
 
 #include <chrono>
+#include "mem/memallocator.h"
+
+static void *tj_ngtcp2_malloc(size_t size, void *user_data) {
+    (void)user_data;
+    return tp::get_tj_mem_allocator().malloc(size, "ngtcp2", 0);
+}
+
+static void tj_ngtcp2_free(void *ptr, void *user_data) {
+    (void)user_data;
+    tp::get_tj_mem_allocator().free(ptr);
+}
+
+static void *tj_ngtcp2_calloc(size_t nmemb, size_t size, void *user_data) {
+    (void)user_data;
+    size_t real_size = nmemb * size;
+    void *ptr = tp::get_tj_mem_allocator().malloc(real_size, "ngtcp2", 0);
+    if (ptr) {
+        std::memset(ptr, 0, real_size);
+    }
+    return ptr;
+}
+
+static void *tj_ngtcp2_realloc(void *ptr, size_t size, void *user_data) {
+    (void)user_data;
+    return tp::get_tj_mem_allocator().realloc(ptr, size, "ngtcp2", 0);
+}
+
+static const ngtcp2_mem tj_ngtcp2_mem = {
+    nullptr,
+    tj_ngtcp2_malloc,
+    tj_ngtcp2_free,
+    tj_ngtcp2_calloc,
+    tj_ngtcp2_realloc
+};
 #include <cstddef>
 #include <cstring>
 
@@ -291,7 +325,7 @@ bool QuicConnection::init_server(const uint8_t* data, std::size_t datalen,
     //   dcid = the client's SCID (server uses it as its destination CID)
     //   scid = the server's own SCID (newly generated sv_scid)
     int rv = ngtcp2_conn_server_new(&m_conn, scid ? scid : dcid, &sv_scid, &path, version,
-                                    &callbacks, &settings, &params, nullptr, this);
+                                    &callbacks, &settings, &params, &tj_ngtcp2_mem, this);
     if (rv != 0) {
         _log_with_date_time(
             "QuicConnection::init_server: ngtcp2_conn_server_new: " + tp::string(ngtcp2_strerror(rv)),
@@ -394,7 +428,7 @@ bool QuicConnection::init_client(const boost::asio::ip::udp::endpoint& local_ep,
     auto path = make_path(local_ep, remote_ep);
 
     int rv = ngtcp2_conn_client_new(&m_conn, &dcid, &scid, &path, NGTCP2_PROTO_VER_V1,
-                                    &callbacks, &settings, &params, nullptr, this);
+                                    &callbacks, &settings, &params, &tj_ngtcp2_mem, this);
     if (rv != 0) {
         _log_with_date_time(
             "QuicConnection::init_client: ngtcp2_conn_client_new: " + tp::string(ngtcp2_strerror(rv)),

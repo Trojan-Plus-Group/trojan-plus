@@ -30,7 +30,7 @@ Http1UpstreamConn::Http1UpstreamConn(boost::asio::io_context& io_ctx,
       m_port_str(port_str),
       m_observer(observer) {
     m_tcp_read_buf.resize(kTcpBufSize, '\0');
-    m_resp_parser = std::make_unique<H1RespParser>();
+    m_resp_parser = TP_MAKE_UNIQUE(H1RespParser);
     m_resp_parser->eager(true);
     m_resp_parser->body_limit((std::numeric_limits<uint64_t>::max)());
 }
