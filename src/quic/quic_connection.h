@@ -108,6 +108,10 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     [[nodiscard]] const boost::asio::ip::udp::endpoint& peer() const { return m_peer; }
     [[nodiscard]] ngtcp2_conn* native_handle() const { return m_conn; }
 
+    enum class ConnType { unknown, proxy, other };
+    [[nodiscard]] ConnType conn_type() const { return m_conn_type; }
+    void set_conn_type(ConnType t) { m_conn_type = t; }
+
     static constexpr size_t kServerScidLen = 18;
 
     // Callback invoked on handshake completion (client: after server Finished).
@@ -178,6 +182,7 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     bool m_closed{false};
     bool m_handshake_done{false};
     bool m_is_server{false};
+    ConnType m_conn_type{ConnType::unknown};
 
     tp::unordered_map<int64_t, std::shared_ptr<QuicStreamHandler>> m_stream_handlers;
     std::unique_ptr<QuicToHttp3Connect> m_h3;  // declared after m_stream_handlers, destroyed first

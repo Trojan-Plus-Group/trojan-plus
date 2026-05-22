@@ -9,6 +9,7 @@
  */
 
 #include "quic_session.h"
+#include "quic_connection.h"
 #include "quic_session_upstream.h"
 #include "quic_to_http3_connect.h"
 #include <memory>
@@ -157,6 +158,8 @@ void QuicProxySession::try_parse_request(bool fin) {
                         Log::INFO);
 
     m_request_parsed = true;
+    if (auto c = m_conn.lock())
+        c->set_conn_type(QuicConnection::ConnType::proxy);
 
     if (req.command == TrojanRequest::UDP_ASSOCIATE) {
         m_is_udp = true;
@@ -180,8 +183,16 @@ void QuicProxySession::forward_to_h1_upstream(bool fin) {
     auto locked_conn = m_conn.lock();
     if (!locked_conn) return;
 
-    if (!locked_conn->forward_to_h1_upstream(m_stream_id, 
-                                            reinterpret_cast<const uint8_t*>(m_recv_buf.data()), 
+    if (locked_conn->conn_type() == QuicConnection::ConnType::proxy) {
+        _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) +
+                                " unexpected fallback on proxy connection, resetting stream",
+                            Log::WARN);
+        destroy(true, NGHTTP3_H3_INTERNAL_ERROR);
+        return;
+    }
+
+    if (!locked_conn->forward_to_h1_upstream(m_stream_id,
+                                            reinterpret_cast<const uint8_t*>(m_recv_buf.data()),
                                             m_recv_buf.size(), fin)) {
         destroy(true, NGHTTP3_H3_INTERNAL_ERROR);
     }

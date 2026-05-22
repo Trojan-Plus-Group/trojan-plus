@@ -76,6 +76,16 @@ py -3 -m pip install PySocks psutil dnspython
 py -3 fulltest_main.py /path/to/build/trojan.exe -g -n -d 5333
 ```
 
+**QUIC tests**:
+```bash
+cd tests/LinuxFullTest/
+python3 fulltest_main.py ../../build/trojan -q
+
+# Run a single QUIC test case
+python3 fulltest_main.py ../../build/trojan -q T4
+python3 fulltest_main.py ../../build/trojan -q T15
+```
+
 ## Architecture
 
 ### Core Components

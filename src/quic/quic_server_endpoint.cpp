@@ -22,6 +22,7 @@
 
 #include "core/config.h"
 #include "core/log.h"
+#include "quic_connection.h"
 #include "quic_session.h"
 #include "quic_tls_ctx.h"
 #include "quic_to_http3_connect.h"
@@ -172,9 +173,11 @@ void QuicServerEndpoint::on_packet(const uint8_t* data, std::size_t len,
             return;
         }
 
-        if (is_quic_client_uni_stream(stream_id)) {
-            // Trojan quic_client_endpoint only creates bidirectional streams. Any client-initiated 
-            // unidirectional streams must be for H3, so we can directly initialize H3 upstream.
+        bool route_to_h1 = is_quic_client_uni_stream(stream_id)
+                         || locked->conn_type() == QuicConnection::ConnType::other;
+        if (route_to_h1) {
+            // Uni streams are H3 control/QPACK; bidi streams on an already-identified
+            // non-Trojan connection also go directly to H1 upstream.
             if (!locked->forward_to_h1_upstream(stream_id, nullptr, 0, false)) {
                 locked->reset_stream(stream_id, NGHTTP3_H3_INTERNAL_ERROR);
             }
