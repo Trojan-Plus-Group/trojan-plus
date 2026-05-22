@@ -56,6 +56,7 @@ class mem_allocator {
         uint32_t size;
         uint32_t stat_index;
         uint32_t start_offset;
+        uint32_t pad; // Pad to 16 bytes to keep 16-byte alignment
     };
 
     static constexpr size_t memory_recorder_header_size = sizeof(memory_recorder_header);

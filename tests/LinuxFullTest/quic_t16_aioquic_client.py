@@ -23,14 +23,15 @@ class H3ClientProtocol(QuicConnectionProtocol):
     def quic_event_received(self, event):
         for h3_event in self.h3.handle_event(event):
             if isinstance(h3_event, HeadersReceived):
-                print(f"H3_EVENT: HeadersReceived stream={h3_event.stream_id}")
+                # print(f"H3_EVENT: HeadersReceived stream={h3_event.stream_id}")
+                pass
             if isinstance(h3_event, DataReceived):
                 size = len(h3_event.data)
                 self.recv_size += size  
-                print(f"H3_EVENT: DataReceived stream={h3_event.stream_id} len={size} recv_size={self.recv_size}")
+                # print(f"H3_EVENT: DataReceived stream={h3_event.stream_id} len={size} recv_size={self.recv_size}")
                 self.responses[h3_event.stream_id] += h3_event.data
             if getattr(h3_event, 'stream_ended', False):
-                print(f"H3_EVENT: StreamEnded stream={h3_event.stream_id}")
+                # print(f"H3_EVENT: StreamEnded stream={h3_event.stream_id}")
                 if h3_event.stream_id in self.done_events:
                     self.done_events[h3_event.stream_id].set()
 
@@ -117,7 +118,7 @@ async def main():
                     done_count += 1
                     md5 = hashlib.md5(res).hexdigest()
                     print(f"FILE:{path}:OK:{len(res)}:{md5}")
-                    if done_count % 1 == 0 or done_count == len(paths):
+                    if done_count % 10 == 0 or done_count == len(paths):
                         print(f"H3_PROGRESS: {done_count}/{len(paths)}")
                 except Exception as e:
                     print(f"H3_FILE_ERROR: {e}")

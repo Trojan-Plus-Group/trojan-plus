@@ -1454,6 +1454,10 @@ def test_quic_load_test(binary_path):
     TOTAL_FILES       = 100
     SOCKS_CONCURRENCY = 20
     H3_CONCURRENCY    = 20
+
+    CLIENT_MEMORY_GROW_THRESHOLD = 0.15
+    SERVER_MEMORY_GROW_THRESHOLD = 0.35
+    LOAD_RUNS         = 5
     # ---------------------
 
     # 1. Server config: proxy to HTTP_TARGET_PORT, fallback to HTTP_TARGET_PORT.
@@ -1614,79 +1618,85 @@ def test_quic_load_test(binary_path):
             return aio_proc.returncode, stdout, stderr
 
         # Run configured load types
-        proxy_results = None
-        h3_res = None
-        
-        crash_event = threading.Event()
-        with ThreadPoolExecutor(max_workers=2) as main_pool:
-            futs = {}
+        for run_idx in range(LOAD_RUNS):
+            print_time_log(f"[T16] Running load iteration {run_idx + 1}/{LOAD_RUNS}...")
+            proxy_results = None
+            h3_res = None
+            
+            crash_event = threading.Event()
+            with ThreadPoolExecutor(max_workers=2) as main_pool:
+                futs = {}
+                if ENABLE_SOCKS_LOAD:
+                    futs['proxy'] = main_pool.submit(run_proxy_load, crash_event)
+                if ENABLE_H3_LOAD:
+                    futs['h3'] = main_pool.submit(run_h3_load, crash_event, H3_CONCURRENCY)
+                
+                if 'proxy' in futs:
+                    proxy_results = futs['proxy'].result()
+                if 'h3' in futs:
+                    h3_res = futs['h3'].result()
+
+            # 1. Verify Proxy Results
             if ENABLE_SOCKS_LOAD:
-                futs['proxy'] = main_pool.submit(run_proxy_load, crash_event)
-            if ENABLE_H3_LOAD:
-                futs['h3'] = main_pool.submit(run_h3_load, crash_event, H3_CONCURRENCY)
-            
-            if 'proxy' in futs:
-                proxy_results = futs['proxy'].result()
-            if 'h3' in futs:
-                h3_res = futs['h3'].result()
-
-        # 1. Verify Proxy Results
-        if ENABLE_SOCKS_LOAD:
-            if proxy_results and proxy_results[0][0] == "CRASH":
-                dump = True
-                return False
-            for fname, ok, info in proxy_results:
-                if not ok:
-                    print_time_log(f"[T16] FAIL: proxy failure for {fname}: {info}")
-                    return False
-            print_time_log(f"[T16] Proxy parallel requests OK")
-
-        # 2. Verify H3 Results
-        if ENABLE_H3_LOAD:
-            h3_rc, h3_stdout, h3_stderr = h3_res
-            if h3_rc != 0:
-                if h3_rc == -1:
+                if proxy_results and proxy_results[0][0] == "CRASH":
                     dump = True
-                print_time_log(f"[T16] FAIL: aioquic client exited with {h3_rc}")
-                if h3_stdout: print_time_log(f"STDOUT: {h3_stdout}")
-                if h3_stderr: print_time_log(f"STDERR: {h3_stderr}")
-                return False
-                
-            # Parse aioquic output
-            h3_results = {}
-            for line in h3_stdout.splitlines():
-                if line.startswith("FILE:"):
-                    parts = line.split(":")
-                    if len(parts) >= 5 and parts[2] == "OK":
-                        fname = parts[1]
-                        size = int(parts[3])
-                        md5 = parts[4]
-                        h3_results[fname] = (size, md5)
-                    else:
-                        print_time_log(f"[T16] FAIL: aioquic error line: {line}")
+                    return False
+                for fname, ok, info in proxy_results:
+                    if not ok:
+                        print_time_log(f"[T16] FAIL: proxy failure for {fname}: {info} (iteration {run_idx + 1})")
                         return False
+                print_time_log(f"[T16] Proxy parallel requests OK (iteration {run_idx + 1})")
 
-            import hashlib
-            for fname in test_files:
-                if fname not in h3_results:
-                    print_time_log(f"[T16] FAIL: {fname} missing from H3 results")
+            # 2. Verify H3 Results
+            if ENABLE_H3_LOAD:
+                h3_rc, h3_stdout, h3_stderr = h3_res
+                if h3_rc != 0:
+                    if h3_rc == -1:
+                        dump = True
+                    print_time_log(f"[T16] FAIL: aioquic client exited with {h3_rc} (iteration {run_idx + 1})")
+                    if h3_stdout: print_time_log(f"STDOUT: {h3_stdout}")
+                    if h3_stderr: print_time_log(f"STDERR: {h3_stderr}")
                     return False
+                    
+                # Parse aioquic output
+                h3_results = {}
+                for line in h3_stdout.splitlines():
+                    if line.startswith("FILE:"):
+                        parts = line.split(":")
+                        if len(parts) >= 5 and parts[2] == "OK":
+                            fname = parts[1]
+                            size = int(parts[3])
+                            md5 = parts[4]
+                            h3_results[fname] = (size, md5)
+                        else:
+                            print_time_log(f"[T16] FAIL: aioquic error line: {line} (iteration {run_idx + 1})")
+                            return False
+
+                import hashlib
+                for fname in test_files:
+                    if fname not in h3_results:
+                        print_time_log(f"[T16] FAIL: {fname} missing from H3 results (iteration {run_idx + 1})")
+                        return False
+                    
+                    with open(os.path.join(TEST_FILES_DIR, fname), 'rb') as f:
+                        want_data = f.read()
+                        want_md5 = hashlib.md5(want_data).hexdigest()
+                        want_size = len(want_data)
+                    
+                    got_size, got_md5 = h3_results[fname]
+                    if got_size != want_size or got_md5 != want_md5:
+                        print_time_log(f"[T16] FAIL: H3 content mismatch for {fname} (got {got_size} bytes, md5 {got_md5}; want {want_size} bytes, md5 {want_md5}) (iteration {run_idx + 1})")
+                        return False
                 
-                with open(os.path.join(TEST_FILES_DIR, fname), 'rb') as f:
-                    want_data = f.read()
-                    want_md5 = hashlib.md5(want_data).hexdigest()
-                    want_size = len(want_data)
-                
-                got_size, got_md5 = h3_results[fname]
-                if got_size != want_size or got_md5 != want_md5:
-                    print_time_log(f"[T16] FAIL: H3 content mismatch for {fname} (got {got_size} bytes, md5 {got_md5}; want {want_size} bytes, md5 {want_md5})")
-                    return False
+                print_time_log(f"[T16] H3 parallel requests OK (iteration {run_idx + 1})")
             
-            print_time_log(f"[T16] H3 parallel requests OK")
+            if run_idx < LOAD_RUNS - 1:
+                print_time_log(f"[T16] Sleeping 3 seconds before next iteration...")
+                time.sleep(3)
         
         # Wait a short cooldown for connections to completely close and clear from memory.
-        print_time_log("[T16] Waiting 3 seconds for connections to tear down and memory recovery...")
-        time.sleep(3)
+        print_time_log("[T16] Waiting 5 seconds for connections to tear down and memory recovery...")
+        time.sleep(5)
 
         # Get final memory usage and check for memory leaks
         srv_mem_after = get_process_memory(server.pid)
@@ -1698,8 +1708,8 @@ def test_quic_load_test(binary_path):
         if srv_mem_before > 0:
             srv_ratio = (srv_mem_after - srv_mem_before) / srv_mem_before
             print_time_log(f"[T16] Server memory change: {srv_ratio * 100:.2f}%")
-            if srv_ratio > 0.35:
-                print_time_log(f"[T16] FAIL: Server memory grew by {srv_ratio * 100:.2f}%, exceeding 35% threshold (possible memory leak)")
+            if srv_ratio > SERVER_MEMORY_GROW_THRESHOLD:
+                print_time_log(f"[T16] FAIL: Server memory grew by {srv_ratio * 100:.2f}%, exceeding {SERVER_MEMORY_GROW_THRESHOLD * 100}% threshold (possible memory leak)")
                 leak_detected = True
         else:
             print_time_log("[T16] WARN: Could not retrieve server initial memory")
@@ -1707,8 +1717,8 @@ def test_quic_load_test(binary_path):
         if cli_mem_before > 0:
             cli_ratio = (cli_mem_after - cli_mem_before) / cli_mem_before
             print_time_log(f"[T16] Client memory change: {cli_ratio * 100:.2f}%")
-            if cli_ratio > 0.35:
-                print_time_log(f"[T16] FAIL: Client memory grew by {cli_ratio * 100:.2f}%, exceeding 35% threshold (possible memory leak)")
+            if cli_ratio > CLIENT_MEMORY_GROW_THRESHOLD:
+                print_time_log(f"[T16] FAIL: Client memory grew by {cli_ratio * 100:.2f}%, exceeding {CLIENT_MEMORY_GROW_THRESHOLD * 100}% threshold (possible memory leak)")
                 leak_detected = True
         else:
             print_time_log("[T16] WARN: Could not retrieve client initial memory")
