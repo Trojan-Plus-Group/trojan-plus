@@ -17,6 +17,7 @@ Test cases:
   T13: h3_upstream_dns_failure      - h3_upstream with invalid hostname → resolve error, no crash
   T14: multiple_quic_connections    - two independent QUIC clients connect to same server concurrently
   T18: bidirectional_stream_close   - TCP and UDP proxy streams close cleanly via FIN (log-confirmed)
+  T19: quic_ping_keepalive          - PING keep-alive prevents idle close (Part A: no ping→idle close; Part B: ping→no idle close, second request succeeds)
 """
 
 import json
@@ -2114,6 +2115,135 @@ def test_bidirectional_stream_close(binary_path):
         close_process(server, dump)
 
 
+def test_quic_ping_keepalive(binary_path):
+    """T19: PING keep-alive prevents idle close.
+
+    Part A: ping_interval_ms=0 (disabled). After one request, connection goes idle.
+            Idle close log must appear within idle_timeout + 2s.
+    Part B: ping_interval_ms = idle_timeout/2. Same wait. No idle close log.
+            Second request at the end must succeed.
+    """
+    print_time_log("[T19] quic_ping_keepalive: starting...")
+    if socks is None:
+        print_time_log("[T19] SKIP: PySocks not available")
+        return True
+
+    IDLE_MS = 10000   # 10s idle timeout for both sides
+    WAIT_S  = 12      # wait > IDLE_MS to ensure timeout fires if no PING
+
+    # ---- Part A: no PING ----
+    print_time_log("[T19-A] ping disabled, expect idle close after request...")
+    srv_cfg_a = patch_quic_config("quic_server_config.json", {
+        "remote_port": HTTP_TARGET_PORT,
+        "quic": {"enabled": True, "max_idle_timeout_ms": IDLE_MS, "ping_interval_ms": 0},
+    })
+    cli_cfg_a = patch_quic_config_with_suffix("quic_client_config.json", ".a.tmp.json", {
+        "quic": {"enabled": True, "prefer_quic": True,
+                 "max_idle_timeout_ms": IDLE_MS, "ping_interval_ms": 0},
+    })
+    server_a, srv_log_a = start_trojan(binary_path, srv_cfg_a)
+    client_a, cli_log_a = start_trojan(binary_path, cli_cfg_a)
+    dump_a = False
+    try:
+        if not server_a or not client_a:
+            dump_a = True
+            return False
+        if not wait_for_log(cli_log_a, r"QuicConnection: handshake completed", timeout=15):
+            print_time_log("[T19-A] FAIL: QUIC handshake not seen")
+            dump_a = True
+            return False
+        if not wait_for_port(QUIC_CLIENT_PROXY_PORT, timeout=5):
+            print_time_log("[T19-A] FAIL: proxy port not open")
+            dump_a = True
+            return False
+        # Send one request to mark connection active, then let it go idle.
+        try:
+            http_get_via_socks5(f"http://127.0.0.1:{HTTP_TARGET_PORT}/", QUIC_CLIENT_PROXY_PORT, timeout=10)
+        except Exception:
+            pass
+        print_time_log(f"[T19-A] request done, waiting {WAIT_S}s for idle close...")
+        time.sleep(WAIT_S)
+        # Idle close must appear in at least one side's log.
+        found_a = (wait_for_log(cli_log_a, r"IDLE_CLOSE|idle.*close", timeout=3) or
+                   wait_for_log(srv_log_a, r"IDLE_CLOSE|idle.*close", timeout=3))
+        if not found_a:
+            print_time_log("[T19-A] FAIL: idle close not seen — connection may have stayed alive without PING")
+            dump_a = True
+            return False
+        print_time_log("[T19-A] idle close confirmed OK")
+    except Exception:
+        traceback.print_exc()
+        dump_a = True
+        return False
+    finally:
+        close_process(client_a, dump_a)
+        close_process(server_a, dump_a)
+
+    time.sleep(1)
+
+    # ---- Part B: PING enabled (interval = IDLE_MS/2) ----
+    PING_MS = IDLE_MS // 2   # 5s
+    print_time_log(f"[T19-B] ping_interval_ms={PING_MS}, expect NO idle close after same wait...")
+    srv_cfg_b = patch_quic_config("quic_server_config.json", {
+        "remote_port": HTTP_TARGET_PORT,
+        "quic": {"enabled": True, "max_idle_timeout_ms": IDLE_MS, "ping_interval_ms": PING_MS},
+    })
+    cli_cfg_b = patch_quic_config_with_suffix("quic_client_config.json", ".b.tmp.json", {
+        "quic": {"enabled": True, "prefer_quic": True,
+                 "max_idle_timeout_ms": IDLE_MS, "ping_interval_ms": PING_MS},
+    })
+    server_b, srv_log_b = start_trojan(binary_path, srv_cfg_b)
+    client_b, cli_log_b = start_trojan(binary_path, cli_cfg_b)
+    dump_b = False
+    try:
+        if not server_b or not client_b:
+            dump_b = True
+            return False
+        if not wait_for_log(cli_log_b, r"QuicConnection: handshake completed", timeout=15):
+            print_time_log("[T19-B] FAIL: QUIC handshake not seen")
+            dump_b = True
+            return False
+        if not wait_for_port(QUIC_CLIENT_PROXY_PORT, timeout=5):
+            print_time_log("[T19-B] FAIL: proxy port not open")
+            dump_b = True
+            return False
+        # First request.
+        try:
+            http_get_via_socks5(f"http://127.0.0.1:{HTTP_TARGET_PORT}/", QUIC_CLIENT_PROXY_PORT, timeout=10)
+        except Exception:
+            pass
+        print_time_log(f"[T19-B] first request done, waiting {WAIT_S}s (PING fires every {PING_MS}ms)...")
+        time.sleep(WAIT_S)
+        # Must NOT have idle close.
+        idle_found = (wait_for_log(cli_log_b, r"IDLE_CLOSE|idle.*close", timeout=1) or
+                      wait_for_log(srv_log_b, r"IDLE_CLOSE|idle.*close", timeout=1))
+        if idle_found:
+            print_time_log("[T19-B] FAIL: idle close seen even with PING enabled")
+            dump_b = True
+            return False
+        # Second request must succeed on the still-alive connection.
+        try:
+            resp = http_get_via_socks5(f"http://127.0.0.1:{HTTP_TARGET_PORT}/", QUIC_CLIENT_PROXY_PORT, timeout=10)
+        except Exception as e:
+            print_time_log(f"[T19-B] FAIL: second request failed: {e}")
+            dump_b = True
+            return False
+        if not resp:
+            print_time_log("[T19-B] FAIL: second request returned empty response")
+            dump_b = True
+            return False
+        print_time_log("[T19-B] second request succeeded, no idle close — PING keep-alive works!")
+        print_time_log("[T19] quic_ping_keepalive PASSED")
+        return True
+    except Exception:
+        traceback.print_exc()
+        dump_b = True
+        return False
+    finally:
+        close_process(client_b, dump_b)
+        close_process(server_b, dump_b)
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -2137,6 +2267,7 @@ ALL_TESTS = [
     ("T16", test_quic_load_test),
     ("T17", test_stateless_reset),
     ("T18", test_bidirectional_stream_close),
+    ("T19", test_quic_ping_keepalive),
 ]
 
 def main(binary_path, test_tag='all'):

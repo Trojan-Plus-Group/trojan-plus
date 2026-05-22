@@ -109,6 +109,7 @@ class Config {
         uint32_t   send_buffer_size;          // UDP send buffer bytes
         tp::string h3_upstream;               // server: real HTTP/3 backend for non-trojan traffic
         bool       debug_disable_tcp;         // debug: disable tcp, only allow quic
+        uint32_t   ping_interval_ms;          // QUIC PING keep-alive interval, 0 = disabled
     };
 
     using TUN = struct {

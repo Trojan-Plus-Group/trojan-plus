@@ -793,6 +793,13 @@ void QuicConnection::on_handshake_completed_impl() {
     if (on_handshake_completed_cb) {
         on_handshake_completed_cb();
     }
+    if (!m_is_server) {
+        uint32_t ping_ms = m_endpoint.config().get_quic().ping_interval_ms;
+        if (ping_ms > 0) {
+            ngtcp2_conn_set_keep_alive_timeout(m_conn,
+                static_cast<ngtcp2_duration>(ping_ms) * 1'000'000ULL);
+        }
+    }
 }
 
 // ---- loss timer -------------------------------------------------------------

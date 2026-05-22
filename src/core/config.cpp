@@ -237,6 +237,27 @@ void Config::populate(const ptree& tree) {
     quic.send_buffer_size       = tree.get("quic.send_buffer_size", quic.max_datagram_size * 64U);
     quic.h3_upstream            = tree.get("quic.h3_upstream", std::string()).c_str();
     quic.debug_disable_tcp      = tree.get("quic.debug_disable_tcp", false);
+    quic.ping_interval_ms       = tree.get("quic.ping_interval_ms", 20000U);
+
+    constexpr uint32_t kMinIdleTimeoutMs = 10000U;
+    if (quic.max_idle_timeout_ms < kMinIdleTimeoutMs) {
+        _log_with_date_time(
+            "quic.max_idle_timeout_ms=" + std::to_string(quic.max_idle_timeout_ms) +
+            " is too small (minimum " + std::to_string(kMinIdleTimeoutMs) + " ms); reset to " +
+            std::to_string(kMinIdleTimeoutMs) + " ms",
+            Log::ERROR);
+        quic.max_idle_timeout_ms = kMinIdleTimeoutMs;
+    }
+
+    if (quic.ping_interval_ms > 0 && quic.ping_interval_ms >= quic.max_idle_timeout_ms / 2) {
+        uint32_t adjusted = quic.max_idle_timeout_ms / 3;
+        _log_with_date_time(
+            "quic.ping_interval_ms=" + std::to_string(quic.ping_interval_ms) +
+            " must be less than quic.max_idle_timeout_ms=" + std::to_string(quic.max_idle_timeout_ms) +
+            "; reset to " + std::to_string(adjusted) + " ms",
+            Log::ERROR);
+        quic.ping_interval_ms = adjusted;
+    }
 
 #ifndef ENABLE_QUIC
     if (quic.enabled) {
