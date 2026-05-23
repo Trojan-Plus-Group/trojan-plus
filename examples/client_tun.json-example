@@ -1,5 +1,5 @@
 {
-    "run_type": "client",
+    "run_type": "client_tun",
     "local_addr": "127.0.0.1",
     "local_port": 1080,
     "remote_addr": "example.com",
@@ -30,7 +30,6 @@
         "fast_open": false,
         "fast_open_qlen": 20
     },
-
     "experimental": {
         "pipeline_num": 0,
         "pipeline_timeout": 600,
@@ -40,5 +39,34 @@
     },
     "quic": {
         "enabled": false
+    },
+    "tun": {
+        "tun_name": "tun0",
+        "net_ip": "10.0.0.2",
+        "net_mask": "255.255.255.0",
+        "mtu": 1500,
+        "redirect_local": true
+    },
+    "dns": {
+        "enabled": true,
+        "enable_cached": true,
+        "port": 53,
+        "udp_timeout": 5,
+        "udp_socket_buf": -1,
+        "udp_recv_buf": 1024,
+        "up_dns_server": [
+            "114.114.114.114"
+        ],
+        "up_gfw_dns_server": [
+            "8.8.8.8"
+        ],
+        "gfwlist": "gfwlist_domain.txt"
+    },
+    "route": {
+        "enabled": true,
+        "proxy_type": 2,
+        "cn_mainland_ips_file": "cn_mainland_ips_list.txt",
+        "proxy_ips": "proxy_ips.txt",
+        "white_ips": "white_ips.txt"
     }
 }
