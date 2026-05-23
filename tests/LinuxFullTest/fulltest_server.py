@@ -51,6 +51,9 @@ def run_udp(port):
 
 class ServerHandler(BaseHTTPRequestHandler):
 
+    def log_message(self, format, *args):
+        pass
+
     def do_GET(self):
         filepath = urlparse(self.path).path
 

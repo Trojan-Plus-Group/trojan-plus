@@ -1390,9 +1390,9 @@ def test_quic_load_test(binary_path):
     SOCKS_CONCURRENCY = 20
     H3_CONCURRENCY    = 20
 
-    CLIENT_MEMORY_GROW_THRESHOLD = 0.15
-    SERVER_MEMORY_GROW_THRESHOLD = 0.35
-    LOAD_RUNS         = 5
+    CLIENT_MEMORY_GROW_THRESHOLD = 0.05
+    SERVER_MEMORY_GROW_THRESHOLD = 0.2
+    LOAD_RUNS         = 10
     # ---------------------
 
     # 1. Server config: proxy to HTTP_TARGET_PORT, fallback to HTTP_TARGET_PORT.
@@ -1429,9 +1429,11 @@ def test_quic_load_test(binary_path):
             return False
 
         # Get initial memory usage
-        srv_mem_before = get_process_memory(server.pid)
-        cli_mem_before = get_process_memory(client.pid)
-        print_time_log(f"[T16] Initial memory - Server PID {server.pid}: {srv_mem_before / 1024 / 1024:.2f} MB, Client PID {client.pid}: {cli_mem_before / 1024 / 1024:.2f} MB")
+        init_srv_mem = get_process_memory(server.pid)
+        init_cli_mem = get_process_memory(client.pid)
+        print_time_log(f"[T16] Initial memory - Server PID {server.pid}: {init_srv_mem / 1024 / 1024:.2f} MB, Client PID {client.pid}: {init_cli_mem / 1024 / 1024:.2f} MB")
+        srv_mem_before = 0
+        cli_mem_before = 0
 
         # Get list of files from target server
         url_base = f"http://127.0.0.1:{HTTP_TARGET_PORT}/"
@@ -1625,6 +1627,11 @@ def test_quic_load_test(binary_path):
                 
                 print_time_log(f"[T16] H3 parallel requests OK (iteration {run_idx + 1})")
             
+            if run_idx == 0:
+                srv_mem_before = get_process_memory(server.pid)
+                cli_mem_before = get_process_memory(client.pid)
+                print_time_log(f"[T16] Baseline memory recorded - Server PID {server.pid}: {srv_mem_before / 1024 / 1024:.2f} MB, Client PID {client.pid}: {cli_mem_before / 1024 / 1024:.2f} MB")
+
             if run_idx < LOAD_RUNS - 1:
                 print_time_log(f"[T16] Sleeping 3 seconds before next iteration...")
                 time.sleep(3)
