@@ -619,13 +619,13 @@ def test_idle_timeout(binary_path):
     """T5: Connection closes after max_idle_timeout_ms."""
     print_time_log("[T5] idle_timeout: starting...")
 
-    IDLE_MS = 3000  # 3 seconds
+    IDLE_MS = 10000  # 10 seconds
     srv_cfg = patch_quic_config("quic_server_config.json", {
         "remote_port": HTTP_TARGET_PORT,
-        "quic": {"enabled": True, "max_idle_timeout_ms": IDLE_MS},
+        "quic": {"enabled": True, "max_idle_timeout_ms": IDLE_MS, "ping_interval_ms": 0},
     })
     cli_cfg = patch_quic_config("quic_client_config.json", {
-        "quic": {"enabled": True, "prefer_quic": True, "max_idle_timeout_ms": IDLE_MS},
+        "quic": {"enabled": True, "prefer_quic": True, "max_idle_timeout_ms": IDLE_MS, "ping_interval_ms": 0},
     })
 
     server, srv_log = start_trojan(binary_path, srv_cfg)
