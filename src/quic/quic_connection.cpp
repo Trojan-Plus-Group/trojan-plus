@@ -682,27 +682,27 @@ bool QuicConnection::forward_to_h1_upstream(int64_t stream_id, const uint8_t* da
         m_conn_type = ConnType::other;
     }
     const auto& config = m_endpoint.config();
-    const auto& h3_cfg = config.get_quic().h3_upstream;
+    const auto& h1_cfg = config.get_quic().h1_stream;
     tp::string host;
     tp::string port_str;
 
-    if (!h3_cfg.empty()) {
-        auto colon_pos = h3_cfg.rfind(':');
-        host = (colon_pos == tp::string::npos) ? h3_cfg : h3_cfg.substr(0, colon_pos);
-        port_str = (colon_pos == tp::string::npos) ? "80" : h3_cfg.substr(colon_pos + 1);
+    if (!h1_cfg.empty()) {
+        auto colon_pos = h1_cfg.rfind(':');
+        host = (colon_pos == tp::string::npos) ? h1_cfg : h1_cfg.substr(0, colon_pos);
+        port_str = (colon_pos == tp::string::npos) ? "80" : h1_cfg.substr(colon_pos + 1);
     } else if (!config.get_remote_addr().empty()) {
         host = config.get_remote_addr();
         port_str = tp::to_string(config.get_remote_port());
     } else {
         _log_with_date_time("QuicConnection: stream " + tp::to_string(stream_id) +
-                                " h3_upstream not configured, dropping",
+                                " h1_stream not configured, dropping",
                             Log::WARN);
         return false;
     }
 
     _log_with_date_time("QuicConnection: stream " + tp::to_string(stream_id) +
-                            " " + (h3_cfg.empty() ? "falling back to " : "forwarding to ") 
-                            + "h3_upstream " + host + ":" + port_str,
+                            " " + (h1_cfg.empty() ? "falling back to " : "forwarding to ") 
+                            + "h1_stream " + host + ":" + port_str,
                         Log::INFO);
 
     auto& h3_mgr = get_or_create_h3();

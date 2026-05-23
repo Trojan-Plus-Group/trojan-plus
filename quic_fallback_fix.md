@@ -221,7 +221,7 @@
 
 ## 阶段五：资源管理与健壮性
 
-### 5.1 为 h3_upstream TCP 连接添加超时
+### 5.1 为 h1_stream TCP 连接添加超时
 
 - **文件**：`src/quic/quic_session.cpp`，`forward_to_h1_upstream`
 - **问题**：`async_connect` 没有 deadline，上游不可达时 QUIC stream 及 session 资源最长泄漏 60–120s（内核 SYN 重传超时）。
@@ -231,21 +231,21 @@
     m_write_timer.expires_after(std::chrono::seconds(10));
     m_write_timer.async_wait([this, self](const boost::system::error_code& ec) {
         if (!ec && !m_destroyed && !m_tcp_socket.is_open()) {
-            _log_with_date_time("h3_upstream connect timeout", Log::WARN);
+            _log_with_date_time("h1_stream connect timeout", Log::WARN);
             destroy();
         }
     });
     ```
-  - [ ] TCP 连接成功后 cancel timer。
+  - [ ] TCP 连接成功后 cancel timer.
 
 ---
 
-### 5.2 h3_upstream DNS 缓存（避免每流重复解析）
+### 5.2 h1_stream DNS 缓存（避免每流重复解析）
 
 - **文件**：`src/quic/quic_connection.h/.cpp`
 - **问题**：每个 fallback 流都独立调 `async_resolve`，高并发下（一个 QUIC 连接多流同时 fallback）会向 DNS 发大量重复查询并创建大量 TCP 连接。
 - **修复方案**：
-  - [ ] 在 `QuicConnection` 中缓存已解析的 `h3_upstream` endpoints（`boost::asio::ip::tcp::resolver::results_type`），TTL 30s（用 steady_timer 过期）。
+  - [ ] 在 `QuicConnection` 中缓存已解析的 `h1_stream` endpoints（`boost::asio::ip::tcp::resolver::results_type`），TTL 30s（用 steady_timer 过期）。
   - [ ] `QuicProxySession` 通过 `QuicConnection` 获取缓存的 endpoints，仅在缓存缺失或过期时才重新解析。
 
 ---

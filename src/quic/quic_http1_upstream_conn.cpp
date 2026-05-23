@@ -47,7 +47,7 @@ void Http1UpstreamConn::start() {
                      boost::asio::ip::tcp::resolver::results_type    results) {
             if (m_destroyed) return;
             if (ec) {
-                _log_with_date_time("h3_upstream TCP resolve failed " + m_host + ":" + m_port_str +
+                _log_with_date_time("h1_stream TCP resolve failed " + m_host + ":" + m_port_str +
                                         " failed: " + tp::string(ec.message().c_str()),
                                     Log::ERROR);
                 if (m_observer) m_observer->on_h1_connect_done(false);

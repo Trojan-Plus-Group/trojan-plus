@@ -323,7 +323,7 @@ cd trojan-plus; mkdir build; cd build; cmake ..; cmake --build . --config Releas
 
 ### 单流冒烟
 
-启动 server，配置 `h3_upstream` 指向真实 H1.1 后端：
+启动 server，配置 `h1_stream` 指向真实 H1.1 后端：
 
 ```bash
 curl --http3 -k https://localhost:443/                           # 简单 GET

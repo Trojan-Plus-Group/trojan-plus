@@ -40,6 +40,6 @@
         "alpn_token": "h3",
         "max_idle_timeout_ms": 30000,
         "max_concurrent_streams": 100,
-        "h3_upstream": ""
+        "h1_stream": ""
     }
 }
