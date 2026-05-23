@@ -73,6 +73,9 @@ void QuicClientEndpoint::connect_to_server() {
               auto it = m_stream_data_cb.find(stream_id);
               if (it != m_stream_data_cb.end()) {
                   it->second(data, len, fin);
+              } else {
+                  // No active handler for this stream. We must extend window to prevent global MAX_DATA lock.
+                  extend_window(stream_id, len);
               }
           };
 

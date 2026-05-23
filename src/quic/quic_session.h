@@ -97,6 +97,11 @@ class QuicProxySession : public QuicStreamHandler, public std::enable_shared_fro
     };
     tp::deque<TcpWriteBuffer> m_tcp_write_queue;
     bool m_is_writing_to_tcp{false};
+    bool m_tcp_write_blocked{false};
+    std::size_t m_tcp_pending_offset{0};
+    std::size_t m_tcp_pending_bytes{0};
+    bool m_tcp_write_pending{false};
+    bool m_udp_write_pending{false};
 };
 
 #endif // QUIC_SESSION_H

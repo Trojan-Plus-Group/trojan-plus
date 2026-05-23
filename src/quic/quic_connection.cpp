@@ -125,6 +125,11 @@ int QuicConnection::cb_recv_stream_data(ngtcp2_conn* /*conn*/, uint32_t flags, i
     } else if (self->on_stream_data_cb) {
         // client will use cb 
         self->on_stream_data_cb(stream_id, data, datalen, fin);
+    } else {
+        // No handler/callback found for this stream data.
+        // We must extend the connection-level flow control window to avoid window leakage,
+        // since this data is consumed at the transport layer but ignored by the app layer.
+        self->extend_window(stream_id, datalen);
     }
 
     return 0;
@@ -233,6 +238,9 @@ QuicConnection::QuicConnection(QuicEndpoint& endpoint, std::shared_ptr<QuicTlsCt
       m_write_buf(NGTCP2_MAX_UDP_PAYLOAD_SIZE) {}
 
 QuicConnection::~QuicConnection() {
+    _log_with_date_time("QuicConnection: ~QuicConnection destructed for peer " + 
+                        tp::string(m_peer.address().to_string().c_str()) + ":" + 
+                        tp::to_string(m_peer.port()), Log::INFO);
     if (m_conn) {
         ngtcp2_conn_del(m_conn);
     }
@@ -567,7 +575,7 @@ int64_t QuicConnection::send_stream_data(int64_t stream_id, const uint8_t* data,
             }
             if (nwrite != NGTCP2_ERR_STREAM_SHUT_WR) {
                 _log_with_date_time(
-                    "QuicConnection::send_stream_data: " + tp::string(ngtcp2_strerror(static_cast<int>(nwrite))),
+                    tp::string(ngtcp2_strerror(static_cast<int>(nwrite))),
                     Log::WARN);
             }
             if (written > 0) return static_cast<int64_t>(written);
@@ -576,8 +584,6 @@ int64_t QuicConnection::send_stream_data(int64_t stream_id, const uint8_t* data,
 
         if (nwrite > 0) {
             m_endpoint.send_packet(m_peer, m_write_buf.data(), static_cast<std::size_t>(nwrite));
-            _log_with_date_time("QuicConnection::send_stream_data: sent packet len=" + 
-                                tp::to_string(nwrite) + " pdatalen=" + tp::to_string(pdatalen), Log::ALL);
         }
 
         if (pdatalen > 0) {
@@ -741,6 +747,22 @@ void QuicConnection::close(uint64_t app_error_code) {
     }
     m_closed = true;
     m_loss_timer.cancel();
+
+    if(on_close_cb){
+        // Delay connection cleanup by 5 seconds to allow pending asynchronous operations 
+        // (such as H1 fallback resolver and connects) to finish gracefully.
+        m_loss_timer.expires_after(std::chrono::seconds(5));
+        auto self = shared_from_this();
+        m_loss_timer.async_wait([this, self](const boost::system::error_code& ec) {
+            if (!ec) {
+                if (on_close_cb) {
+                    on_close_cb(this);
+                    on_close_cb = nullptr;
+                }
+            }
+        });
+    }
+    
     
     _log_with_date_time("QuicConnection: closing connection with error code " + 
                             tp::to_string(app_error_code) + " to peer " + 
@@ -811,7 +833,14 @@ void QuicConnection::reschedule_loss_timer() {
 
     auto expiry = ngtcp2_conn_get_expiry2(m_conn);
     if (expiry == UINT64_MAX) {
-        m_loss_timer.cancel();
+        if (m_last_timer_expiry != UINT64_MAX) {
+            m_loss_timer.cancel();
+            m_last_timer_expiry = UINT64_MAX;
+        }
+        return;
+    }
+
+    if (expiry == m_last_timer_expiry) {
         return;
     }
 
@@ -819,13 +848,23 @@ void QuicConnection::reschedule_loss_timer() {
     auto delay_ns  = expiry > now_ns ? expiry - now_ns : 0;
     auto delay_dur = std::chrono::nanoseconds(delay_ns);
 
+    m_last_timer_expiry = expiry;
+
     m_loss_timer.expires_after(delay_dur);
     auto self = shared_from_this();
     m_loss_timer.async_wait([this, self](const boost::system::error_code& ec) {
-        if (ec || m_closed) {
+        if (ec) {
+            if (ec != boost::asio::error::operation_aborted) {
+                _log_with_date_time("QuicConnection: loss timer wait error: " + tp::string(ec.message().c_str()), Log::WARN);
+            }
             return;
         }
-        auto rv = ngtcp2_conn_handle_expiry(m_conn, now_nanos());
+        if (m_closed) {
+            return;
+        }
+        auto now = now_nanos();
+        m_last_timer_expiry = 0; // reset
+        auto rv = ngtcp2_conn_handle_expiry(m_conn, now);
         if (rv != 0) {
             _log_with_date_time(
                 "QuicConnection: ngtcp2_conn_handle_expiry: " + tp::string(ngtcp2_strerror(rv)),
@@ -844,6 +883,11 @@ void QuicConnection::extend_window(int64_t stream_id, std::size_t n) {
     if (m_conn && !m_closed && n > 0) {
         ngtcp2_conn_extend_max_stream_offset(m_conn, stream_id, n);
         ngtcp2_conn_extend_max_offset(m_conn, n);
+        // Trigger active pump write to immediately transmit window updates (MAX_DATA / MAX_STREAM_DATA) to prevent deadlock.
+        // Note: ngtcp2 has internal coalescing and thresholds for window updates (usually 1/2 of initial window size).
+        // It won't actually queue frames or generate UDP packets until the threshold is crossed, 
+        // avoiding traffic waste from small incremental window updates.
+        on_pump_write();
     }
 }
 

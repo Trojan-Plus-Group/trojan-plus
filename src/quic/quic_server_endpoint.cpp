@@ -165,6 +165,16 @@ void QuicServerEndpoint::on_packet(const uint8_t* data, std::size_t len,
     auto self = shared_from_this();
     auto conn = TP_MAKE_SHARED(QuicConnection, *this, m_tls_ctx, src);
 
+    conn->on_close_cb = [this](QuicConnection* connection) {
+        for (auto iter = m_conns.begin(); iter != m_conns.end();) {
+            if (iter->second.get() == connection) {
+                iter = m_conns.erase(iter);
+            } else {
+                ++iter;
+            }
+        }
+    };
+
     // stream_open: create a QuicProxySession for each new bidi stream.
     auto weak_conn = std::weak_ptr<QuicConnection>(conn);
     conn->on_stream_open_cb = [this, self, weak_conn](int64_t stream_id) {

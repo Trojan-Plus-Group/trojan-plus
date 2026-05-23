@@ -57,17 +57,6 @@ void QuicProxySession::on_stream_data(const uint8_t* data, std::size_t len, bool
     m_unacked_stream_bytes += len;
     m_recv_buf.append(reinterpret_cast<const char*>(data), len);
 
-    if (Log::level == Log::ALL) {
-        char hex[129];
-        for (int i = 0; i < std::min((int)len, 64); ++i) {
-            snprintf(hex + i * 2, 3, "%02x", data[i]);
-        }
-        hex[std::min((int)len, 64) * 2] = '\0';
-        _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) + " recv " +
-                            tp::to_string(len) + " bytes, parsed=" + tp::to_string(m_request_parsed) +
-                            " hex=" + hex, Log::ALL);
-    }
-
     if (!m_request_parsed) {
         try_parse_request(fin);
         if (m_request_parsed && fin) {
@@ -347,18 +336,29 @@ void QuicProxySession::flush_tcp_read_buf(std::size_t offset, std::size_t bytes)
         return;
     }
 
-    locked_conn->on_pump_write();
+    if (written > 0) {
+        locked_conn->on_pump_write();
+    }
 
     offset += written;
     if (offset < bytes) {
-        m_write_timer.expires_after(std::chrono::milliseconds(5));
+        m_tcp_pending_offset = offset;
+        m_tcp_pending_bytes = bytes;
+        m_tcp_write_blocked = true;
+
+        uint32_t delay_ms = (written > 0) ? 5 : 100;
+        m_write_timer.expires_after(std::chrono::milliseconds(delay_ms));
         auto self = this->shared_from_this();
-        m_write_timer.async_wait([this, self, offset, bytes](const boost::system::error_code& ec) {
+        m_write_timer.async_wait([this, self](const boost::system::error_code& ec) {
             if (!ec) {
-                flush_tcp_read_buf(offset, bytes);
+                m_tcp_write_blocked = false;
+                flush_tcp_read_buf(m_tcp_pending_offset, m_tcp_pending_bytes);
             }
         });
     } else {
+        m_tcp_write_blocked = false;
+        m_tcp_pending_offset = 0;
+        m_tcp_pending_bytes = 0;
         tcp_read();
     }
 }
@@ -366,16 +366,30 @@ void QuicProxySession::flush_tcp_read_buf(std::size_t offset, std::size_t bytes)
 void QuicProxySession::on_connection_pump() {
     if (m_destroyed) return;
     if (m_is_udp) {
-        if (!m_udp_pending_stream_data.empty()) {
-            flush_udp_stream_data(0);
+        if (!m_udp_pending_stream_data.empty() && !m_udp_write_pending) {
+            m_udp_write_pending = true;
+            auto self = shared_from_this();
+            boost::asio::post(m_io_ctx, [this, self]() {
+                if (m_destroyed) return;
+                m_udp_write_pending = false;
+                m_write_timer.cancel();
+                flush_udp_stream_data(0);
+            });
         }
     } else {
-        // If we were blocked by QUIC flow control, retry reading from TCP.
-        // Actually, tcp_read() will only start a new read if one is not in progress.
-        // If flush_tcp_read_buf is waiting on a timer, this won't help much, 
-        // but it ensures we don't stay stuck.
-        // We don't have a direct 'retry' for flush_tcp_read_buf here yet, 
-        // but tcp_read() is a good start.
+        if (m_tcp_write_blocked && !m_tcp_write_pending) {
+            m_tcp_write_pending = true;
+            auto self = shared_from_this();
+            boost::asio::post(m_io_ctx, [this, self]() {
+                if (m_destroyed) return;
+                m_tcp_write_pending = false;
+                if (m_tcp_write_blocked) {
+                    m_tcp_write_blocked = false;
+                    m_write_timer.cancel();
+                    flush_tcp_read_buf(m_tcp_pending_offset, m_tcp_pending_bytes);
+                }
+            });
+        }
     }
 }
 
@@ -563,10 +577,13 @@ void QuicProxySession::flush_udp_stream_data(std::size_t offset) {
         offset = 0;
     }
 
-    locked_conn->on_pump_write(); // erase before pump so on_connection_pump re-entry sees empty buf
+    if (written > 0) {
+        locked_conn->on_pump_write(); // erase before pump so on_connection_pump re-entry sees empty buf
+    }
 
     if (!m_udp_pending_stream_data.empty()) {
-        m_write_timer.expires_after(std::chrono::milliseconds(5));
+        uint32_t delay_ms = (written > 0) ? 5 : 100;
+        m_write_timer.expires_after(std::chrono::milliseconds(delay_ms));
         auto self = this->shared_from_this();
         m_write_timer.async_wait([this, self](const boost::system::error_code& ec) {
             if (!ec) {

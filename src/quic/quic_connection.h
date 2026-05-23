@@ -124,6 +124,8 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     std::function<void(int64_t)> on_stream_close_cb;
     // Callback invoked when a new Connection ID is generated.
     std::function<void(const ngtcp2_cid*)> on_new_connection_id_cb;
+    // Callback invoked when connection closes.
+    std::function<void(QuicConnection*)> on_close_cb;
 
   private:
     // ngtcp2 static callbacks — forward to instance methods.
@@ -183,6 +185,7 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     bool m_handshake_done{false};
     bool m_is_server{false};
     ConnType m_conn_type{ConnType::unknown};
+    uint64_t m_last_timer_expiry{0};
 
     tp::unordered_map<int64_t, std::shared_ptr<QuicStreamHandler>> m_stream_handlers;
     std::unique_ptr<QuicToHttp3Connect> m_h3;  // declared after m_stream_handlers, destroyed first

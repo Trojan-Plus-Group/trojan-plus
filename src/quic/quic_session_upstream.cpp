@@ -29,7 +29,11 @@ QuicUpstreamHandler::QuicUpstreamHandler(
     m_h1_conn = TP_MAKE_SHARED(Http1UpstreamConn, io_ctx, host, port_str, this);
 }
 
-QuicUpstreamHandler::~QuicUpstreamHandler() = default;
+QuicUpstreamHandler::~QuicUpstreamHandler() {
+    if (m_h1_conn) {
+        m_h1_conn->detach_observer();
+    }
+}
 
 void QuicUpstreamHandler::start() {
     if (m_destroyed) return;

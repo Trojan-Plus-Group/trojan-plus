@@ -276,7 +276,7 @@ class QuicStreamTransport : public OutboundTransport,
 
         offset += written;
         if (offset < buf->size()) {
-            m_write_timer.expires_after(std::chrono::milliseconds(5));
+            m_write_timer.expires_after(std::chrono::milliseconds(50));
             m_write_timer.async_wait([this, self = shared_from_this(), buf, offset, h = std::move(handler)]
                                     (const boost::system::error_code& ec) mutable {
                 if (!ec) {
