@@ -40,7 +40,6 @@
     },
     "quic": {
         "enabled": false,
-        "prefer_quic": true,
         "alpn_token": "h3"
     }
 }

@@ -361,7 +361,6 @@ std::shared_ptr<OutboundTransport> create_outbound_transport(
 #ifdef ENABLE_QUIC
     if (quic_client != nullptr &&
         config.get_quic().enabled &&
-        config.get_quic().prefer_quic &&
         quic_client->is_connected()) {
         return TP_MAKE_SHARED(QuicStreamTransport, io_ctx, quic_client);
     }

@@ -11,7 +11,6 @@ Test cases:
   T7:  alpn_negotiation             - verify ALPN token in logs
   T8:  quic_disabled                - quic.enabled=false falls back to TLS
   T9:  client_retry_no_server       - retry_connect_timeout_ms > 0 fires; = 0 does not
-  T10: prefer_quic_false            - prefer_quic=false routes data over TLS, not QUIC streams
   T11: tcp_target_unreachable       - server logs error and drops session on TCP connect fail
   T12: large_file_transfer          - 300 KB file exercises QUIC flow-control back-pressure
   T13: h1_stream_dns_failure      - h1_stream with invalid hostname → resolve error, no crash
@@ -625,7 +624,7 @@ def test_idle_timeout(binary_path):
         "quic": {"enabled": True, "max_idle_timeout_ms": IDLE_MS, "ping_interval_ms": 0},
     })
     cli_cfg = patch_quic_config("quic_client_config.json", {
-        "quic": {"enabled": True, "prefer_quic": True, "max_idle_timeout_ms": IDLE_MS, "ping_interval_ms": 0},
+        "quic": {"enabled": True, "max_idle_timeout_ms": IDLE_MS, "ping_interval_ms": 0},
     })
 
     server, srv_log = start_trojan(binary_path, srv_cfg)
@@ -756,7 +755,7 @@ def test_alpn_negotiation(binary_path):
         "quic": {"enabled": True, "alpn_token": "h3"},
     })
     cli_cfg = patch_quic_config("quic_client_config.json", {
-        "quic": {"enabled": True, "prefer_quic": True, "alpn_token": "h3"},
+        "quic": {"enabled": True, "alpn_token": "h3"},
     })
 
     server, srv_log = start_trojan(binary_path, srv_cfg)
@@ -881,7 +880,7 @@ def test_client_retry_no_server(binary_path):
     # Use an unresolvable hostname (.invalid TLD is reserved by RFC 2606).
     cli_cfg_a = patch_quic_config("quic_client_config.json", {
         "remote_addr": "quic-test-unreachable.invalid",
-        "quic": {"enabled": True, "prefer_quic": True, "retry_connect_timeout_ms": 500},
+        "quic": {"enabled": True, "retry_connect_timeout_ms": 500},
     })
     client_a, cli_log_a = start_trojan(binary_path, cli_cfg_a)
     dump_a = False
@@ -917,7 +916,7 @@ def test_client_retry_no_server(binary_path):
     # --- Part B: retry_connect_timeout_ms=0, must NOT see "retrying" ---
     cli_cfg_b = patch_quic_config_with_suffix("quic_client_config.json", ".tmpb.json", {
         "remote_addr": "quic-test-unreachable.invalid",
-        "quic": {"enabled": True, "prefer_quic": True, "retry_connect_timeout_ms": 0},
+        "quic": {"enabled": True, "retry_connect_timeout_ms": 0},
     })
     client_b, cli_log_b = start_trojan(binary_path, cli_cfg_b)
     dump_b = False
@@ -949,80 +948,6 @@ def test_client_retry_no_server(binary_path):
     print_time_log("[T9] client_retry_no_server PASSED")
     return True
 
-
-def test_prefer_quic_false(binary_path):
-    """T10: prefer_quic=false → QUIC endpoint connects but data is routed via TLS.
-
-    QuicClientEndpoint still establishes a QUIC connection (enabled=true), but
-    the per-request transport selector skips it (prefer_quic=false).  The server
-    should therefore never see any QuicProxySession streams for the test request.
-    """
-    print_time_log("[T10] prefer_quic_false: starting...")
-
-    srv_cfg = patch_quic_config("quic_server_config.json", {
-        "remote_port": HTTP_TARGET_PORT,
-    })
-    cli_cfg = patch_quic_config("quic_client_config.json", {
-        "quic": {"enabled": True, "prefer_quic": False},
-    })
-
-    server, srv_log = start_trojan(binary_path, srv_cfg)
-    client, cli_log = start_trojan(binary_path, cli_cfg)
-    dump = False
-    try:
-        if not server or not client:
-            dump = True
-            return False
-
-        if not wait_for_port(QUIC_SERVER_PORT, timeout=8):
-            print_time_log("[T10] FAIL: server port not open")
-            dump = True
-            return False
-        if not wait_for_port(QUIC_CLIENT_PROXY_PORT, timeout=8):
-            print_time_log("[T10] FAIL: client proxy port not open")
-            dump = True
-            return False
-
-        # Allow the QUIC endpoint time to (optionally) handshake in background.
-        time.sleep(2)
-
-        # Fetch a test file — should succeed via TLS transport.
-        url_base = f"http://127.0.0.1:{HTTP_TARGET_PORT}/"
-        got_index = http_get_via_socks5(url_base, QUIC_CLIENT_PROXY_PORT).decode('utf-8')
-        files = [f for f in got_index.splitlines() if f.strip()]
-        if not files:
-            print_time_log("[T10] FAIL: no test files")
-            dump = True
-            return False
-
-        test_file = files[0]
-        url = f"http://127.0.0.1:{HTTP_TARGET_PORT}/{test_file}"
-        got = http_get_via_socks5(url, QUIC_CLIENT_PROXY_PORT)
-        with open(os.path.join(TEST_FILES_DIR, test_file), 'rb') as f:
-            want = f.read()
-        if got != want:
-            print_time_log("[T10] FAIL: content mismatch — TLS path did not work")
-            dump = True
-            return False
-
-        # With prefer_quic=false, the server must never handle the request as a
-        # QUIC proxy session (no QuicProxySession stream opened for proxy data).
-        with open(srv_log, 'r', errors='replace') as f:
-            srv_content = f.read()
-        if re.search(r"QuicProxySession: stream \d+ opened", srv_content):
-            print_time_log("[T10] FAIL: QuicProxySession stream opened on server despite prefer_quic=false")
-            dump = True
-            return False
-
-        print_time_log("[T10] prefer_quic_false PASSED")
-        return True
-    except Exception:
-        traceback.print_exc()
-        dump = True
-        return False
-    finally:
-        close_process(client, dump)
-        close_process(server, dump)
 
 
 def test_tcp_target_unreachable(binary_path):
@@ -1775,7 +1700,7 @@ def test_stateless_reset(binary_path):
         "quic": {"enabled": True, "max_idle_timeout_ms": IDLE_MS},
     })
     cli_cfg = patch_quic_config_with_suffix("quic_client_config.json", "T17.tmp.json", {
-        "quic": {"enabled": True, "prefer_quic": True,
+        "quic": {"enabled": True,
                  "max_idle_timeout_ms": IDLE_MS,
                  "retry_connect_timeout_ms": 0},   # no auto-retry
     })
@@ -2147,7 +2072,7 @@ def test_quic_ping_keepalive(binary_path):
         "quic": {"enabled": True, "max_idle_timeout_ms": IDLE_MS, "ping_interval_ms": 0},
     })
     cli_cfg_a = patch_quic_config_with_suffix("quic_client_config.json", ".a.tmp.json", {
-        "quic": {"enabled": True, "prefer_quic": True,
+        "quic": {"enabled": True,
                  "max_idle_timeout_ms": IDLE_MS, "ping_interval_ms": 0},
     })
     server_a, srv_log_a = start_trojan(binary_path, srv_cfg_a)
@@ -2198,7 +2123,7 @@ def test_quic_ping_keepalive(binary_path):
         "quic": {"enabled": True, "max_idle_timeout_ms": IDLE_MS, "ping_interval_ms": PING_MS},
     })
     cli_cfg_b = patch_quic_config_with_suffix("quic_client_config.json", ".b.tmp.json", {
-        "quic": {"enabled": True, "prefer_quic": True,
+        "quic": {"enabled": True,
                  "max_idle_timeout_ms": IDLE_MS, "ping_interval_ms": PING_MS},
     })
     server_b, srv_log_b = start_trojan(binary_path, srv_cfg_b)
@@ -2267,7 +2192,6 @@ ALL_TESTS = [
     ("T7",  test_alpn_negotiation),
     ("T8",  test_quic_disabled),
     ("T9",  test_client_retry_no_server),
-    ("T10", test_prefer_quic_false),
     ("T11", test_tcp_target_unreachable),
     ("T12", test_large_file_transfer),
     ("T13", test_h1_stream_dns_failure),

@@ -99,7 +99,6 @@ class Config {
 
     using QUICConfig = struct {
         bool       enabled;                    // master switch; default false
-        bool       prefer_quic;               // client: try QUIC first, fall back to pipeline/TCP+TLS
         uint32_t   retry_connect_timeout_ms;  // client: retry delay after DNS/init failure (ms), 0 = no retry
         tp::string alpn_token;                // ALPN advertised; default "h3" for HTTP/3 disguise
         uint32_t   max_idle_timeout_ms;       // QUIC idle timeout

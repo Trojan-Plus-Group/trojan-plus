@@ -445,7 +445,7 @@ void ClientSession::request_remote() {
         auto quic_client = get_service()->get_quic_client();
         if(quic_client){
             if(quic_client->is_connected()){
-                try_quic_first = quic_config.prefer_quic;
+                try_quic_first = true;
             }else{
                 if(!quic_client->is_known_unreachable()){
                     get_service()->reconnect_quic_client();

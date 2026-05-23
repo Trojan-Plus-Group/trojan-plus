@@ -227,7 +227,6 @@ void Config::populate(const ptree& tree) {
     }
 
     quic.enabled                = tree.get("quic.enabled", false);
-    quic.prefer_quic            = tree.get("quic.prefer_quic", true);
     quic.retry_connect_timeout_ms = tree.get("quic.retry_connect_timeout_ms", 0U);
     quic.alpn_token             = tree.get("quic.alpn_token", std::string("h3")).c_str();
     quic.max_idle_timeout_ms    = tree.get("quic.max_idle_timeout_ms", 60000U);
@@ -264,9 +263,9 @@ void Config::populate(const ptree& tree) {
         _log_with_date_time("quic.enabled=true but ENABLE_QUIC was OFF at build time", Log::FATAL);
     }
 #endif
-    if (quic.enabled && experimental.pipeline_num > 0 && quic.prefer_quic) {
+    if (quic.enabled && experimental.pipeline_num > 0) {
         _log_with_date_time(
-            "quic.prefer_quic=true with pipeline_num>0: QUIC will be tried first per session, "
+            "quic.enabled=true with pipeline_num>0: QUIC will be tried first per session, "
             "pipeline will be used as fallback if QUIC stream open fails",
             Log::WARN);
     }

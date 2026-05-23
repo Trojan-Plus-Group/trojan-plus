@@ -39,7 +39,6 @@
     },
     "quic": {
         "enabled": true,
-        "prefer_quic": true,
         "retry_connect_timeout_ms": 500,
         "alpn_token": "h3",
         "max_idle_timeout_ms": 30000,
