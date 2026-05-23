@@ -40,7 +40,6 @@
     },
     "quic": {
         "enabled": true,
-        "prefer_quic": true,
         "alpn_token": "h3",
         "debug_disable_tcp": true
     }
