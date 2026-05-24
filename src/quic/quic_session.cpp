@@ -39,8 +39,7 @@ QuicProxySession::QuicProxySession(std::shared_ptr<QuicConnection> conn, int64_t
       m_udp_socket(io_ctx),
       m_udp_resolver(io_ctx),
       m_write_timer(io_ctx) {
-    m_tcp_buf.resize(kTcpBufSize, '\0');
-    m_udp_recv_buf.resize(kTcpBufSize, '\0');
+    m_quic_recv_buf.reserve(kQuicRecvBufReserveSize);
 }
 
 QuicProxySession::~QuicProxySession() = default;
@@ -55,22 +54,22 @@ void QuicProxySession::on_stream_data(const uint8_t* data, std::size_t len, bool
         return;
     }
     m_unacked_stream_bytes += len;
-    m_recv_buf.append(reinterpret_cast<const char*>(data), len);
+    m_quic_recv_buf.append(reinterpret_cast<const char*>(data), len);
 
     if (!m_request_parsed) {
         try_parse_request(fin);
         if (m_request_parsed && fin) {
             write_to_target(tp::string(), true);
         }
-    } else if (!m_recv_buf.empty() || fin) {
+    } else if (!m_quic_recv_buf.empty() || fin) {
         if (m_is_udp) {
-            m_udp_data_buf += std::move(m_recv_buf);
-            m_recv_buf.clear();
+            m_udp_data_buf += std::move(m_quic_recv_buf);
+            m_quic_recv_buf.clear();
             if (fin) m_udp_fin_received = true;
             out_udp_sent();
         } else {
-            write_to_target(std::move(m_recv_buf), fin);
-            m_recv_buf.clear();
+            write_to_target(std::move(m_quic_recv_buf), fin);
+            m_quic_recv_buf.clear();
         }
     }
 }
@@ -80,8 +79,8 @@ void QuicProxySession::on_stream_close() {
 }
 
 void QuicProxySession::try_parse_request(bool fin) {
-    if (!m_recv_buf.empty()) {
-        char first_char = m_recv_buf[0];
+    if (!m_quic_recv_buf.empty()) {
+        char first_char = m_quic_recv_buf[0];
         bool is_valid_hex = (first_char >= '0' && first_char <= '9') ||
                             (first_char >= 'a' && first_char <= 'f');
         if (!is_valid_hex) {
@@ -95,9 +94,9 @@ void QuicProxySession::try_parse_request(bool fin) {
 
     // Wait for at least the first CRLF (end of password) before deciding if it's Trojan.
     // This avoids premature fallback to h1_stream if the password is split across packets.
-    size_t first_crlf = m_recv_buf.find("\r\n");
+    size_t first_crlf = m_quic_recv_buf.find("\r\n");
     if (first_crlf == tp::string::npos) {
-        if (m_recv_buf.length() > kMaxPasswordLineBytes || fin) {
+        if (m_quic_recv_buf.length() > kMaxPasswordLineBytes || fin) {
             _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) +
                                     " no CRLF in " + tp::to_string(kMaxPasswordLineBytes) +
                                     " bytes" + tp::to_string(fin ? " (fin)" : "") + ", falling back to h1_stream",
@@ -116,7 +115,7 @@ void QuicProxySession::try_parse_request(bool fin) {
     }
 
     TrojanRequest req;
-    int parsed = req.parse(m_recv_buf);
+    int parsed = req.parse(m_quic_recv_buf);
     if (parsed == -1) {
         // If it has a CRLF but still fails to parse as Trojan, it's definitely non-trojan.
         _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) +
@@ -135,7 +134,7 @@ void QuicProxySession::try_parse_request(bool fin) {
         _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) +
                                 " invalid password, forwarding to h1_stream",
                             Log::WARN);
-        // m_recv_buf still holds the original raw bytes (not yet consumed), forward verbatim.
+        // m_quic_recv_buf still holds the original raw bytes (not yet consumed), forward verbatim.
         forward_to_h1_upstream(fin);
         return;
     }
@@ -152,20 +151,22 @@ void QuicProxySession::try_parse_request(bool fin) {
 
     if (req.command == TrojanRequest::UDP_ASSOCIATE) {
         m_is_udp = true;
+        // 2048 is greater than MTU 
+        m_udp_pending_stream_data.reserve(2048);
+        m_udp_recv_buf.resize(kTcpBufSize, '\0');
         if (!req.payload.empty()) {
             m_udp_data_buf.append(req.payload.data(), req.payload.length());
             out_udp_sent();
         }
-        m_recv_buf.clear();
-        return;
+        m_quic_recv_buf.clear();
+    }else{
+        m_tcp_buf.resize(kTcpBufSize, '\0');
+        if (!req.payload.empty()) {
+            write_to_target(tp::string(req.payload.data(), req.payload.length()), fin);
+        }
+        m_quic_recv_buf.clear();
+        connect_target(tp::string(req.address.address), req.address.port);
     }
-
-    if (!req.payload.empty()) {
-        write_to_target(tp::string(req.payload.data(), req.payload.length()), fin);
-    }
-    m_recv_buf.clear();
-
-    connect_target(tp::string(req.address.address), req.address.port);
 }
 
 void QuicProxySession::forward_to_h1_upstream(bool fin) {
@@ -181,11 +182,11 @@ void QuicProxySession::forward_to_h1_upstream(bool fin) {
     }
 
     if (!locked_conn->forward_to_h1_upstream(m_stream_id,
-                                            reinterpret_cast<const uint8_t*>(m_recv_buf.data()),
-                                            m_recv_buf.size(), fin)) {
+                                            reinterpret_cast<const uint8_t*>(m_quic_recv_buf.data()),
+                                            m_quic_recv_buf.size(), fin)) {
         destroy(true, NGHTTP3_H3_INTERNAL_ERROR);
     }
-    m_recv_buf.clear();
+    m_quic_recv_buf.clear();
 }
 
 void QuicProxySession::connect_target(const tp::string& host, uint16_t port) {
@@ -553,7 +554,6 @@ void QuicProxySession::udp_read() {
             if (was_empty) {
                 flush_udp_stream_data(0);
             }
-            udp_read();
         });
 }
 
@@ -590,5 +590,7 @@ void QuicProxySession::flush_udp_stream_data(std::size_t offset) {
                 flush_udp_stream_data(0);
             }
         });
+    }else{
+        udp_read();
     }
 }

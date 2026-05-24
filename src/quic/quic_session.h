@@ -11,6 +11,7 @@
 #ifndef QUIC_SESSION_H
 #define QUIC_SESSION_H
 
+#include <cstddef>
 #include <memory>
 #include <cstdint>
 #include <functional>
@@ -66,7 +67,7 @@ class QuicProxySession : public QuicStreamHandler, public std::enable_shared_fro
     boost::asio::ip::tcp::socket m_tcp_socket;
     boost::asio::ip::tcp::resolver m_resolver;
 
-    tp::string m_recv_buf;    // accumulates stream bytes until request parsed
+    tp::string m_quic_recv_buf;    // accumulates stream bytes until request parsed
     tp::string m_tcp_buf;     // read buffer for upstream → stream direction
 
     void udp_read();
@@ -87,6 +88,7 @@ class QuicProxySession : public QuicStreamHandler, public std::enable_shared_fro
     bool m_destroyed{false};
     std::size_t m_unacked_stream_bytes{0};
 
+    static constexpr std::size_t kQuicRecvBufReserveSize = 64 * 1024;
     static constexpr std::size_t kTcpBufSize = 16 * 1024;
     boost::asio::steady_timer m_write_timer;
 
