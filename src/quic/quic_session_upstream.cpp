@@ -81,6 +81,10 @@ void QuicUpstreamHandler::retry_feed_h3() {
             m_h3_in_buf.erase(0, n);
         }
 
+        if (m_h3_in_buf.empty() && m_h3_in_fin) {
+            m_h3_in_fin = false;
+        }
+
         // Extend window immediately for all stream types. For uni streams
         // (Control/QPACK) there is no TCP write to defer credit to. For bidi
         // streams, the H3 framing overhead consumed inside this same call is
@@ -89,10 +93,6 @@ void QuicUpstreamHandler::retry_feed_h3() {
         if (m_unacked_stream_bytes > 0) {
             locked_conn->stream_extend_window(m_stream_id, m_unacked_stream_bytes);
             m_unacked_stream_bytes = 0;
-        }
-
-        if (m_h3_in_buf.empty() && m_h3_in_fin) {
-            m_h3_in_fin = false;
         }
     }
 }
