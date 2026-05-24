@@ -87,7 +87,7 @@ void QuicUpstreamHandler::retry_feed_h3() {
         // not associated with any send_request_chunk batch and would otherwise
         // leak. Matching pre-refactor semantics — see plan §4.4 future work.
         if (m_unacked_stream_bytes > 0) {
-            locked_conn->extend_window(m_stream_id, m_unacked_stream_bytes);
+            locked_conn->stream_extend_window(m_stream_id, m_unacked_stream_bytes);
             m_unacked_stream_bytes = 0;
         }
 
@@ -267,7 +267,7 @@ void QuicUpstreamHandler::on_h1_stream_credit(std::size_t bytes) {
     // later without further interface changes.
     if (bytes == 0 || m_destroyed) return;
     if (auto locked_conn = m_conn_ptr.lock()) {
-        locked_conn->extend_window(m_stream_id, bytes);
+        locked_conn->stream_extend_window(m_stream_id, bytes);
     }
 }
 

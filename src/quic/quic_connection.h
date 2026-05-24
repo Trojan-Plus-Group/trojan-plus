@@ -98,7 +98,8 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
 
     // Manually extend the QUIC flow control window for a stream.
     // Call this after the application has processed/sent received data.
-    void extend_window(int64_t stream_id, std::size_t n);
+    void stream_extend_window(int64_t stream_id, std::size_t n);
+    void conn_extend_window(std::size_t n);
 
     // Manually reset a stream with an error code.
     void reset_stream(int64_t stream_id, uint64_t app_error_code);

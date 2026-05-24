@@ -224,7 +224,7 @@ class QuicStreamTransport : public OutboundTransport,
                 }));
                 return;
             }
-            ep->extend_window(m_stream_id, n);
+            ep->stream_extend_window(m_stream_id, n);
 
             boost::asio::post(m_io_ctx, tp::bind_mem_alloc([handler = std::move(handler), n]() mutable {
                 handler({}, n);
@@ -323,7 +323,7 @@ class QuicStreamTransport : public OutboundTransport,
                 }));
                 return;
             }
-            ep->extend_window(m_stream_id, n);
+            ep->stream_extend_window(m_stream_id, n);
 
             if (n < len) {
                 m_recv_buf.append(reinterpret_cast<const char*>(data + n), len - n);

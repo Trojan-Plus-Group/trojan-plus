@@ -12,6 +12,7 @@
 #include "quic_connection.h"
 #include "quic_session_upstream.h"
 #include "quic_to_http3_connect.h"
+#include <cstddef>
 #include <memory>
 #include <string_view>
 #include <initializer_list>
@@ -53,23 +54,20 @@ void QuicProxySession::on_stream_data(const uint8_t* data, std::size_t len, bool
     if (m_destroyed) {
         return;
     }
-    m_unacked_stream_bytes += len;
-    m_quic_recv_buf.append(reinterpret_cast<const char*>(data), len);
-
+    
     if (!m_request_parsed) {
-        try_parse_request(fin);
-        if (m_request_parsed && fin) {
-            write_to_target(tp::string(), true);
+        m_quic_recv_buf.append(reinterpret_cast<const char*>(data), len);
+        try_parse_request(m_quic_recv_buf,  fin);
+        if(m_request_parsed){
+            tp::string().swap(m_quic_recv_buf); // release memory
         }
-    } else if (!m_quic_recv_buf.empty() || fin) {
+    } else {
         if (m_is_udp) {
-            m_udp_data_buf += std::move(m_quic_recv_buf);
-            m_quic_recv_buf.clear();
+            m_udp_data_buf.append(reinterpret_cast<const char*>(data), len);
             if (fin) m_udp_fin_received = true;
             out_udp_sent();
         } else {
-            write_to_target(std::move(m_quic_recv_buf), fin);
-            m_quic_recv_buf.clear();
+            write_to_target(tp::string(reinterpret_cast<const char*>(data), len), fin);
         }
     }
 }
@@ -78,30 +76,30 @@ void QuicProxySession::on_stream_close() {
     destroy();
 }
 
-void QuicProxySession::try_parse_request(bool fin) {
-    if (!m_quic_recv_buf.empty()) {
-        char first_char = m_quic_recv_buf[0];
+void QuicProxySession::try_parse_request(std::string_view data, bool fin) {
+    if (!data.empty()) {
+        char first_char = data[0];
         bool is_valid_hex = (first_char >= '0' && first_char <= '9') ||
                             (first_char >= 'a' && first_char <= 'f');
         if (!is_valid_hex) {
             _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) +
                                     " first byte not hex (" + tp::to_string((int)first_char) + "), falling back to h1_stream",
                                 Log::INFO);
-            forward_to_h1_upstream(fin);
+            forward_to_h1_upstream(data, fin);
             return;
         }
     }
 
     // Wait for at least the first CRLF (end of password) before deciding if it's Trojan.
     // This avoids premature fallback to h1_stream if the password is split across packets.
-    size_t first_crlf = m_quic_recv_buf.find("\r\n");
+    size_t first_crlf = data.find("\r\n");
     if (first_crlf == tp::string::npos) {
-        if (m_quic_recv_buf.length() > kMaxPasswordLineBytes || fin) {
+        if (data.length() > kMaxPasswordLineBytes || fin) {
             _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) +
                                     " no CRLF in " + tp::to_string(kMaxPasswordLineBytes) +
                                     " bytes" + tp::to_string(fin ? " (fin)" : "") + ", falling back to h1_stream",
                                 Log::WARN);
-            forward_to_h1_upstream(fin);
+            forward_to_h1_upstream(data, fin);
         }
         return;
     }
@@ -110,18 +108,18 @@ void QuicProxySession::try_parse_request(bool fin) {
                                 " password line exceeds " + tp::to_string(kMaxPasswordLineBytes) +
                                 " bytes, falling back to h1_stream",
                             Log::WARN);
-        forward_to_h1_upstream(fin);
+        forward_to_h1_upstream(data, fin);
         return;
     }
 
     TrojanRequest req;
-    int parsed = req.parse(m_quic_recv_buf);
+    int parsed = req.parse(data);
     if (parsed == -1) {
         // If it has a CRLF but still fails to parse as Trojan, it's definitely non-trojan.
         _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) +
                                 " parse failed, forwarding to h1_stream",
                             Log::INFO);
-        forward_to_h1_upstream(fin);
+        forward_to_h1_upstream(data, fin);
         return;
     }
     if (parsed == 0) {
@@ -135,7 +133,7 @@ void QuicProxySession::try_parse_request(bool fin) {
                                 " invalid password, forwarding to h1_stream",
                             Log::WARN);
         // m_quic_recv_buf still holds the original raw bytes (not yet consumed), forward verbatim.
-        forward_to_h1_upstream(fin);
+        forward_to_h1_upstream(data, fin);
         return;
     }
 
@@ -146,9 +144,13 @@ void QuicProxySession::try_parse_request(bool fin) {
                         Log::INFO);
 
     m_request_parsed = true;
-    if (auto c = m_conn.lock())
-        c->set_conn_type(QuicConnection::ConnType::proxy);
 
+    if (auto c = m_conn.lock()){
+        c->set_conn_type(QuicConnection::ConnType::proxy);
+        const size_t password_len = data.size() - req.payload.length();
+        c->stream_extend_window(m_stream_id, password_len);
+    }
+    
     if (req.command == TrojanRequest::UDP_ASSOCIATE) {
         m_is_udp = true;
         // 2048 is greater than MTU 
@@ -158,18 +160,21 @@ void QuicProxySession::try_parse_request(bool fin) {
             m_udp_data_buf.append(req.payload.data(), req.payload.length());
             out_udp_sent();
         }
-        m_quic_recv_buf.clear();
+
     }else{
         m_tcp_buf.resize(kTcpBufSize, '\0');
         if (!req.payload.empty()) {
             write_to_target(tp::string(req.payload.data(), req.payload.length()), fin);
         }
-        m_quic_recv_buf.clear();
+        
         connect_target(tp::string(req.address.address), req.address.port);
     }
 }
 
-void QuicProxySession::forward_to_h1_upstream(bool fin) {
+void QuicProxySession::forward_to_h1_upstream(std::string_view data, bool fin) {
+
+    m_request_parsed = true;
+
     auto locked_conn = m_conn.lock();
     if (!locked_conn) return;
 
@@ -182,11 +187,10 @@ void QuicProxySession::forward_to_h1_upstream(bool fin) {
     }
 
     if (!locked_conn->forward_to_h1_upstream(m_stream_id,
-                                            reinterpret_cast<const uint8_t*>(m_quic_recv_buf.data()),
-                                            m_quic_recv_buf.size(), fin)) {
+                                            reinterpret_cast<const uint8_t*>(data.data()),
+                                            data.size(), fin)) {
         destroy(true, NGHTTP3_H3_INTERNAL_ERROR);
     }
-    m_quic_recv_buf.clear();
 }
 
 void QuicProxySession::connect_target(const tp::string& host, uint16_t port) {
@@ -234,8 +238,7 @@ void QuicProxySession::write_to_target(tp::string data, bool fin) {
     if (data.empty() && !fin) {
         return;
     }
-    m_tcp_write_queue.push_back({std::move(data), m_unacked_stream_bytes, fin});
-    m_unacked_stream_bytes = 0;
+    m_tcp_write_queue.push_back({std::move(data), fin});
     if (!m_is_writing_to_tcp && m_tcp_socket.is_open()) {
         do_tcp_write();
     }
@@ -261,13 +264,12 @@ void QuicProxySession::do_tcp_write() {
     }
 
     auto buf = TP_MAKE_SHARED(tp::string, std::move(front.data));
-    std::size_t stream_bytes = front.stream_bytes;
     bool fin = front.fin;
     m_tcp_write_queue.pop_front();
 
     boost::asio::async_write(
         m_tcp_socket, boost::asio::buffer(*buf),
-        [this, self, buf, fin, stream_bytes](const boost::system::error_code& ec, std::size_t) {
+        [this, self, buf, fin](const boost::system::error_code& ec, std::size_t sent) {
             if (m_destroyed) {
                 return;
             }
@@ -276,9 +278,8 @@ void QuicProxySession::do_tcp_write() {
                 return;
             }
 
-            auto locked_conn = m_conn.lock();
-            if (locked_conn) {
-                locked_conn->extend_window(m_stream_id, stream_bytes);
+            if(auto c = m_conn.lock()){
+                c->stream_extend_window(m_stream_id, sent);
             }
 
             // If we received a FIN from QUIC, we should shut down the TCP send side
@@ -511,22 +512,17 @@ void QuicProxySession::out_udp_async_write(const std::string_view& data, const b
 
     auto self = shared_from_this();
     auto data_copy = TP_MAKE_SHARED(tp::string, data);
-    std::size_t stream_bytes = m_unacked_stream_bytes;
-    m_unacked_stream_bytes = 0;
 
     m_udp_socket.async_send_to(boost::asio::buffer(*data_copy), endpoint,
-        [this, self, data_copy, stream_bytes](const boost::system::error_code& ec, std::size_t) {
+        [this, self, data_copy](const boost::system::error_code& ec, std::size_t sent) {
             if (m_destroyed) return;
             if (ec) {
                 destroy();
                 return;
             }
-            
-            auto locked_conn = m_conn.lock();
-            if (locked_conn) {
-                locked_conn->extend_window(m_stream_id, stream_bytes);
+            if(auto c = m_conn.lock()){
+                c->stream_extend_window(m_stream_id, sent);
             }
-            
             out_udp_sent();
         });
 }

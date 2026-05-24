@@ -73,9 +73,6 @@ void QuicClientEndpoint::connect_to_server() {
               auto it = m_stream_data_cb.find(stream_id);
               if (it != m_stream_data_cb.end()) {
                   it->second(data, len, fin);
-              } else {
-                  // No active handler for this stream. We must extend window to prevent global MAX_DATA lock.
-                  extend_window(stream_id, len);
               }
           };
 
@@ -115,9 +112,9 @@ void QuicClientEndpoint::on_pump_write() {
 
 bool QuicClientEndpoint::is_connected() const { return m_conn && !m_conn->is_closed() && m_conn->is_handshake_done(); }
 
-void QuicClientEndpoint::extend_window(int64_t stream_id, std::size_t n) {
+void QuicClientEndpoint::stream_extend_window(int64_t stream_id, std::size_t n) {
     if (m_conn) {
-        m_conn->extend_window(stream_id, n);
+        m_conn->stream_extend_window(stream_id, n);
     }
 }
 

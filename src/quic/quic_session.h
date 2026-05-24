@@ -50,8 +50,8 @@ class QuicProxySession : public QuicStreamHandler, public std::enable_shared_fro
     [[nodiscard]] int64_t stream_id() const { return m_stream_id; }
 
   private:
-    void try_parse_request(bool fin);
-    void forward_to_h1_upstream(bool fin);
+    void try_parse_request(std::string_view data, bool fin);
+    void forward_to_h1_upstream(std::string_view data, bool fin);
     void connect_target(const tp::string& host, uint16_t port);
     void tcp_read();
     void flush_tcp_read_buf(std::size_t offset, std::size_t bytes);
@@ -88,13 +88,12 @@ class QuicProxySession : public QuicStreamHandler, public std::enable_shared_fro
     bool m_destroyed{false};
     std::size_t m_unacked_stream_bytes{0};
 
-    static constexpr std::size_t kQuicRecvBufReserveSize = 64 * 1024;
+    static constexpr std::size_t kQuicRecvBufReserveSize = 2 * 1024;
     static constexpr std::size_t kTcpBufSize = 16 * 1024;
     boost::asio::steady_timer m_write_timer;
 
     struct TcpWriteBuffer {
         tp::string data;
-        std::size_t stream_bytes{0};
         bool fin{false};
     };
     tp::deque<TcpWriteBuffer> m_tcp_write_queue;

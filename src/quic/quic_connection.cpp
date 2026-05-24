@@ -114,8 +114,12 @@ int QuicConnection::cb_handshake_completed(ngtcp2_conn* /*conn*/, void* user_dat
 int QuicConnection::cb_recv_stream_data(ngtcp2_conn* /*conn*/, uint32_t flags, int64_t stream_id,
                                         uint64_t /*offset*/, const uint8_t* data, size_t datalen,
                                         void* user_data, void* /*stream_user_data*/) {
+
     auto* self = static_cast<QuicConnection*>(user_data);
     bool fin = (flags & NGTCP2_STREAM_DATA_FLAG_FIN) != 0;
+
+    // extend connection window at very first to make sure connection will be never stuck
+    self->conn_extend_window(datalen);
 
     auto it = self->m_stream_handlers.find(stream_id);
     if (it != self->m_stream_handlers.end()) {
@@ -125,11 +129,6 @@ int QuicConnection::cb_recv_stream_data(ngtcp2_conn* /*conn*/, uint32_t flags, i
     } else if (self->on_stream_data_cb) {
         // client will use cb 
         self->on_stream_data_cb(stream_id, data, datalen, fin);
-    } else {
-        // No handler/callback found for this stream data.
-        // We must extend the connection-level flow control window to avoid window leakage,
-        // since this data is consumed at the transport layer but ignored by the app layer.
-        self->extend_window(stream_id, datalen);
     }
 
     return 0;
@@ -309,8 +308,8 @@ bool QuicConnection::init_server(const uint8_t* data, std::size_t datalen,
 
     ngtcp2_transport_params params;
     ngtcp2_transport_params_default(&params);
-    params.initial_max_stream_data_bidi_local  = 4 * 1024 * 1024; // max cache size in one stream
-    params.initial_max_stream_data_bidi_remote = 4 * 1024 * 1024;
+    params.initial_max_stream_data_bidi_local  = 512 * 1024; // max cache size in one stream
+    params.initial_max_stream_data_bidi_remote = 512 * 1024;
     params.initial_max_data                    = 32 * 1024 * 1024; // max cache size in all streams
     params.initial_max_streams_bidi            = 1000;
     params.initial_max_stream_data_uni         = 64 * 1024;
@@ -422,8 +421,8 @@ bool QuicConnection::init_client(const boost::asio::ip::udp::endpoint& local_ep,
     params.initial_max_streams_bidi            = 100;
     params.initial_max_stream_data_uni         = 64 * 1024;
     params.initial_max_streams_uni             = 100;
-    params.initial_max_stream_data_bidi_local  = 4 * 1024 * 1024;  // max cache size in one stream
-    params.initial_max_stream_data_bidi_remote = 4 * 1024 * 1024;  // max cache size in one stream
+    params.initial_max_stream_data_bidi_local  = 1 * 1024 * 1024;  // max cache size in one stream
+    params.initial_max_stream_data_bidi_remote = 1 * 1024 * 1024;  // max cache size in one stream
     params.max_idle_timeout = static_cast<ngtcp2_duration>(
         m_endpoint.config().get_quic().max_idle_timeout_ms) * 1'000'000ULL;
 
@@ -879,9 +878,19 @@ void QuicConnection::reschedule_loss_timer() {
     });
 }
 
-void QuicConnection::extend_window(int64_t stream_id, std::size_t n) {
+void QuicConnection::stream_extend_window(int64_t stream_id, std::size_t n) {
     if (m_conn && !m_closed && n > 0) {
         ngtcp2_conn_extend_max_stream_offset(m_conn, stream_id, n);
+        // Trigger active pump write to immediately transmit window updates (MAX_DATA / MAX_STREAM_DATA) to prevent deadlock.
+        // Note: ngtcp2 has internal coalescing and thresholds for window updates (usually 1/2 of initial window size).
+        // It won't actually queue frames or generate UDP packets until the threshold is crossed, 
+        // avoiding traffic waste from small incremental window updates.
+        on_pump_write();
+    }
+}
+
+void QuicConnection::conn_extend_window(std::size_t n) {
+    if (m_conn && !m_closed && n > 0) {
         ngtcp2_conn_extend_max_offset(m_conn, n);
         // Trigger active pump write to immediately transmit window updates (MAX_DATA / MAX_STREAM_DATA) to prevent deadlock.
         // Note: ngtcp2 has internal coalescing and thresholds for window updates (usually 1/2 of initial window size).
