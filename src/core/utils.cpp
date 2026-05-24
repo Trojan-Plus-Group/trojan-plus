@@ -117,12 +117,24 @@ size_t streambuf_append(tp::streambuf& target, const tp::string& append_data) {
 std::string_view streambuf_to_string_view(const tp::streambuf& target) {
     _guard;
     auto buffers = target.data();
-    if (boost::asio::buffer_size(buffers) == 0) {
+    std::size_t total_size = boost::asio::buffer_size(buffers);
+    if (total_size == 0) {
         return std::string_view();
     }
-    // boost::asio::streambuf (and basic_streambuf) is guaranteed to be contiguous for its input sequence.
     auto it = boost::asio::buffer_sequence_begin(buffers);
-    return std::string_view(static_cast<const char*>(it->data()), it->size());
+    if (it->size() == total_size) {
+        // single buffer, no need to merge
+        return std::string_view(static_cast<const char*>(it->data()), total_size);
+    }
+    // multiple buffers, need to merge to a ring of thread-local buffers to prevent concurrent/reentrant overwrite
+    static thread_local tp::string merge_bufs[16];
+    static thread_local std::size_t next_idx = 0;
+    auto& merge_buf = merge_bufs[next_idx];
+    next_idx = (next_idx + 1) % 16;
+
+    merge_buf.resize(total_size);
+    boost::asio::buffer_copy(boost::asio::buffer(&merge_buf[0], total_size), buffers);
+    return std::string_view(merge_buf.data(), total_size);
     _unguard;
 }
 

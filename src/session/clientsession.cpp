@@ -193,11 +193,10 @@ void ClientSession::out_async_write(const std::string_view& data) {
               out_sent();
           }));
     } else {
-        auto data_copy = get_service()->get_sending_data_allocator().allocate(data);
-        // data_copy keeps the streambuf alive; m_out reads from the string_view asynchronously.
+        auto data_copy = TP_MAKE_SHARED(tp::string, data);
+        // data_copy keeps the string alive; m_out reads from the string_view asynchronously.
         m_out->async_write(
-          streambuf_to_string_view(*data_copy), tp::bind_mem_alloc([this, self, data_copy](const boost::system::error_code error, size_t) {
-              get_service()->get_sending_data_allocator().free(data_copy);
+          *data_copy, tp::bind_mem_alloc([this, self, data_copy](const boost::system::error_code error, size_t) {
               if (error) {
                   output_debug_info_ec(error);
                   destroy();

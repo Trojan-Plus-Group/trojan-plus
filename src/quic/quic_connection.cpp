@@ -234,7 +234,8 @@ QuicConnection::QuicConnection(QuicEndpoint& endpoint, std::shared_ptr<QuicTlsCt
       m_tls_ctx(std::move(tls_ctx)),
       m_peer(peer),
       m_loss_timer(endpoint.io_context()),
-      m_write_buf(NGTCP2_MAX_UDP_PAYLOAD_SIZE) {}
+      m_write_buf(NGTCP2_MAX_UDP_PAYLOAD_SIZE),
+      m_in_read_pkt(false) {}
 
 QuicConnection::~QuicConnection() {
     _log_with_date_time("QuicConnection: ~QuicConnection destructed for peer " + 
@@ -460,8 +461,10 @@ void QuicConnection::on_packet(const uint8_t* data, std::size_t datalen,
     if (m_closed || !m_conn) {
         return;
     }
+    m_in_read_pkt = true;
     auto path = make_path(local_ep, remote_ep);
     int  rv   = ngtcp2_conn_read_pkt(m_conn, &path, nullptr, data, datalen, now_nanos());
+    m_in_read_pkt = false;
     if (rv != 0) {
         if (rv != NGTCP2_ERR_DRAINING && rv != NGTCP2_ERR_DROP_CONN) {
             _log_with_date_time(
@@ -885,7 +888,9 @@ void QuicConnection::stream_extend_window(int64_t stream_id, std::size_t n) {
         // Note: ngtcp2 has internal coalescing and thresholds for window updates (usually 1/2 of initial window size).
         // It won't actually queue frames or generate UDP packets until the threshold is crossed, 
         // avoiding traffic waste from small incremental window updates.
-        on_pump_write();
+        if (!m_in_read_pkt) {
+            on_pump_write();
+        }
     }
 }
 
@@ -896,7 +901,9 @@ void QuicConnection::conn_extend_window(std::size_t n) {
         // Note: ngtcp2 has internal coalescing and thresholds for window updates (usually 1/2 of initial window size).
         // It won't actually queue frames or generate UDP packets until the threshold is crossed, 
         // avoiding traffic waste from small incremental window updates.
-        on_pump_write();
+        if (!m_in_read_pkt) {
+            on_pump_write();
+        }
     }
 }
 

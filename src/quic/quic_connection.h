@@ -191,6 +191,7 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     tp::unordered_map<int64_t, std::shared_ptr<QuicStreamHandler>> m_stream_handlers;
     std::unique_ptr<QuicToHttp3Connect> m_h3;  // declared after m_stream_handlers, destroyed first
     tp::vector<uint8_t> m_write_buf;
+    bool m_in_read_pkt{false};
 };
 
 #endif // _QUIC_CONNECTION_H_

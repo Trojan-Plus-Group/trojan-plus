@@ -1452,7 +1452,14 @@ def test_quic_load_test(binary_path):
                 got = http_get_via_socks5(url, QUIC_CLIENT_PROXY_PORT)
                 with open(os.path.join(TEST_FILES_DIR, fname), 'rb') as f:
                     want = f.read()
-                return fname, got == want, len(got)
+                success = (got == want)
+                if not success:
+                    print_time_log(f"[DEBUG] Content Mismatch for {fname}: got_len={len(got)} want_len={len(want)}")
+                    print_time_log(f"[DEBUG] got prefix: {got[:100]}")
+                    print_time_log(f"[DEBUG] want prefix: {want[:100]}")
+                    print_time_log(f"[DEBUG] got suffix: {got[-100:]}")
+                    print_time_log(f"[DEBUG] want suffix: {want[-100:]}")
+                return fname, success, len(got)
             except Exception as e:
                 return fname, False, str(e)
 
