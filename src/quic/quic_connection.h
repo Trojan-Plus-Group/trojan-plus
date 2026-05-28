@@ -162,8 +162,7 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
                           const boost::asio::ip::udp::endpoint& remote_ep);
     void reschedule_loss_timer();
     void on_handshake_completed_impl();
-    void append_unacked_buf(int64_t stream_id, std::size_t written, std::shared_ptr<tp::string> buf);
-    ngtcp2_vec prepare_ngvec_to_send(int64_t stream_id, const uint8_t* buf, std::size_t buf_len);
+
 
     // Write pending stream data (call after every read or timer event).
     void pump_write();
@@ -199,6 +198,7 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     struct UnackedBuf : public std::enable_shared_from_this<UnackedBuf>{
       int64_t m_stream_id;
       std::size_t m_ack_offset;
+      std::size_t m_bytes_acked;
       std::shared_ptr<ReadBufWithGuard> m_buf;
       bool m_fin;
       IoHandler m_sent_cb;
@@ -206,6 +206,7 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
       std::weak_ptr<QuicConnection> m_conn;
       UnackedBuf(boost::asio::io_context& io_ctx):m_write_timer(io_ctx){}
       void send();
+      void cancel_timer();
     private:
       std::size_t m_sending_offset{0};
     };

@@ -30,7 +30,7 @@
 class NATSession : public ClientSession {
   protected:
     virtual std::pair<tp::string, uint16_t> get_target_endpoint();
-    void in_recv(const std::string_view& data) override;
+    void in_recv(std::shared_ptr<ReadBufWithGuard> data) override;
     void in_sent() override;
 
   public:

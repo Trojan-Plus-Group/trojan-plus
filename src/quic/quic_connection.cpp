@@ -136,7 +136,7 @@ int QuicConnection::cb_recv_stream_data(ngtcp2_conn* /*conn*/, uint32_t flags, i
 }
 
 int QuicConnection::cb_acked_stream_data_offset(ngtcp2_conn* /*conn*/, int64_t stream_id,
-                                                uint64_t /*offset*/, uint64_t datalen,
+                                                uint64_t offset, uint64_t datalen,
                                                 void* user_data, void* /*stream_user_data*/) {
     auto* self = static_cast<QuicConnection*>(user_data);
 
@@ -145,15 +145,28 @@ int QuicConnection::cb_acked_stream_data_offset(ngtcp2_conn* /*conn*/, int64_t s
     auto it_buf = self->m_conn_unacked_bufs.find(stream_id);
     if (it_buf != self->m_conn_unacked_bufs.end()) {
         auto& bufs = it_buf->second;
-        std::size_t remain = datalen;
-        while (remain > 0 && !bufs->buffers.empty()) {
-            auto& front = bufs->buffers.front();
-            if (remain >= front->m_ack_offset) {
-                remain -= front->m_ack_offset;
-                bufs->buffers.pop_front();
+        uint64_t ack_start = offset;
+        uint64_t ack_end = offset + datalen;
+
+        auto it = bufs->buffers.begin();
+        while (it != bufs->buffers.end()) {
+            auto& buf = *it;
+            uint64_t buf_start = buf->m_ack_offset;
+            uint64_t buf_end = buf_start + (buf->m_buf ? buf->m_buf->size() : 0);
+
+            // Calculate intersection
+            uint64_t intersect_start = std::max(ack_start, buf_start);
+            uint64_t intersect_end = std::min(ack_end, buf_end);
+
+            if (intersect_start < intersect_end) {
+                buf->m_bytes_acked += (intersect_end - intersect_start);
+            }
+
+            if (buf->m_buf && buf->m_bytes_acked >= buf->m_buf->size()) {
+                buf->cancel_timer();
+                it = bufs->buffers.erase(it);
             } else {
-                front->m_ack_offset -= remain;
-                remain = 0;
+                ++it;
             }
         }
     }
@@ -183,7 +196,13 @@ int QuicConnection::cb_stream_close(ngtcp2_conn* /*conn*/, uint32_t /*flags*/, i
         self->on_stream_close_cb(stream_id);
     }
 
-    self->m_conn_unacked_bufs.erase(stream_id);
+    auto it_buf = self->m_conn_unacked_bufs.find(stream_id);
+    if (it_buf != self->m_conn_unacked_bufs.end()) {
+        for (auto& buf : it_buf->second->buffers) {
+            buf->cancel_timer();
+        }
+        self->m_conn_unacked_bufs.erase(it_buf);
+    }
 
     if (!ngtcp2_conn_is_local_stream2(self->m_conn, stream_id)) {
         if (ngtcp2_is_bidi_stream(stream_id)) {
@@ -592,6 +611,8 @@ void QuicConnection::send_stream_data(int64_t stream_id, std::shared_ptr<ReadBuf
     if(it == m_conn_unacked_bufs.end()){
         ptr = TP_MAKE_SHARED(UnackedBuffers);
         m_conn_unacked_bufs[stream_id] = ptr;
+    } else {
+        ptr = it->second;
     }
 
     auto& list = ptr->buffers;
@@ -600,14 +621,19 @@ void QuicConnection::send_stream_data(int64_t stream_id, std::shared_ptr<ReadBuf
     unacked_ptr->m_buf = buf;
     unacked_ptr->m_fin = fin;
     unacked_ptr->m_ack_offset = ptr->curr_written;
+    unacked_ptr->m_bytes_acked = 0;
     unacked_ptr->m_sent_cb = std::move(sent_cb);
     unacked_ptr->m_conn = shared_from_this();
     
     list.emplace_back(unacked_ptr);
 
-    ptr->curr_written += buf ? buf->size();
+    ptr->curr_written += buf ? buf->size() : 0;
 
     unacked_ptr->send();
+}
+
+void QuicConnection::UnackedBuf::cancel_timer() {
+    m_write_timer.cancel();
 }
 
 void QuicConnection::UnackedBuf::send(){
@@ -620,7 +646,7 @@ void QuicConnection::UnackedBuf::send(){
         return;
     }
 
-    const auto* ptr = m_buf ? ((const uint8_t*)m_buf->data().data()) + m_sending_offset : nullptr;
+    const auto* ptr = m_buf ? ((const uint8_t*)m_buf->to_string_view().data()) + m_sending_offset : nullptr;
     auto len = m_buf ? m_buf->size() - m_sending_offset : 0;
 
     auto sent = c->send_stream_data_impl(m_stream_id, ptr, len, m_fin);
@@ -888,6 +914,15 @@ void QuicConnection::close(uint64_t app_error_code) {
     m_closed = true;
     m_loss_timer.cancel();
 
+    for (auto& [id, bufs] : m_conn_unacked_bufs) {
+        if (bufs) {
+            for (auto& buf : bufs->buffers) {
+                buf->cancel_timer();
+            }
+        }
+    }
+    m_conn_unacked_bufs.clear();
+
     if(on_close_cb){
         // Delay connection cleanup by 5 seconds to allow pending asynchronous operations 
         // (such as H1 fallback resolver and connects) to finish gracefully.
@@ -1019,26 +1054,7 @@ void QuicConnection::reschedule_loss_timer() {
     });
 }
 
-ngtcp2_vec QuicConnection::prepare_ngvec_to_send(int64_t stream_id, const uint8_t* buf, std::size_t buf_len){
-    ngtcp2_vec vec;
-    if(buf_len > 0 && buf){
-        auto unack_data = TP_MAKE_SHARED(tp::string, (const char*)(buf), buf_len);
-        m_conn_unacked_bufs[stream_id].push_back({written, unack_data});
 
-        vec.base = (uint8_t*)(unack_data->data());
-        vec.len  = unack_data->size();
-    }else{
-        vec.base = nullptr;
-        vec.len  = 0;
-    }
-    return vec;
-}
-
-void QuicConnection::append_unacked_buf(int64_t stream_id, std::size_t written, std::shared_ptr<tp::string> buf) {
-    if (written > 0 && buf) {
-        m_conn_unacked_bufs[stream_id].push_back({written, buf});
-    }
-}
 
 void QuicConnection::stream_extend_window(int64_t stream_id, std::size_t n) {
     if (m_conn && !m_closed && n > 0) {

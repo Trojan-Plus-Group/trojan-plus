@@ -164,7 +164,7 @@ void QuicClientEndpoint::send_stream_data(int64_t stream_id, std::shared_ptr<Rea
         if(sent_cb){
             sent_cb(boost::asio::error::broken_pipe, 0);
         }
-        return
+        return;
     }
     m_conn->send_stream_data(stream_id, buf, fin, std::move(sent_cb));
 }
