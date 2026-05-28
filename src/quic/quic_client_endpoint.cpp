@@ -73,7 +73,7 @@ void QuicClientEndpoint::connect_to_server() {
               auto it = m_stream_data_cb.find(stream_id);
               if (it != m_stream_data_cb.end()) {
                   it->second(data, len, fin);
-              }
+               }
           };
 
           // On handshake completion, fulfil deferred stream-open requests.
@@ -88,7 +88,9 @@ void QuicClientEndpoint::connect_to_server() {
               }
           };
 
-          m_conn->on_stream_close_cb = [this, self](int64_t stream_id) { m_stream_data_cb.erase(stream_id); };
+          m_conn->on_stream_close_cb = [this, self](int64_t stream_id) { 
+            m_stream_data_cb.erase(stream_id); 
+          };
 
           if (!m_conn->init_client(local_endpoint(), m_server_ep)) {
               _log_with_date_time("QuicClientEndpoint: init_client failed", Log::ERROR);
@@ -157,15 +159,14 @@ int64_t QuicClientEndpoint::open_bidi_stream(std::function<void(int64_t)> on_str
     return -1;
 }
 
-int64_t QuicClientEndpoint::send_stream_data(int64_t stream_id, const uint8_t* data, std::size_t len, bool fin) {
+void QuicClientEndpoint::send_stream_data(int64_t stream_id, std::shared_ptr<ReadBufWithGuard> buf, bool fin, IoHandler sent_cb){
     if (!m_conn || m_conn->is_closed()) {
-        return -1;
+        if(sent_cb){
+            sent_cb(boost::asio::error::broken_pipe, 0);
+        }
+        return
     }
-    int64_t written = m_conn->send_stream_data(stream_id, data, len, fin);
-    if (written >= 0) {
-        m_conn->on_pump_write();
-    }
-    return written;
+    m_conn->send_stream_data(stream_id, buf, fin, std::move(sent_cb));
 }
 
 void QuicClientEndpoint::set_stream_data_handler(

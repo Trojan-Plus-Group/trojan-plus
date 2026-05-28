@@ -339,8 +339,8 @@ class ReadBufWithGuard {
     }
 
     inline operator std::string_view() const { return streambuf_to_string_view(read_buf); }
-
-    inline operator tp::streambuf &() { return read_buf; }
+    inline std::string_view to_string_view()const { return streambuf_to_string_view(read_buf); }
+    inline operator tp::streambuf&() { return read_buf; }
 
     inline void begin_read(const char* __file__, int __line__) {
         _guard;
@@ -671,5 +671,6 @@ void close_file_lock(FILE_LOCK_HANDLE& file_fd);
  */
 [[nodiscard]] bool is_quic_client_uni_stream(int64_t stream_id);
 [[nodiscard]] bool is_quic_uni_stream(int64_t stream_id);
+tp::string dump_data_summary(const uint8_t* data, std::size_t len);
 
 #endif //_TROJAN_UTILS_H_

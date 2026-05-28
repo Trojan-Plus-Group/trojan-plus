@@ -14,7 +14,6 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
-#include <string_view>
 
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/tcp.hpp>
@@ -25,6 +24,7 @@
 
 class Config;
 class QuicClientEndpoint;
+class ReadBufWithGuard;
 
 // Uniform async outbound transport – either TLS-over-TCP or a QUIC bidi stream.
 // ClientSession depends only on this interface for its server-facing connection.
@@ -47,7 +47,7 @@ class OutboundTransport {
     virtual void async_read_some(boost::asio::mutable_buffer buf, IoHandler handler) = 0;
 
     // Write all bytes in [data]. Caller must keep data valid until handler fires.
-    virtual void async_write(std::string_view data, IoHandler handler) = 0;
+    virtual void async_write(std::shared_ptr<ReadBufWithGuard> buf, IoHandler handler) = 0;
 
     // Cancel all pending async operations.
     virtual void cancel() = 0;

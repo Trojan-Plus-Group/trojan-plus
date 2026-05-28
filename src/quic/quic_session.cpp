@@ -416,10 +416,10 @@ void QuicProxySession::destroy(bool reset, uint64_t app_error_code) {
         locked_conn->remove_stream_handler(m_stream_id);
         if (reset) {
             locked_conn->reset_stream(m_stream_id, app_error_code);
+            locked_conn->on_pump_write();
         } else {
-            locked_conn->send_stream_data(m_stream_id, nullptr, 0, true);
+            locked_conn->send_stream_data(m_stream_id, nullptr, true, nullptr);
         }
-        locked_conn->on_pump_write();
     }
     _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) + " closed",
                         Log::INFO);

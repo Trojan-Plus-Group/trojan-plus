@@ -9,6 +9,7 @@
  */
 
 #include "quic_connection.h"
+#include "core/utils.h"
 
 #include <chrono>
 #include "mem/memallocator.h"
@@ -138,9 +139,25 @@ int QuicConnection::cb_acked_stream_data_offset(ngtcp2_conn* /*conn*/, int64_t s
                                                 uint64_t /*offset*/, uint64_t datalen,
                                                 void* user_data, void* /*stream_user_data*/) {
     auto* self = static_cast<QuicConnection*>(user_data);
-    if (self->m_h3) {
-        self->m_h3->acked_stream_data(stream_id, datalen);
+
+
+    // Release ACKed buffers maintained at connection level
+    auto it_buf = self->m_conn_unacked_bufs.find(stream_id);
+    if (it_buf != self->m_conn_unacked_bufs.end()) {
+        auto& bufs = it_buf->second;
+        std::size_t remain = datalen;
+        while (remain > 0 && !bufs->buffers.empty()) {
+            auto& front = bufs->buffers.front();
+            if (remain >= front->m_ack_offset) {
+                remain -= front->m_ack_offset;
+                bufs->buffers.pop_front();
+            } else {
+                front->m_ack_offset -= remain;
+                remain = 0;
+            }
+        }
     }
+
     return 0;
 }
 
@@ -165,6 +182,8 @@ int QuicConnection::cb_stream_close(ngtcp2_conn* /*conn*/, uint32_t /*flags*/, i
     } else if (self->on_stream_close_cb) {
         self->on_stream_close_cb(stream_id);
     }
+
+    self->m_conn_unacked_bufs.erase(stream_id);
 
     if (!ngtcp2_conn_is_local_stream2(self->m_conn, stream_id)) {
         if (ngtcp2_is_bidi_stream(stream_id)) {
@@ -476,6 +495,9 @@ void QuicConnection::on_packet(const uint8_t* data, std::size_t datalen,
             return;
         }
     }
+    if (!m_closed && m_conn) {
+        on_pump_write();
+    }
 }
 
 void QuicConnection::on_pump_write() {
@@ -542,7 +564,105 @@ void QuicConnection::pump_write() {
 
 // ---- send_stream_data -------------------------------------------------------
 
-int64_t QuicConnection::send_stream_data(int64_t stream_id, const uint8_t* data, std::size_t datalen,
+void QuicConnection::send_stream_data(int64_t stream_id, std::shared_ptr<ReadBufWithGuard> buf, bool fin, IoHandler sent_cb){
+    if (m_closed || !m_conn) {
+        if(sent_cb){
+            sent_cb(boost::asio::error::broken_pipe, 0);
+        }
+        return;
+    }
+
+    if(!buf || buf->size() == 0){
+        auto sent = send_stream_data_impl(stream_id, nullptr, 0, fin);
+        if(sent < 0){
+            if(sent_cb){
+                sent_cb(boost::asio::error::broken_pipe, 0);
+            }
+        }else{
+            if(sent_cb){
+                sent_cb(boost::system::error_code(), 0);
+            }
+        }
+        return;
+    }
+
+    // cache the data for ack
+    auto it = m_conn_unacked_bufs.find(stream_id);
+    std::shared_ptr<UnackedBuffers> ptr;
+    if(it == m_conn_unacked_bufs.end()){
+        ptr = TP_MAKE_SHARED(UnackedBuffers);
+        m_conn_unacked_bufs[stream_id] = ptr;
+    }
+
+    auto& list = ptr->buffers;
+    auto unacked_ptr = TP_MAKE_SHARED(UnackedBuf, m_endpoint.io_context());
+    unacked_ptr->m_stream_id = stream_id;
+    unacked_ptr->m_buf = buf;
+    unacked_ptr->m_fin = fin;
+    unacked_ptr->m_ack_offset = ptr->curr_written;
+    unacked_ptr->m_sent_cb = std::move(sent_cb);
+    unacked_ptr->m_conn = shared_from_this();
+    
+    list.emplace_back(unacked_ptr);
+
+    ptr->curr_written += buf ? buf->size();
+
+    unacked_ptr->send();
+}
+
+void QuicConnection::UnackedBuf::send(){
+    auto c = m_conn.lock();
+    if(!c){
+        if(m_sent_cb){
+            m_sent_cb(boost::asio::error::broken_pipe, 0);
+            m_sent_cb = nullptr;
+        }
+        return;
+    }
+
+    const auto* ptr = m_buf ? ((const uint8_t*)m_buf->data().data()) + m_sending_offset : nullptr;
+    auto len = m_buf ? m_buf->size() - m_sending_offset : 0;
+
+    auto sent = c->send_stream_data_impl(m_stream_id, ptr, len, m_fin);
+    if(sent < 0){
+        if(m_sent_cb){
+            m_sent_cb(boost::asio::error::broken_pipe, 0);
+            m_sent_cb = nullptr;
+        }
+    }else if((std::size_t)sent == len){
+        // finished
+        if(m_sent_cb){
+            m_sent_cb(boost::system::error_code(), m_buf ? m_buf->size() : 0);
+            m_sent_cb = nullptr;
+        }
+    }else{
+        // wait for a while and send again
+        m_sending_offset += sent;
+
+        m_write_timer.expires_after(std::chrono::milliseconds(50));
+        m_write_timer.async_wait(
+            [unacked = this->shared_from_this()](boost::system::error_code ec){
+                if(ec){
+                    unacked->m_sent_cb(boost::asio::error::operation_aborted, 0);
+                    unacked->m_sent_cb = nullptr;
+                    return;
+                }
+                unacked->send();
+            }
+        );
+    }
+
+    if(sent > 0){
+        c->on_pump_write();
+    }
+}
+
+void QuicConnection::send_stream_vecs(int64_t stream_id, 
+    const ngtcp2_vec* datav, std::size_t datavcnt, bool fin, IoHandler sent_cb){
+    
+}
+
+int64_t QuicConnection::send_stream_data_impl(int64_t stream_id, const uint8_t* data, std::size_t datalen,
                                       bool fin) {
     if (m_closed || !m_conn) {
         return -1;
@@ -553,7 +673,7 @@ int64_t QuicConnection::send_stream_data(int64_t stream_id, const uint8_t* data,
     ngtcp2_pkt_info pi{};
 
     std::size_t written = 0;
-    bool fin_sent = false;
+    bool needs_flush = false;
 
     for (;;) {
         std::size_t remain = datalen - written;
@@ -562,17 +682,29 @@ int64_t QuicConnection::send_stream_data(int64_t stream_id, const uint8_t* data,
         vec.len  = remain;
         ngtcp2_ssize pdatalen = -1;
 
-        bool send_fin = fin && !fin_sent && (remain == 0 || written + remain == datalen);
         uint32_t flags = 0;
-        if (send_fin) flags |= NGTCP2_WRITE_STREAM_FLAG_FIN;
+        if (fin) {
+            // mark fin tag for all data, ngtcp2 will process correctly
+            flags |= NGTCP2_WRITE_STREAM_FLAG_FIN;
+        } else {
+            flags |= NGTCP2_WRITE_STREAM_FLAG_MORE;
+        }
 
         auto nwrite = ngtcp2_conn_writev_stream(m_conn, &ps.path, &pi, m_write_buf.data(), m_write_buf.size(),
                                                 &pdatalen, flags,
                                                 stream_id, &vec, 1, now_nanos());
 
+        if (nwrite == NGTCP2_ERR_WRITE_MORE) {
+            if (pdatalen > 0) written += pdatalen;
+            if (written == datalen && !fin) {
+                needs_flush = true;
+                break;
+            }
+            continue;
+        }
+
         if (nwrite < 0) {
             if (nwrite == NGTCP2_ERR_STREAM_DATA_BLOCKED) {
-                // Not a fatal error, just blocked. Return what we wrote so far (or 0).
                 return static_cast<int64_t>(written);
             }
             if (nwrite != NGTCP2_ERR_STREAM_SHUT_WR) {
@@ -592,11 +724,7 @@ int64_t QuicConnection::send_stream_data(int64_t stream_id, const uint8_t* data,
             written += pdatalen;
         }
 
-        if (send_fin && pdatalen >= 0) {
-            fin_sent = true;
-        }
-
-        if (written == datalen && (fin_sent || !fin)) {
+        if (written == datalen) {
             break;
         }
 
@@ -606,7 +734,44 @@ int64_t QuicConnection::send_stream_data(int64_t stream_id, const uint8_t* data,
             break;
         }
     }
+
+    if (needs_flush) {
+        auto flush_nwrite = ngtcp2_conn_writev_stream(m_conn, &ps.path, &pi, m_write_buf.data(), m_write_buf.size(),
+                                                      nullptr, 0, -1, nullptr, 0, now_nanos());
+        if (flush_nwrite > 0) {
+            m_endpoint.send_packet(m_peer, m_write_buf.data(), static_cast<std::size_t>(flush_nwrite));
+        }
+    }
+
     return static_cast<int64_t>(written);
+}
+
+
+int64_t QuicConnection::send_stream_vecs_impl(int64_t stream_id,
+                                          const ngtcp2_vec* datav,
+                                          std::size_t datavcnt, bool fin) {
+    if (m_closed || !m_conn) return -1;
+
+    ngtcp2_path_storage ps;
+    ngtcp2_path_storage_zero(&ps);
+    ngtcp2_pkt_info pi{};
+    ngtcp2_ssize pdatalen = -1;
+
+    uint32_t flags = 0;
+    if (fin) flags |= NGTCP2_WRITE_STREAM_FLAG_FIN;
+
+    auto nwrite = ngtcp2_conn_writev_stream(
+        m_conn, &ps.path, &pi,
+        m_write_buf.data(), m_write_buf.size(),
+        &pdatalen, flags,
+        stream_id, datav, datavcnt, now_nanos());
+
+    if (nwrite == NGTCP2_ERR_STREAM_DATA_BLOCKED) return 0;
+    if (nwrite < 0) return -1;
+    if (nwrite > 0) {
+        m_endpoint.send_packet(m_peer, m_write_buf.data(), static_cast<std::size_t>(nwrite));
+    }
+    return pdatalen > 0 ? static_cast<int64_t>(pdatalen) : (fin ? 0 : 0);
 }
 
 // ---- open_bidi_stream -------------------------------------------------------
@@ -635,33 +800,6 @@ int64_t QuicConnection::open_uni_stream() {
     int64_t id = -1;
     if (ngtcp2_conn_open_uni_stream(m_conn, &id, nullptr) != 0) return -1;
     return id;
-}
-
-int64_t QuicConnection::send_stream_vecs(int64_t stream_id,
-                                          const ngtcp2_vec* datav,
-                                          std::size_t datavcnt, bool fin) {
-    if (m_closed || !m_conn) return -1;
-
-    ngtcp2_path_storage ps;
-    ngtcp2_path_storage_zero(&ps);
-    ngtcp2_pkt_info pi{};
-    ngtcp2_ssize pdatalen = -1;
-
-    uint32_t flags = 0;
-    if (fin) flags |= NGTCP2_WRITE_STREAM_FLAG_FIN;
-
-    auto nwrite = ngtcp2_conn_writev_stream(
-        m_conn, &ps.path, &pi,
-        m_write_buf.data(), m_write_buf.size(),
-        &pdatalen, flags,
-        stream_id, datav, datavcnt, now_nanos());
-
-    if (nwrite == NGTCP2_ERR_STREAM_DATA_BLOCKED) return 0;
-    if (nwrite < 0) return -1;
-    if (nwrite > 0) {
-        m_endpoint.send_packet(m_peer, m_write_buf.data(), static_cast<std::size_t>(nwrite));
-    }
-    return pdatalen > 0 ? static_cast<int64_t>(pdatalen) : (fin ? 0 : 0);
 }
 
 QuicToHttp3Connect& QuicConnection::get_or_create_h3() {
@@ -881,9 +1019,31 @@ void QuicConnection::reschedule_loss_timer() {
     });
 }
 
+ngtcp2_vec QuicConnection::prepare_ngvec_to_send(int64_t stream_id, const uint8_t* buf, std::size_t buf_len){
+    ngtcp2_vec vec;
+    if(buf_len > 0 && buf){
+        auto unack_data = TP_MAKE_SHARED(tp::string, (const char*)(buf), buf_len);
+        m_conn_unacked_bufs[stream_id].push_back({written, unack_data});
+
+        vec.base = (uint8_t*)(unack_data->data());
+        vec.len  = unack_data->size();
+    }else{
+        vec.base = nullptr;
+        vec.len  = 0;
+    }
+    return vec;
+}
+
+void QuicConnection::append_unacked_buf(int64_t stream_id, std::size_t written, std::shared_ptr<tp::string> buf) {
+    if (written > 0 && buf) {
+        m_conn_unacked_bufs[stream_id].push_back({written, buf});
+    }
+}
+
 void QuicConnection::stream_extend_window(int64_t stream_id, std::size_t n) {
     if (m_conn && !m_closed && n > 0) {
         ngtcp2_conn_extend_max_stream_offset(m_conn, stream_id, n);
+        ngtcp2_conn_extend_max_offset(m_conn, n);
         // Trigger active pump write to immediately transmit window updates (MAX_DATA / MAX_STREAM_DATA) to prevent deadlock.
         // Note: ngtcp2 has internal coalescing and thresholds for window updates (usually 1/2 of initial window size).
         // It won't actually queue frames or generate UDP packets until the threshold is crossed, 

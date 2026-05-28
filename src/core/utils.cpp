@@ -127,10 +127,11 @@ std::string_view streambuf_to_string_view(const tp::streambuf& target) {
         return std::string_view(static_cast<const char*>(it->data()), total_size);
     }
     // multiple buffers, need to merge to a ring of thread-local buffers to prevent concurrent/reentrant overwrite
-    static thread_local tp::string merge_bufs[16];
+    const int cycle_buffer_num = 2;
+    static thread_local tp::string merge_bufs[cycle_buffer_num];
     static thread_local std::size_t next_idx = 0;
     auto& merge_buf = merge_bufs[next_idx];
-    next_idx = (next_idx + 1) % 16;
+    next_idx = (next_idx + 1) % cycle_buffer_num;
 
     merge_buf.resize(total_size);
     boost::asio::buffer_copy(boost::asio::buffer(&merge_buf[0], total_size), buffers);
@@ -711,6 +712,40 @@ bool is_quic_client_uni_stream(int64_t stream_id) {
 
 bool is_quic_uni_stream(int64_t stream_id) {
     return (stream_id & 0x2) != 0;
+}
+
+tp::string dump_data_summary(const uint8_t* data, std::size_t len) {
+    if (len == 0) {
+        return "empty";
+    }
+    char buf[128];
+    std::size_t prefix_len = std::min(len, std::size_t(16));
+    std::size_t suffix_len = (len > 32) ? 16 : (len - prefix_len);
+    
+    tp::string prefix_str;
+    for (std::size_t i = 0; i < prefix_len; ++i) {
+        char c = static_cast<char>(data[i]);
+        if ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
+            prefix_str.push_back(c);
+        } else {
+            prefix_str.push_back('.');
+        }
+    }
+    
+    tp::string suffix_str;
+    if (suffix_len > 0) {
+        for (std::size_t i = len - suffix_len; i < len; ++i) {
+            char c = static_cast<char>(data[i]);
+            if ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
+                suffix_str.push_back(c);
+            } else {
+                suffix_str.push_back('.');
+            }
+        }
+    }
+    
+    snprintf(buf, sizeof(buf), "len=%zu prefix=%s suffix=%s", len, prefix_str.c_str(), suffix_str.c_str());
+    return tp::string(buf);
 }
 
 #ifndef _WIN32 // nat mode does not support in windows platform

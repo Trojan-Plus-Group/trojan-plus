@@ -563,11 +563,12 @@ void Service::reconnect_quic_client(){
         return;
     }
     
-    _log_with_date_time("reconnect quic client!");
-    if(m_quic_client){
-        m_quic_client->stop();
+    if(m_quic_client && m_quic_client->is_connected()){
+        _log_with_date_time("quic client is already connected!");
+        return;
     }
     
+    _log_with_date_time("reconnect quic client!");
     m_quic_client = TP_MAKE_SHARED(QuicClientEndpoint, std::ref(io_context), config, m_quic_tls_ctx);
     m_quic_client->start();
     _unguard;

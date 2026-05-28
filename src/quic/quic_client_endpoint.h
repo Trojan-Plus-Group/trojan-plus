@@ -12,15 +12,20 @@
 #define _QUIC_CLIENT_ENDPOINT_H_
 
 #include <functional>
+#include <memory>
 
 #include "quic_connection.h"
 #include "quic_endpoint.h"
+
+class ReadBufWithGuard;
 
 // Client-side QUIC endpoint. Maintains one QuicConnection to the trojan
 // server. Callers use open_bidi_stream() to get a stream_id, then call
 // send_stream_data() / register on_stream_data_cb to communicate.
 class QuicClientEndpoint : public QuicEndpoint {
   public:
+    using IoHandler = std::function<void(boost::system::error_code, std::size_t)>;
+
     QuicClientEndpoint(boost::asio::io_context& io_ctx, const Config& config,
                        std::shared_ptr<QuicTlsCtx> tls_ctx);
 
@@ -31,8 +36,8 @@ class QuicClientEndpoint : public QuicEndpoint {
     // The connected_handler is called once the stream is open and ready.
     int64_t open_bidi_stream(std::function<void(int64_t /*stream_id*/)> on_stream_ready);
 
-    // Send data on an open stream. Returns bytes sent, or -1 on error.
-    int64_t send_stream_data(int64_t stream_id, const uint8_t* data, std::size_t len, bool fin);
+    // Send data on an open stream.
+    void send_stream_data(int64_t stream_id, std::shared_ptr<ReadBufWithGuard> buf, bool fin, IoHandler sent_cb);
 
     // Register a per-stream data handler.
     void set_stream_data_handler(int64_t stream_id,

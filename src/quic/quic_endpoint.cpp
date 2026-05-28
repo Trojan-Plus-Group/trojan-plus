@@ -100,14 +100,14 @@ void QuicEndpoint::async_recv() {
 
 
             int read_count = 0;
-            const int MAX_READS_PER_EVENT = 64; // 或者 128, 256，视业务而定
+            const int MAX_READS_PER_EVENT = 64; // Or 128, 256, depending on the workload
 
             // ==========================================
-            // 阶段 1：疯狂吸干网卡缓冲区 (The Drain Loop)
+            // Phase 1: Drain the NIC buffer (The Drain Loop)
             // ==========================================
             while (read_count++ < MAX_READS_PER_EVENT) {
                 boost::system::error_code read_ec;
-                // 使用同步非阻塞模式读取！
+                // Read using synchronous non-blocking mode!
                 size_t bytes_recvd = m_socket.receive_from(
                     boost::asio::buffer(m_recv_buf.data(), m_recv_buf.size()), 
                     m_recv_endpoint, 
@@ -118,10 +118,10 @@ void QuicEndpoint::async_recv() {
                 if (read_ec) {
                     if (read_ec == boost::asio::error::would_block || 
                         read_ec == boost::asio::error::try_again) {
-                        break; // 正常吸干
+                        break; // Normal drain completed (no more data to read)
                     }
-                    // 发生了真正的错误 (如 connection_reset)
-                    // 记录日志，或者终止当前连接
+                    // A real error occurred (e.g., connection_reset)
+                    // Log the error or terminate the current connection
                     // log_error(read_ec);
                     if (m_running) {
                         _log_with_date_time("QuicEndpoint: async_receive_from error: " +
@@ -134,12 +134,12 @@ void QuicEndpoint::async_recv() {
                 if (bytes_recvd > 0) {
                     // on_packet will set the quic connection stream offset
                     on_packet(m_recv_buf.data(), bytes_recvd, m_recv_endpoint);
-                    need_flush = true; // 状态改变，一会儿需要检查是否发包
+                    need_flush = true; // State changed, need to check if we should send packets later
                 }
             }
 
             // ==========================================
-            // 阶段 2：发送累积的数据 (The Send Phase)
+            // Phase 2: Send accumulated data (The Send Phase)
             // ==========================================
             if (need_flush) {
                 on_pump_write();

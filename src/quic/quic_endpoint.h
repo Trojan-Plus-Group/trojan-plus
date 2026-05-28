@@ -42,6 +42,7 @@ class QuicEndpoint : public std::enable_shared_from_this<QuicEndpoint> {
 
     boost::asio::io_context& io_context() { return m_io_context; }
     const Config& config() const { return m_config; }
+    bool is_running() const { return m_running; }
 
     // Per-process secret for deterministic Stateless Reset token derivation.
     // Generated once at endpoint construction, shared across all connections.

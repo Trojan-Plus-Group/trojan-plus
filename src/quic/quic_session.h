@@ -20,6 +20,7 @@
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/steady_timer.hpp>
+#include <list>
 
 #include <nghttp3/nghttp3.h>
 
@@ -54,7 +55,7 @@ class QuicProxySession : public QuicStreamHandler, public std::enable_shared_fro
     void forward_to_h1_upstream(std::string_view data, bool fin);
     void connect_target(const tp::string& host, uint16_t port);
     void tcp_read();
-    void flush_tcp_read_buf(std::size_t offset, std::size_t bytes);
+    void flush_tcp_read_buf(std::shared_ptr<tp::string> buf, std::size_t offset, std::size_t bytes);
     void write_to_target(tp::string data, bool fin = false);
     void do_tcp_write();
     void destroy(bool reset = false, uint64_t app_error_code = 0);
@@ -68,7 +69,8 @@ class QuicProxySession : public QuicStreamHandler, public std::enable_shared_fro
     boost::asio::ip::tcp::resolver m_resolver;
 
     tp::string m_quic_recv_buf;    // accumulates stream bytes until request parsed
-    tp::string m_tcp_buf;     // read buffer for upstream → stream direction
+    std::list<std::pair<std::size_t, std::shared_ptr<tp::string>>> m_unacked_bufs; // unacked stream buffers
+    std::shared_ptr<tp::string> m_tcp_pending_buf; // current pending write buffer
 
     void udp_read();
     void out_udp_sent();

@@ -109,11 +109,11 @@ class TlsOutboundTransport
         m_socket.async_read_some(buf, std::move(handler));
     }
 
-    void async_write(std::string_view data, IoHandler handler) override {
+    void async_write(std::shared_ptr<ReadBufWithGuard> buf, IoHandler handler) override {
         // Caller captures the backing buffer in the handler closure to keep it alive.
         boost::asio::async_write(
             m_socket,
-            boost::asio::buffer(data.data(), data.size()),
+            boost::asio::buffer(buf->data(), buf->size()),
             std::move(handler));
     }
 
@@ -240,19 +240,7 @@ class QuicStreamTransport : public OutboundTransport,
         }
     }
 
-    void async_write(std::string_view data, IoHandler handler) override {
-        auto buf = TP_MAKE_SHARED(tp::string, data);
-        do_write(buf, 0, std::move(handler));
-    }
-
-    void do_write(std::shared_ptr<tp::string> buf, std::size_t offset, IoHandler handler) {
-        if (offset >= buf->size()) {
-            boost::asio::post(m_io_ctx, tp::bind_mem_alloc([handler = std::move(handler), len = buf->size()]() mutable {
-                handler({}, len);
-            }));
-            return;
-        }
-
+    void async_write(std::shared_ptr<ReadBufWithGuard> buf, IoHandler handler) override {
         auto ep = m_endpoint.lock();
         if (!ep) {
             boost::asio::post(m_io_ctx, tp::bind_mem_alloc([handler = std::move(handler)]() mutable {
@@ -261,35 +249,7 @@ class QuicStreamTransport : public OutboundTransport,
             return;
         }
 
-        int64_t written = ep->send_stream_data(
-            m_stream_id,
-            reinterpret_cast<const uint8_t*>(buf->data() + offset),
-            buf->size() - offset,
-            false);
-
-        if (written < 0) {
-            boost::asio::post(m_io_ctx, tp::bind_mem_alloc([handler = std::move(handler)]() mutable {
-                handler(boost::asio::error::broken_pipe, 0);
-            }));
-            return;
-        }
-
-        offset += written;
-        if (offset < buf->size()) {
-            m_write_timer.expires_after(std::chrono::milliseconds(50));
-            m_write_timer.async_wait([this, self = shared_from_this(), buf, offset, h = std::move(handler)]
-                                    (const boost::system::error_code& ec) mutable {
-                if (!ec) {
-                    do_write(buf, offset, std::move(h));
-                } else {
-                    h(ec, 0);
-                }
-            });
-        } else {
-            boost::asio::post(m_io_ctx, tp::bind_mem_alloc([handler = std::move(handler), len = buf->size()]() mutable {
-                handler({}, len);
-            }));
-        }
+        ep->send_stream_data(m_stream_id, buf, false, std::move(handler));
     }
 
     void cancel() override {
@@ -301,7 +261,7 @@ class QuicStreamTransport : public OutboundTransport,
         if (auto ep = m_endpoint.lock()) {
             if (m_stream_id >= 0) {
                 ep->remove_stream_data_handler(m_stream_id);
-                ep->send_stream_data(m_stream_id, nullptr, 0, true);
+                ep->send_stream_data(m_stream_id, nullptr, true, nullptr);
             }
         }
     }

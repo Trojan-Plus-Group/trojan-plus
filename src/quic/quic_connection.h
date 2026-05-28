@@ -11,6 +11,7 @@
 #ifndef _QUIC_CONNECTION_H_
 #define _QUIC_CONNECTION_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -19,6 +20,7 @@
 
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/steady_timer.hpp>
+#include <list>
 
 #include <ngtcp2/ngtcp2.h>
 #include <ngtcp2/ngtcp2_crypto.h>
@@ -30,6 +32,7 @@ class QuicEndpoint;
 class QuicTlsCtx;
 class QuicProxySession;
 class QuicToHttp3Connect;
+class ReadBufWithGuard;
 
 struct WOLFSSL;
 
@@ -37,6 +40,8 @@ struct WOLFSSL;
 // All I/O is driven through the owning QuicEndpoint's UDP socket.
 class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
   public:
+    using IoHandler = std::function<void(boost::system::error_code, std::size_t)>;
+
     QuicConnection(QuicEndpoint& endpoint, std::shared_ptr<QuicTlsCtx> tls_ctx,
                    const boost::asio::ip::udp::endpoint& peer);
     ~QuicConnection();
@@ -67,14 +72,9 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
 
     void on_pump_write();
 
-    // Send data on an existing bidi stream. Returns false on error.
-    int64_t send_stream_data(int64_t stream_id, const uint8_t* data, std::size_t datalen, bool fin);
-
-    // Send vectorised stream data sourced from nghttp3 (multi-vec variant).
-    // Returns pdatalen (bytes accepted by ngtcp2), 0 if flow-controlled, -1 on error.
-    int64_t send_stream_vecs(int64_t stream_id,
-                             const ngtcp2_vec* datav, std::size_t datavcnt, bool fin);
-
+    void send_stream_data(int64_t stream_id, std::shared_ptr<ReadBufWithGuard> buf, bool fin, IoHandler sent_cb);
+    void send_stream_vecs(int64_t stream_id, const ngtcp2_vec* datav, std::size_t datavcnt, bool fin, IoHandler sent_cb);
+    
     // Open a new server-initiated unidirectional stream (for H3 control/QPACK).
     // Returns the stream ID, or -1 on error.
     int64_t open_uni_stream();
@@ -162,10 +162,18 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
                           const boost::asio::ip::udp::endpoint& remote_ep);
     void reschedule_loss_timer();
     void on_handshake_completed_impl();
+    void append_unacked_buf(int64_t stream_id, std::size_t written, std::shared_ptr<tp::string> buf);
+    ngtcp2_vec prepare_ngvec_to_send(int64_t stream_id, const uint8_t* buf, std::size_t buf_len);
 
     // Write pending stream data (call after every read or timer event).
     void pump_write();
 
+    // Send data on an existing bidi stream. Returns false on error.
+    int64_t send_stream_data_impl(int64_t stream_id, const uint8_t* data, std::size_t datalen, bool fin);
+
+    // Send vectorised stream data sourced from nghttp3 (multi-vec variant).
+    // Returns pdatalen (bytes accepted by ngtcp2), 0 if flow-controlled, -1 on error.
+    int64_t send_stream_vecs_impl(int64_t stream_id, const ngtcp2_vec* datav, std::size_t datavcnt, bool fin);
 
     QuicEndpoint& m_endpoint;
     std::shared_ptr<QuicTlsCtx> m_tls_ctx;
@@ -188,7 +196,28 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     ConnType m_conn_type{ConnType::unknown};
     uint64_t m_last_timer_expiry{0};
 
+    struct UnackedBuf : public std::enable_shared_from_this<UnackedBuf>{
+      int64_t m_stream_id;
+      std::size_t m_ack_offset;
+      std::shared_ptr<ReadBufWithGuard> m_buf;
+      bool m_fin;
+      IoHandler m_sent_cb;
+      boost::asio::steady_timer m_write_timer;
+      std::weak_ptr<QuicConnection> m_conn;
+      UnackedBuf(boost::asio::io_context& io_ctx):m_write_timer(io_ctx){}
+      void send();
+    private:
+      std::size_t m_sending_offset{0};
+    };
+    
+    // reserve un-acked buffer until ack 
+    struct UnackedBuffers{
+      tp::list<std::shared_ptr<UnackedBuf>> buffers;
+      std::size_t curr_written{0};
+    };
+
     tp::unordered_map<int64_t, std::shared_ptr<QuicStreamHandler>> m_stream_handlers;
+    tp::unordered_map<int64_t, std::shared_ptr<UnackedBuffers>> m_conn_unacked_bufs;
     std::unique_ptr<QuicToHttp3Connect> m_h3;  // declared after m_stream_handlers, destroyed first
     tp::vector<uint8_t> m_write_buf;
     bool m_in_read_pkt{false};

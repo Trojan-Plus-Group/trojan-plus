@@ -50,18 +50,21 @@ class ClientSession : public SocketSession {
     tp::streambuf udp_recv_buf;
     tp::streambuf udp_send_buf;
 
-    ReadBufWithGuard in_read_buf;
+    std::shared_ptr<ReadBufWithGuard> in_read_buf;
+    std::shared_ptr<ReadBufWithGuard> get_in_read_buf(tp::streambuf* src = nullptr);
+
     ReadBufWithGuard out_read_buf;
     ReadBufWithGuard udp_read_buf;
 
     tp::streambuf out_write_buf;
     tp::streambuf udp_data_buf;
+    bool pipeline_session{false};
 
   protected:
     void in_async_read();
     void in_async_write(const std::string_view& data, size_t ack_count = 0);
     void out_async_read();
-    void out_async_write(const std::string_view& data);
+    void out_async_write(std::shared_ptr<ReadBufWithGuard> data);
     void out_sent();
     void udp_async_read();
     void udp_async_write(const std::string_view& data, const boost::asio::ip::udp::endpoint& endpoint);
@@ -69,7 +72,7 @@ class ClientSession : public SocketSession {
     void udp_sent();
     void out_recv(const std::string_view& data, size_t ack_count = 0);
 
-    virtual void in_recv(const std::string_view& data);
+    virtual void in_recv(std::shared_ptr<ReadBufWithGuard> data);
     virtual void in_sent();
 
     bool prepare_session();
