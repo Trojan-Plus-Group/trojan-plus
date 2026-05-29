@@ -73,7 +73,7 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     void on_pump_write();
 
     void send_stream_data(int64_t stream_id, std::shared_ptr<ReadBufWithGuard> buf, bool fin, IoHandler sent_cb);
-    void send_stream_vecs(int64_t stream_id, const ngtcp2_vec* datav, std::size_t datavcnt, bool fin, IoHandler sent_cb);
+    int64_t send_stream_vecs(int64_t stream_id, const ngtcp2_vec* datav, std::size_t datavcnt, bool fin, IoHandler sent_cb);
     
     // Open a new server-initiated unidirectional stream (for H3 control/QPACK).
     // Returns the stream ID, or -1 on error.
@@ -222,6 +222,7 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     std::unique_ptr<QuicToHttp3Connect> m_h3;  // declared after m_stream_handlers, destroyed first
     tp::vector<uint8_t> m_write_buf;
     bool m_in_read_pkt{false};
+
 };
 
 #endif // _QUIC_CONNECTION_H_

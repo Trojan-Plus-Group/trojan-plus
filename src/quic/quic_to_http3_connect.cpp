@@ -164,7 +164,7 @@ void QuicToHttp3Connect::pump_h3_response() {
             sid,
             reinterpret_cast<const ngtcp2_vec*>(h3vecs),
             static_cast<std::size_t>(n),
-            fin != 0);
+            fin != 0, nullptr);
 
         // Always report back to nghttp3 how many bytes ngtcp2 accepted
         nghttp3_conn_add_write_offset(

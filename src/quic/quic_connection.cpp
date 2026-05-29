@@ -55,6 +55,7 @@ static const ngtcp2_mem tj_ngtcp2_mem = {
 
 #include <ngtcp2/ngtcp2_crypto_wolfssl.h>
 #include <ngtcp2/ngtcp2_crypto.h>
+
 #include <wolfssl/options.h>
 #include <wolfssl/ssl.h>
 
@@ -546,12 +547,18 @@ void QuicConnection::pump_write() {
     ngtcp2_path_storage_zero(&ps);
     ngtcp2_pkt_info pi{};
 
+    bool ppe_pending = false;
     for (;;) {
         auto nwrite = ngtcp2_conn_write_pkt(m_conn, &ps.path, &pi, m_write_buf.data(), m_write_buf.size(),
                                             now_nanos());
         if (nwrite < 0) {
             if (nwrite == NGTCP2_ERR_WRITE_MORE) {
+                ppe_pending = true;
                 continue;
+            }
+            if (ppe_pending) {
+                ngtcp2_conn_write_pkt(m_conn, &ps.path, &pi, m_write_buf.data(), m_write_buf.size(),
+                                      now_nanos());
             }
             _log_with_date_time(
                 "QuicConnection::pump_write: " + tp::string(ngtcp2_strerror(static_cast<int>(nwrite))),
@@ -561,6 +568,7 @@ void QuicConnection::pump_write() {
             }
             return;
         }
+        ppe_pending = false;
         if (nwrite == 0) {
             break;
         }
@@ -588,6 +596,14 @@ void QuicConnection::send_stream_data(int64_t stream_id, std::shared_ptr<ReadBuf
         if(sent_cb){
             sent_cb(boost::asio::error::broken_pipe, 0);
         }
+        return;
+    }
+
+    if (m_in_read_pkt) {
+        auto self = shared_from_this();
+        boost::asio::post(m_endpoint.io_context(), [this, self, stream_id, buf, fin, sent_cb]() {
+            send_stream_data(stream_id, buf, fin, sent_cb);
+        });
         return;
     }
 
@@ -669,10 +685,13 @@ void QuicConnection::UnackedBuf::send(){
         m_write_timer.async_wait(
             [unacked = this->shared_from_this()](boost::system::error_code ec){
                 if(ec){
-                    unacked->m_sent_cb(boost::asio::error::operation_aborted, 0);
-                    unacked->m_sent_cb = nullptr;
+                    if (unacked->m_sent_cb) {
+                        unacked->m_sent_cb(boost::asio::error::operation_aborted, 0);
+                        unacked->m_sent_cb = nullptr;
+                    }
                     return;
                 }
+                _log_with_date_time("UnackedBuf retry send stream_id=" + tp::to_string(unacked->m_stream_id), Log::ALL);
                 unacked->send();
             }
         );
@@ -683,9 +702,9 @@ void QuicConnection::UnackedBuf::send(){
     }
 }
 
-void QuicConnection::send_stream_vecs(int64_t stream_id, 
+int64_t QuicConnection::send_stream_vecs(int64_t stream_id, 
     const ngtcp2_vec* datav, std::size_t datavcnt, bool fin, IoHandler sent_cb){
-    
+        return 0;
 }
 
 int64_t QuicConnection::send_stream_data_impl(int64_t stream_id, const uint8_t* data, std::size_t datalen,
@@ -699,7 +718,20 @@ int64_t QuicConnection::send_stream_data_impl(int64_t stream_id, const uint8_t* 
     ngtcp2_pkt_info pi{};
 
     std::size_t written = 0;
-    bool needs_flush = false;
+    bool ppe_pending = false;  // true when WRITE_MORE was returned, ngtcp2 PPE_PENDING flag is set
+
+    // Flush PPE on any exit path to ensure PPE_PENDING is cleared before read_pkt can be called.
+    // ngtcp2 asserts PPE_PENDING==0 at the top of ngtcp2_conn_read_pkt_versioned.
+    // IMPORTANT: must reuse the same ps/pi/buf as the WRITE_MORE call per ngtcp2 contract.
+    auto flush_ppe = [&]() {
+        if (!ppe_pending) return;
+        ppe_pending = false;
+        auto flush_nwrite = ngtcp2_conn_writev_stream(m_conn, &ps.path, &pi, m_write_buf.data(), m_write_buf.size(),
+                                                      nullptr, 0, -1, nullptr, 0, now_nanos());
+        if (flush_nwrite > 0) {
+            m_endpoint.send_packet(m_peer, m_write_buf.data(), static_cast<std::size_t>(flush_nwrite));
+        }
+    };
 
     for (;;) {
         std::size_t remain = datalen - written;
@@ -716,14 +748,18 @@ int64_t QuicConnection::send_stream_data_impl(int64_t stream_id, const uint8_t* 
             flags |= NGTCP2_WRITE_STREAM_FLAG_MORE;
         }
 
+        if (flags & NGTCP2_WRITE_STREAM_FLAG_MORE) {
+            ppe_pending = true;
+        }
+
         auto nwrite = ngtcp2_conn_writev_stream(m_conn, &ps.path, &pi, m_write_buf.data(), m_write_buf.size(),
                                                 &pdatalen, flags,
                                                 stream_id, &vec, 1, now_nanos());
 
         if (nwrite == NGTCP2_ERR_WRITE_MORE) {
+            ppe_pending = true;
             if (pdatalen > 0) written += pdatalen;
             if (written == datalen && !fin) {
-                needs_flush = true;
                 break;
             }
             continue;
@@ -731,17 +767,22 @@ int64_t QuicConnection::send_stream_data_impl(int64_t stream_id, const uint8_t* 
 
         if (nwrite < 0) {
             if (nwrite == NGTCP2_ERR_STREAM_DATA_BLOCKED) {
+                // PPE_PENDING may be set from a previous WRITE_MORE; must flush before returning.
+                flush_ppe();
                 return static_cast<int64_t>(written);
             }
             if (nwrite != NGTCP2_ERR_STREAM_SHUT_WR) {
                 _log_with_date_time(
-                    tp::string(ngtcp2_strerror(static_cast<int>(nwrite))),
+                    "send_stream_data_impl error=" + tp::string(ngtcp2_strerror(static_cast<int>(nwrite))) +
+                    " stream=" + tp::to_string(stream_id),
                     Log::WARN);
             }
+            flush_ppe();
             if (written > 0) return static_cast<int64_t>(written);
             return -1;
         }
 
+        ppe_pending = false;  // successful writev clears internal PPE_PENDING
         if (nwrite > 0) {
             m_endpoint.send_packet(m_peer, m_write_buf.data(), static_cast<std::size_t>(nwrite));
         }
@@ -761,14 +802,7 @@ int64_t QuicConnection::send_stream_data_impl(int64_t stream_id, const uint8_t* 
         }
     }
 
-    if (needs_flush) {
-        auto flush_nwrite = ngtcp2_conn_writev_stream(m_conn, &ps.path, &pi, m_write_buf.data(), m_write_buf.size(),
-                                                      nullptr, 0, -1, nullptr, 0, now_nanos());
-        if (flush_nwrite > 0) {
-            m_endpoint.send_packet(m_peer, m_write_buf.data(), static_cast<std::size_t>(flush_nwrite));
-        }
-    }
-
+    flush_ppe();
     return static_cast<int64_t>(written);
 }
 
@@ -847,6 +881,14 @@ QuicToHttp3Connect& QuicConnection::get_or_create_h3() {
 
 void QuicConnection::remove_stream_handler(int64_t stream_id) {
     m_stream_handlers.erase(stream_id);
+    auto it = m_conn_unacked_bufs.find(stream_id);
+    if (it != m_conn_unacked_bufs.end()) {
+        for (auto& buf : it->second->buffers) {
+            buf->cancel_timer();
+        }
+        m_conn_unacked_bufs.erase(it);
+        reset_stream(stream_id, 0);
+    }
 }
 
 bool QuicConnection::forward_to_h1_upstream(int64_t stream_id, const uint8_t* data, std::size_t len, bool fin) {
@@ -909,6 +951,13 @@ bool QuicConnection::forward_to_h1_upstream(int64_t stream_id, const uint8_t* da
 
 void QuicConnection::close(uint64_t app_error_code) {
     if (m_closed) {
+        return;
+    }
+    if (m_in_read_pkt) {
+        auto self = shared_from_this();
+        boost::asio::post(m_endpoint.io_context(), [this, self, app_error_code]() {
+            close(app_error_code);
+        });
         return;
     }
     m_closed = true;
@@ -1090,6 +1139,8 @@ void QuicConnection::reset_stream(int64_t stream_id, uint64_t app_error_code) {
             _log_with_date_time("QuicConnection: ngtcp2_conn_shutdown_stream failed for stream " + 
                                 tp::to_string(stream_id) + ": " + tp::string(ngtcp2_strerror(rv)), Log::WARN);
         }
-        pump_write();
+        if (!m_in_read_pkt) {
+            pump_write();
+        }
     }
 }

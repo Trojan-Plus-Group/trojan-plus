@@ -46,7 +46,6 @@ class QuicProxySession : public QuicStreamHandler, public std::enable_shared_fro
     // QuicStreamHandler implementation
     void on_stream_data(const uint8_t* data, std::size_t len, bool fin) override;
     void on_stream_close() override;
-    void on_connection_pump() override;
 
     [[nodiscard]] int64_t stream_id() const { return m_stream_id; }
 
@@ -55,10 +54,9 @@ class QuicProxySession : public QuicStreamHandler, public std::enable_shared_fro
     void forward_to_h1_upstream(std::string_view data, bool fin);
     void connect_target(const tp::string& host, uint16_t port);
     void tcp_read();
-    void flush_tcp_read_buf(std::shared_ptr<tp::string> buf, std::size_t offset, std::size_t bytes);
     void write_to_target(tp::string data, bool fin = false);
     void do_tcp_write();
-    void destroy(bool reset = false, uint64_t app_error_code = 0);
+    void destroy(bool reset = false, uint64_t app_error_code = 0, bool from_close_cb = false);
 
     std::weak_ptr<QuicConnection> m_conn;
     int64_t m_stream_id;
@@ -75,7 +73,6 @@ class QuicProxySession : public QuicStreamHandler, public std::enable_shared_fro
     void udp_read();
     void out_udp_sent();
     void out_udp_async_write(const std::string_view& data, const boost::asio::ip::udp::endpoint& endpoint);
-    void flush_udp_stream_data(std::size_t offset);
 
     boost::asio::ip::udp::socket m_udp_socket;
     boost::asio::ip::udp::resolver m_udp_resolver;

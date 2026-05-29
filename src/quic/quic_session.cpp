@@ -9,6 +9,7 @@
  */
 
 #include "quic_session.h"
+#include "mem/memallocator.h"
 #include "quic_connection.h"
 #include "quic_session_upstream.h"
 #include "quic_to_http3_connect.h"
@@ -20,6 +21,7 @@
 #include <boost/asio/connect.hpp>
 #include <boost/asio/write.hpp>
 
+#include "core/utils.h"
 #include "core/config.h"
 #include "core/log.h"
 #include "proto/trojanrequest.h"
@@ -73,7 +75,7 @@ void QuicProxySession::on_stream_data(const uint8_t* data, std::size_t len, bool
 }
 
 void QuicProxySession::on_stream_close() {
-    destroy();
+    destroy(false, 0, true);
 }
 
 void QuicProxySession::try_parse_request(std::string_view data, bool fin) {
@@ -162,7 +164,6 @@ void QuicProxySession::try_parse_request(std::string_view data, bool fin) {
         }
 
     }else{
-        m_tcp_buf.resize(kTcpBufSize, '\0');
         if (!req.payload.empty()) {
             write_to_target(tp::string(req.payload.data(), req.payload.length()), fin);
         }
@@ -297,9 +298,10 @@ void QuicProxySession::tcp_read() {
         return;
     }
     auto self = this->shared_from_this();
+    auto buff = TP_MAKE_SHARED(ReadBufWithGuard);
     m_tcp_socket.async_read_some(
-        boost::asio::buffer(&m_tcp_buf[0], kTcpBufSize),
-        [this, self](const boost::system::error_code& ec, std::size_t bytes) {
+        buff->prepare(kTcpBufSize),
+        [this, self, buff](const boost::system::error_code& ec, std::size_t bytes) {
             if (m_destroyed) {
                 return;
             }
@@ -311,91 +313,29 @@ void QuicProxySession::tcp_read() {
                 }
                 auto locked_conn = m_conn.lock();
                 if (locked_conn && !locked_conn->is_closed()) {
-                    locked_conn->send_stream_data(m_stream_id, nullptr, 0, true);
-                    locked_conn->on_pump_write();
+                    locked_conn->send_stream_data(m_stream_id, nullptr, true, nullptr);
                 }
                 destroy();
                 return;
             }
             auto locked_conn = m_conn.lock();
             if (locked_conn && !locked_conn->is_closed()) {
-                flush_tcp_read_buf(0, bytes);
+                buff->commit(bytes);
+                locked_conn->send_stream_data(m_stream_id,
+                    buff, false, [self, this](boost::system::error_code ec, std::size_t){
+                        if(ec){
+                            destroy();
+                            return;
+                        }
+                        tcp_read();
+                    });
+            }else{
+                destroy();
             }
         });
 }
 
-void QuicProxySession::flush_tcp_read_buf(std::size_t offset, std::size_t bytes) {
-    auto locked_conn = m_conn.lock();
-    if (m_destroyed || !locked_conn || locked_conn->is_closed()) {
-        return;
-    }
-
-    int64_t written = locked_conn->send_stream_data(m_stream_id,
-                                               reinterpret_cast<const uint8_t*>(m_tcp_buf.data() + offset),
-                                               bytes - offset, false);
-    if (written < 0) {
-        destroy();
-        return;
-    }
-
-    if (written > 0) {
-        locked_conn->on_pump_write();
-    }
-
-    offset += written;
-    if (offset < bytes) {
-        m_tcp_pending_offset = offset;
-        m_tcp_pending_bytes = bytes;
-        m_tcp_write_blocked = true;
-
-        uint32_t delay_ms = (written > 0) ? 5 : 100;
-        m_write_timer.expires_after(std::chrono::milliseconds(delay_ms));
-        auto self = this->shared_from_this();
-        m_write_timer.async_wait([this, self](const boost::system::error_code& ec) {
-            if (!ec) {
-                m_tcp_write_blocked = false;
-                flush_tcp_read_buf(m_tcp_pending_offset, m_tcp_pending_bytes);
-            }
-        });
-    } else {
-        m_tcp_write_blocked = false;
-        m_tcp_pending_offset = 0;
-        m_tcp_pending_bytes = 0;
-        tcp_read();
-    }
-}
- 
-void QuicProxySession::on_connection_pump() {
-    if (m_destroyed) return;
-    if (m_is_udp) {
-        if (!m_udp_pending_stream_data.empty() && !m_udp_write_pending) {
-            m_udp_write_pending = true;
-            auto self = shared_from_this();
-            boost::asio::post(m_io_ctx, [this, self]() {
-                if (m_destroyed) return;
-                m_udp_write_pending = false;
-                m_write_timer.cancel();
-                flush_udp_stream_data(0);
-            });
-        }
-    } else {
-        if (m_tcp_write_blocked && !m_tcp_write_pending) {
-            m_tcp_write_pending = true;
-            auto self = shared_from_this();
-            boost::asio::post(m_io_ctx, [this, self]() {
-                if (m_destroyed) return;
-                m_tcp_write_pending = false;
-                if (m_tcp_write_blocked) {
-                    m_tcp_write_blocked = false;
-                    m_write_timer.cancel();
-                    flush_tcp_read_buf(m_tcp_pending_offset, m_tcp_pending_bytes);
-                }
-            });
-        }
-    }
-}
-
-void QuicProxySession::destroy(bool reset, uint64_t app_error_code) {
+void QuicProxySession::destroy(bool reset, uint64_t app_error_code, bool from_close_cb) {
     if (m_destroyed) {
         return;
     }
@@ -414,11 +354,13 @@ void QuicProxySession::destroy(bool reset, uint64_t app_error_code) {
     auto locked_conn = m_conn.lock();
     if (locked_conn && !locked_conn->is_closed()) {
         locked_conn->remove_stream_handler(m_stream_id);
-        if (reset) {
-            locked_conn->reset_stream(m_stream_id, app_error_code);
-            locked_conn->on_pump_write();
-        } else {
-            locked_conn->send_stream_data(m_stream_id, nullptr, true, nullptr);
+        if (!from_close_cb) {
+            if (reset) {
+                locked_conn->reset_stream(m_stream_id, app_error_code);
+                locked_conn->on_pump_write();
+            } else {
+                locked_conn->send_stream_data(m_stream_id, nullptr, true, nullptr);
+            }
         }
     }
     _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) + " closed",
@@ -541,52 +483,22 @@ void QuicProxySession::udp_read() {
                 destroy();
                 return;
             }
-
-            tp::streambuf buf;
-            UDPPacket::generate(buf, m_udp_remote_endpoint, std::string_view(m_udp_recv_buf.data(), bytes));
             
-            bool was_empty = m_udp_pending_stream_data.empty();
-            m_udp_pending_stream_data.append(streambuf_to_string_view(buf));
-            if (was_empty) {
-                flush_udp_stream_data(0);
+            auto buff = TP_MAKE_SHARED(ReadBufWithGuard);
+            UDPPacket::generate(*buff, m_udp_remote_endpoint, std::string_view(m_udp_recv_buf.data(), bytes));
+            
+            auto locked_conn = m_conn.lock();
+            if (locked_conn && !locked_conn->is_closed()) {
+                locked_conn->send_stream_data(m_stream_id, buff, false,
+                [self, this](boost::system::error_code ec, std::size_t){
+                    if(ec){
+                        destroy();
+                        return;
+                    }
+                    udp_read();
+                });
+            }else{
+                destroy();
             }
         });
-}
-
-void QuicProxySession::flush_udp_stream_data(std::size_t offset) {
-    auto locked_conn = m_conn.lock();
-    if (m_destroyed || !locked_conn || locked_conn->is_closed() || m_udp_pending_stream_data.empty()) {
-        return;
-    }
-
-    int64_t written = locked_conn->send_stream_data(m_stream_id,
-                                               reinterpret_cast<const uint8_t*>(m_udp_pending_stream_data.data() + offset),
-                                               m_udp_pending_stream_data.size() - offset, false);
-    if (written < 0) {
-        destroy();
-        return;
-    }
-
-    offset += written;
-    if (offset > 0) {
-        m_udp_pending_stream_data.erase(0, offset);
-        offset = 0;
-    }
-
-    if (written > 0) {
-        locked_conn->on_pump_write(); // erase before pump so on_connection_pump re-entry sees empty buf
-    }
-
-    if (!m_udp_pending_stream_data.empty()) {
-        uint32_t delay_ms = (written > 0) ? 5 : 100;
-        m_write_timer.expires_after(std::chrono::milliseconds(delay_ms));
-        auto self = this->shared_from_this();
-        m_write_timer.async_wait([this, self](const boost::system::error_code& ec) {
-            if (!ec) {
-                flush_udp_stream_data(0);
-            }
-        });
-    }else{
-        udp_read();
-    }
 }

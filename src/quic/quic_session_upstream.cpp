@@ -255,7 +255,7 @@ void QuicUpstreamHandler::on_h1_error(const boost::system::error_code& /*ec*/) {
     // then tear down. Mirrors the old handle_parse_error path.
     auto locked_conn = m_conn_ptr.lock();
     if (locked_conn && !locked_conn->is_closed()) {
-        locked_conn->send_stream_data(m_stream_id, nullptr, 0, true);
+        locked_conn->send_stream_data(m_stream_id, nullptr, true, nullptr);
         locked_conn->on_pump_write();
     }
     destroy();
