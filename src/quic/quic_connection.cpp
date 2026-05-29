@@ -274,7 +274,8 @@ QuicConnection::QuicConnection(QuicEndpoint& endpoint, std::shared_ptr<QuicTlsCt
       m_peer(peer),
       m_loss_timer(endpoint.io_context()),
       m_write_buf(NGTCP2_MAX_UDP_PAYLOAD_SIZE),
-      m_in_read_pkt(false) {}
+      m_in_read_pkt(false),
+      m_in_pump_write(false) {}
 
 QuicConnection::~QuicConnection() {
     _log_with_date_time("QuicConnection: ~QuicConnection destructed for peer " + 
@@ -521,6 +522,14 @@ void QuicConnection::on_packet(const uint8_t* data, std::size_t datalen,
 }
 
 void QuicConnection::on_pump_write() {
+    if (m_closed || !m_conn) {
+        return;
+    }
+
+    if (m_in_pump_write) {
+        return;
+    }
+    m_in_pump_write = true;
     
     pump_write();
 
@@ -533,6 +542,10 @@ void QuicConnection::on_pump_write() {
         handler->on_connection_pump();
     }
 
+    // Retrying data blocked by flow/congestion control
+    retry_blocked_sends();
+
+    m_in_pump_write = false;
     reschedule_loss_timer();
 }
 
@@ -648,7 +661,12 @@ void QuicConnection::send_stream_data(int64_t stream_id, std::shared_ptr<ReadBuf
     unacked_ptr->send();
 }
 
+bool QuicConnection::UnackedBuf::is_blocked() const {
+    return m_sending_offset < (m_buf ? m_buf->size() : 0);
+}
+
 void QuicConnection::UnackedBuf::cancel_timer() {
+    m_timer_running = false;
     m_write_timer.cancel();
 }
 
@@ -673,6 +691,8 @@ void QuicConnection::UnackedBuf::send(){
         }
     }else if((std::size_t)sent == len){
         // finished
+        m_sending_offset = m_buf ? m_buf->size() : 0;
+        cancel_timer();
         if(m_sent_cb){
             m_sent_cb(boost::system::error_code(), m_buf ? m_buf->size() : 0);
             m_sent_cb = nullptr;
@@ -681,30 +701,71 @@ void QuicConnection::UnackedBuf::send(){
         // wait for a while and send again
         m_sending_offset += sent;
 
-        m_write_timer.expires_after(std::chrono::milliseconds(50));
-        m_write_timer.async_wait(
-            [unacked = this->shared_from_this()](boost::system::error_code ec){
-                if(ec){
-                    if (unacked->m_sent_cb) {
-                        unacked->m_sent_cb(boost::asio::error::operation_aborted, 0);
-                        unacked->m_sent_cb = nullptr;
+        if (sent > 0) {
+            m_retry_delay_ms = 50;
+        } else {
+            m_retry_delay_ms = std::min<std::size_t>(m_retry_delay_ms * 2, 1000);
+        }
+
+        if (!m_timer_running) {
+            m_timer_running = true;
+            m_write_timer.expires_after(std::chrono::milliseconds(m_retry_delay_ms));
+            m_write_timer.async_wait(
+                [unacked = this->shared_from_this(), sent](boost::system::error_code ec){
+                    unacked->m_timer_running = false;
+                    if(ec){
+                        if (unacked->m_sent_cb) {
+                            unacked->m_sent_cb(boost::asio::error::operation_aborted, 0);
+                            unacked->m_sent_cb = nullptr;
+                        }
+                        return;
                     }
-                    return;
+                    _log_with_date_time("UnackedBuf retry send stream_id=" + 
+                        tp::to_string(unacked->m_stream_id) + " sent=" + tp::to_string(sent) + 
+                        " offset=" + tp::to_string(unacked->m_sending_offset) + 
+                        " fin=" + tp::to_string(unacked->m_fin) + " buf_size=" + 
+                        tp::to_string(unacked->m_buf ? unacked->m_buf->size() : 0), 
+                        Log::ALL);
+                    unacked->send();
                 }
-                _log_with_date_time("UnackedBuf retry send stream_id=" + tp::to_string(unacked->m_stream_id), Log::ALL);
-                unacked->send();
-            }
-        );
+            );
+        }
     }
 
     if(sent > 0){
+        m_retry_delay_ms = 50;
         c->on_pump_write();
+    }
+}
+
+void QuicConnection::retry_blocked_sends() {
+    tp::vector<std::shared_ptr<UnackedBuf>> blocked_bufs;
+    for (auto& [stream_id, ptr] : m_conn_unacked_bufs) {
+        if (!ptr || ptr->buffers.empty()) {
+            continue;
+        }
+        for (auto& buf : ptr->buffers) {
+            if (buf && buf->is_blocked()) {
+                blocked_bufs.push_back(buf);
+                break; // Only retry the first blocked buffer of each stream to maintain packet ordering
+            }
+        }
+    }
+
+    for (auto& buf : blocked_bufs) {
+        auto c = buf->m_conn.lock();
+        if (c && !c->is_closed()) {
+            auto it = c->m_conn_unacked_bufs.find(buf->m_stream_id);
+            if (it != c->m_conn_unacked_bufs.end()) {
+                buf->send();
+            }
+        }
     }
 }
 
 int64_t QuicConnection::send_stream_vecs(int64_t stream_id, 
     const ngtcp2_vec* datav, std::size_t datavcnt, bool fin, IoHandler sent_cb){
-        return 0;
+    return 0;
 }
 
 int64_t QuicConnection::send_stream_data_impl(int64_t stream_id, const uint8_t* data, std::size_t datalen,
@@ -712,6 +773,8 @@ int64_t QuicConnection::send_stream_data_impl(int64_t stream_id, const uint8_t* 
     if (m_closed || !m_conn) {
         return -1;
     }
+
+    _log_with_date_time("send_stream_data_impl enter: stream_id=" + tp::to_string(stream_id) + " datalen=" + tp::to_string(datalen) + " fin=" + tp::to_string(fin), Log::ALL);
 
     ngtcp2_path_storage ps;
     ngtcp2_path_storage_zero(&ps);
@@ -757,6 +820,7 @@ int64_t QuicConnection::send_stream_data_impl(int64_t stream_id, const uint8_t* 
                                                 stream_id, &vec, 1, now_nanos());
 
         if (nwrite == NGTCP2_ERR_WRITE_MORE) {
+            _log_with_date_time("send_stream_data_impl: WRITE_MORE stream=" + tp::to_string(stream_id) + " pdatalen=" + tp::to_string(pdatalen), Log::ALL);
             ppe_pending = true;
             if (pdatalen > 0) written += pdatalen;
             if (written == datalen && !fin) {
@@ -767,10 +831,15 @@ int64_t QuicConnection::send_stream_data_impl(int64_t stream_id, const uint8_t* 
 
         if (nwrite < 0) {
             if (nwrite == NGTCP2_ERR_STREAM_DATA_BLOCKED) {
+                _log_with_date_time("send_stream_data_impl: STREAM_DATA_BLOCKED stream=" + tp::to_string(stream_id) + " written=" + tp::to_string(written), Log::ALL);
                 // PPE_PENDING may be set from a previous WRITE_MORE; must flush before returning.
                 flush_ppe();
                 return static_cast<int64_t>(written);
             }
+            _log_with_date_time(
+                "send_stream_data_impl error=" + tp::string(ngtcp2_strerror(static_cast<int>(nwrite))) +
+                " stream=" + tp::to_string(stream_id) + " written=" + tp::to_string(written),
+                Log::ALL);
             if (nwrite != NGTCP2_ERR_STREAM_SHUT_WR) {
                 _log_with_date_time(
                     "send_stream_data_impl error=" + tp::string(ngtcp2_strerror(static_cast<int>(nwrite))) +
@@ -796,6 +865,7 @@ int64_t QuicConnection::send_stream_data_impl(int64_t stream_id, const uint8_t* 
         }
 
         if (pdatalen <= 0) {
+            _log_with_date_time("send_stream_data_impl: loop break due to pdatalen<=0 stream=" + tp::to_string(stream_id) + " written=" + tp::to_string(written), Log::ALL);
             // Flow control, congestion control, or no more data for this stream in current packets.
             // DO NOT loop if we didn't send any stream data, to avoid infinite loop on connection-level frames.
             break;
@@ -803,6 +873,7 @@ int64_t QuicConnection::send_stream_data_impl(int64_t stream_id, const uint8_t* 
     }
 
     flush_ppe();
+    _log_with_date_time("send_stream_data_impl leave: stream_id=" + tp::to_string(stream_id) + " written=" + tp::to_string(written), Log::ALL);
     return static_cast<int64_t>(written);
 }
 

@@ -166,6 +166,7 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
 
     // Write pending stream data (call after every read or timer event).
     void pump_write();
+    void retry_blocked_sends();
 
     // Send data on an existing bidi stream. Returns false on error.
     int64_t send_stream_data_impl(int64_t stream_id, const uint8_t* data, std::size_t datalen, bool fin);
@@ -204,9 +205,12 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
       IoHandler m_sent_cb;
       boost::asio::steady_timer m_write_timer;
       std::weak_ptr<QuicConnection> m_conn;
-      UnackedBuf(boost::asio::io_context& io_ctx):m_write_timer(io_ctx){}
+      bool m_timer_running{false};
+      std::size_t m_retry_delay_ms{50};
+      UnackedBuf(boost::asio::io_context& io_ctx):m_write_timer(io_ctx), m_timer_running(false), m_retry_delay_ms(50){}
       void send();
       void cancel_timer();
+      bool is_blocked() const;
     private:
       std::size_t m_sending_offset{0};
     };
@@ -222,6 +226,7 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     std::unique_ptr<QuicToHttp3Connect> m_h3;  // declared after m_stream_handlers, destroyed first
     tp::vector<uint8_t> m_write_buf;
     bool m_in_read_pkt{false};
+    bool m_in_pump_write{false};
 
 };
 
