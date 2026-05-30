@@ -19,6 +19,7 @@
 #include <boost/asio/post.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/write.hpp>
+#include <boost/asio/buffer.hpp>
 #include <memory>
 
 #include "core/config.h"
@@ -170,7 +171,7 @@ class QuicStreamTransport : public OutboundTransport,
   public:
     QuicStreamTransport(boost::asio::io_context& io_ctx,
                         std::shared_ptr<QuicClientEndpoint>      endpoint)
-        : m_io_ctx(io_ctx), m_endpoint(endpoint), m_write_timer(io_ctx) {}
+        : m_io_ctx(io_ctx), m_endpoint(endpoint){}
 
     // host/port are the trojan server coordinates but ignored here – the QUIC
     // connection to the server is already maintained by QuicClientEndpoint.
@@ -212,10 +213,12 @@ class QuicStreamTransport : public OutboundTransport,
     }
 
     void async_read_some(boost::asio::mutable_buffer buf, IoHandler handler) override {
-        if (!m_recv_buf.empty()) {
+        // If there is cached data in the stream buffer, consume it first.
+        if (m_recv_buf.size() > 0) {
             std::size_t n = std::min(m_recv_buf.size(), buf.size());
-            std::memcpy(buf.data(), m_recv_buf.data(), n);
-            m_recv_buf.erase(0, n);
+            // Copy data from the input sequence of tp::streambuf to the user buffer.
+            boost::asio::buffer_copy(buf, m_recv_buf.data(), n);
+            m_recv_buf.consume(n); // O(1) read pointer advancement, no memory shifting.
 
             auto ep = m_endpoint.lock();
             if (!ep) {
@@ -226,14 +229,17 @@ class QuicStreamTransport : public OutboundTransport,
             }
             ep->stream_extend_window(m_stream_id, n);
 
+            // Always post the completion handler to ensure async execution consistency.
             boost::asio::post(m_io_ctx, tp::bind_mem_alloc([handler = std::move(handler), n]() mutable {
                 handler({}, n);
             }));
         } else if (m_fin_received) {
+            // If the stream has finished and the buffer is empty, return EOF.
             boost::asio::post(m_io_ctx, tp::bind_mem_alloc([handler = std::move(handler)]() mutable {
                 handler(boost::asio::error::eof, 0);
             }));
         } else {
+            // Save the user buffer and completion handler for future incoming data.
             m_pending_buf     = buf;
             m_pending_handler = std::move(handler);
             m_has_pending     = true;
@@ -273,9 +279,19 @@ class QuicStreamTransport : public OutboundTransport,
         m_fin_received = fin;
 
         if (m_has_pending) {
-            m_has_pending       = false;
-            std::size_t n       = std::min(len, m_pending_buf.size());
+            m_has_pending = false;
+
+            // If a pure FIN (EOF) frame is received (no payload), immediately complete the read with EOF.
+            if (len == 0 && fin) {
+                boost::asio::post(m_io_ctx, tp::bind_mem_alloc([handler = std::move(m_pending_handler)]() mutable {
+                    handler(boost::asio::error::eof, 0);
+                }));
+                return;
+            }
+
+            std::size_t n = std::min(len, m_pending_buf.size());
             std::memcpy(m_pending_buf.data(), data, n);
+
             auto ep = m_endpoint.lock();
             if (!ep) {
                 boost::asio::post(m_io_ctx, tp::bind_mem_alloc([handler = std::move(m_pending_handler)]() mutable {
@@ -285,13 +301,18 @@ class QuicStreamTransport : public OutboundTransport,
             }
             ep->stream_extend_window(m_stream_id, n);
 
+            // If the incoming payload is larger than the pending read buffer, cache the remaining part.
             if (n < len) {
-                m_recv_buf.append(reinterpret_cast<const char*>(data + n), len - n);
+                m_recv_buf.sputn(reinterpret_cast<const char*>(data + n), len - n);
             }
-            auto h = std::move(m_pending_handler);
-            h({}, n);
+
+            // Always post the handler asynchronously to prevent synchronous re-entrancy and stack growth.
+            boost::asio::post(m_io_ctx, tp::bind_mem_alloc([handler = std::move(m_pending_handler), n]() mutable {
+                handler({}, n);
+            }));
         } else {
-            m_recv_buf.append(reinterpret_cast<const char*>(data), len);
+            // No pending reads, cache all incoming data directly.
+            m_recv_buf.sputn(reinterpret_cast<const char*>(data), len);
         }
     }
 
@@ -299,12 +320,11 @@ class QuicStreamTransport : public OutboundTransport,
     std::weak_ptr<QuicClientEndpoint> m_endpoint;
     int64_t                  m_stream_id{-1};
 
-    tp::string               m_recv_buf;
+    tp::streambuf            m_recv_buf;
     boost::asio::mutable_buffer m_pending_buf{};
     IoHandler                m_pending_handler;
     bool                     m_has_pending{false};
     bool                     m_fin_received{false};
-    boost::asio::steady_timer m_write_timer;
 };
 
 // ─────────────────────────────────────────────────────────────

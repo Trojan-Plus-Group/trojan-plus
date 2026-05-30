@@ -166,7 +166,7 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
 
     // Write pending stream data (call after every read or timer event).
     void pump_write();
-    void retry_blocked_sends();
+    
 
     // Send data on an existing bidi stream. Returns false on error.
     int64_t send_stream_data_impl(int64_t stream_id, const uint8_t* data, std::size_t datalen, bool fin);
@@ -210,8 +210,7 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
       UnackedBuf(boost::asio::io_context& io_ctx):m_write_timer(io_ctx), m_timer_running(false), m_retry_delay_ms(50){}
       void send();
       void cancel_timer();
-      bool is_blocked() const;
-    private:
+      bool is_sending() const;
       std::size_t m_sending_offset{0};
     };
     
@@ -219,7 +218,11 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     struct UnackedBuffers{
       tp::list<std::shared_ptr<UnackedBuf>> buffers;
       std::size_t curr_written{0};
+      bool m_sending{false};
     };
+
+    void remove_unacked_buff(int64_t stream_id);
+    void send_next_unacked_buff(int64_t stream_id, UnackedBuf* buf_finished);
 
     tp::unordered_map<int64_t, std::shared_ptr<QuicStreamHandler>> m_stream_handlers;
     tp::unordered_map<int64_t, std::shared_ptr<UnackedBuffers>> m_conn_unacked_bufs;

@@ -1386,9 +1386,9 @@ def test_quic_load_test(binary_path):
     ENABLE_SOCKS_LOAD = True
     ENABLE_H3_LOAD    = False
     
-    TOTAL_FILES       = 100
-    SOCKS_CONCURRENCY = 20
-    H3_CONCURRENCY    = 20
+    TOTAL_FILES       = 200
+    SOCKS_CONCURRENCY = 30
+    H3_CONCURRENCY    = 30
 
     CLIENT_MEMORY_GROW_THRESHOLD = 0.05
     SERVER_MEMORY_GROW_THRESHOLD = 0.2

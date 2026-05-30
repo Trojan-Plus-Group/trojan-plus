@@ -75,16 +75,15 @@ void ClientSession::recv_ack_cmd(size_t ack_count) {
 std::shared_ptr<ReadBufWithGuard> ClientSession::get_in_read_buf(tp::streambuf* copy_src /*= nullptr*/){
     std::shared_ptr<ReadBufWithGuard> ret;
 
-    if(pipeline_session || (m_out && !m_out->is_via_quic())){
+    if((m_out && m_out->is_via_quic())){
+        // should be quic, return a new buff for ack
+        ret = TP_MAKE_SHARED(ReadBufWithGuard);
+    }else{
         if(!in_read_buf){
             in_read_buf = TP_MAKE_SHARED(ReadBufWithGuard);
         }
         ret = in_read_buf;
         ret->consume_all();
-    }else{
-        // should be quic, return a new buff for ack
-        // TODO : use a global pool to avoid constructor
-        ret = TP_MAKE_SHARED(ReadBufWithGuard);
     }
 
     if(copy_src){

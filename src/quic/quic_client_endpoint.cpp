@@ -176,7 +176,4 @@ void QuicClientEndpoint::set_stream_data_handler(
 
 void QuicClientEndpoint::remove_stream_data_handler(int64_t stream_id) { 
     m_stream_data_cb.erase(stream_id);
-    if (m_conn) {
-        m_conn->remove_stream_handler(stream_id);
-    }
 }

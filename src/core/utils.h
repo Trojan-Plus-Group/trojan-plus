@@ -340,7 +340,10 @@ class ReadBufWithGuard {
 
     inline operator std::string_view() const { return streambuf_to_string_view(read_buf); }
     inline std::string_view to_string_view()const { return streambuf_to_string_view(read_buf); }
+
     inline operator tp::streambuf&() { return read_buf; }
+    inline const tp::streambuf& buffer() const { return read_buf; }
+    inline tp::streambuf& buffer(){return read_buf;}
 
     inline void begin_read(const char* __file__, int __line__) {
         _guard;

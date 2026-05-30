@@ -108,7 +108,7 @@ void Log::log_with_date_time(const tp::string& message, Level level) {
 
     static tp::ostringstream time_stream;
     static const std::locale loc(
-      time_stream.getloc(), new time_facet("[%Y-%m-%d %H:%M:%S] ")); // have to use fu*k nacked new
+      time_stream.getloc(), new time_facet("[%Y-%m-%d %H:%M:%S.%f] ")); // have to use fu*k nacked new
     static bool set_time_stream = false;
     if (!set_time_stream) {
         set_time_stream = true;
@@ -116,7 +116,7 @@ void Log::log_with_date_time(const tp::string& message, Level level) {
     }
 
     time_stream.str(tp::string());
-    time_stream << second_clock::local_time();
+    time_stream << microsec_clock::local_time();
 
     log(time_stream.str() + '[' + tp::string(gsl::at(level_strings, level)) + "] " + message, level);
 }

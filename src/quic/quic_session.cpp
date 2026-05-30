@@ -85,7 +85,8 @@ void QuicProxySession::try_parse_request(std::string_view data, bool fin) {
                             (first_char >= 'a' && first_char <= 'f');
         if (!is_valid_hex) {
             _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) +
-                                    " first byte not hex (" + tp::to_string((int)first_char) + "), falling back to h1_stream",
+                                    " first byte not hex (" + tp::to_string((int)first_char) + ") len=" + tp::to_string(data.length()) + 
+                                    ", falling back to h1_stream",
                                 Log::INFO);
             forward_to_h1_upstream(data, fin);
             return;
@@ -311,10 +312,6 @@ void QuicProxySession::tcp_read() {
                                             tp::string(ec.message().c_str()),
                                         Log::WARN);
                 }
-                auto locked_conn = m_conn.lock();
-                if (locked_conn && !locked_conn->is_closed()) {
-                    locked_conn->send_stream_data(m_stream_id, nullptr, true, nullptr);
-                }
                 destroy();
                 return;
             }
@@ -324,7 +321,7 @@ void QuicProxySession::tcp_read() {
                 locked_conn->send_stream_data(m_stream_id,
                     buff, false, [self, this](boost::system::error_code ec, std::size_t){
                         if(ec){
-                            destroy();
+                            destroy(false, 0, true);
                             return;
                         }
                         tcp_read();
@@ -357,7 +354,6 @@ void QuicProxySession::destroy(bool reset, uint64_t app_error_code, bool from_cl
         if (!from_close_cb) {
             if (reset) {
                 locked_conn->reset_stream(m_stream_id, app_error_code);
-                locked_conn->on_pump_write();
             } else {
                 locked_conn->send_stream_data(m_stream_id, nullptr, true, nullptr);
             }
