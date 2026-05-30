@@ -261,9 +261,9 @@ if(ENABLE_QUIC)
         src/quic/quic_client_endpoint.cpp
         src/quic/quic_connection.cpp
         src/quic/quic_session.cpp
-        src/quic/quic_session_upstream.cpp
-        src/quic/quic_http1_upstream_conn.cpp
-        src/quic/quic_to_http3_connect.cpp
+        src/quic/h1_upstream/quic_session_upstream.cpp
+        src/quic/h1_upstream/quic_http1_upstream_conn.cpp
+        src/quic/h1_upstream/quic_to_http3_connect.cpp
         src/quic/outbound_transport.cpp
     )
 endif()

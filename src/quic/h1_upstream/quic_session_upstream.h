@@ -19,9 +19,9 @@
 #include <nghttp3/nghttp3.h>
 
 #include "mem/memallocator.h"
-#include "quic_connection.h"
+#include "../quic_connection.h"
 #include "quic_http1_upstream_conn.h"
-#include "quic_stream_handler.h"
+#include "../quic_stream_handler.h"
 
 class Config;
 

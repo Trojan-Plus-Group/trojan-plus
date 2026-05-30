@@ -17,7 +17,7 @@
 #include <nghttp3/nghttp3.h>
 
 #include "core/log.h"
-#include "quic_connection.h"
+#include "../quic_connection.h"
 #include "quic_to_http3_connect.h"
 
 QuicUpstreamHandler::QuicUpstreamHandler(

@@ -49,8 +49,8 @@ static const ngtcp2_mem tj_ngtcp2_mem = {
 #include <cstddef>
 #include <cstring>
 
-#include "quic_to_http3_connect.h"
-#include "quic_session_upstream.h"
+#include "h1_upstream/quic_to_http3_connect.h"
+#include "h1_upstream/quic_session_upstream.h"
 #include "core/config.h"
 
 #include <ngtcp2/ngtcp2_crypto_wolfssl.h>

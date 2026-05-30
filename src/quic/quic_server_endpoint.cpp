@@ -25,7 +25,7 @@
 #include "quic_connection.h"
 #include "quic_session.h"
 #include "quic_tls_ctx.h"
-#include "quic_to_http3_connect.h"
+#include "h1_upstream/quic_to_http3_connect.h"
 #include "core/utils.h"
 
 QuicServerEndpoint::QuicServerEndpoint(boost::asio::io_context& io_ctx, const Config& config,

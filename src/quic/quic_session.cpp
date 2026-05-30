@@ -11,8 +11,8 @@
 #include "quic_session.h"
 #include "mem/memallocator.h"
 #include "quic_connection.h"
-#include "quic_session_upstream.h"
-#include "quic_to_http3_connect.h"
+#include "h1_upstream/quic_session_upstream.h"
+#include "h1_upstream/quic_to_http3_connect.h"
 #include <cstddef>
 #include <memory>
 #include <string_view>
