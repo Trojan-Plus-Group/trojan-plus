@@ -65,6 +65,9 @@ class QuicToHttp3Connect {
     // Notify H3 of data acknowledged on stream
     int acked_stream_data(int64_t stream_id, std::size_t datalen);
 
+    // Close stream in nghttp3
+    int close_stream(int64_t stream_id, uint64_t app_error_code);
+
     // data_reader callback for nghttp3 — delegates to handler->on_read_data().
     static nghttp3_ssize s_read_data(nghttp3_conn*, int64_t stream_id,
                                      nghttp3_vec* vec, std::size_t veccnt,

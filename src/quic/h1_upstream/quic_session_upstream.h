@@ -49,39 +49,39 @@ class QuicUpstreamHandler : public QuicStreamHandler,
                         const tp::string& host, const tp::string& port_str);
     ~QuicUpstreamHandler() override;
 
-    void start();
+    void h1_start();
     void on_stream_data(const uint8_t* data, size_t len, bool fin) override;
     void on_stream_close() override;
     void on_connection_pump() override;
     void destroy();
 
     // Called by QuicToHttp3Connect callbacks with already-decoded values.
-    int on_h3_begin_headers();
-    int on_h3_header(const tp::string& name, const tp::string& value);
-    int on_h3_end_headers(bool fin);
-    int on_h3_data(const uint8_t* data, std::size_t len);
-    int on_h3_end_stream();
-    int on_h3_stream_close(uint64_t app_error_code);
+    int h3_on_begin_headers();
+    int h3_on_header(const tp::string& name, const tp::string& value);
+    int h3_on_end_headers(bool fin);
+    int h3_on_data(const uint8_t* data, std::size_t len);
+    int h3_on_end_stream();
+    int h3_on_stream_close(uint64_t app_error_code);
 
     // Called by QuicToHttp3Connect::s_read_data (nghttp3 data_reader callback).
-    nghttp3_ssize on_read_data(nghttp3_vec* vec, std::size_t veccnt, uint32_t* pflags);
+    nghttp3_ssize h3_on_read_data(nghttp3_vec* vec, std::size_t veccnt, uint32_t* pflags);
     // Called by QuicToHttp3Connect::pump_h3_response after nghttp3 acks bytes.
-    void notify_body_consumed(std::size_t n);
+    void h3_notify_body_consumed(std::size_t n);
 
     // Http1UpstreamConn::Observer
-    void on_h1_connect_done(bool ok) override;
-    void on_h1_resp_headers(Http1UpstreamConn::H1RespParser& parser) override;
-    void on_h1_body_data_available() override;
-    void on_h1_eof() override;
-    void on_h1_error(const boost::system::error_code& ec) override;
-    void on_h1_stream_credit(std::size_t bytes) override;
+    void h1_on_connect_done(bool ok) override;
+    void h1_on_resp_headers(Http1UpstreamConn::H1RespParser& parser) override;
+    void h1_on_body_data_available() override;
+    void h1_on_eof() override;
+    void h1_on_error(const boost::system::error_code& ec) override;
+    void h1_on_stream_credit(std::size_t bytes) override;
 
-    std::shared_ptr<Http1UpstreamConn> get_h1_conn() const { return m_h1_conn; }
+    std::shared_ptr<Http1UpstreamConn> h1_get_conn() const { return m_h1_conn; }
 
   private:
-    void retry_feed_h3();
-    int  submit_h3_response_headers(Http1UpstreamConn::H1RespParser& parser);
-    void pump_h3_response();
+    void h3_retry_feed();
+    int  h3_submit_response_headers(Http1UpstreamConn::H1RespParser& parser);
+    void h3_pump_response();
 
     std::weak_ptr<QuicConnection> m_conn_ptr;
     int64_t                       m_stream_id;
@@ -98,16 +98,22 @@ class QuicUpstreamHandler : public QuicStreamHandler,
     bool       m_has_content_length{false};
     bool       m_fin_sent{false};
     bool       m_destroyed{false};
-    std::size_t m_unacked_stream_bytes{0};
 
     // Pending H3 frame bytes received via on_stream_data, awaiting feed.
-    tp::string m_h3_in_buf;
-    bool       m_h3_in_fin{false};
+    tp::streambuf m_h3_in_buf;
+    bool          m_h3_in_fin{false};
 
     // H3 outbound state (response direction).
     H3OutState m_h3_out_state{H3OutState::Active};
 
     std::shared_ptr<Http1UpstreamConn> m_h1_conn;
+
+    // Struct to buffer request chunks during a synchronous feed_stream_data call.
+    struct PendingChunk {
+        tp::string data;
+        bool fin{false};
+    };
+    tp::vector<PendingChunk> m_h3_to_h1_feed_chunks;
 };
 
 #endif // QUIC_SESSION_UPSTREAM_H

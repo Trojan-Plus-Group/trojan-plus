@@ -50,7 +50,7 @@ void Http1UpstreamConn::start() {
                 _log_with_date_time("h1_stream TCP resolve failed " + m_host + ":" + m_port_str +
                                         " failed: " + tp::string(ec.message().c_str()),
                                     Log::ERROR);
-                if (m_observer) m_observer->on_h1_connect_done(false);
+                if (m_observer) m_observer->h1_on_connect_done(false);
                 return;
             }
             boost::asio::async_connect(
@@ -61,14 +61,14 @@ void Http1UpstreamConn::start() {
                         _log_with_date_time("Http1UpstreamConn: connect " + m_host + ":" + m_port_str +
                                                 " failed: " + tp::string(ec2.message().c_str()),
                                             Log::ERROR);
-                        if (m_observer) m_observer->on_h1_connect_done(false);
+                        if (m_observer) m_observer->h1_on_connect_done(false);
                         return;
                     }
                     m_connected = true;
                     _log_with_date_time(
                         "HTTP upstream connected to " + m_host + ":" + m_port_str,
                         Log::INFO);
-                    if (m_observer) m_observer->on_h1_connect_done(true);
+                    if (m_observer) m_observer->h1_on_connect_done(true);
                     if (m_destroyed) return;
 
                     if (!m_write_queue.empty() && !m_write_in_progress) {
@@ -104,12 +104,17 @@ void Http1UpstreamConn::set_read_state(ReadState s) {
 void Http1UpstreamConn::buffer_chunk_append(tp::string chunk) {
     if (chunk.empty()) return;
     m_buffered_bytes += chunk.size();
-    _log_with_date_time("buffer_chunk_append: chunk size=" + tp::to_string(chunk.size()) + " data_ptr=" + tp::to_string(reinterpret_cast<uintptr_t>(chunk.data())), Log::ALL);
+    _log_with_date_time("buffer_chunk_append: chunk size=" + 
+        tp::to_string(chunk.size()) + " data_ptr=" + 
+        tp::to_string(reinterpret_cast<uintptr_t>(chunk.data())), Log::ALL);
     m_body_out_chunks.push_back(std::move(chunk));
 }
 
 void Http1UpstreamConn::buffer_chunk_drop_front(std::size_t n) {
-    _log_with_date_time("buffer_chunk_drop_front: n=" + tp::to_string(n) + " m_front_chunk_offset=" + tp::to_string(m_front_chunk_offset) + " m_body_read_offset=" + tp::to_string(m_body_read_offset) + " m_body_out_chunks.size()=" + tp::to_string(m_body_out_chunks.size()), Log::ALL);
+    _log_with_date_time("buffer_chunk_drop_front: n=" + tp::to_string(n) + 
+        " m_front_chunk_offset=" + tp::to_string(m_front_chunk_offset) + 
+        " m_body_read_offset=" + tp::to_string(m_body_read_offset) + 
+        " m_body_out_chunks.size()=" + tp::to_string(m_body_out_chunks.size()), Log::ALL);
     if (m_buffered_bytes >= n) {
         m_buffered_bytes -= n;
     } else {
@@ -120,7 +125,9 @@ void Http1UpstreamConn::buffer_chunk_drop_front(std::size_t n) {
     while (!m_body_out_chunks.empty()) {
         auto& chunk = m_body_out_chunks.front();
         if (m_front_chunk_offset >= chunk.size()) {
-            _log_with_date_time("buffer_chunk_drop_front: popping chunk size=" + tp::to_string(chunk.size()) + " data_ptr=" + tp::to_string(reinterpret_cast<uintptr_t>(chunk.data())), Log::ALL);
+            _log_with_date_time("buffer_chunk_drop_front: popping chunk size=" + 
+                tp::to_string(chunk.size()) + " data_ptr=" + 
+                tp::to_string(reinterpret_cast<uintptr_t>(chunk.data())), Log::ALL);
             m_front_chunk_offset -= chunk.size();
             m_body_out_chunks.pop_front();
         } else {
@@ -138,7 +145,10 @@ void Http1UpstreamConn::buffer_chunk_drop_front(std::size_t n) {
         m_front_chunk_offset = 0;
         m_body_read_offset = 0;
     }
-    _log_with_date_time("buffer_chunk_drop_front: done. new m_front_chunk_offset=" + tp::to_string(m_front_chunk_offset) + " m_body_read_offset=" + tp::to_string(m_body_read_offset) + " m_body_out_chunks.size()=" + tp::to_string(m_body_out_chunks.size()), Log::ALL);
+    _log_with_date_time("buffer_chunk_drop_front: done. new m_front_chunk_offset=" + 
+        tp::to_string(m_front_chunk_offset) + " m_body_read_offset=" + 
+        tp::to_string(m_body_read_offset) + " m_body_out_chunks.size()=" + 
+        tp::to_string(m_body_out_chunks.size()), Log::ALL);
 }
 
 // ---- write side ---------------------------------------------------------
@@ -166,7 +176,7 @@ void Http1UpstreamConn::do_tcp_write() {
         ec = m_tcp_socket.shutdown(boost::asio::socket_base::shutdown_send, ec);
         std::size_t credit = front.stream_bytes;
         m_write_queue.pop_front();
-        if (credit > 0 && m_observer) m_observer->on_h1_stream_credit(credit);
+        if (credit > 0 && m_observer) m_observer->h1_on_stream_credit(credit);
         do_tcp_write();
         return;
     }
@@ -185,11 +195,11 @@ void Http1UpstreamConn::do_tcp_write() {
                 _log_with_date_time(
                     "Http1UpstreamConn: TCP write failed: " + tp::string(ec.message().c_str()),
                     Log::ERROR);
-                if (m_observer) m_observer->on_h1_error(ec);
+                if (m_observer) m_observer->h1_on_error(ec);
                 return;
             }
             if (stream_bytes > 0 && m_observer) {
-                m_observer->on_h1_stream_credit(stream_bytes);
+                m_observer->h1_on_stream_credit(stream_bytes);
             }
             if (m_destroyed) return;
             if (fin) {
@@ -226,13 +236,13 @@ void Http1UpstreamConn::on_tcp_read_done(const boost::system::error_code& ec, st
             if (bytes > 0) parse_tcp_data(bytes);
             if (m_destroyed) return;
             set_read_state(ReadState::Eof);
-            if (m_observer) m_observer->on_h1_eof();
+            if (m_observer) m_observer->h1_on_eof();
             return;
         }
         _log_with_date_time(
             "Http1UpstreamConn: TCP read error: " + tp::string(ec.message().c_str()), Log::ERROR);
         set_read_state(ReadState::Error);
-        if (m_observer) m_observer->on_h1_error(ec);
+        if (m_observer) m_observer->h1_on_error(ec);
         return;
     }
 
@@ -268,12 +278,12 @@ void Http1UpstreamConn::parse_tcp_data(std::size_t bytes) {
                     "Http1UpstreamConn: header parse error: " + tp::string(ec.message().c_str()),
                     Log::ERROR);
                 set_read_state(ReadState::Error);
-                if (m_observer) m_observer->on_h1_error(ec);
+                if (m_observer) m_observer->h1_on_error(ec);
                 return;
             }
             if (m_resp_parser->is_header_done()) {
                 m_headers_delivered = true;
-                if (m_observer) m_observer->on_h1_resp_headers(*m_resp_parser);
+                if (m_observer) m_observer->h1_on_resp_headers(*m_resp_parser);
                 if (m_destroyed) return;
                 // continue loop — there may be body bytes already in the same buffer
             } else {
@@ -299,24 +309,24 @@ void Http1UpstreamConn::parse_tcp_data(std::size_t bytes) {
             if (ec && ec != boost::beast::http::error::need_buffer) {
                 if (ec == boost::beast::http::error::end_of_stream) {
                     set_read_state(ReadState::Eof);
-                    if (any_body_added && m_observer) m_observer->on_h1_body_data_available();
+                    if (any_body_added && m_observer) m_observer->h1_on_body_data_available();
                     if (m_destroyed) return;
-                    if (m_observer) m_observer->on_h1_eof();
+                    if (m_observer) m_observer->h1_on_eof();
                     return;
                 }
                 _log_with_date_time("Http1UpstreamConn: body parse error: " +
                                         tp::string(ec.message().c_str()),
                                     Log::ERROR);
                 set_read_state(ReadState::Error);
-                if (m_observer) m_observer->on_h1_error(ec);
+                if (m_observer) m_observer->h1_on_error(ec);
                 return;
             }
 
             if (m_resp_parser->is_done()) {
                 set_read_state(ReadState::Eof);
-                if (any_body_added && m_observer) m_observer->on_h1_body_data_available();
+                if (any_body_added && m_observer) m_observer->h1_on_body_data_available();
                 if (m_destroyed) return;
-                if (m_observer) m_observer->on_h1_eof();
+                if (m_observer) m_observer->h1_on_eof();
                 return;
             }
 
@@ -327,7 +337,7 @@ void Http1UpstreamConn::parse_tcp_data(std::size_t bytes) {
         }
     }
 
-    if (any_body_added && m_observer) m_observer->on_h1_body_data_available();
+    if (any_body_added && m_observer) m_observer->h1_on_body_data_available();
 }
 
 nghttp3_ssize Http1UpstreamConn::pull_body_chunks(nghttp3_vec* vec, std::size_t veccnt,

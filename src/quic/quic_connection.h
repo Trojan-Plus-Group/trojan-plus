@@ -72,8 +72,11 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
 
     void on_pump_write();
 
+    // called by QuicProxySession, this func has re-try timer and ack-delay mechanisms 
     void send_stream_data(int64_t stream_id, std::shared_ptr<ReadBufWithGuard> buf, bool fin, IoHandler sent_cb);
-    int64_t send_stream_vecs(int64_t stream_id, const ngtcp2_vec* datav, std::size_t datavcnt, bool fin, IoHandler sent_cb);
+
+    // called by h3 which has own re-try timer and ack
+    int64_t send_stream_vecs(int64_t stream_id, const ngtcp2_vec* datav, std::size_t datavcnt, bool fin);
     
     // Open a new server-initiated unidirectional stream (for H3 control/QPACK).
     // Returns the stream ID, or -1 on error.

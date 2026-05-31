@@ -141,13 +141,13 @@ void QuicToHttp3Connect::pump_h3_response() {
     nghttp3_vec h3vecs[kMaxVecs];
 
     for (;;) {
-        int64_t sid = -1;
+        int64_t stream_id = -1;
         int fin = 0;
         nghttp3_ssize n = nghttp3_conn_writev_stream(
-            m_conn, &sid, &fin, h3vecs, kMaxVecs);
+            m_conn, &stream_id, &fin, h3vecs, kMaxVecs);
         
         if (n > 0) {
-            _log_with_date_time("QuicToHttp3Connect: pump_h3_response stream " + tp::to_string(sid) + " produced " + tp::to_string(n) + " vecs", Log::ALL);
+            _log_with_date_time("QuicToHttp3Connect: pump_h3_response stream " + tp::to_string(stream_id) + " produced " + tp::to_string(n) + " vecs", Log::ALL);
         }
 
         if (n < 0) {
@@ -155,24 +155,42 @@ void QuicToHttp3Connect::pump_h3_response() {
                 "QuicToHttp3Connect::pump_h3_response: writev_stream: " +
                 tp::string(nghttp3_strerror(static_cast<int>(n))),
                 Log::WARN);
+            m_owner.close(NGHTTP3_H3_FRAME_ERROR);
             break;
         }
-        if (sid == -1) break;  // nothing to write
+        if (stream_id == -1) break;  // nothing to write
 
         // nghttp3_vec and ngtcp2_vec are layout-compatible ({uint8_t* base, size_t len})
         int64_t consumed = m_owner.send_stream_vecs(
-            sid,
+            stream_id,
             reinterpret_cast<const ngtcp2_vec*>(h3vecs),
             static_cast<std::size_t>(n),
-            fin != 0, nullptr);
+            fin != 0);
 
         // Always report back to nghttp3 how many bytes ngtcp2 accepted
-        nghttp3_conn_add_write_offset(
-            m_conn, sid,
+        int rv_offset = nghttp3_conn_add_write_offset(
+            m_conn, stream_id,
             consumed > 0 ? static_cast<std::size_t>(consumed) : 0);
+        if (rv_offset < 0) {
+            _log_with_date_time(
+                "QuicToHttp3Connect::pump_h3_response: add_write_offset failed: " +
+                tp::string(nghttp3_strerror(rv_offset)),
+                Log::ERROR);
+            m_owner.close(NGHTTP3_H3_INTERNAL_ERROR);
+            break;
+        }
 
-        if (consumed < 0 || (consumed == 0 && n > 0)) {
-            // error or QUIC flow-control blocked
+        if (consumed < 0) {
+            _log_with_date_time(
+                "QuicToHttp3Connect::pump_h3_response: send_stream_vecs error stream=" +
+                tp::to_string(stream_id) + ", closing stream",
+                Log::WARN);
+            nghttp3_conn_close_stream(m_conn, stream_id, NGHTTP3_H3_INTERNAL_ERROR);
+            continue; // Keep pumping for other streams
+        }
+
+        if (consumed == 0 && n > 0) {
+            // QUIC flow-control blocked
             break;
         }
     }
@@ -183,6 +201,15 @@ int QuicToHttp3Connect::acked_stream_data(int64_t stream_id, std::size_t datalen
     int rv = nghttp3_conn_add_ack_offset(m_conn, stream_id, datalen);
     if (rv != 0) {
         _log_with_date_time("QuicToHttp3Connect::acked_stream_data stream " + tp::to_string(stream_id) + " failed: " + tp::string(nghttp3_strerror(rv)), Log::WARN);
+    }
+    return rv;
+}
+
+int QuicToHttp3Connect::close_stream(int64_t stream_id, uint64_t app_error_code) {
+    if (!m_conn) return NGHTTP3_ERR_INVALID_STATE;
+    int rv = nghttp3_conn_close_stream(m_conn, stream_id, app_error_code);
+    if (rv != 0 && rv != NGHTTP3_ERR_STREAM_NOT_FOUND) {
+        _log_with_date_time("QuicToHttp3Connect::close_stream stream " + tp::to_string(stream_id) + " failed: " + tp::string(nghttp3_strerror(rv)), Log::WARN);
     }
     return rv;
 }
@@ -204,7 +231,7 @@ nghttp3_ssize QuicToHttp3Connect::s_read_data(
         *pflags |= NGHTTP3_DATA_FLAG_EOF;
         return 0;
     }
-    return h->on_read_data(vec, veccnt, pflags);
+    return h->h3_on_read_data(vec, veccnt, pflags);
 }
 
 void QuicToHttp3Connect::register_stream(int64_t stream_id, std::shared_ptr<QuicUpstreamHandler> handler) {
@@ -234,7 +261,7 @@ int QuicToHttp3Connect::cb_begin_headers(nghttp3_conn*, int64_t stream_id,
     auto* self = static_cast<QuicToHttp3Connect*>(conn_user_data);
     auto h = self->find_handler(stream_id);
     if (!h) return 0;
-    return h->on_h3_begin_headers();
+    return h->h3_on_begin_headers();
 }
 
 int QuicToHttp3Connect::cb_recv_header(nghttp3_conn*, int64_t stream_id, int32_t,
@@ -245,7 +272,7 @@ int QuicToHttp3Connect::cb_recv_header(nghttp3_conn*, int64_t stream_id, int32_t
     if (!h) return 0;
     auto nb = nghttp3_rcbuf_get_buf(name);
     auto vb = nghttp3_rcbuf_get_buf(value);
-    return h->on_h3_header(
+    return h->h3_on_header(
         tp::string(reinterpret_cast<char*>(nb.base), nb.len),
         tp::string(reinterpret_cast<char*>(vb.base), vb.len));
 }
@@ -255,7 +282,7 @@ int QuicToHttp3Connect::cb_end_headers(nghttp3_conn*, int64_t stream_id, int fin
     auto* self = static_cast<QuicToHttp3Connect*>(conn_user_data);
     auto h = self->find_handler(stream_id);
     if (!h) return 0;
-    return h->on_h3_end_headers(fin != 0);
+    return h->h3_on_end_headers(fin != 0);
 }
 
 int QuicToHttp3Connect::cb_recv_data(nghttp3_conn*, int64_t stream_id,
@@ -264,7 +291,7 @@ int QuicToHttp3Connect::cb_recv_data(nghttp3_conn*, int64_t stream_id,
     auto* self = static_cast<QuicToHttp3Connect*>(conn_user_data);
     auto h = self->find_handler(stream_id);
     if (!h) return 0;
-    return h->on_h3_data(data, datalen);
+    return h->h3_on_data(data, datalen);
 }
 
 int QuicToHttp3Connect::cb_end_stream(nghttp3_conn*, int64_t stream_id,
@@ -272,7 +299,7 @@ int QuicToHttp3Connect::cb_end_stream(nghttp3_conn*, int64_t stream_id,
     auto* self = static_cast<QuicToHttp3Connect*>(conn_user_data);
     auto h = self->find_handler(stream_id);
     if (!h) return 0;
-    return h->on_h3_end_stream();
+    return h->h3_on_end_stream();
 }
 
 int QuicToHttp3Connect::cb_stream_close(nghttp3_conn*, int64_t stream_id,
@@ -281,7 +308,7 @@ int QuicToHttp3Connect::cb_stream_close(nghttp3_conn*, int64_t stream_id,
     auto* self = static_cast<QuicToHttp3Connect*>(conn_user_data);
     auto h = self->find_handler(stream_id);
     if (!h) return 0;
-    return h->on_h3_stream_close(app_error_code);
+    return h->h3_on_stream_close(app_error_code);
 }
 
 int QuicToHttp3Connect::cb_acked_stream_data(nghttp3_conn*, int64_t stream_id,
@@ -291,7 +318,7 @@ int QuicToHttp3Connect::cb_acked_stream_data(nghttp3_conn*, int64_t stream_id,
     auto h = self->find_handler(stream_id);
     if (h) {
         _log_with_date_time("QuicToHttp3Connect: acked " + tp::to_string(datalen) + " body bytes on stream " + tp::to_string(stream_id), Log::ALL);
-        h->notify_body_consumed(static_cast<std::size_t>(datalen));
+        h->h3_notify_body_consumed(static_cast<std::size_t>(datalen));
     }
     return 0;
 }

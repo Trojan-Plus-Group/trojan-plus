@@ -141,6 +141,10 @@ int QuicConnection::cb_acked_stream_data_offset(ngtcp2_conn* /*conn*/, int64_t s
                                                 void* user_data, void* /*stream_user_data*/) {
     auto* self = static_cast<QuicConnection*>(user_data);
 
+    // Notify H3 engine to free internal buffers and release backpressure.
+    if (self->m_h3) {
+        self->m_h3->acked_stream_data(stream_id, static_cast<std::size_t>(datalen));
+    }
 
     // Release ACKed buffers maintained at connection level
     auto it_buf = self->m_conn_unacked_bufs.find(stream_id);
@@ -187,9 +191,13 @@ int QuicConnection::cb_stream_open(ngtcp2_conn* /*conn*/, int64_t stream_id, voi
 }
 
 int QuicConnection::cb_stream_close(ngtcp2_conn* /*conn*/, uint32_t /*flags*/, int64_t stream_id,
-                                    uint64_t /*app_error_code*/, void* user_data,
+                                    uint64_t app_error_code, void* user_data,
                                     void* /*stream_user_data*/) {
     auto* self = static_cast<QuicConnection*>(user_data);
+
+    if (self->m_h3) {
+        self->m_h3->close_stream(stream_id, app_error_code);
+    }
 
     auto it = self->m_stream_handlers.find(stream_id);
     if (it != self->m_stream_handlers.end()) {
@@ -804,8 +812,8 @@ void QuicConnection::remove_unacked_buff(int64_t stream_id){
 }
 
 int64_t QuicConnection::send_stream_vecs(int64_t stream_id, 
-    const ngtcp2_vec* datav, std::size_t datavcnt, bool fin, IoHandler sent_cb){
-    return 0;
+    const ngtcp2_vec* datav, std::size_t datavcnt, bool fin){
+    return send_stream_vecs_impl(stream_id, datav, datavcnt, fin);
 }
 
 int64_t QuicConnection::send_stream_data_impl(int64_t stream_id, const uint8_t* data, std::size_t datalen,
@@ -925,28 +933,156 @@ int64_t QuicConnection::send_stream_data_impl(int64_t stream_id, const uint8_t* 
 int64_t QuicConnection::send_stream_vecs_impl(int64_t stream_id,
                                           const ngtcp2_vec* datav,
                                           std::size_t datavcnt, bool fin) {
-    if (m_closed || !m_conn) return -1;
+    if (m_closed || !m_conn) {
+        return -1;
+    }
+
+    _log_with_date_time("send_stream_vecs_impl enter: stream_id=" + tp::to_string(stream_id) + 
+                    " datavcnt=" + tp::to_string(datavcnt) + " fin=" + tp::to_string(fin), Log::ALL);
+
+    // Calculate total data length across all vectors
+    std::size_t total_len = 0;
+    for (std::size_t i = 0; i < datavcnt; ++i) {
+        total_len += datav[i].len;
+    }
 
     ngtcp2_path_storage ps;
     ngtcp2_path_storage_zero(&ps);
     ngtcp2_pkt_info pi{};
-    ngtcp2_ssize pdatalen = -1;
 
-    uint32_t flags = 0;
-    if (fin) flags |= NGTCP2_WRITE_STREAM_FLAG_FIN;
+    std::size_t written = 0;
+    bool ppe_pending = false;  // true when WRITE_MORE was returned, ngtcp2 PPE_PENDING flag is set
 
-    auto nwrite = ngtcp2_conn_writev_stream(
-        m_conn, &ps.path, &pi,
-        m_write_buf.data(), m_write_buf.size(),
-        &pdatalen, flags,
-        stream_id, datav, datavcnt, now_nanos());
+    // Flush PPE on any exit path to ensure PPE_PENDING is cleared before read_pkt can be called.
+    // ngtcp2 asserts PPE_PENDING==0 at the top of ngtcp2_conn_read_pkt_versioned.
+    // IMPORTANT: must reuse the same ps/pi/buf as the WRITE_MORE call per ngtcp2 contract.
+    auto flush_ppe = [&]() {
+        if (!ppe_pending) return;
+        ppe_pending = false;
+        auto flush_nwrite = ngtcp2_conn_writev_stream(m_conn, &ps.path, &pi, m_write_buf.data(), m_write_buf.size(),
+                                                      nullptr, 0, -1, nullptr, 0, now_nanos());
+        if (flush_nwrite > 0) {
+            m_endpoint.send_packet(m_peer, m_write_buf.data(), static_cast<std::size_t>(flush_nwrite));
+        }
+    };
 
-    if (nwrite == NGTCP2_ERR_STREAM_DATA_BLOCKED) return 0;
-    if (nwrite < 0) return -1;
-    if (nwrite > 0) {
-        m_endpoint.send_packet(m_peer, m_write_buf.data(), static_cast<std::size_t>(nwrite));
+    for (;;) {
+        // Calculate the slice of active vecs for this iteration
+        std::size_t skip = written;
+        std::size_t start_idx = 0;
+        std::size_t first_vec_offset = 0;
+        bool found = false;
+
+        for (std::size_t i = 0; i < datavcnt; ++i) {
+            if (skip < datav[i].len) {
+                start_idx = i;
+                first_vec_offset = skip;
+                found = true;
+                break;
+            }
+            skip -= datav[i].len;
+        }
+
+        tp::vector<ngtcp2_vec> active_vecs;
+        if (found) {
+            active_vecs.reserve(datavcnt - start_idx);
+            
+            // Slice the first vector to skip already sent bytes
+            ngtcp2_vec first_vec;
+            first_vec.base = datav[start_idx].base + first_vec_offset;
+            first_vec.len = datav[start_idx].len - first_vec_offset;
+            active_vecs.push_back(first_vec);
+
+            // Copy subsequent unsent vectors
+            for (std::size_t i = start_idx + 1; i < datavcnt; ++i) {
+                active_vecs.push_back(datav[i]);
+            }
+        } else {
+            // If all data was sent but we still need to send the fin tag, 
+            // push an empty vector to match send_stream_data_impl behavior.
+            ngtcp2_vec empty_vec;
+            empty_vec.base = nullptr;
+            empty_vec.len = 0;
+            active_vecs.push_back(empty_vec);
+        }
+
+        ngtcp2_ssize pdatalen = -1;
+
+        uint32_t flags = 0;
+        if (fin) {
+            // mark fin tag for all data, ngtcp2 will process correctly
+            flags |= NGTCP2_WRITE_STREAM_FLAG_FIN;
+        } else {
+            flags |= NGTCP2_WRITE_STREAM_FLAG_MORE;
+        }
+
+        if (flags & NGTCP2_WRITE_STREAM_FLAG_MORE) {
+            ppe_pending = true;
+        }
+
+        auto nwrite = ngtcp2_conn_writev_stream(m_conn, &ps.path, &pi, m_write_buf.data(), m_write_buf.size(),
+                                                &pdatalen, flags,
+                                                stream_id, active_vecs.data(), active_vecs.size(), now_nanos());
+
+        if (nwrite == NGTCP2_ERR_WRITE_MORE) {
+            _log_with_date_time("send_stream_vecs_impl: WRITE_MORE stream=" + 
+                tp::to_string(stream_id) + " pdatalen=" + tp::to_string(pdatalen), Log::ALL);
+            ppe_pending = true;
+            if (pdatalen > 0) written += pdatalen;
+            if (written == total_len && !fin) {
+                break;
+            }
+            continue;
+        }
+
+        if (nwrite < 0) {
+            if (nwrite == NGTCP2_ERR_STREAM_DATA_BLOCKED) {
+                _log_with_date_time("send_stream_vecs_impl: STREAM_DATA_BLOCKED stream=" + tp::to_string(stream_id) + 
+                    " written=" + tp::to_string(written), Log::ALL);
+                // PPE_PENDING may be set from a previous WRITE_MORE; must flush before returning.
+                flush_ppe();
+                return static_cast<int64_t>(written);
+            }
+            _log_with_date_time(
+                "send_stream_vecs_impl error=" + tp::string(ngtcp2_strerror(static_cast<int>(nwrite))) +
+                " stream=" + tp::to_string(stream_id) + " written=" + tp::to_string(written),
+                Log::ALL);
+            if (nwrite != NGTCP2_ERR_STREAM_SHUT_WR) {
+                _log_with_date_time(
+                    "send_stream_vecs_impl error=" + tp::string(ngtcp2_strerror(static_cast<int>(nwrite))) +
+                    " stream=" + tp::to_string(stream_id),
+                    Log::WARN);
+            }
+            flush_ppe();
+            if (written > 0) return static_cast<int64_t>(written);
+            return -1;
+        }
+
+        ppe_pending = false;  // successful writev clears internal PPE_PENDING
+        if (nwrite > 0) {
+            m_endpoint.send_packet(m_peer, m_write_buf.data(), static_cast<std::size_t>(nwrite));
+        }
+
+        if (pdatalen > 0) {
+            written += pdatalen;
+        }
+
+        if (written == total_len) {
+            break;
+        }
+
+        if (pdatalen <= 0) {
+            _log_with_date_time("send_stream_vecs_impl: loop break due to pdatalen<=0 stream=" + tp::to_string(stream_id) + 
+                " written=" + tp::to_string(written), Log::ALL);
+            // Flow control, congestion control, or no more data for this stream in current packets.
+            // DO NOT loop if we didn't send any stream data, to avoid infinite loop on connection-level frames.
+            break;
+        }
     }
-    return pdatalen > 0 ? static_cast<int64_t>(pdatalen) : (fin ? 0 : 0);
+
+    flush_ppe();
+    _log_with_date_time("send_stream_vecs_impl leave: stream_id=" + tp::to_string(stream_id) + " written=" + tp::to_string(written), Log::ALL);
+    return static_cast<int64_t>(written);
 }
 
 // ---- open_bidi_stream -------------------------------------------------------
@@ -1049,7 +1185,7 @@ bool QuicConnection::forward_to_h1_upstream(int64_t stream_id, const uint8_t* da
 
     if (!is_closed()) {
         // data is error so that handler is destroyed in h3_handler->on_stream_data
-        h3_handler->start();
+        h3_handler->h1_start();
     }
     return true;
 }

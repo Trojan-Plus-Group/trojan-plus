@@ -66,10 +66,10 @@ async def _fetch_file_impl(protocol, path):
         await asyncio.wait_for(protocol.done_events[stream_id].wait(), timeout=5.0)
     except TimeoutError:
         print(f"DEBUG_TIMEOUT: stream_id={stream_id} path={path} recv_len={len(protocol.responses[stream_id])}")
-        debug_fname = f"debug_recv_{path}.bin"
-        with open(debug_fname, "wb") as f:
-            f.write(protocol.responses[stream_id])
-        print(f"DEBUG_TIMEOUT: saved to {debug_fname}")
+        # debug_fname = f"debug_recv_{path}.bin"
+        # with open(debug_fname, "wb") as f:
+        #     f.write(protocol.responses[stream_id])
+        # print(f"DEBUG_TIMEOUT: saved to {debug_fname}")
         raise
     return bytes(protocol.responses[stream_id])
 

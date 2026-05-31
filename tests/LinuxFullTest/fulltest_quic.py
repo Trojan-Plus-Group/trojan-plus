@@ -1384,7 +1384,7 @@ def test_quic_load_test(binary_path):
     
     # --- Configuration ---
     ENABLE_SOCKS_LOAD = True
-    ENABLE_H3_LOAD    = False
+    ENABLE_H3_LOAD    = True
     
     TOTAL_FILES       = 200
     SOCKS_CONCURRENCY = 30

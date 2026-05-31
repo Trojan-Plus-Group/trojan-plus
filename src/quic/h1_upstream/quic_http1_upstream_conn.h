@@ -45,19 +45,19 @@ class Http1UpstreamConn : public std::enable_shared_from_this<Http1UpstreamConn>
       public:
         virtual ~Observer() = default;
         // TCP connect finished. ok==false if resolve or connect failed.
-        virtual void on_h1_connect_done(bool ok) = 0;
+        virtual void h1_on_connect_done(bool ok) = 0;
         // HTTP/1.1 response headers parsed; the parser ref is valid only inside this call.
-        virtual void on_h1_resp_headers(H1RespParser& parser) = 0;
+        virtual void h1_on_resp_headers(H1RespParser& parser) = 0;
         // One or more body chunks were appended to the buffer; observer should
         // drain via pull_body_chunks (typically by pumping H3).
-        virtual void on_h1_body_data_available() = 0;
+        virtual void h1_on_body_data_available() = 0;
         // TCP read EOF or parser end_of_stream. No more body data will arrive.
-        virtual void on_h1_eof() = 0;
+        virtual void h1_on_eof() = 0;
         // TCP/parse error. Observer should call destroy() afterwards.
-        virtual void on_h1_error(const boost::system::error_code& ec) = 0;
+        virtual void h1_on_error(const boost::system::error_code& ec) = 0;
         // A queued write completed; bytes is the QUIC inbound credit
         // (the caller-provided stream_bytes) that may now be returned.
-        virtual void on_h1_stream_credit(std::size_t bytes) = 0;
+        virtual void h1_on_stream_credit(std::size_t bytes) = 0;
     };
 
     Http1UpstreamConn(boost::asio::io_context& io_ctx,
