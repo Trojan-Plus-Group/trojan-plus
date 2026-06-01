@@ -23,15 +23,14 @@ class H3ClientProtocol(QuicConnectionProtocol):
     def quic_event_received(self, event):
         for h3_event in self.h3.handle_event(event):
             if isinstance(h3_event, HeadersReceived):
-                # print(f"H3_EVENT: HeadersReceived stream={h3_event.stream_id}")
-                pass
+                print(f"HeadersReceived stream={h3_event.stream_id}")
             if isinstance(h3_event, DataReceived):
                 size = len(h3_event.data)
                 self.recv_size += size  
-                # print(f"H3_EVENT: DataReceived stream={h3_event.stream_id} len={size} recv_size={self.recv_size}")
+                print(f"DataReceived stream={h3_event.stream_id} len={size} recv_size={self.recv_size}")
                 self.responses[h3_event.stream_id] += h3_event.data
             if getattr(h3_event, 'stream_ended', False):
-                # print(f"H3_EVENT: StreamEnded stream={h3_event.stream_id}")
+                print(f"StreamEnded stream={h3_event.stream_id}")
                 if h3_event.stream_id in self.done_events:
                     self.done_events[h3_event.stream_id].set()
 
@@ -49,6 +48,8 @@ async def _fetch_file_impl(protocol, path):
     protocol.responses[stream_id] = bytearray()
     protocol.done_events[stream_id] = asyncio.Event()
     
+    print(f"RequestStart stream_id={stream_id} path={path}")
+    
     protocol.h3.send_headers(
         stream_id=stream_id,
         headers=[
@@ -65,12 +66,13 @@ async def _fetch_file_impl(protocol, path):
     try:
         await asyncio.wait_for(protocol.done_events[stream_id].wait(), timeout=5.0)
     except TimeoutError:
-        print(f"DEBUG_TIMEOUT: stream_id={stream_id} path={path} recv_len={len(protocol.responses[stream_id])}")
-        # debug_fname = f"debug_recv_{path}.bin"
-        # with open(debug_fname, "wb") as f:
-        #     f.write(protocol.responses[stream_id])
-        # print(f"DEBUG_TIMEOUT: saved to {debug_fname}")
+        print(f"Timeout stream_id={stream_id} path={path} recv_len={len(protocol.responses[stream_id])}")
         raise
+    except Exception as e:
+        print(f"Error stream_id={stream_id} path={path} type={type(e).__name__} msg={str(e)} recv_len={len(protocol.responses[stream_id])}")
+        raise
+    
+    print(f"RequestSuccess stream_id={stream_id} path={path} size={len(protocol.responses[stream_id])}")
     return bytes(protocol.responses[stream_id])
 
 async def main():

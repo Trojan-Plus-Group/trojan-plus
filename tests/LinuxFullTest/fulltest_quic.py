@@ -1489,7 +1489,7 @@ def test_quic_load_test(binary_path):
                         print_time_log(f"[T16] Proxy progress: {done}/{len(test_files)}")
             return results
 
-        def run_h3_load(crash_event, concurrency=20):
+        def run_h3_load(crash_event, concurrency=20, iteration=1):
             print_time_log(f"[T16] Starting {len(test_files)} H3 fallback requests (concurrency={concurrency})...")
             
             list_file = os.path.join("config", "t16_file_list.tmp")
@@ -1504,6 +1504,14 @@ def test_quic_load_test(binary_path):
                 "--concurrency", str(concurrency)
             ]
             
+            t16_log_path = os.path.join("config", "quic_t16_log.output")
+            os.makedirs(os.path.dirname(t16_log_path), exist_ok=True)
+            log_file = open(t16_log_path, "w")
+            log_file.write(f"--- H3 Load run (iteration {iteration}) ---\n")
+            log_file.flush()
+            
+            log_lock = threading.Lock()
+            
             aio_proc = Popen(cmd, stdout=PIPE, stderr=PIPE, universal_newlines=True)
             stdout_lines = []
             stderr_lines = []
@@ -1514,6 +1522,11 @@ def test_quic_load_test(binary_path):
                         line = line.strip()
                         if line:
                             lines_list.append(line)
+                            with log_lock:
+                                try:
+                                    log_file.write(f"[{prefix}] {line}\n")
+                                    log_file.flush()
+                                except: pass
                             if line.startswith("H3_PROGRESS:") or line.startswith("AIOQUIC_") or line.startswith("H3_EVENT:"):
                                 print_time_log(f"[T16] {line}")
                             elif line.startswith("FILE:") and ":OK:" in line:
@@ -1559,6 +1572,10 @@ def test_quic_load_test(binary_path):
                         os.remove(list_file)
                     except:
                         pass
+                try:
+                    log_file.close()
+                except:
+                    pass
             return aio_proc.returncode, stdout, stderr
 
         # Run configured load types
@@ -1573,7 +1590,7 @@ def test_quic_load_test(binary_path):
                 if ENABLE_SOCKS_LOAD:
                     futs['proxy'] = main_pool.submit(run_proxy_load, crash_event)
                 if ENABLE_H3_LOAD:
-                    futs['h3'] = main_pool.submit(run_h3_load, crash_event, H3_CONCURRENCY)
+                    futs['h3'] = main_pool.submit(run_h3_load, crash_event, H3_CONCURRENCY, run_idx + 1)
                 
                 if 'proxy' in futs:
                     proxy_results = futs['proxy'].result()
