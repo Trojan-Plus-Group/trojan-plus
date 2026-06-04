@@ -107,6 +107,7 @@ class Http1UpstreamConn : public std::enable_shared_from_this<Http1UpstreamConn>
     void parse_tcp_data(std::size_t bytes);
     void do_tcp_write();
     void close_socket();
+    void on_connect_done(const boost::system::error_code& ec);
 
     void set_read_state(ReadState s);
     void buffer_chunk_append(tp::string chunk);

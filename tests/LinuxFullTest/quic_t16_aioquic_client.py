@@ -1,4 +1,9 @@
 import asyncio
+from datetime import datetime
+
+def log(*args, **kwargs):
+    print(*args, **kwargs)
+    
 import sys
 import os
 import hashlib
@@ -23,14 +28,14 @@ class H3ClientProtocol(QuicConnectionProtocol):
     def quic_event_received(self, event):
         for h3_event in self.h3.handle_event(event):
             if isinstance(h3_event, HeadersReceived):
-                print(f"HeadersReceived stream={h3_event.stream_id}")
+                log(f"HeadersReceived stream={h3_event.stream_id}")
             if isinstance(h3_event, DataReceived):
                 size = len(h3_event.data)
                 self.recv_size += size  
-                print(f"DataReceived stream={h3_event.stream_id} len={size} recv_size={self.recv_size}")
+                log(f"DataReceived stream={h3_event.stream_id} len={size} recv_size={self.recv_size}")
                 self.responses[h3_event.stream_id] += h3_event.data
             if getattr(h3_event, 'stream_ended', False):
-                print(f"StreamEnded stream={h3_event.stream_id}")
+                log(f"StreamEnded stream={h3_event.stream_id}")
                 if h3_event.stream_id in self.done_events:
                     self.done_events[h3_event.stream_id].set()
 
@@ -48,7 +53,7 @@ async def _fetch_file_impl(protocol, path):
     protocol.responses[stream_id] = bytearray()
     protocol.done_events[stream_id] = asyncio.Event()
     
-    print(f"RequestStart stream_id={stream_id} path={path}")
+    log(f"RequestStart stream_id={stream_id} path={path}")
     
     protocol.h3.send_headers(
         stream_id=stream_id,
@@ -66,13 +71,13 @@ async def _fetch_file_impl(protocol, path):
     try:
         await asyncio.wait_for(protocol.done_events[stream_id].wait(), timeout=5.0)
     except TimeoutError:
-        print(f"Timeout stream_id={stream_id} path={path} recv_len={len(protocol.responses[stream_id])}")
+        log(f"Timeout stream_id={stream_id} path={path} recv_len={len(protocol.responses[stream_id])}")
         raise
     except Exception as e:
-        print(f"Error stream_id={stream_id} path={path} type={type(e).__name__} msg={str(e)} recv_len={len(protocol.responses[stream_id])}")
+        log(f"Error stream_id={stream_id} path={path} type={type(e).__name__} msg={str(e)} recv_len={len(protocol.responses[stream_id])}")
         raise
     
-    print(f"RequestSuccess stream_id={stream_id} path={path} size={len(protocol.responses[stream_id])}")
+    log(f"RequestSuccess stream_id={stream_id} path={path} size={len(protocol.responses[stream_id])}")
     return bytes(protocol.responses[stream_id])
 
 async def main():
@@ -89,11 +94,11 @@ async def main():
             with open(args.file_list, "r") as f:
                 paths = [line.strip() for line in f if line.strip()]
         else:
-            print(f"AIOQUIC_ERROR: file list {args.file_list} not found")
+            log(f"AIOQUIC_ERROR: file list {args.file_list} not found")
             return
 
     if not paths:
-        print("AIOQUIC_ERROR: no files to download")
+        log("AIOQUIC_ERROR: no files to download")
         return
 
     config = QuicConfiguration(alpn_protocols=["h3"], is_client=True)
@@ -101,7 +106,7 @@ async def main():
     
     semaphore = asyncio.Semaphore(args.concurrency) if args.concurrency > 0 else None
 
-    print(f"AIOQUIC_STARTING: connecting to 127.0.0.1:{args.port}...")
+    log(f"AIOQUIC_STARTING: connecting to 127.0.0.1:{args.port}...")
     try:
         async with async_connect(
             "127.0.0.1",
@@ -110,7 +115,7 @@ async def main():
             create_protocol=H3ClientProtocol,
             wait_connected=True,
         ) as protocol:
-            print("AIOQUIC_CONNECTED")
+            log("AIOQUIC_CONNECTED")
             tasks = [fetch_file(protocol, p, semaphore) for p in paths]
             
             done_count = 0
@@ -119,14 +124,14 @@ async def main():
                     path, res = await fut
                     done_count += 1
                     md5 = hashlib.md5(res).hexdigest()
-                    print(f"FILE:{path}:OK:{len(res)}:{md5}")
+                    log(f"FILE:{path}:OK:{len(res)}:{md5}")
                     if done_count % 10 == 0 or done_count == len(paths):
-                        print(f"H3_PROGRESS: {done_count}/{len(paths)}")
+                        log(f"H3_PROGRESS: {done_count}/{len(paths)}")
                 except Exception as e:
-                    print(f"H3_FILE_ERROR: {e}")
+                    log(f"H3_FILE_ERROR: {e}")
                     done_count += 1
     except Exception as e:
-        print(f"AIOQUIC_ERROR: {e}")
+        log(f"AIOQUIC_ERROR: {e}")
 
 if __name__ == "__main__":
     asyncio.run(main())

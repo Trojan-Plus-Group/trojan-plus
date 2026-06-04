@@ -227,6 +227,14 @@ int QuicConnection::cb_stream_close(ngtcp2_conn* /*conn*/, uint32_t /*flags*/, i
     return 0;
 }
 
+int QuicConnection::cb_extend_max_stream_data(ngtcp2_conn* /*conn*/, int64_t stream_id,
+                                              uint64_t max_data, void* user_data,
+                                              void* /*stream_user_data*/) {
+    auto* self = static_cast<QuicConnection*>(user_data);
+    self->on_extend_max_stream_data(stream_id, max_data);
+    return 0;
+}
+
 void QuicConnection::cb_rand(uint8_t* dest, size_t destlen, const ngtcp2_rand_ctx* /*ctx*/) {
     wolfSSL_RAND_bytes(dest, static_cast<int>(destlen));
 }
@@ -353,6 +361,7 @@ bool QuicConnection::init_server(const uint8_t* data, std::size_t datalen,
     callbacks.get_new_connection_id2   = cb_get_new_connection_id;
     callbacks.get_path_challenge_data2 = ngtcp2_crypto_get_path_challenge_data2_cb;
     callbacks.acked_stream_data_offset = cb_acked_stream_data_offset;
+    callbacks.extend_max_stream_data   = cb_extend_max_stream_data;
 
     ngtcp2_settings settings;
     ngtcp2_settings_default(&settings);
@@ -411,7 +420,7 @@ bool QuicConnection::init_server(const uint8_t* data, std::size_t datalen,
         return false;
     }
 
-    pump_write();
+    pump_write(FUNC_NAME);
     reschedule_loss_timer();
     return true;
 }
@@ -462,6 +471,7 @@ bool QuicConnection::init_client(const boost::asio::ip::udp::endpoint& local_ep,
     callbacks.get_new_connection_id2        = cb_get_new_connection_id;
     callbacks.get_path_challenge_data2      = ngtcp2_crypto_get_path_challenge_data2_cb;
     callbacks.acked_stream_data_offset      = cb_acked_stream_data_offset;
+    callbacks.extend_max_stream_data        = cb_extend_max_stream_data;
 
     ngtcp2_settings settings;
     ngtcp2_settings_default(&settings);
@@ -499,7 +509,7 @@ bool QuicConnection::init_client(const boost::asio::ip::udp::endpoint& local_ep,
 
     ngtcp2_conn_set_tls_native_handle(m_conn, m_ssl);
 
-    pump_write();
+    pump_write(FUNC_NAME);
     reschedule_loss_timer();
     return true;
 }
@@ -528,11 +538,11 @@ void QuicConnection::on_packet(const uint8_t* data, std::size_t datalen,
         }
     }
     if (!m_closed && m_conn) {
-        on_pump_write();
+        on_pump_write(FUNC_NAME);
     }
 }
 
-void QuicConnection::on_pump_write() {
+void QuicConnection::on_pump_write(const char* debug_path) {
     if (m_closed || !m_conn) {
         return;
     }
@@ -542,10 +552,10 @@ void QuicConnection::on_pump_write() {
     }
     m_in_pump_write = true;
     
-    pump_write();
+    pump_write(debug_path);
 
     if (m_h3) {
-        m_h3->pump_h3_response();
+        m_h3->pump_h3_response(debug_path);
     }
 
     // Give handlers a chance to retry buffered data (e.g. if QPACK was unblocked)
@@ -559,7 +569,7 @@ void QuicConnection::on_pump_write() {
 
 // ---- pump_write : send ACK/Control/handshake packet without stream id --------------------------
 
-void QuicConnection::pump_write() {
+void QuicConnection::pump_write(const char* debug_path) {
     if (m_closed || !m_conn) {
         return;
     }
@@ -582,7 +592,8 @@ void QuicConnection::pump_write() {
                                       now_nanos());
             }
             _log_with_date_time(
-                "QuicConnection::pump_write: " + tp::string(ngtcp2_strerror(static_cast<int>(nwrite))),
+                "QuicConnection::pump_write: " + tp::string(ngtcp2_strerror(static_cast<int>(nwrite))) + 
+                " path" + tp::string(debug_path),
                 Log::WARN);
             if (nwrite == NGTCP2_ERR_CLOSING || nwrite == NGTCP2_ERR_DRAINING) {
                 m_closed = true;
@@ -782,7 +793,7 @@ void QuicConnection::UnackedBuf::send(){
     }
 
     if(sent > 0){
-        conn->on_pump_write();
+        conn->on_pump_write(FUNC_NAME);
     }
 }
 
@@ -812,8 +823,8 @@ void QuicConnection::remove_unacked_buff(int64_t stream_id){
 }
 
 int64_t QuicConnection::send_stream_vecs(int64_t stream_id, 
-    const ngtcp2_vec* datav, std::size_t datavcnt, bool fin){
-    return send_stream_vecs_impl(stream_id, datav, datavcnt, fin);
+    const ngtcp2_vec* datav, std::size_t datavcnt, bool fin, const char* debug_path){
+    return send_stream_vecs_impl(stream_id, datav, datavcnt, fin, debug_path);
 }
 
 int64_t QuicConnection::send_stream_data_impl(int64_t stream_id, const uint8_t* data, std::size_t datalen,
@@ -932,13 +943,14 @@ int64_t QuicConnection::send_stream_data_impl(int64_t stream_id, const uint8_t* 
 
 int64_t QuicConnection::send_stream_vecs_impl(int64_t stream_id,
                                           const ngtcp2_vec* datav,
-                                          std::size_t datavcnt, bool fin) {
+                                          std::size_t datavcnt, bool fin, const char* debug_path) {
     if (m_closed || !m_conn) {
         return -1;
     }
 
     _log_with_date_time("send_stream_vecs_impl enter: stream_id=" + tp::to_string(stream_id) + 
-                    " datavcnt=" + tp::to_string(datavcnt) + " fin=" + tp::to_string(fin), Log::ALL);
+                    " datavcnt=" + tp::to_string(datavcnt) + " fin=" + tp::to_string(fin) + 
+                    " path=" + tp::string(debug_path), Log::ALL);
 
     // Calculate total data length across all vectors
     std::size_t total_len = 0;
@@ -1026,7 +1038,8 @@ int64_t QuicConnection::send_stream_vecs_impl(int64_t stream_id,
 
         if (nwrite == NGTCP2_ERR_WRITE_MORE) {
             _log_with_date_time("send_stream_vecs_impl: WRITE_MORE stream=" + 
-                tp::to_string(stream_id) + " pdatalen=" + tp::to_string(pdatalen), Log::ALL);
+                tp::to_string(stream_id) + " pdatalen=" + tp::to_string(pdatalen) + 
+                " path=" + tp::string(debug_path), Log::ALL);
             ppe_pending = true;
             if (pdatalen > 0) written += pdatalen;
             if (written == total_len && !fin) {
@@ -1038,19 +1051,21 @@ int64_t QuicConnection::send_stream_vecs_impl(int64_t stream_id,
         if (nwrite < 0) {
             if (nwrite == NGTCP2_ERR_STREAM_DATA_BLOCKED) {
                 _log_with_date_time("send_stream_vecs_impl: STREAM_DATA_BLOCKED stream=" + tp::to_string(stream_id) + 
-                    " written=" + tp::to_string(written), Log::ALL);
+                    " written=" + tp::to_string(written) + 
+                    " path=" + tp::string(debug_path), Log::ALL);
                 // PPE_PENDING may be set from a previous WRITE_MORE; must flush before returning.
                 flush_ppe();
                 return static_cast<int64_t>(written);
             }
             _log_with_date_time(
                 "send_stream_vecs_impl error=" + tp::string(ngtcp2_strerror(static_cast<int>(nwrite))) +
-                " stream=" + tp::to_string(stream_id) + " written=" + tp::to_string(written),
+                " stream=" + tp::to_string(stream_id) + " written=" + tp::to_string(written) + 
+                " path=" + tp::string(debug_path),
                 Log::ALL);
             if (nwrite != NGTCP2_ERR_STREAM_SHUT_WR) {
                 _log_with_date_time(
                     "send_stream_vecs_impl error=" + tp::string(ngtcp2_strerror(static_cast<int>(nwrite))) +
-                    " stream=" + tp::to_string(stream_id),
+                    " stream=" + tp::to_string(stream_id) + " path=" + tp::string(debug_path),
                     Log::WARN);
             }
             flush_ppe();
@@ -1073,7 +1088,8 @@ int64_t QuicConnection::send_stream_vecs_impl(int64_t stream_id,
 
         if (pdatalen <= 0) {
             _log_with_date_time("send_stream_vecs_impl: loop break due to pdatalen<=0 stream=" + tp::to_string(stream_id) + 
-                " written=" + tp::to_string(written), Log::ALL);
+                " written=" + tp::to_string(written) + 
+                " path=" + tp::string(debug_path), Log::ALL);
             // Flow control, congestion control, or no more data for this stream in current packets.
             // DO NOT loop if we didn't send any stream data, to avoid infinite loop on connection-level frames.
             break;
@@ -1081,7 +1097,9 @@ int64_t QuicConnection::send_stream_vecs_impl(int64_t stream_id,
     }
 
     flush_ppe();
-    _log_with_date_time("send_stream_vecs_impl leave: stream_id=" + tp::to_string(stream_id) + " written=" + tp::to_string(written), Log::ALL);
+    _log_with_date_time("send_stream_vecs_impl leave: stream_id=" + tp::to_string(stream_id) + 
+    " written=" + tp::to_string(written) + 
+                    " path=" + tp::string(debug_path), Log::ALL);
     return static_cast<int64_t>(written);
 }
 
@@ -1123,8 +1141,8 @@ QuicToHttp3Connect& QuicConnection::get_or_create_h3() {
             if (ctrl >= 0 && qenc >= 0 && qdec >= 0) {
                 m_h3->bind_control_streams(ctrl, qenc, qdec);
             }
-            m_h3->pump_h3_response();
-            pump_write();
+            m_h3->pump_h3_response(FUNC_NAME);
+            pump_write(FUNC_NAME);
         }
     }
     return *m_h3;
@@ -1183,7 +1201,7 @@ bool QuicConnection::forward_to_h1_upstream(int64_t stream_id, const uint8_t* da
         h3_handler->on_stream_data(nullptr, 0, true);
     }
 
-    if (!is_closed()) {
+    if (!is_closed() && !is_quic_client_uni_stream(stream_id)) {
         // data is error so that handler is destroyed in h3_handler->on_stream_data
         h3_handler->h1_start();
     }
@@ -1342,7 +1360,7 @@ void QuicConnection::reschedule_loss_timer() {
             }
         }
 
-        on_pump_write();
+        on_pump_write(FUNC_NAME);
     });
 }
 
@@ -1357,7 +1375,7 @@ void QuicConnection::stream_extend_window(int64_t stream_id, std::size_t n) {
         // It won't actually queue frames or generate UDP packets until the threshold is crossed, 
         // avoiding traffic waste from small incremental window updates.
         if (!m_in_read_pkt) {
-            on_pump_write();
+            on_pump_write(FUNC_NAME);
         }
     }
 }
@@ -1370,7 +1388,7 @@ void QuicConnection::conn_extend_window(std::size_t n) {
         // It won't actually queue frames or generate UDP packets until the threshold is crossed, 
         // avoiding traffic waste from small incremental window updates.
         if (!m_in_read_pkt) {
-            on_pump_write();
+            on_pump_write(FUNC_NAME);
         }
     }
 }
@@ -1383,7 +1401,21 @@ void QuicConnection::reset_stream(int64_t stream_id, uint64_t app_error_code) {
                                 tp::to_string(stream_id) + ": " + tp::string(ngtcp2_strerror(rv)), Log::WARN);
         }
         if (!m_in_read_pkt) {
-            on_pump_write();
+            on_pump_write(FUNC_NAME);
         }
     }
+}
+
+void QuicConnection::on_extend_max_stream_data(int64_t stream_id, uint64_t max_data) {
+    _log_with_date_time("on_extend_max_stream_data: stream=" + tp::to_string(stream_id) + 
+                        " max_data=" + tp::to_string(max_data), Log::ALL);
+    if (m_h3) {
+        m_h3->unblock_stream(stream_id);
+    }
+    on_pump_write(FUNC_NAME);
+}
+
+bool QuicConnection::is_stream_flow_control_blocked(int64_t stream_id) const {
+    if (!m_conn) return false;
+    return ngtcp2_conn_get_max_stream_data_left(m_conn, stream_id) == 0;
 }

@@ -70,13 +70,13 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
                    const boost::asio::ip::udp::endpoint& local_ep,
                    const boost::asio::ip::udp::endpoint& remote_ep);
 
-    void on_pump_write();
+    void on_pump_write(const char* debug_path);
 
     // called by QuicProxySession, this func has re-try timer and ack-delay mechanisms 
     void send_stream_data(int64_t stream_id, std::shared_ptr<ReadBufWithGuard> buf, bool fin, IoHandler sent_cb);
 
     // called by h3 which has own re-try timer and ack
-    int64_t send_stream_vecs(int64_t stream_id, const ngtcp2_vec* datav, std::size_t datavcnt, bool fin);
+    int64_t send_stream_vecs(int64_t stream_id, const ngtcp2_vec* datav, std::size_t datavcnt, bool fin, const char* debug_path);
     
     // Open a new server-initiated unidirectional stream (for H3 control/QPACK).
     // Returns the stream ID, or -1 on error.
@@ -101,8 +101,11 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
 
     // Manually extend the QUIC flow control window for a stream.
     // Call this after the application has processed/sent received data.
-    void stream_extend_window(int64_t stream_id, std::size_t n);
+     void stream_extend_window(int64_t stream_id, std::size_t n);
     void conn_extend_window(std::size_t n);
+
+    void on_extend_max_stream_data(int64_t stream_id, uint64_t max_data);
+    [[nodiscard]] bool is_stream_flow_control_blocked(int64_t stream_id) const;
 
     // Manually reset a stream with an error code.
     void reset_stream(int64_t stream_id, uint64_t app_error_code);
@@ -156,6 +159,9 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
                              const uint8_t* current_rx_secret, const uint8_t* current_tx_secret,
                              size_t secretlen, void* user_data);
     static int cb_extend_max_local_streams_bidi(ngtcp2_conn*, uint64_t max_streams, void* user_data);
+    static int cb_extend_max_stream_data(ngtcp2_conn* conn, int64_t stream_id,
+                                         uint64_t max_data, void* user_data,
+                                         void* stream_user_data);
 
     // ngtcp2_crypto_conn_ref get_conn callback.
     static ngtcp2_conn* get_conn_cb(ngtcp2_crypto_conn_ref* ref);
@@ -168,7 +174,7 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
 
 
     // Write pending stream data (call after every read or timer event).
-    void pump_write();
+    void pump_write(const char* debug_path);
     
 
     // Send data on an existing bidi stream. Returns false on error.
@@ -176,7 +182,7 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
 
     // Send vectorised stream data sourced from nghttp3 (multi-vec variant).
     // Returns pdatalen (bytes accepted by ngtcp2), 0 if flow-controlled, -1 on error.
-    int64_t send_stream_vecs_impl(int64_t stream_id, const ngtcp2_vec* datav, std::size_t datavcnt, bool fin);
+    int64_t send_stream_vecs_impl(int64_t stream_id, const ngtcp2_vec* datav, std::size_t datavcnt, bool fin, const char* debug_path);
 
     QuicEndpoint& m_endpoint;
     std::shared_ptr<QuicTlsCtx> m_tls_ctx;

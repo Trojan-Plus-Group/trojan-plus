@@ -42,6 +42,29 @@ static constexpr const char* get_filename(const char* path) {
 }
 #define __STRIPPED_FILE__ get_filename(__FILE__)
 
+static constexpr const char* extract_class_and_func(std::string_view sig) {
+    size_t paren_pos = sig.find('(');
+    if (paren_pos == std::string_view::npos) {
+        return sig.data(); 
+    }
+    std::string_view without_args = sig.substr(0, paren_pos);
+
+    size_t space_pos = without_args.find_last_of(' ');
+    if (space_pos != std::string_view::npos) {
+        return without_args.substr(space_pos + 1).data();
+    }
+
+    return without_args.data();
+}
+
+#if defined(_MSC_VER)
+    #define FUNC_NAME (Log::level <= Log::ALL ? extract_class_and_func(__FUNCSIG__) : __func__)
+#elif defined(__GNUC__) || defined(__clang__)
+    #define FUNC_NAME (Log::level <= Log::ALL ? extract_class_and_func(__PRETTY_FUNCTION__) : __func__)
+#else
+    #define FUNC_NAME __func__
+#endif
+
 #ifdef ERROR // windows.h
 #undef ERROR
 #endif // ERROR

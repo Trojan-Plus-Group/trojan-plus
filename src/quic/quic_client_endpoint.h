@@ -58,7 +58,7 @@ class QuicClientEndpoint : public QuicEndpoint {
   protected:
     void on_packet(const uint8_t* data, std::size_t len,
                    const boost::asio::ip::udp::endpoint& src) override;
-    void on_pump_write() override;
+    void on_pump_write(const char* debug_path) override;
 
   private:
     void connect_to_server();

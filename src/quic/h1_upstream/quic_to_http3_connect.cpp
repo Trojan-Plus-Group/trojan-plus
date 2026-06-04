@@ -134,27 +134,30 @@ int QuicToHttp3Connect::submit_response(
     return rv;
 }
 
-void QuicToHttp3Connect::pump_h3_response() {
-    if (!m_conn) return;
+void QuicToHttp3Connect::pump_h3_response(const char* debug_path) {
+    if (!m_conn || m_owner.is_closed()) return;
 
     constexpr int kMaxVecs = 16;
     nghttp3_vec h3vecs[kMaxVecs];
 
     for (;;) {
+        if (m_owner.is_closed()) break;
+
         int64_t stream_id = -1;
         int fin = 0;
         nghttp3_ssize n = nghttp3_conn_writev_stream(
             m_conn, &stream_id, &fin, h3vecs, kMaxVecs);
         
         if (n > 0) {
-            _log_with_date_time("QuicToHttp3Connect: pump_h3_response stream " + tp::to_string(stream_id) + " produced " + tp::to_string(n) + " vecs", Log::ALL);
+            _log_with_date_time("QuicToHttp3Connect: pump_h3_response stream " + tp::to_string(stream_id) + 
+                " produced " + tp::to_string(n) + " vecs" + " path=" + tp::string(debug_path), Log::ALL);
         }
 
         if (n < 0) {
             _log_with_date_time(
                 "QuicToHttp3Connect::pump_h3_response: writev_stream: " +
-                tp::string(nghttp3_strerror(static_cast<int>(n))),
-                Log::WARN);
+                tp::string(nghttp3_strerror(static_cast<int>(n))) +  
+                " path=" + tp::string(debug_path), Log::WARN);
             m_owner.close(NGHTTP3_H3_FRAME_ERROR);
             break;
         }
@@ -165,7 +168,7 @@ void QuicToHttp3Connect::pump_h3_response() {
             stream_id,
             reinterpret_cast<const ngtcp2_vec*>(h3vecs),
             static_cast<std::size_t>(n),
-            fin != 0);
+            fin != 0, debug_path);
 
         // Always report back to nghttp3 how many bytes ngtcp2 accepted
         int rv_offset = nghttp3_conn_add_write_offset(
@@ -174,7 +177,7 @@ void QuicToHttp3Connect::pump_h3_response() {
         if (rv_offset < 0) {
             _log_with_date_time(
                 "QuicToHttp3Connect::pump_h3_response: add_write_offset failed: " +
-                tp::string(nghttp3_strerror(rv_offset)),
+                tp::string(nghttp3_strerror(rv_offset)) + " path=" + tp::string(debug_path), 
                 Log::ERROR);
             m_owner.close(NGHTTP3_H3_INTERNAL_ERROR);
             break;
@@ -183,14 +186,28 @@ void QuicToHttp3Connect::pump_h3_response() {
         if (consumed < 0) {
             _log_with_date_time(
                 "QuicToHttp3Connect::pump_h3_response: send_stream_vecs error stream=" +
-                tp::to_string(stream_id) + ", closing stream",
-                Log::WARN);
-            nghttp3_conn_close_stream(m_conn, stream_id, NGHTTP3_H3_INTERNAL_ERROR);
+                tp::to_string(stream_id) + ", closing stream" + 
+                " path=" + tp::string(debug_path), Log::WARN);
+            int rv_close = nghttp3_conn_close_stream(m_conn, stream_id, NGHTTP3_H3_INTERNAL_ERROR);
+            if (rv_close < 0) {
+                _log_with_date_time(
+                    "QuicToHttp3Connect::pump_h3_response: failed to close stream " + tp::to_string(stream_id) +
+                    " in nghttp3: " + tp::string(nghttp3_strerror(rv_close)) + ", closing connection to prevent infinite loop" +
+                    " path=" + tp::string(debug_path), Log::ERROR);
+                m_owner.close(NGHTTP3_H3_INTERNAL_ERROR);
+                break;
+            }
             continue; // Keep pumping for other streams
         }
 
         if (consumed == 0 && n > 0) {
             // QUIC flow-control blocked
+            if (m_owner.is_stream_flow_control_blocked(stream_id)) {
+                _log_with_date_time("QuicToHttp3Connect::pump_h3_response: stream " + tp::to_string(stream_id) + 
+                    " flow control blocked, blocking stream in nghttp3 path=" + tp::string(debug_path), Log::ALL);
+                nghttp3_conn_block_stream(m_conn, stream_id);
+                continue; // Skip this stream and keep pumping other streams
+            }
             break;
         }
     }
@@ -214,10 +231,18 @@ int QuicToHttp3Connect::close_stream(int64_t stream_id, uint64_t app_error_code)
     return rv;
 }
 
-void QuicToHttp3Connect::resume_stream(int64_t stream_id) {
+void QuicToHttp3Connect::resume_stream(int64_t stream_id, const char* debug_path) {
     if (!m_conn) return;
     nghttp3_conn_resume_stream(m_conn, stream_id);
-    pump_h3_response();
+    pump_h3_response(debug_path);
+}
+
+void QuicToHttp3Connect::unblock_stream(int64_t stream_id) {
+    if (!m_conn) return;
+    int rv = nghttp3_conn_unblock_stream(m_conn, stream_id);
+    if (rv == 0) {
+        _log_with_date_time("QuicToHttp3Connect::unblock_stream: stream " + tp::to_string(stream_id) + " unblocked", Log::ALL);
+    }
 }
 
 nghttp3_ssize QuicToHttp3Connect::s_read_data(

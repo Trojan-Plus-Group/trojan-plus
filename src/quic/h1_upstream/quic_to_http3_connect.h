@@ -56,11 +56,14 @@ class QuicToHttp3Connect {
 
     // Drive the nghttp3 write loop: pull encoded H3 frames and hand them to
     // QuicConnection::send_stream_vecs, then call add_write_offset.
-    void pump_h3_response();
+    void pump_h3_response(const char* debug_path);
 
     // Resume a stream that previously returned NGHTTP3_ERR_WOULDBLOCK from
     // its data_reader, then immediately pump.
-    void resume_stream(int64_t stream_id);
+    void resume_stream(int64_t stream_id, const char* debug_path);
+
+    // Unblock a stream blocked by flow control.
+    void unblock_stream(int64_t stream_id);
 
     // Notify H3 of data acknowledged on stream
     int acked_stream_data(int64_t stream_id, std::size_t datalen);

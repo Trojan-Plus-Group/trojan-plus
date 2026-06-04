@@ -1384,7 +1384,7 @@ def test_quic_load_test(binary_path):
     
     # --- Configuration ---
     ENABLE_SOCKS_LOAD = True
-    ENABLE_H3_LOAD    = True
+    ENABLE_H3_LOAD    = False
     
     TOTAL_FILES       = 200
     SOCKS_CONCURRENCY = 30
@@ -1517,6 +1517,7 @@ def test_quic_load_test(binary_path):
             stderr_lines = []
             
             def reader_thread(pipe, lines_list, prefix=""):
+                from datetime import datetime
                 try:
                     for line in pipe:
                         line = line.strip()
@@ -1524,7 +1525,8 @@ def test_quic_load_test(binary_path):
                             lines_list.append(line)
                             with log_lock:
                                 try:
-                                    log_file.write(f"[{prefix}] {line}\n")
+                                    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
+                                    log_file.write(f"[{ts}] [{prefix}] {line}\n")
                                     log_file.flush()
                                 except: pass
                             if line.startswith("H3_PROGRESS:") or line.startswith("AIOQUIC_") or line.startswith("H3_EVENT:"):

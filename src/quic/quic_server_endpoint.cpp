@@ -237,11 +237,11 @@ void QuicServerEndpoint::on_packet(const uint8_t* data, std::size_t len,
     m_pumping_conn.push_back(key);
 }
 
-void QuicServerEndpoint::on_pump_write(){
+void QuicServerEndpoint::on_pump_write(const char* debug_path){
     for(const auto& key : m_pumping_conn){
         auto it = m_conns.find(key);
         if(it != m_conns.end()){
-            it->second->on_pump_write();
+            it->second->on_pump_write(debug_path);
         }
     }
 

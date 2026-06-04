@@ -14,6 +14,7 @@
 #include <initializer_list>
 #include <string_view>
 
+#include <boost/asio/post.hpp>
 #include <nghttp3/nghttp3.h>
 
 #include "core/log.h"
@@ -26,7 +27,8 @@ QuicUpstreamHandler::QuicUpstreamHandler(
     boost::asio::io_context& io_ctx,
     const tp::string& host, const tp::string& port_str)
     : m_conn_ptr(conn),
-      m_stream_id(stream_id) {
+      m_stream_id(stream_id),
+      m_io_ctx(io_ctx) {
     m_h1_conn = TP_MAKE_SHARED(Http1UpstreamConn, io_ctx, host, port_str, this);
 }
 
@@ -70,17 +72,38 @@ void QuicUpstreamHandler::h3_retry_feed() {
                                         reinterpret_cast<const uint8_t*>(sv.data()),
                                         sv.size(),
                                         m_h3_in_fin);
+    
+    if (consumed == NGHTTP3_ERR_WOULDBLOCK) {
+        // NGHTTP3_ERR_WOULDBLOCK implies nghttp3 has successfully buffered all input data.
+        // We must treat this as consuming the entire sv.size(), and NOT a protocol error.
+        consumed = static_cast<nghttp3_ssize>(sv.size());
+    }
+
     if (consumed < 0) {
         _log_with_date_time("QuicUpstreamHandler: H3 protocol error on stream " +
                                 tp::to_string(m_stream_id) + ": " +
                                 tp::string(nghttp3_strerror(static_cast<int>(consumed))),
                             Log::WARN);
-        locked_conn->close(NGHTTP3_H3_FRAME_ERROR);
+        if (is_quic_client_uni_stream(m_stream_id)) {
+            // Unidirectional streams are critical (Control/QPACK). A real error here requires connection teardown.
+            locked_conn->close(NGHTTP3_H3_FRAME_ERROR);
+            destroy();
+        } else {
+            // Bidirectional request streams can be safely reset without tearing down the entire connection.
+            locked_conn->reset_stream(m_stream_id, NGHTTP3_H3_INTERNAL_ERROR);
+
+            // Post destroy() to the next event loop tick to avoid modifying m_stream_handlers 
+            // while iterating it inside QuicConnection::on_pump_write()
+            auto self = shared_from_this();
+            boost::asio::post(m_io_ctx, [self]() {
+                self->destroy();
+            });
+        }
         return;
     }
 
     if (consumed > 0 || (m_h3_in_buf.size() == 0 && m_h3_in_fin)) {
-        std::size_t n = static_cast<std::size_t>(consumed);
+        std::size_t n = static_cast<std::size_t>(consumed > 0 ? consumed : 0);
         if (n > 0) {
             m_h3_in_buf.consume(n);
         }
@@ -89,7 +112,7 @@ void QuicUpstreamHandler::h3_retry_feed() {
             m_h3_in_fin = false;
         }
 
-        if (n > 0) {
+        if (n > 0 || !m_h3_to_h1_feed_chunks.empty()) {
             if (m_h3_to_h1_feed_chunks.empty()) {
                 // If no upstream HTTP/1 chunks were generated (e.g. control frames
                 // or headers only), extend the stream window immediately to avoid deadlock.
@@ -175,15 +198,15 @@ int QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespPar
     int rv = h3->submit_response(m_stream_id, hdrs, has_body);
     if (rv != 0) return rv;
 
-    h3_pump_response();
+    h3_pump_response(FUNC_NAME);
     return 0;
 }
 
-void QuicUpstreamHandler::h3_pump_response() {
+void QuicUpstreamHandler::h3_pump_response(const char* debug_path) {
     if (m_destroyed) return;
     auto locked_conn = m_conn_ptr.lock();
     if (!locked_conn || locked_conn->is_closed()) return;
-    locked_conn->on_pump_write();
+    locked_conn->on_pump_write(debug_path);
 }
 
 // ---- nghttp3 data_reader / consume notification -------------------------
@@ -208,6 +231,9 @@ nghttp3_ssize QuicUpstreamHandler::h3_on_read_data(nghttp3_vec* vec, std::size_t
 void QuicUpstreamHandler::h3_notify_body_consumed(std::size_t n) {
     if (m_destroyed || !m_h1_conn) return;
     m_h1_conn->notify_body_consumed(n);
+    if (m_h1_conn->is_eof() && !m_h1_conn->has_buffered_body()) {
+        h3_pump_response(FUNC_NAME);
+    }
 }
 
 // ---- Http1UpstreamConn::Observer ----------------------------------------
@@ -223,7 +249,7 @@ void QuicUpstreamHandler::h1_on_connect_done(bool ok) {
                 tp::vector<std::pair<tp::string, tp::string>> hdrs;
                 hdrs.push_back({":status", "502"});
                 h3->submit_response(m_stream_id, hdrs, false);
-                locked_conn->on_pump_write();
+                locked_conn->on_pump_write(FUNC_NAME);
             } else {
                 // Fallback to stream reset if H3 manager is not available.
                 locked_conn->reset_stream(m_stream_id, NGHTTP3_H3_INTERNAL_ERROR);
@@ -249,12 +275,12 @@ void QuicUpstreamHandler::h1_on_body_data_available() {
         auto locked_conn = m_conn_ptr.lock();
         if (locked_conn) {
             if (auto* h3 = locked_conn->h3_if_exists()) {
-                h3->resume_stream(m_stream_id);
+                h3->resume_stream(m_stream_id, FUNC_NAME);
                 return; // resume_stream itself pumps
             }
         }
     }
-    h3_pump_response();
+    h3_pump_response(FUNC_NAME);
 }
 
 void QuicUpstreamHandler::h1_on_eof() {
@@ -267,12 +293,12 @@ void QuicUpstreamHandler::h1_on_eof() {
         auto locked_conn = m_conn_ptr.lock();
         if (locked_conn) {
             if (auto* h3 = locked_conn->h3_if_exists()) {
-                h3->resume_stream(m_stream_id);
+                h3->resume_stream(m_stream_id, FUNC_NAME);
                 return;
             }
         }
     }
-    h3_pump_response();
+    h3_pump_response(FUNC_NAME);
 }
 
 void QuicUpstreamHandler::h1_on_error(const boost::system::error_code& /*ec*/) {
@@ -281,7 +307,7 @@ void QuicUpstreamHandler::h1_on_error(const boost::system::error_code& /*ec*/) {
     auto locked_conn = m_conn_ptr.lock();
     if (locked_conn && !locked_conn->is_closed()) {
         locked_conn->send_stream_data(m_stream_id, nullptr, true, nullptr);
-        locked_conn->on_pump_write();
+        locked_conn->on_pump_write(FUNC_NAME);
     }
     destroy();
 }

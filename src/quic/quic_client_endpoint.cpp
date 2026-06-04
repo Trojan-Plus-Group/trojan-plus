@@ -106,9 +106,9 @@ void QuicClientEndpoint::on_packet(const uint8_t* data, std::size_t len, const b
     }
 }
 
-void QuicClientEndpoint::on_pump_write() {
+void QuicClientEndpoint::on_pump_write(const char* debug_path) {
     if (m_conn && !m_conn->is_closed()) {
-        m_conn->on_pump_write();
+        m_conn->on_pump_write(debug_path);
     }
 }
 

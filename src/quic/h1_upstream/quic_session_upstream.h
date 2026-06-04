@@ -81,10 +81,11 @@ class QuicUpstreamHandler : public QuicStreamHandler,
   private:
     void h3_retry_feed();
     int  h3_submit_response_headers(Http1UpstreamConn::H1RespParser& parser);
-    void h3_pump_response();
+    void h3_pump_response(const char* debug_path);
 
     std::weak_ptr<QuicConnection> m_conn_ptr;
     int64_t                       m_stream_id;
+    boost::asio::io_context&      m_io_ctx;
 
     // Request assembly (H3 → HTTP/1.1)
     tp::string m_http1_request;

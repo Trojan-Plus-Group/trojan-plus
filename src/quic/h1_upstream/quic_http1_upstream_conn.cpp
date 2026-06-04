@@ -37,10 +37,45 @@ Http1UpstreamConn::Http1UpstreamConn(boost::asio::io_context& io_ctx,
 
 Http1UpstreamConn::~Http1UpstreamConn() = default;
 
+void Http1UpstreamConn::on_connect_done(const boost::system::error_code& ec) {
+    if (m_destroyed) return;
+    if (ec) {
+        _log_with_date_time("Http1UpstreamConn: connect " + m_host + ":" + m_port_str +
+                                " failed: " + tp::string(ec.message().c_str()),
+                            Log::ERROR);
+        if (m_observer) m_observer->h1_on_connect_done(false);
+        return;
+    }
+    m_connected = true;
+    _log_with_date_time(
+        "HTTP upstream connected to " + m_host + ":" + m_port_str,
+        Log::INFO);
+    if (m_observer) m_observer->h1_on_connect_done(true);
+    if (m_destroyed) return;
+
+    if (!m_write_queue.empty() && !m_write_in_progress) {
+        do_tcp_write();
+    }
+    start_async_read();
+}
+
 void Http1UpstreamConn::start() {
     if (m_destroyed) return;
 
     auto self = shared_from_this();
+
+    boost::system::error_code ec;
+    auto addr = boost::asio::ip::make_address(m_host.c_str(), ec);
+    if (!ec) {
+        boost::asio::ip::tcp::endpoint ep(addr, static_cast<unsigned short>(std::stoi(m_port_str.c_str())));
+        m_tcp_socket.async_connect(
+            ep,
+            [this, self](const boost::system::error_code& ec2) {
+                on_connect_done(ec2);
+            });
+        return;
+    }
+
     m_resolver.async_resolve(
         m_host, m_port_str,
         [this, self](const boost::system::error_code&                ec,
@@ -56,25 +91,7 @@ void Http1UpstreamConn::start() {
             boost::asio::async_connect(
                 m_tcp_socket, results,
                 [this, self](const boost::system::error_code& ec2, const auto&) {
-                    if (m_destroyed) return;
-                    if (ec2) {
-                        _log_with_date_time("Http1UpstreamConn: connect " + m_host + ":" + m_port_str +
-                                                " failed: " + tp::string(ec2.message().c_str()),
-                                            Log::ERROR);
-                        if (m_observer) m_observer->h1_on_connect_done(false);
-                        return;
-                    }
-                    m_connected = true;
-                    _log_with_date_time(
-                        "HTTP upstream connected to " + m_host + ":" + m_port_str,
-                        Log::INFO);
-                    if (m_observer) m_observer->h1_on_connect_done(true);
-                    if (m_destroyed) return;
-
-                    if (!m_write_queue.empty() && !m_write_in_progress) {
-                        do_tcp_write();
-                    }
-                    start_async_read();
+                    on_connect_done(ec2);
                 });
         });
 }
