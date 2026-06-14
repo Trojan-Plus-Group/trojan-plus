@@ -54,7 +54,7 @@ void QuicUpstreamHandler::on_stream_data(const uint8_t* data, size_t len, bool f
     h3_retry_feed();
 }
 
-void QuicUpstreamHandler::on_connection_pump() { h3_retry_feed(); }
+void QuicUpstreamHandler::on_connection_pump() {}
 
 void QuicUpstreamHandler::h3_retry_feed() {
     if (m_destroyed) return;
@@ -80,10 +80,23 @@ void QuicUpstreamHandler::h3_retry_feed() {
     }
 
     if (consumed < 0) {
-        _log_with_date_time("QuicUpstreamHandler: H3 protocol error on stream " +
+        if (Log::level <= Log::WARN) {
+            tp::string hex_data;
+            for (std::size_t i = 0; i < std::min(sv.size(), (std::size_t)64); ++i) {
+                char hex_buf[4];
+                snprintf(hex_buf, sizeof(hex_buf), "%02x ", static_cast<unsigned char>(sv[i]));
+                hex_data += hex_buf;
+            }
+
+            _log_with_date_time("QuicUpstreamHandler: H3 protocol error on stream " +
                                 tp::to_string(m_stream_id) + ": " +
-                                tp::string(nghttp3_strerror(static_cast<int>(consumed))),
-                            Log::WARN);
+                                tp::string(nghttp3_strerror(static_cast<int>(consumed))) +
+                                " data_len=" + tp::to_string(sv.size()) +
+                                " fin=" + tp::to_string(m_h3_in_fin) +
+                                " hex=[" + hex_data + "]",
+                                Log::WARN);
+        }
+        
         if (is_quic_client_uni_stream(m_stream_id)) {
             // Unidirectional streams are critical (Control/QPACK). A real error here requires connection teardown.
             locked_conn->close(NGHTTP3_H3_FRAME_ERROR);
@@ -374,6 +387,7 @@ int QuicUpstreamHandler::h3_on_end_headers(bool fin) {
         "QuicUpstreamHandler: stream " + tp::to_string(m_stream_id) +
             " on_h3_end_headers fin=" + tp::to_string(fin),
         Log::INFO);
+
     if (m_method.empty()) return NGHTTP3_ERR_CALLBACK_FAILURE;
     if (m_method == "CONNECT") {
         if (m_authority.empty()) return NGHTTP3_ERR_CALLBACK_FAILURE;
@@ -401,50 +415,151 @@ int QuicUpstreamHandler::h3_on_end_headers(bool fin) {
 
     m_request_complete = true;
 
-    m_h3_to_h1_feed_chunks.push_back({std::move(m_http1_request), false});
+    tp::vector<PendingChunk> tmp_chunks;
+    tmp_chunks.push_back({std::move(m_http1_request), false});
     m_http1_request.clear();
     if (fin) {
         if (m_chunked_body) {
-            m_h3_to_h1_feed_chunks.push_back({tp::string("0\r\n\r\n"), false});
+            tmp_chunks.push_back({tp::string("0\r\n\r\n"), false});
         }
-        m_h3_to_h1_feed_chunks.push_back({tp::string(), true});
+        tmp_chunks.push_back({tp::string(), true});
         m_fin_sent = true;
+        m_h3_in_buf.consume(m_h3_in_buf.size());
+        m_h3_in_fin = false;
+    }
+
+    bool is_non_feeding = false;
+    auto locked_conn = m_conn_ptr.lock();
+    if (locked_conn) {
+        if (auto* h3 = locked_conn->h3_if_exists()) {
+            int64_t feeding_id = h3->curr_feeding_stream_id();
+            if (feeding_id != -1 && feeding_id != m_stream_id) {
+                is_non_feeding = true;
+            }
+        }
+    }
+
+    if (is_non_feeding) {
+        if (m_h1_conn) {
+            for (auto& chunk : tmp_chunks) {
+                m_h1_conn->send_request_chunk(std::move(chunk.data), 0, chunk.fin);
+            }
+        }
+    } else {
+        for (auto& chunk : tmp_chunks) {
+            m_h3_to_h1_feed_chunks.push_back(std::move(chunk));
+        }
     }
     return 0;
 }
 
 int QuicUpstreamHandler::h3_on_data(const uint8_t* data, std::size_t datalen) {
     if (datalen == 0) return 0;
+
+    tp::vector<PendingChunk> tmp_chunks;
     if (m_chunked_body) {
         char hex[16];
         int  n = snprintf(hex, sizeof(hex), "%zx\r\n", datalen);
-        m_h3_to_h1_feed_chunks.push_back({tp::string(hex, n), false});
-        m_h3_to_h1_feed_chunks.push_back({
-            tp::string(reinterpret_cast<const char*>(data), datalen), false});
-        m_h3_to_h1_feed_chunks.push_back({tp::string("\r\n"), false});
+        tmp_chunks.push_back({tp::string(hex, n), false});
+        tmp_chunks.push_back({tp::string(reinterpret_cast<const char*>(data), datalen), false});
+        tmp_chunks.push_back({tp::string("\r\n"), false});
     } else {
-        m_h3_to_h1_feed_chunks.push_back({
-            tp::string(reinterpret_cast<const char*>(data), datalen), false});
+        tmp_chunks.push_back({tp::string(reinterpret_cast<const char*>(data), datalen), false});
+    }
+
+    bool is_non_feeding = false;
+    auto locked_conn = m_conn_ptr.lock();
+    if (locked_conn) {
+        if (auto* h3 = locked_conn->h3_if_exists()) {
+            int64_t feeding_id = h3->curr_feeding_stream_id();
+            if (feeding_id != -1 && feeding_id != m_stream_id) {
+                is_non_feeding = true;
+            }
+        }
+    }
+
+    if (is_non_feeding) {
+        if (m_h1_conn) {
+            for (auto& chunk : tmp_chunks) {
+                m_h1_conn->send_request_chunk(std::move(chunk.data), 0, chunk.fin);
+            }
+        }
+    } else {
+        for (auto& chunk : tmp_chunks) {
+            m_h3_to_h1_feed_chunks.push_back(std::move(chunk));
+        }
     }
     return 0;
 }
 
 int QuicUpstreamHandler::h3_on_end_stream() {
+    m_h3_in_buf.consume(m_h3_in_buf.size());
+    m_h3_in_fin = false;
     if (m_fin_sent) return 0;
+    tp::vector<PendingChunk> tmp_chunks;
     if (m_chunked_body) {
-        m_h3_to_h1_feed_chunks.push_back({tp::string("0\r\n\r\n"), false});
+        tmp_chunks.push_back({tp::string("0\r\n\r\n"), false});
     }
-    m_h3_to_h1_feed_chunks.push_back({tp::string(), true});
+    tmp_chunks.push_back({tp::string(), true});
     m_fin_sent = true;
+
+    bool is_non_feeding = false;
+    auto locked_conn = m_conn_ptr.lock();
+    if (locked_conn) {
+        if (auto* h3 = locked_conn->h3_if_exists()) {
+            int64_t feeding_id = h3->curr_feeding_stream_id();
+            if (feeding_id != -1 && feeding_id != m_stream_id) {
+                is_non_feeding = true;
+            }
+        }
+    }
+
+    if (is_non_feeding) {
+        if (m_h1_conn) {
+            for (auto& chunk : tmp_chunks) {
+                m_h1_conn->send_request_chunk(std::move(chunk.data), 0, chunk.fin);
+            }
+        }
+    } else {
+        for (auto& chunk : tmp_chunks) {
+            m_h3_to_h1_feed_chunks.push_back(std::move(chunk));
+        }
+    }
     return 0;
 }
 
 int QuicUpstreamHandler::h3_on_stream_close(uint64_t /*app_error_code*/) {
+    m_h3_in_buf.consume(m_h3_in_buf.size());
+    m_h3_in_fin = false;
     if (m_fin_sent) return 0;
+    tp::vector<PendingChunk> tmp_chunks;
     if (m_chunked_body) {
-        m_h3_to_h1_feed_chunks.push_back({tp::string("0\r\n\r\n"), false});
+        tmp_chunks.push_back({tp::string("0\r\n\r\n"), false});
     }
-    m_h3_to_h1_feed_chunks.push_back({tp::string(), true});
+    tmp_chunks.push_back({tp::string(), true});
     m_fin_sent = true;
+
+    bool is_non_feeding = false;
+    auto locked_conn = m_conn_ptr.lock();
+    if (locked_conn) {
+        if (auto* h3 = locked_conn->h3_if_exists()) {
+            int64_t feeding_id = h3->curr_feeding_stream_id();
+            if (feeding_id != -1 && feeding_id != m_stream_id) {
+                is_non_feeding = true;
+            }
+        }
+    }
+
+    if (is_non_feeding) {
+        if (m_h1_conn) {
+            for (auto& chunk : tmp_chunks) {
+                m_h1_conn->send_request_chunk(std::move(chunk.data), 0, chunk.fin);
+            }
+        }
+    } else {
+        for (auto& chunk : tmp_chunks) {
+            m_h3_to_h1_feed_chunks.push_back(std::move(chunk));
+        }
+    }
     return 0;
 }

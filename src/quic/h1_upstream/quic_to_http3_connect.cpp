@@ -271,7 +271,10 @@ nghttp3_ssize QuicToHttp3Connect::feed_stream_data(int64_t stream_id,
                                                     const uint8_t* data,
                                                     std::size_t len, bool fin) {
     if (!m_conn) return NGHTTP3_ERR_INVALID_STATE;
-    return nghttp3_conn_read_stream(m_conn, stream_id, data, len, fin ? 1 : 0);
+    m_curr_feeding_stream_id = stream_id;
+    auto rv = nghttp3_conn_read_stream(m_conn, stream_id, data, len, fin ? 1 : 0);
+    m_curr_feeding_stream_id = -1;
+    return rv;
 }
 
 std::shared_ptr<QuicUpstreamHandler> QuicToHttp3Connect::find_handler(int64_t stream_id) {

@@ -71,6 +71,8 @@ class QuicToHttp3Connect {
     // Close stream in nghttp3
     int close_stream(int64_t stream_id, uint64_t app_error_code);
 
+    [[nodiscard]] int64_t curr_feeding_stream_id() const { return m_curr_feeding_stream_id; }
+
     // data_reader callback for nghttp3 — delegates to handler->on_read_data().
     static nghttp3_ssize s_read_data(nghttp3_conn*, int64_t stream_id,
                                      nghttp3_vec* vec, std::size_t veccnt,
@@ -103,6 +105,7 @@ class QuicToHttp3Connect {
     QuicConnection& m_owner;
     nghttp3_conn* m_conn{nullptr};
     tp::unordered_map<int64_t, std::weak_ptr<QuicUpstreamHandler>> m_streams;
+    int64_t m_curr_feeding_stream_id{-1};
 };
 
 #endif // _QUIC_TO_HTTP3_CONNECT_H_

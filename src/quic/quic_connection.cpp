@@ -1153,7 +1153,7 @@ void QuicConnection::remove_stream_handler(int64_t stream_id) {
 }
 
 bool QuicConnection::forward_to_h1_upstream(int64_t stream_id, const uint8_t* data, std::size_t len, bool fin) {
-    if (!is_quic_client_uni_stream(stream_id) && m_conn_type == ConnType::unknown) {
+    if (m_conn_type == ConnType::unknown) {
         m_conn_type = ConnType::other;
     }
     const auto& config = m_endpoint.config();
