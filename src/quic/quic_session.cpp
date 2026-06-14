@@ -43,9 +43,14 @@ QuicProxySession::QuicProxySession(std::shared_ptr<QuicConnection> conn, int64_t
       m_udp_resolver(io_ctx),
       m_write_timer(io_ctx) {
     m_quic_recv_buf.reserve(kQuicRecvBufReserveSize);
+    _log_with_date_time("QuicProxySession: QuicProxySession constructed stream_id=" + 
+                        tp::to_string(stream_id), Log::INFO);
 }
 
-QuicProxySession::~QuicProxySession() = default;
+QuicProxySession::~QuicProxySession() {
+    _log_with_date_time("QuicProxySession: QuicProxySession destructed stream_id=" + 
+                        tp::to_string(m_stream_id), Log::INFO);
+}
 
 void QuicProxySession::start() {
     _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) + " opened",

@@ -177,6 +177,9 @@ int QuicConnection::cb_acked_stream_data_offset(ngtcp2_conn* /*conn*/, int64_t s
                 ++it;
             }
         }
+        if (bufs->buffers.empty()) {
+            self->m_conn_unacked_bufs.erase(it_buf);
+        }
     }
 
     return 0;
@@ -294,7 +297,11 @@ QuicConnection::QuicConnection(QuicEndpoint& endpoint, std::shared_ptr<QuicTlsCt
       m_loss_timer(endpoint.io_context()),
       m_write_buf(NGTCP2_MAX_UDP_PAYLOAD_SIZE),
       m_in_read_pkt(false),
-      m_in_pump_write(false) {}
+      m_in_pump_write(false) {
+    _log_with_date_time("QuicConnection: QuicConnection constructed for peer " + 
+                        tp::string(peer.address().to_string().c_str()) + ":" + 
+                        tp::to_string(peer.port()), Log::INFO);
+}
 
 QuicConnection::~QuicConnection() {
     _log_with_date_time("QuicConnection: ~QuicConnection destructed for peer " + 

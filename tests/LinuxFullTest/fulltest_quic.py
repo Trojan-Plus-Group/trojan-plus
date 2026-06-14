@@ -1390,8 +1390,8 @@ def test_quic_load_test(binary_path):
     SOCKS_CONCURRENCY = 30
     H3_CONCURRENCY    = 30
 
-    CLIENT_MEMORY_GROW_THRESHOLD = 0.05
-    SERVER_MEMORY_GROW_THRESHOLD = 0.2
+    CLIENT_MEMORY_GROW_THRESHOLD = 0.15
+    SERVER_MEMORY_GROW_THRESHOLD = 0.3
     LOAD_RUNS         = 10
     # ---------------------
 

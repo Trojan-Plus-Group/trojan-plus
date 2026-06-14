@@ -30,9 +30,13 @@ QuicUpstreamHandler::QuicUpstreamHandler(
       m_stream_id(stream_id),
       m_io_ctx(io_ctx) {
     m_h1_conn = TP_MAKE_SHARED(Http1UpstreamConn, io_ctx, host, port_str, this);
+    _log_with_date_time("QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=" + 
+                        tp::to_string(stream_id), Log::INFO);
 }
 
 QuicUpstreamHandler::~QuicUpstreamHandler() {
+    _log_with_date_time("QuicUpstreamHandler: QuicUpstreamHandler destructed stream_id=" + 
+                        tp::to_string(m_stream_id), Log::INFO);
     if (m_h1_conn) {
         m_h1_conn->detach_observer();
     }
