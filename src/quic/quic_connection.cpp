@@ -177,9 +177,6 @@ int QuicConnection::cb_acked_stream_data_offset(ngtcp2_conn* /*conn*/, int64_t s
                 ++it;
             }
         }
-        if (bufs->buffers.empty()) {
-            self->m_conn_unacked_bufs.erase(it_buf);
-        }
     }
 
     return 0;
