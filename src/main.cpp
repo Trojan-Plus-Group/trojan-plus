@@ -32,6 +32,26 @@
 #include "core/version.h"
 #include "mem/memallocator.h"
 
+#ifdef ENABLE_QUIC
+#include <wolfssl/options.h>
+#include <wolfssl/ssl.h>
+
+extern "C" {
+static void* tj_wolfssl_malloc(size_t size) {
+    return tp::get_tj_mem_allocator().malloc(size, "wolfssl", 0);
+}
+
+static void tj_wolfssl_free(void* ptr) {
+    tp::get_tj_mem_allocator().free(ptr);
+}
+
+static void* tj_wolfssl_realloc(void* ptr, size_t size) {
+    return tp::get_tj_mem_allocator().realloc(ptr, size, "wolfssl", 0);
+}
+}
+#endif
+
+
 using namespace boost::asio;
 namespace po = boost::program_options;
 
@@ -96,6 +116,9 @@ void crash_handler(int sig) {
 static std::shared_ptr<Service> g_service;
 
 int main_impl(int argc, const char* argv[]) {
+#ifdef ENABLE_QUIC
+    wolfSSL_SetAllocators(tj_wolfssl_malloc, tj_wolfssl_free, tj_wolfssl_realloc);
+#endif
 #ifndef _WIN32
     signal(SIGSEGV, crash_handler);
     signal(SIGABRT, crash_handler);

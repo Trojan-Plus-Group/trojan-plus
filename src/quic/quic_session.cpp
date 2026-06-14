@@ -204,7 +204,7 @@ void QuicProxySession::connect_target(const tp::string& host, uint16_t port) {
     auto self = this->shared_from_this();
     m_resolver.async_resolve(
         host, tp::to_string(port).c_str(),
-        [this, self, host, port](const boost::system::error_code& ec,
+        tp::bind_mem_alloc([this, self, host, port](const boost::system::error_code& ec,
                                  boost::asio::ip::tcp::resolver::results_type results) {
             if (ec || m_destroyed) {
                 if (ec) {
@@ -217,7 +217,7 @@ void QuicProxySession::connect_target(const tp::string& host, uint16_t port) {
             }
             boost::asio::async_connect(
                 m_tcp_socket, results,
-                [this, self, host, port](const boost::system::error_code& ec2,
+                tp::bind_mem_alloc([this, self, host, port](const boost::system::error_code& ec2,
                                          [[maybe_unused]] const boost::asio::ip::tcp::endpoint& ep) {
                     if (ec2 || m_destroyed) {
                         _log_with_date_time(
@@ -237,8 +237,8 @@ void QuicProxySession::connect_target(const tp::string& host, uint16_t port) {
                         do_tcp_write();
                     }
                     tcp_read();
-                });
-        });
+                }));
+        }));
 }
 
 void QuicProxySession::write_to_target(tp::string data, bool fin) {
@@ -276,7 +276,7 @@ void QuicProxySession::do_tcp_write() {
 
     boost::asio::async_write(
         m_tcp_socket, boost::asio::buffer(*buf),
-        [this, self, buf, fin](const boost::system::error_code& ec, std::size_t sent) {
+        tp::bind_mem_alloc([this, self, buf, fin](const boost::system::error_code& ec, std::size_t sent) {
             if (m_destroyed) {
                 return;
             }
@@ -296,7 +296,7 @@ void QuicProxySession::do_tcp_write() {
                 ec2 = m_tcp_socket.shutdown(boost::asio::socket_base::shutdown_send, ec2);
             }
             do_tcp_write();
-        });
+        }));
 }
 
 void QuicProxySession::tcp_read() {
@@ -307,7 +307,7 @@ void QuicProxySession::tcp_read() {
     auto buff = TP_MAKE_SHARED(ReadBufWithGuard);
     m_tcp_socket.async_read_some(
         buff->prepare(kTcpBufSize),
-        [this, self, buff](const boost::system::error_code& ec, std::size_t bytes) {
+        tp::bind_mem_alloc([this, self, buff](const boost::system::error_code& ec, std::size_t bytes) {
             if (m_destroyed) {
                 return;
             }
@@ -324,17 +324,17 @@ void QuicProxySession::tcp_read() {
             if (locked_conn && !locked_conn->is_closed()) {
                 buff->commit(bytes);
                 locked_conn->send_stream_data(m_stream_id,
-                    buff, false, [self, this](boost::system::error_code ec, std::size_t){
+                    buff, false, tp::bind_mem_alloc([self, this](boost::system::error_code ec, std::size_t){
                         if(ec){
                             destroy(false, 0, true);
                             return;
                         }
                         tcp_read();
-                    });
+                    }));
             }else{
                 destroy();
             }
-        });
+        }));
 }
 
 void QuicProxySession::destroy(bool reset, uint64_t app_error_code, bool from_close_cb) {
@@ -421,7 +421,7 @@ void QuicProxySession::out_udp_sent() {
         packet.payload = *payload_tmp_buf;
         
         m_udp_resolver.async_resolve(packet.address.address, tp::to_string(packet.address.port),
-            [this, self, cb, payload_tmp_buf, packet, packet_len](const boost::system::error_code& error, const boost::asio::ip::udp::resolver::results_type& results) {
+            tp::bind_mem_alloc([this, self, cb, payload_tmp_buf, packet, packet_len](const boost::system::error_code& error, const boost::asio::ip::udp::resolver::results_type& results) {
                 if (error || m_destroyed || results.empty()) {
                     destroy();
                     return;
@@ -437,7 +437,7 @@ void QuicProxySession::out_udp_sent() {
                 }
                 auto dst_endpoint = boost::asio::ip::udp::endpoint(iterator->endpoint().address(), packet.address.port);
                 cb(packet, packet_len, dst_endpoint);
-            });
+            }));
     } else {
         boost::system::error_code ec;
         auto dst_endpoint = boost::asio::ip::udp::endpoint(
@@ -457,7 +457,7 @@ void QuicProxySession::out_udp_async_write(const std::string_view& data, const b
     auto data_copy = TP_MAKE_SHARED(tp::string, data);
 
     m_udp_socket.async_send_to(boost::asio::buffer(*data_copy), endpoint,
-        [this, self, data_copy](const boost::system::error_code& ec, std::size_t sent) {
+        tp::bind_mem_alloc([this, self, data_copy](const boost::system::error_code& ec, std::size_t sent) {
             if (m_destroyed) return;
             if (ec) {
                 destroy();
@@ -467,7 +467,7 @@ void QuicProxySession::out_udp_async_write(const std::string_view& data, const b
                 c->stream_extend_window(m_stream_id, sent);
             }
             out_udp_sent();
-        });
+        }));
 }
 
 void QuicProxySession::udp_read() {
@@ -475,7 +475,7 @@ void QuicProxySession::udp_read() {
 
     auto self = shared_from_this();
     m_udp_socket.async_receive_from(boost::asio::buffer(&m_udp_recv_buf[0], kTcpBufSize), m_udp_remote_endpoint,
-        [this, self](const boost::system::error_code& ec, std::size_t bytes) {
+        tp::bind_mem_alloc([this, self](const boost::system::error_code& ec, std::size_t bytes) {
             if (m_destroyed) return;
             if (ec) {
                 if (ec != boost::asio::error::operation_aborted) {
@@ -491,15 +491,15 @@ void QuicProxySession::udp_read() {
             auto locked_conn = m_conn.lock();
             if (locked_conn && !locked_conn->is_closed()) {
                 locked_conn->send_stream_data(m_stream_id, buff, false,
-                [self, this](boost::system::error_code ec, std::size_t){
+                tp::bind_mem_alloc([self, this](boost::system::error_code ec, std::size_t){
                     if(ec){
                         destroy();
                         return;
                     }
                     udp_read();
-                });
+                }));
             }else{
                 destroy();
             }
-        });
+        }));
 }
