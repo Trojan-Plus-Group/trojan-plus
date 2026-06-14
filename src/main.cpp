@@ -62,6 +62,15 @@ void signal_async_wait(signal_set& sig, Service& service, bool& restart) {
                 service.reload_cert();
                 signal_async_wait(sig, service, restart);
                 break;
+#ifdef SIGINFO
+            case SIGINFO:
+                {
+                    std::string stat = tp::get_tj_mem_allocator().show_stat();
+                    _log_with_date_time("Memory statistics:\n" + stat, Log::WARN);
+                }
+                signal_async_wait(sig, service, restart);
+                break;
+#endif
 #endif // _WIN32
         }
     }));
@@ -172,6 +181,11 @@ int main_impl(int argc, const char* argv[]) {
             } else {
                 config.load(config_file);
             }
+            if (config.get_log_level() == Log::ALL) {
+                tp::get_tj_mem_allocator().set_trace_file_line_enable(true);
+            } else {
+                tp::get_tj_mem_allocator().set_trace_file_line_enable(false);
+            }
             g_service = TP_MAKE_SHARED(Service, config, test);
 
             if (test) {
@@ -186,6 +200,9 @@ int main_impl(int argc, const char* argv[]) {
             sig.add(SIGHUP);
             sig.add(SIGUSR1);
             sig.add(SIGUSR2); // for Android Close
+#ifdef SIGINFO
+            sig.add(SIGINFO);
+#endif
 #endif                        // _WIN32
             signal_async_wait(sig, *g_service, restart);
             g_service->run();

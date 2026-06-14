@@ -187,6 +187,15 @@ void mem_allocator::free_aligned_impl(void *ptr) {
     }
 }
 
+#ifdef ENABLE_MIMALLOC
+static void mi_cdecl mimalloc_stats_callback(const char* msg, void* arg) {
+    if (msg && arg) {
+        auto* oss = static_cast<std::ostringstream*>(arg);
+        *oss << msg;
+    }
+}
+#endif
+
 std::string mem_allocator::show_stat(int top_count) {
     if (mem_stat_) {
         uint64_t total = get_total_memory();
@@ -256,6 +265,13 @@ std::string mem_allocator::show_stat(int top_count) {
                        << " extra: " << get_size_string(extra) << " (" << extra_count << ")";
             }
         }
+
+#ifdef ENABLE_MIMALLOC
+        if (mimalloc_) {
+            result << "\nmimalloc stats:\n";
+            mi_stats_print_out(mimalloc_stats_callback, &result);
+        }
+#endif
 
         return result.str();
     }

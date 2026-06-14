@@ -1384,7 +1384,7 @@ def test_quic_load_test(binary_path):
     
     # --- Configuration ---
     ENABLE_SOCKS_LOAD = True
-    ENABLE_H3_LOAD    = False
+    ENABLE_H3_LOAD    = True
     
     TOTAL_FILES       = 200
     SOCKS_CONCURRENCY = 30
@@ -1692,6 +1692,19 @@ def test_quic_load_test(binary_path):
             print_time_log("[T16] WARN: Could not retrieve client initial memory")
 
         if leak_detected:
+            if hasattr(signal, 'SIGINFO'):
+                print_time_log("[T16] Leak detected. Sending SIGINFO to server and client to dump memory logs...")
+                try:
+                    server.send_signal(signal.SIGINFO)
+                except Exception as e:
+                    print_time_log(f"[T16] Failed to send SIGINFO to server: {e}")
+                try:
+                    client.send_signal(signal.SIGINFO)
+                except Exception as e:
+                    print_time_log(f"[T16] Failed to send SIGINFO to client: {e}")
+                time.sleep(2)
+            else:
+                print_time_log("[T16] Leak detected. SIGINFO is not supported on this platform.")
             return False
 
         print_time_log(f"[T16] quic_load_test PASSED")
