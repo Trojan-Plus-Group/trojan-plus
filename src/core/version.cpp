@@ -23,6 +23,6 @@
 #include "version.h"
 #include "mem/memallocator.h"
 
-const tp::string Version::version("10.2.1");
+const tp::string Version::version("10.3.0");
 
 tp::string Version::get_version() { return version; }
