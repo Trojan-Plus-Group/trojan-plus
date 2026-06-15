@@ -108,7 +108,8 @@ stages:
         ifconfig
         route -n
         
-        sudo python3 -u fulltest_main.py $BINARY -t -n -q -d 5333
+        sudo python3 -u fulltest_main.py $BINARY -t -n -d 5333
+        sudo python3 -u fulltest_main.py $BINARY -q
       env:
         PIPELINE_WORKSPACE: $(Pipeline.Workspace)
 
@@ -126,7 +127,8 @@ stages:
         BINARY="$PIPELINE_WORKSPACE/WindowsBinary/trojan.exe"
         py -3 -m pip install PySocks psutil dnspython aioquic
         cd tests/LinuxFullTest/
-        py -3 -u fulltest_main.py $BINARY -g -q -n -d 5333 -f
+        py -3 -u fulltest_main.py $BINARY -g -n -d 5333 -f
+        py -3 -u fulltest_main.py $BINARY -q
       env:
         PIPELINE_WORKSPACE: $(Pipeline.Workspace)
 
@@ -145,7 +147,8 @@ stages:
         chmod +x "$BINARY"
         cd tests/LinuxFullTest/
         python3 -m pip install PySocks psutil dnspython aioquic --break-system-packages --ignore-installed
-        python3 -u fulltest_main.py $BINARY -g -q -n -d 5333 -f
+        python3 -u fulltest_main.py $BINARY -g -n -d 5333 -f
+        python3 -u fulltest_main.py $BINARY -q
       env:
         PIPELINE_WORKSPACE: $(Pipeline.Workspace)
 
