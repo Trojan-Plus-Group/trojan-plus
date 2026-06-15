@@ -16,7 +16,7 @@ stages:
       image: trojanplusgroup/centos-build:debian
     steps:
     - checkout: self
-      submodules: true
+      submodules: recursive
     - script: |
         set -euo pipefail
         set -v
@@ -32,7 +32,7 @@ stages:
       vmImage: macOS-latest
     steps:
     - checkout: self
-      submodules: true
+      submodules: recursive
     - script: |
         set -euo pipefail
         set -v
@@ -49,7 +49,7 @@ stages:
       vmImage: windows-latest
     steps:
     - checkout: self
-      submodules: true
+      submodules: recursive
     - bash: |
         set -euo pipefail
         set -v
@@ -80,7 +80,7 @@ stages:
       options: --privileged
     steps:
     - checkout: self
-      submodules: true
+      submodules: recursive
     - download: current
       artifact: LinuxBinary
     - script: |
@@ -117,7 +117,7 @@ stages:
       vmImage: windows-latest
     steps:
     - checkout: self
-      submodules: true
+      submodules: recursive
     - download: current
       artifact: WindowsBinary
     - bash: |
@@ -135,7 +135,7 @@ stages:
       vmImage: macOS-latest
     steps:
     - checkout: self
-      submodules: true
+      submodules: recursive
     - download: current
       artifact: macOSBinary
     - script: |
