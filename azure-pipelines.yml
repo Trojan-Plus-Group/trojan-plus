@@ -144,7 +144,7 @@ stages:
         BINARY="$PIPELINE_WORKSPACE/macOSBinary/trojan"
         chmod +x "$BINARY"
         cd tests/LinuxFullTest/
-        python3 -m pip install PySocks psutil dnspython aioquic --break-system-packages
+        python3 -m pip install PySocks psutil dnspython aioquic --break-system-packages --ignore-installed
         python3 -u fulltest_main.py $BINARY -g -q -n -d 5333 -f
       env:
         PIPELINE_WORKSPACE: $(Pipeline.Workspace)
