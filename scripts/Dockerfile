@@ -23,7 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         netcat-openbsd \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
-    && pip3 install --break-system-packages PySocks psutil dnspython
+    && pip3 install --break-system-packages PySocks psutil dnspython aioquic
 
 # Set working directory
 WORKDIR /usr/src/trojan

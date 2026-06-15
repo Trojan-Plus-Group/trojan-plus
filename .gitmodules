@@ -13,3 +13,10 @@
 [submodule "wolfssl"]
 	path = wolfssl
 	url = https://github.com/Trojan-Plus-Group/wolfssl
+[submodule "ngtcp2"]
+	path = ngtcp2
+	url = https://github.com/Trojan-Plus-Group/ngtcp2
+
+[submodule "nghttp3"]
+	path = nghttp3
+	url = https://github.com/Trojan-Plus-Group/nghttp3.git

@@ -61,13 +61,14 @@ void NATSession::start() {
     }
 }
 
-void NATSession::in_recv(const std::string_view& data) {
+void NATSession::in_recv(std::shared_ptr<ReadBufWithGuard> data) {
     if (get_status() == CONNECT) {
-        get_stat().inc_sent_len(data.length());
+        get_stat().inc_sent_len(data->size());
         set_first_packet_recv(true);
-        streambuf_append(get_out_write_buf(), data);
+        const tp::streambuf& append = *data;
+        streambuf_append(get_out_write_buf(), append);
     } else if (get_status() == FORWARD) {
-        get_stat().inc_sent_len(data.length());
+        get_stat().inc_sent_len(data->size());
         out_async_write(data);
     }
 }

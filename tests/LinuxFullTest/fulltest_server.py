@@ -51,6 +51,9 @@ def run_udp(port):
 
 class ServerHandler(BaseHTTPRequestHandler):
 
+    def log_message(self, format, *args):
+        pass
+
     def do_GET(self):
         filepath = urlparse(self.path).path
 
@@ -64,6 +67,7 @@ class ServerHandler(BaseHTTPRequestHandler):
 
             self.send_response(200)
             self.send_header("Content-type", "text/plain")
+            self.send_header("Content-Length", str(len(content)))
             self.end_headers()
             self.wfile.write(content)
         except:
@@ -103,7 +107,11 @@ def run(dir, port):
     t.daemon = True
     t.start()
 
-    httpd = HTTPServer(('127.0.0.1', port), ServerHandler)
+    try:
+        from http.server import ThreadingHTTPServer
+        httpd = ThreadingHTTPServer(('127.0.0.1', port), ServerHandler)
+    except ImportError:
+        httpd = HTTPServer(('127.0.0.1', port), ServerHandler)
     print_time_log("start fulltest server port: " + str(port))
     httpd.serve_forever()
 

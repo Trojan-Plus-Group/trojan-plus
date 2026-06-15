@@ -56,8 +56,8 @@ void *mem_allocator::malloc(size_t size, const char *file, int line) {
 
 void *mem_allocator::malloc_aligned(size_t size, size_t align, const char *file, int line) {
     if (mem_stat_) {
-        int offset = std::max(memory_recorder_header_size, align);
-        int real_align = std::max(alignof(memory_recorder_header), align);
+        auto offset = std::max(memory_recorder_header_size, align);
+        auto real_align = std::max(alignof(memory_recorder_header), align);
         auto *ptr = malloc_aligned_impl(size + offset, real_align);
         record_malloc(ptr, size, offset, file, line);
 
@@ -187,6 +187,15 @@ void mem_allocator::free_aligned_impl(void *ptr) {
     }
 }
 
+#ifdef ENABLE_MIMALLOC
+static void mi_cdecl mimalloc_stats_callback(const char* msg, void* arg) {
+    if (msg && arg) {
+        auto* oss = static_cast<std::ostringstream*>(arg);
+        *oss << msg;
+    }
+}
+#endif
+
 std::string mem_allocator::show_stat(int top_count) {
     if (mem_stat_) {
         uint64_t total = get_total_memory();
@@ -257,6 +266,13 @@ std::string mem_allocator::show_stat(int top_count) {
             }
         }
 
+#ifdef ENABLE_MIMALLOC
+        if (mimalloc_) {
+            result << "\nmimalloc stats:\n";
+            mi_stats_print_out(mimalloc_stats_callback, &result);
+        }
+#endif
+
         return result.str();
     }
 
@@ -267,8 +283,8 @@ void mem_allocator::record_malloc(void *ptr, size_t size, size_t offset, const c
     if(!ptr) return;
     
     auto *header = (memory_recorder_header *)((uint8_t *)ptr + offset - memory_recorder_header_size);
-    header->size = size;
-    header->start_offset = offset;
+    header->size = (uint32_t)size;
+    header->start_offset = (uint32_t)offset;
 
     total_object_counter_.fetch_add(1, std::memory_order_relaxed);
     total_memory_.fetch_add(size, std::memory_order_relaxed);

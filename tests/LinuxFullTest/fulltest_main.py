@@ -34,6 +34,7 @@ import fulltest_server
 import fulltest_client
 import fulltest_dns
 import fulltest_fallback
+import fulltest_quic
 from fulltest_utils import print_time_log, is_macos_system, is_windows_system, is_linux_system
 
 
@@ -392,6 +393,12 @@ def main():
                 output_log = True
                 return 1
 
+        if cmd_args.quic is not None:
+            print_time_log(f"start trojan plus QUIC test ({cmd_args.quic})...")
+            if fulltest_quic.main(binary_path, cmd_args.quic) != 0:
+                output_log = True
+                return 1
+
     finally:
         close_process(test_server_process, output_log)
 
@@ -415,10 +422,12 @@ if __name__ == "__main__":
                         type=int, nargs='?', const=53)
     parser.add_argument("-f", "--fallback", help=" whether test server fallback (remote_addr) mode",
                         action='store_true', default=False)
+    parser.add_argument("-q", "--quic", help="whether test QUIC transport mode, optional test case (e.g. T1, T2)",
+                        nargs='?', const='all', default=None)
 
     cmd_args = parser.parse_args()
-    if not cmd_args.normal and not cmd_args.dns and not cmd_args.tun and not cmd_args.fallback:
-        print("Error: must use -n or -d or -t or -f args\n\n")
+    if not cmd_args.normal and not cmd_args.dns and not cmd_args.tun and not cmd_args.fallback and cmd_args.quic is None:
+        print("Error: must use -n or -d or -t or -f or -q args\n\n")
         parser.print_help()
         exit(1)
 

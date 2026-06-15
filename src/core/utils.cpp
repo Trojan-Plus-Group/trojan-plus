@@ -42,11 +42,19 @@ size_t streambuf_append(
     if (n == 0) {
         return 0;
     }
-    auto* dest      = static_cast<uint8_t*>(boost::asio::buffer_sequence_begin(target.prepare(n))->data());
-    const auto* src = static_cast<const uint8_t*>(boost::asio::buffer_sequence_begin(append_buf.data())->data()) + start;
-    std::memcpy(dest, src, n);
-    target.commit(n);
-    return n;
+    auto dest_buffers = target.prepare(n);
+    auto src_buffers  = append_buf.data();
+
+    // Use a temporary merged buffer for the source to handle fragmentation with offset
+    static thread_local tp::string src_merge_buf;
+    if (src_merge_buf.size() < append_buf.size()) {
+        src_merge_buf.resize(append_buf.size());
+    }
+    boost::asio::buffer_copy(boost::asio::buffer(&src_merge_buf[0], append_buf.size()), src_buffers);
+
+    auto copied = boost::asio::buffer_copy(dest_buffers, boost::asio::buffer(src_merge_buf.data() + start, n));
+    target.commit(copied);
+    return copied;
 }
 
 size_t streambuf_append(tp::streambuf& target, const char* append_str) {
@@ -108,10 +116,26 @@ size_t streambuf_append(tp::streambuf& target, const tp::string& append_data) {
 
 std::string_view streambuf_to_string_view(const tp::streambuf& target) {
     _guard;
-    if (target.size() == 0) {
+    auto buffers = target.data();
+    std::size_t total_size = boost::asio::buffer_size(buffers);
+    if (total_size == 0) {
         return std::string_view();
     }
-    return std::string_view(static_cast<const char*>(boost::asio::buffer_sequence_begin(target.data())->data()), target.size());
+    auto it = boost::asio::buffer_sequence_begin(buffers);
+    if (it->size() == total_size) {
+        // single buffer, no need to merge
+        return std::string_view(static_cast<const char*>(it->data()), total_size);
+    }
+    // multiple buffers, need to merge to a ring of thread-local buffers to prevent concurrent/reentrant overwrite
+    const int cycle_buffer_num = 2;
+    static thread_local tp::string merge_bufs[cycle_buffer_num];
+    static thread_local std::size_t next_idx = 0;
+    auto& merge_buf = merge_bufs[next_idx];
+    next_idx = (next_idx + 1) % cycle_buffer_num;
+
+    merge_buf.resize(total_size);
+    boost::asio::buffer_copy(boost::asio::buffer(&merge_buf[0], total_size), buffers);
+    return std::string_view(merge_buf.data(), total_size);
     _unguard;
 }
 
@@ -680,6 +704,48 @@ void close_file_lock(FILE_LOCK_HANDLE& file_fd) {
     }
 
     _unguard;
+}
+
+bool is_quic_client_uni_stream(int64_t stream_id) {
+    return (stream_id & 0x3) == 2;
+}
+
+bool is_quic_uni_stream(int64_t stream_id) {
+    return (stream_id & 0x2) != 0;
+}
+
+tp::string dump_data_summary(const uint8_t* data, std::size_t len) {
+    if (len == 0) {
+        return "empty";
+    }
+    char buf[128];
+    std::size_t prefix_len = std::min(len, std::size_t(16));
+    std::size_t suffix_len = (len > 32) ? 16 : (len - prefix_len);
+    
+    tp::string prefix_str;
+    for (std::size_t i = 0; i < prefix_len; ++i) {
+        char c = static_cast<char>(data[i]);
+        if ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
+            prefix_str.push_back(c);
+        } else {
+            prefix_str.push_back('.');
+        }
+    }
+    
+    tp::string suffix_str;
+    if (suffix_len > 0) {
+        for (std::size_t i = len - suffix_len; i < len; ++i) {
+            char c = static_cast<char>(data[i]);
+            if ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
+                suffix_str.push_back(c);
+            } else {
+                suffix_str.push_back('.');
+            }
+        }
+    }
+    
+    snprintf(buf, sizeof(buf), "len=%zu prefix=%s suffix=%s", len, prefix_str.c_str(), suffix_str.c_str());
+    return tp::string(buf);
 }
 
 #ifndef _WIN32 // nat mode does not support in windows platform

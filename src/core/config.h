@@ -97,6 +97,20 @@ class Config {
         bool pipeline_proxy_icmp;
     };
 
+    using QUICConfig = struct {
+        bool       enabled;                    // master switch; default false
+        uint32_t   retry_connect_timeout_ms;  // client: retry delay after DNS/init failure (ms), 0 = no retry
+        tp::string alpn_token;                // ALPN advertised; default "h3" for HTTP/3 disguise
+        uint32_t   max_idle_timeout_ms;       // QUIC idle timeout
+        uint32_t   max_concurrent_streams;    // per-connection bidi stream limit
+        uint32_t   max_datagram_size;         // per-packet size hint
+        uint32_t   recv_buffer_size;          // UDP recv buffer bytes
+        uint32_t   send_buffer_size;          // UDP send buffer bytes
+        tp::string h1_stream;               // server: real HTTP/1 backend for non-trojan traffic
+        bool       debug_disable_tcp;         // debug: disable tcp, only allow quic
+        uint32_t   ping_interval_ms;          // QUIC PING keep-alive interval, 0 = disabled
+    };
+
     using TUN = struct {
         tp::string tun_name;
         tp::string net_ip;
@@ -151,6 +165,7 @@ class Config {
     SSLConfig ssl;
     TCPConfig tcp;
     Experimental experimental;
+    QUICConfig quic;
     TUN tun;
     DNS dns;
     ROUTE route;
@@ -188,6 +203,7 @@ class Config {
     _define_getter_const(const SSLConfig&, ssl);
     _define_getter_const(const TCPConfig&, tcp);
     _define_getter_const(const Experimental&, experimental);
+    _define_getter_const(const QUICConfig&, quic);
     _define_getter_const(const TUN&, tun);
     _define_getter_const(const DNS&, dns);
     _define_getter_const(const ROUTE&, route);

@@ -1,0 +1,245 @@
+/*
+ * This file is part of the Trojan Plus project.
+ * Copyright (C) 2026 The Trojan Plus Group Authors.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ */
+
+#ifndef _QUIC_CONNECTION_H_
+#define _QUIC_CONNECTION_H_
+
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <string>
+#include <string_view>
+
+#include <boost/asio/ip/udp.hpp>
+#include <boost/asio/steady_timer.hpp>
+#include <list>
+
+#include <ngtcp2/ngtcp2.h>
+#include <ngtcp2/ngtcp2_crypto.h>
+
+#include "mem/memallocator.h"
+#include "quic_stream_handler.h"
+
+class QuicEndpoint;
+class QuicTlsCtx;
+class QuicProxySession;
+class QuicToHttp3Connect;
+class ReadBufWithGuard;
+
+struct WOLFSSL;
+
+// One ngtcp2_conn + its per-connection WOLFSSL handle.
+// All I/O is driven through the owning QuicEndpoint's UDP socket.
+class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
+  public:
+    using IoHandler = std::function<void(boost::system::error_code, std::size_t)>;
+
+    QuicConnection(QuicEndpoint& endpoint, std::shared_ptr<QuicTlsCtx> tls_ctx,
+                   const boost::asio::ip::udp::endpoint& peer);
+    ~QuicConnection();
+
+    QuicConnection(const QuicConnection&)            = delete;
+    QuicConnection& operator=(const QuicConnection&) = delete;
+
+    // Initialise as a server connection. First packet bytes must be passed so
+    // that ngtcp2 can process the Client Initial. If out_sv_scid is non-null,
+    // the server's chosen SCID (sv_scid) is written there; callers should also
+    // insert the connection into their routing table under that key so that
+    // post-handshake packets (DCID = sv_scid) are dispatched correctly.
+    bool init_server(const uint8_t* data, std::size_t datalen,
+                     const boost::asio::ip::udp::endpoint& local_ep,
+                     const boost::asio::ip::udp::endpoint& remote_ep,
+                     const ngtcp2_cid* dcid, const ngtcp2_cid* scid,
+                     uint32_t version,
+                     ngtcp2_cid* out_sv_scid = nullptr);
+
+    // Initialise as a client connection and start the QUIC handshake.
+    bool init_client(const boost::asio::ip::udp::endpoint& local_ep,
+                     const boost::asio::ip::udp::endpoint& remote_ep);
+
+    // Feed an incoming UDP datagram to ngtcp2.
+    void on_packet(const uint8_t* data, std::size_t datalen,
+                   const boost::asio::ip::udp::endpoint& local_ep,
+                   const boost::asio::ip::udp::endpoint& remote_ep);
+
+    void on_pump_write(const char* debug_path);
+
+    // called by QuicProxySession, this func has re-try timer and ack-delay mechanisms 
+    void send_stream_data(int64_t stream_id, std::shared_ptr<ReadBufWithGuard> buf, bool fin, IoHandler sent_cb);
+
+    // called by h3 which has own re-try timer and ack
+    int64_t send_stream_vecs(int64_t stream_id, const ngtcp2_vec* datav, std::size_t datavcnt, bool fin, const char* debug_path);
+    
+    // Open a new server-initiated unidirectional stream (for H3 control/QPACK).
+    // Returns the stream ID, or -1 on error.
+    int64_t open_uni_stream();
+
+    // Open a new client-initiated bidi stream. Returns -1 on error.
+    int64_t open_bidi_stream();
+
+    // Handler management
+    void set_stream_handler(int64_t stream_id, std::shared_ptr<QuicStreamHandler> handler);
+    void remove_stream_handler(int64_t stream_id);
+
+    // H3 manager — lazily created on first H3 stream; null until then.
+    QuicToHttp3Connect& get_or_create_h3();
+    [[nodiscard]] QuicToHttp3Connect* h3_if_exists() const { return m_h3.get(); }
+
+    // Forward a stream to HTTP/3 upstream. Returns true on success.
+    [[nodiscard]] bool forward_to_h1_upstream(int64_t stream_id, const uint8_t* data, std::size_t len, bool fin);
+
+    // Gracefully close the connection with an optional application error code.
+    void close(uint64_t app_error_code = 0);
+
+    // Manually extend the QUIC flow control window for a stream.
+    // Call this after the application has processed/sent received data.
+     void stream_extend_window(int64_t stream_id, std::size_t n);
+    void conn_extend_window(std::size_t n);
+
+    void on_extend_max_stream_data(int64_t stream_id, uint64_t max_data);
+    [[nodiscard]] bool is_stream_flow_control_blocked(int64_t stream_id) const;
+
+    // Manually reset a stream with an error code.
+    void reset_stream(int64_t stream_id, uint64_t app_error_code);
+
+    [[nodiscard]] bool is_closed() const { return m_closed; }
+    [[nodiscard]] bool is_handshake_done() const { return m_handshake_done; }
+    [[nodiscard]] const boost::asio::ip::udp::endpoint& peer() const { return m_peer; }
+    [[nodiscard]] ngtcp2_conn* native_handle() const { return m_conn; }
+
+    enum class ConnType { unknown, proxy, other };
+    [[nodiscard]] ConnType conn_type() const { return m_conn_type; }
+    void set_conn_type(ConnType t) { m_conn_type = t; }
+
+    static constexpr size_t kServerScidLen = 18;
+
+    // Callback invoked on handshake completion (client: after server Finished).
+    std::function<void()> on_handshake_completed_cb;
+    // Callback invoked when stream data arrives (stream_id, data, len, fin).
+    std::function<void(int64_t, const uint8_t*, std::size_t, bool)> on_stream_data_cb;
+    // Callback invoked when a new remote-initiated stream is opened.
+    std::function<void(int64_t)> on_stream_open_cb;
+    // Callback invoked when a stream is closed.
+    std::function<void(int64_t)> on_stream_close_cb;
+    // Callback invoked when a new Connection ID is generated.
+    std::function<void(const ngtcp2_cid*)> on_new_connection_id_cb;
+    // Callback invoked when connection closes.
+    std::function<void(QuicConnection*)> on_close_cb;
+
+  private:
+    // ngtcp2 static callbacks — forward to instance methods.
+    static int cb_recv_client_initial(ngtcp2_conn*, const ngtcp2_cid* dcid, void* user_data);
+    static int cb_recv_crypto_data(ngtcp2_conn*, ngtcp2_encryption_level level,
+                                   uint64_t offset, const uint8_t* data, size_t datalen, void* user_data);
+    static int cb_handshake_completed(ngtcp2_conn*, void* user_data);
+    static int cb_recv_stream_data(ngtcp2_conn*, uint32_t flags, int64_t stream_id,
+                                   uint64_t offset, const uint8_t* data, std::size_t datalen,
+                                   void* user_data, void* stream_user_data);
+    static int cb_acked_stream_data_offset(ngtcp2_conn* conn, int64_t stream_id,
+                                           uint64_t offset, uint64_t datalen,
+                                           void* user_data, void* stream_user_data);
+    static int cb_stream_open(ngtcp2_conn*, int64_t stream_id, void* user_data);
+    static int cb_stream_close(ngtcp2_conn*, uint32_t flags, int64_t stream_id,
+                               uint64_t app_error_code, void* user_data, void* stream_user_data);
+    static void cb_rand(uint8_t* dest, size_t destlen, const ngtcp2_rand_ctx* rand_ctx);
+    static int cb_get_new_connection_id(ngtcp2_conn*, ngtcp2_cid* cid,
+                                        ngtcp2_stateless_reset_token* token,
+                                        size_t cidlen, void* user_data);
+    static int cb_update_key(ngtcp2_conn*, uint8_t* rx_secret, uint8_t* tx_secret,
+                             ngtcp2_crypto_aead_ctx* rx_aead_ctx, uint8_t* rx_iv,
+                             ngtcp2_crypto_aead_ctx* tx_aead_ctx, uint8_t* tx_iv,
+                             const uint8_t* current_rx_secret, const uint8_t* current_tx_secret,
+                             size_t secretlen, void* user_data);
+    static int cb_extend_max_local_streams_bidi(ngtcp2_conn*, uint64_t max_streams, void* user_data);
+    static int cb_extend_max_stream_data(ngtcp2_conn* conn, int64_t stream_id,
+                                         uint64_t max_data, void* user_data,
+                                         void* stream_user_data);
+
+    // ngtcp2_crypto_conn_ref get_conn callback.
+    static ngtcp2_conn* get_conn_cb(ngtcp2_crypto_conn_ref* ref);
+
+    // Internal helpers.
+    ngtcp2_path make_path(const boost::asio::ip::udp::endpoint& local_ep,
+                          const boost::asio::ip::udp::endpoint& remote_ep);
+    void reschedule_loss_timer();
+    void on_handshake_completed_impl();
+
+
+    // Write pending stream data (call after every read or timer event).
+    void pump_write(const char* debug_path);
+    
+
+    // Send data on an existing bidi stream. Returns false on error.
+    int64_t send_stream_data_impl(int64_t stream_id, const uint8_t* data, std::size_t datalen, bool fin);
+
+    // Send vectorised stream data sourced from nghttp3 (multi-vec variant).
+    // Returns pdatalen (bytes accepted by ngtcp2), 0 if flow-controlled, -1 on error.
+    int64_t send_stream_vecs_impl(int64_t stream_id, const ngtcp2_vec* datav, std::size_t datavcnt, bool fin, const char* debug_path);
+
+    QuicEndpoint& m_endpoint;
+    std::shared_ptr<QuicTlsCtx> m_tls_ctx;
+    boost::asio::ip::udp::endpoint m_peer;
+    boost::asio::steady_timer m_loss_timer;
+
+    ngtcp2_conn* m_conn{nullptr};
+    WOLFSSL* m_ssl{nullptr};
+    ngtcp2_crypto_conn_ref m_conn_ref{};
+
+    // sockaddr storage for local/remote addresses (kept alive for path lifetime).
+    ngtcp2_sockaddr_union m_local_su{};
+    ngtcp2_sockaddr_union m_remote_su{};
+    ngtcp2_socklen m_local_len{0};
+    ngtcp2_socklen m_remote_len{0};
+
+    bool m_closed{false};
+    bool m_handshake_done{false};
+    bool m_is_server{false};
+    ConnType m_conn_type{ConnType::unknown};
+    uint64_t m_last_timer_expiry{0};
+
+    struct UnackedBuf : public std::enable_shared_from_this<UnackedBuf>{
+      int64_t m_stream_id;
+      std::size_t m_ack_offset;
+      std::size_t m_bytes_acked;
+      std::shared_ptr<ReadBufWithGuard> m_buf;
+      bool m_fin;
+      IoHandler m_sent_cb;
+      boost::asio::steady_timer m_write_timer;
+      std::weak_ptr<QuicConnection> m_conn;
+      bool m_timer_running{false};
+      std::size_t m_retry_delay_ms{50};
+      UnackedBuf(boost::asio::io_context& io_ctx):m_write_timer(io_ctx), m_timer_running(false), m_retry_delay_ms(50){}
+      void send();
+      void cancel_timer();
+      bool is_sending() const;
+      std::size_t m_sending_offset{0};
+    };
+    
+    // reserve un-acked buffer until ack 
+    struct UnackedBuffers{
+      tp::list<std::shared_ptr<UnackedBuf>> buffers;
+      std::size_t curr_written{0};
+      bool m_sending{false};
+    };
+
+    void remove_unacked_buff(int64_t stream_id);
+    void send_next_unacked_buff(int64_t stream_id, UnackedBuf* buf_finished);
+
+    tp::unordered_map<int64_t, std::shared_ptr<QuicStreamHandler>> m_stream_handlers;
+    tp::unordered_map<int64_t, std::shared_ptr<UnackedBuffers>> m_conn_unacked_bufs;
+    std::unique_ptr<QuicToHttp3Connect> m_h3;  // declared after m_stream_handlers, destroyed first
+    tp::vector<uint8_t> m_write_buf;
+    bool m_in_read_pkt{false};
+    bool m_in_pump_write{false};
+
+};
+
+#endif // _QUIC_CONNECTION_H_

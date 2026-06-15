@@ -1,0 +1,72 @@
+{
+    "run_type": "client_tun",
+    "local_addr": "127.0.0.1",
+    "local_port": 1080,
+    "remote_addr": "example.com",
+    "remote_port": 443,
+    "password": [
+        "password1"
+    ],
+    "log_level": 1,
+    "ssl": {
+        "verify": true,
+        "verify_hostname": true,
+        "cert": "",
+        "cipher": "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384",
+        "cipher_tls13": "TLS_AES_128_GCM_SHA256:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_256_GCM_SHA384",
+        "sni": "",
+        "alpn": [
+            "h2",
+            "http/1.1"
+        ],
+        "reuse_session": true,
+        "session_ticket": false,
+        "curves": "X25519:P-256:P-384"
+    },
+    "tcp": {
+        "no_delay": true,
+        "keep_alive": true,
+        "reuse_port": false,
+        "fast_open": false,
+        "fast_open_qlen": 20
+    },
+    "experimental": {
+        "pipeline_num": 0,
+        "pipeline_timeout": 600,
+        "pipeline_ack_window": 200,
+        "pipeline_loadbalance_configs": [],
+        "pipeline_proxy_icmp": false
+    },
+    "quic": {
+        "enabled": false
+    },
+    "tun": {
+        "tun_name": "tun0",
+        "net_ip": "10.0.0.2",
+        "net_mask": "255.255.255.0",
+        "mtu": 1500,
+        "redirect_local": true
+    },
+    "dns": {
+        "enabled": true,
+        "enable_cached": true,
+        "port": 53,
+        "udp_timeout": 5,
+        "udp_socket_buf": -1,
+        "udp_recv_buf": 1024,
+        "up_dns_server": [
+            "114.114.114.114"
+        ],
+        "up_gfw_dns_server": [
+            "8.8.8.8"
+        ],
+        "gfwlist": "gfwlist_domain.txt"
+    },
+    "route": {
+        "enabled": true,
+        "proxy_type": 2,
+        "cn_mainland_ips_file": "cn_mainland_ips_list.txt",
+        "proxy_ips": "proxy_ips.txt",
+        "white_ips": "white_ips.txt"
+    }
+}

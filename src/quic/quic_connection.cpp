@@ -1,0 +1,1425 @@
+/*
+ * This file is part of the Trojan Plus project.
+ * Copyright (C) 2026 The Trojan Plus Group Authors.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ */
+
+#include "quic_connection.h"
+#include "core/utils.h"
+
+#include <chrono>
+#include "mem/memallocator.h"
+
+static void *tj_ngtcp2_malloc(size_t size, void *user_data) {
+    (void)user_data;
+    return tp::get_tj_mem_allocator().malloc(size, "ngtcp2", 0);
+}
+
+static void tj_ngtcp2_free(void *ptr, void *user_data) {
+    (void)user_data;
+    tp::get_tj_mem_allocator().free(ptr);
+}
+
+static void *tj_ngtcp2_calloc(size_t nmemb, size_t size, void *user_data) {
+    (void)user_data;
+    size_t real_size = nmemb * size;
+    void *ptr = tp::get_tj_mem_allocator().malloc(real_size, "ngtcp2", 0);
+    if (ptr) {
+        std::memset(ptr, 0, real_size);
+    }
+    return ptr;
+}
+
+static void *tj_ngtcp2_realloc(void *ptr, size_t size, void *user_data) {
+    (void)user_data;
+    return tp::get_tj_mem_allocator().realloc(ptr, size, "ngtcp2", 0);
+}
+
+static const ngtcp2_mem tj_ngtcp2_mem = {
+    nullptr,
+    tj_ngtcp2_malloc,
+    tj_ngtcp2_free,
+    tj_ngtcp2_calloc,
+    tj_ngtcp2_realloc
+};
+#include <cstddef>
+#include <cstring>
+
+#include "h1_upstream/quic_to_http3_connect.h"
+#include "h1_upstream/quic_session_upstream.h"
+#include "core/config.h"
+
+#include <ngtcp2/ngtcp2_crypto_wolfssl.h>
+#include <ngtcp2/ngtcp2_crypto.h>
+
+#include <wolfssl/options.h>
+#include <wolfssl/ssl.h>
+
+#include "core/log.h"
+#include "quic_endpoint.h"
+#include "quic_tls_ctx.h"
+#include "core/utils.h"
+
+// ---- helpers ----------------------------------------------------------------
+
+static ngtcp2_tstamp now_nanos() {
+    return static_cast<ngtcp2_tstamp>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch())
+            .count());
+}
+
+static void fill_sockaddr_union(const boost::asio::ip::udp::endpoint& ep,
+                                ngtcp2_sockaddr_union& su, ngtcp2_socklen& len) {
+    std::memset(&su, 0, sizeof(su));
+    if (ep.address().is_v4()) {
+        su.in.sin_family = AF_INET;
+        su.in.sin_port   = htons(ep.port());
+        auto bytes       = ep.address().to_v4().to_bytes();
+        std::memcpy(&su.in.sin_addr, bytes.data(), 4);
+        len = sizeof(ngtcp2_sockaddr_in);
+    } else {
+        su.in6.sin6_family = AF_INET6;
+        su.in6.sin6_port   = htons(ep.port());
+        auto bytes         = ep.address().to_v6().to_bytes();
+        std::memcpy(&su.in6.sin6_addr, bytes.data(), 16);
+        len = sizeof(ngtcp2_sockaddr_in6);
+    }
+}
+
+// ---- static callbacks -------------------------------------------------------
+
+ngtcp2_conn* QuicConnection::get_conn_cb(ngtcp2_crypto_conn_ref* ref) {
+    return static_cast<QuicConnection*>(ref->user_data)->m_conn;
+}
+
+int QuicConnection::cb_recv_client_initial(ngtcp2_conn* conn, const ngtcp2_cid* dcid,
+                                           void* /*user_data*/) {
+    return ngtcp2_crypto_recv_client_initial_cb(conn, dcid, nullptr);
+}
+
+int QuicConnection::cb_recv_crypto_data(ngtcp2_conn* conn, ngtcp2_encryption_level level,
+                                        uint64_t offset, const uint8_t* data, size_t datalen,
+                                        void* /*user_data*/) {
+    return ngtcp2_crypto_recv_crypto_data_cb(conn, level, offset, data, datalen, nullptr);
+}
+
+int QuicConnection::cb_handshake_completed(ngtcp2_conn* /*conn*/, void* user_data) {
+    static_cast<QuicConnection*>(user_data)->on_handshake_completed_impl();
+    return 0;
+}
+
+int QuicConnection::cb_recv_stream_data(ngtcp2_conn* /*conn*/, uint32_t flags, int64_t stream_id,
+                                        uint64_t /*offset*/, const uint8_t* data, size_t datalen,
+                                        void* user_data, void* /*stream_user_data*/) {
+
+    auto* self = static_cast<QuicConnection*>(user_data);
+    bool fin = (flags & NGTCP2_STREAM_DATA_FLAG_FIN) != 0;
+
+    // extend connection window at very first to make sure connection will be never stuck
+    self->conn_extend_window(datalen);
+
+    auto it = self->m_stream_handlers.find(stream_id);
+    if (it != self->m_stream_handlers.end()) {
+        // server will use handlers
+        auto handler = it->second;
+        handler->on_stream_data(data, datalen, fin);
+    } else if (self->on_stream_data_cb) {
+        // client will use cb 
+        self->on_stream_data_cb(stream_id, data, datalen, fin);
+    }
+
+    return 0;
+}
+
+int QuicConnection::cb_acked_stream_data_offset(ngtcp2_conn* /*conn*/, int64_t stream_id,
+                                                uint64_t offset, uint64_t datalen,
+                                                void* user_data, void* /*stream_user_data*/) {
+    auto* self = static_cast<QuicConnection*>(user_data);
+
+    // Notify H3 engine to free internal buffers and release backpressure.
+    if (self->m_h3) {
+        self->m_h3->acked_stream_data(stream_id, static_cast<std::size_t>(datalen));
+    }
+
+    // Release ACKed buffers maintained at connection level
+    auto it_buf = self->m_conn_unacked_bufs.find(stream_id);
+    if (it_buf != self->m_conn_unacked_bufs.end()) {
+        auto& bufs = it_buf->second;
+        uint64_t ack_start = offset;
+        uint64_t ack_end = offset + datalen;
+
+        auto it = bufs->buffers.begin();
+        while (it != bufs->buffers.end()) {
+            auto& buf = *it;
+            uint64_t buf_start = buf->m_ack_offset;
+            uint64_t buf_end = buf_start + buf->m_sending_offset;
+
+            // Calculate intersection
+            uint64_t intersect_start = std::max(ack_start, buf_start);
+            uint64_t intersect_end = std::min(ack_end, buf_end);
+
+            if (intersect_start < intersect_end) {
+                buf->m_bytes_acked += (intersect_end - intersect_start);
+            }
+
+            if (buf->m_buf && buf->m_bytes_acked >= buf->m_buf->size()) {
+                _log_with_date_time_ALL("cb_acked_stream_data_offset stream_id=" + tp::to_string(stream_id) + 
+                    " buf_size=" + tp::to_string(buf->m_buf->size()));
+
+                buf->cancel_timer();
+                it = bufs->buffers.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
+    return 0;
+}
+
+int QuicConnection::cb_stream_open(ngtcp2_conn* /*conn*/, int64_t stream_id, void* user_data) {
+    auto* self = static_cast<QuicConnection*>(user_data);
+    if (self->on_stream_open_cb) {
+        self->on_stream_open_cb(stream_id);
+    }
+    return 0;
+}
+
+int QuicConnection::cb_stream_close(ngtcp2_conn* /*conn*/, uint32_t /*flags*/, int64_t stream_id,
+                                    uint64_t app_error_code, void* user_data,
+                                    void* /*stream_user_data*/) {
+    auto* self = static_cast<QuicConnection*>(user_data);
+
+    if (self->m_h3) {
+        self->m_h3->close_stream(stream_id, app_error_code);
+    }
+
+    auto it = self->m_stream_handlers.find(stream_id);
+    if (it != self->m_stream_handlers.end()) {
+        auto handler = it->second;
+        handler->on_stream_close();
+        self->m_stream_handlers.erase(stream_id);
+    } else if (self->on_stream_close_cb) {
+        self->on_stream_close_cb(stream_id);
+    }
+
+    auto it_buf = self->m_conn_unacked_bufs.find(stream_id);
+    if (it_buf != self->m_conn_unacked_bufs.end()) {
+        for (auto& buf : it_buf->second->buffers) {
+            buf->cancel_timer();
+        }
+        self->m_conn_unacked_bufs.erase(it_buf);
+    }
+
+    if (!ngtcp2_conn_is_local_stream2(self->m_conn, stream_id)) {
+        if (ngtcp2_is_bidi_stream(stream_id)) {
+            ngtcp2_conn_extend_max_streams_bidi(self->m_conn, 1);
+        } else {
+            ngtcp2_conn_extend_max_streams_uni(self->m_conn, 1);
+        }
+    }
+
+    return 0;
+}
+
+int QuicConnection::cb_extend_max_stream_data(ngtcp2_conn* /*conn*/, int64_t stream_id,
+                                              uint64_t max_data, void* user_data,
+                                              void* /*stream_user_data*/) {
+    auto* self = static_cast<QuicConnection*>(user_data);
+    self->on_extend_max_stream_data(stream_id, max_data);
+    return 0;
+}
+
+void QuicConnection::cb_rand(uint8_t* dest, size_t destlen, const ngtcp2_rand_ctx* /*ctx*/) {
+    wolfSSL_RAND_bytes(dest, static_cast<int>(destlen));
+}
+
+int QuicConnection::cb_get_new_connection_id(ngtcp2_conn* /*conn*/, ngtcp2_cid* cid,
+                                             ngtcp2_stateless_reset_token* token,
+                                             size_t cidlen, void* user_data) {
+    cid->datalen = cidlen;
+    wolfSSL_RAND_bytes(cid->data, static_cast<int>(cidlen));
+
+    auto* self = static_cast<QuicConnection*>(user_data);
+
+    // Derive a deterministic Stateless Reset token from the new CID and the
+    // per-process endpoint secret.  This token is advertised to the peer via
+    // NEW_CONNECTION_ID, so when we later send a Stateless Reset (using the
+    // same derivation), the peer will recognise and honour it.
+    const uint8_t* secret = self->m_endpoint.stateless_reset_secret();
+    if (ngtcp2_crypto_generate_stateless_reset_token(
+            reinterpret_cast<uint8_t*>(token),
+            secret, kStatelessResetSecretLen, cid) != 0) {
+        // Fallback to random on unexpected failure (should never happen).
+        wolfSSL_RAND_bytes(reinterpret_cast<uint8_t*>(token),
+                           NGTCP2_STATELESS_RESET_TOKENLEN);
+    }
+
+    if (self->on_new_connection_id_cb) {
+        self->on_new_connection_id_cb(cid);
+    }
+
+    return 0;
+}
+
+int QuicConnection::cb_update_key(ngtcp2_conn* conn, uint8_t* rx_secret, uint8_t* tx_secret,
+                                  ngtcp2_crypto_aead_ctx* rx_aead_ctx, uint8_t* rx_iv,
+                                  ngtcp2_crypto_aead_ctx* tx_aead_ctx, uint8_t* tx_iv,
+                                  const uint8_t* current_rx_secret,
+                                  const uint8_t* current_tx_secret, size_t secretlen,
+                                  void* /*user_data*/) {
+    return ngtcp2_crypto_update_key_cb(conn, rx_secret, tx_secret, rx_aead_ctx, rx_iv,
+                                       tx_aead_ctx, tx_iv, current_rx_secret, current_tx_secret,
+                                       secretlen, nullptr);
+}
+
+int QuicConnection::cb_extend_max_local_streams_bidi(ngtcp2_conn* /*conn*/,
+                                                     uint64_t /*max_streams*/,
+                                                     void* /*user_data*/) {
+    return 0;
+}
+
+// ---- constructor / destructor -----------------------------------------------
+
+QuicConnection::QuicConnection(QuicEndpoint& endpoint, std::shared_ptr<QuicTlsCtx> tls_ctx,
+                               const boost::asio::ip::udp::endpoint& peer)
+    : m_endpoint(endpoint),
+      m_tls_ctx(std::move(tls_ctx)),
+      m_peer(peer),
+      m_loss_timer(endpoint.io_context()),
+      m_write_buf(NGTCP2_MAX_UDP_PAYLOAD_SIZE),
+      m_in_read_pkt(false),
+      m_in_pump_write(false) {
+    _log_with_date_time("QuicConnection: QuicConnection constructed for peer " + 
+                        tp::string(peer.address().to_string().c_str()) + ":" + 
+                        tp::to_string(peer.port()), Log::INFO);
+}
+
+QuicConnection::~QuicConnection() {
+    _log_with_date_time("QuicConnection: ~QuicConnection destructed for peer " + 
+                        tp::string(m_peer.address().to_string().c_str()) + ":" + 
+                        tp::to_string(m_peer.port()), Log::INFO);
+    if (m_conn) {
+        ngtcp2_conn_del(m_conn);
+    }
+    if (m_ssl) {
+        wolfSSL_free(m_ssl);
+    }
+}
+
+// ---- path helper ------------------------------------------------------------
+
+ngtcp2_path QuicConnection::make_path(const boost::asio::ip::udp::endpoint& local_ep,
+                                      const boost::asio::ip::udp::endpoint& remote_ep) {
+    fill_sockaddr_union(local_ep, m_local_su, m_local_len);
+    fill_sockaddr_union(remote_ep, m_remote_su, m_remote_len);
+    ngtcp2_path path;
+    path.local.addr     = &m_local_su.sa;
+    path.local.addrlen  = m_local_len;
+    path.remote.addr    = &m_remote_su.sa;
+    path.remote.addrlen = m_remote_len;
+    return path;
+}
+
+// ---- server init ------------------------------------------------------------
+
+bool QuicConnection::init_server(const uint8_t* data, std::size_t datalen,
+                                 const boost::asio::ip::udp::endpoint& local_ep,
+                                 const boost::asio::ip::udp::endpoint& remote_ep,
+                                 const ngtcp2_cid* dcid, const ngtcp2_cid* scid,
+                                 uint32_t version,
+                                 ngtcp2_cid* out_sv_scid) {
+    m_is_server = true;
+
+    m_ssl = m_tls_ctx->create_ssl();
+    if (!m_ssl) {
+        return false;
+    }
+
+    // Wire up conn_ref so wolfSSL crypto callbacks can reach our ngtcp2_conn.
+    m_conn_ref.get_conn  = &QuicConnection::get_conn_cb;
+    m_conn_ref.user_data = this;
+    wolfSSL_set_app_data(m_ssl, &m_conn_ref);
+
+    ngtcp2_callbacks callbacks;
+    std::memset(&callbacks, 0, sizeof(callbacks));
+    callbacks.recv_client_initial      = cb_recv_client_initial;
+    callbacks.recv_crypto_data         = cb_recv_crypto_data;
+    callbacks.handshake_completed      = cb_handshake_completed;
+    callbacks.encrypt                  = ngtcp2_crypto_encrypt_cb;
+    callbacks.decrypt                  = ngtcp2_crypto_decrypt_cb;
+    callbacks.hp_mask                  = ngtcp2_crypto_hp_mask_cb;
+    callbacks.recv_stream_data         = cb_recv_stream_data;
+    callbacks.stream_open              = cb_stream_open;
+    callbacks.stream_close             = cb_stream_close;
+    callbacks.rand                     = cb_rand;
+    callbacks.update_key               = cb_update_key;
+    callbacks.delete_crypto_aead_ctx   = ngtcp2_crypto_delete_crypto_aead_ctx_cb;
+    callbacks.delete_crypto_cipher_ctx = ngtcp2_crypto_delete_crypto_cipher_ctx_cb;
+    callbacks.version_negotiation      = ngtcp2_crypto_version_negotiation_cb;
+    callbacks.get_new_connection_id2   = cb_get_new_connection_id;
+    callbacks.get_path_challenge_data2 = ngtcp2_crypto_get_path_challenge_data2_cb;
+    callbacks.acked_stream_data_offset = cb_acked_stream_data_offset;
+    callbacks.extend_max_stream_data   = cb_extend_max_stream_data;
+
+    ngtcp2_settings settings;
+    ngtcp2_settings_default(&settings);
+    settings.initial_ts = now_nanos();
+
+    ngtcp2_transport_params params;
+    ngtcp2_transport_params_default(&params);
+    params.initial_max_stream_data_bidi_local  = 512 * 1024; // max cache size in one stream
+    params.initial_max_stream_data_bidi_remote = 512 * 1024;
+    params.initial_max_data                    = 32 * 1024 * 1024; // max cache size in all streams
+    params.initial_max_streams_bidi            = 1000;
+    params.initial_max_stream_data_uni         = 64 * 1024;
+    params.initial_max_streams_uni             = 200;
+    params.max_idle_timeout = static_cast<ngtcp2_duration>(
+        m_endpoint.config().get_quic().max_idle_timeout_ms) * 1'000'000ULL;
+    params.original_dcid         = *dcid;
+    params.original_dcid_present = 1;
+    // No retry token for Phase 1.
+    params.stateless_reset_token_present = 0;
+
+    auto path = make_path(local_ep, remote_ep);
+
+    // Choose a new SCID for the server.
+    ngtcp2_cid sv_scid;
+    sv_scid.datalen = kServerScidLen;
+    wolfSSL_RAND_bytes(sv_scid.data, static_cast<int>(kServerScidLen));
+
+    // ngtcp2_conn_server_new(conn, dcid, scid, path, version, ...):
+    //   dcid = the client's SCID (server uses it as its destination CID)
+    //   scid = the server's own SCID (newly generated sv_scid)
+    int rv = ngtcp2_conn_server_new(&m_conn, scid ? scid : dcid, &sv_scid, &path, version,
+                                    &callbacks, &settings, &params, &tj_ngtcp2_mem, this);
+    if (rv != 0) {
+        _log_with_date_time(
+            "QuicConnection::init_server: ngtcp2_conn_server_new: " + tp::string(ngtcp2_strerror(rv)),
+            Log::ERROR);
+        wolfSSL_free(m_ssl);
+        m_ssl = nullptr;
+        return false;
+    }
+
+    ngtcp2_conn_set_tls_native_handle(m_conn, m_ssl);
+
+    // Export the chosen SCID so the caller can add a routing table entry for it.
+    // Post-handshake packets from the client use sv_scid as DCID.
+    if (out_sv_scid) {
+        *out_sv_scid = sv_scid;
+    }
+
+    // Process the first packet to kick off the handshake.
+    rv = ngtcp2_conn_read_pkt(m_conn, &path, nullptr, data, datalen, now_nanos());
+    if (rv != 0 && rv != NGTCP2_ERR_RETRY) {
+        _log_with_date_time(
+            "QuicConnection::init_server: initial ngtcp2_conn_read_pkt: " + tp::string(ngtcp2_strerror(rv)),
+            Log::WARN);
+        return false;
+    }
+
+    pump_write(FUNC_NAME);
+    reschedule_loss_timer();
+    return true;
+}
+
+// ---- client init ------------------------------------------------------------
+
+bool QuicConnection::init_client(const boost::asio::ip::udp::endpoint& local_ep,
+                                 const boost::asio::ip::udp::endpoint& remote_ep) {
+    m_is_server = false;
+    m_peer      = remote_ep;
+
+    m_ssl = m_tls_ctx->create_ssl();
+    if (!m_ssl) {
+        return false;
+    }
+
+    m_conn_ref.get_conn  = &QuicConnection::get_conn_cb;
+    m_conn_ref.user_data = this;
+    wolfSSL_set_app_data(m_ssl, &m_conn_ref);
+
+    // Set SNI.
+    const auto& ssl_cfg = m_endpoint.config().get_ssl();
+    const auto& sni     = !ssl_cfg.sni.empty() ? ssl_cfg.sni : m_endpoint.config().get_remote_addr();
+    if (!sni.empty()) {
+        wolfSSL_UseSNI(m_ssl, WOLFSSL_SNI_HOST_NAME, sni.c_str(),
+                       static_cast<uint16_t>(sni.size()));
+    }
+
+    ngtcp2_callbacks callbacks;
+    std::memset(&callbacks, 0, sizeof(callbacks));
+    callbacks.client_initial                = ngtcp2_crypto_client_initial_cb;
+    callbacks.recv_crypto_data              = cb_recv_crypto_data;
+    callbacks.handshake_completed           = cb_handshake_completed;
+    callbacks.recv_version_negotiation      = nullptr;
+    callbacks.encrypt                       = ngtcp2_crypto_encrypt_cb;
+    callbacks.decrypt                       = ngtcp2_crypto_decrypt_cb;
+    callbacks.hp_mask                       = ngtcp2_crypto_hp_mask_cb;
+    callbacks.recv_stream_data              = cb_recv_stream_data;
+    callbacks.stream_close                  = cb_stream_close;
+    callbacks.recv_retry                    = ngtcp2_crypto_recv_retry_cb;
+    callbacks.extend_max_local_streams_bidi = cb_extend_max_local_streams_bidi;
+    callbacks.rand                          = cb_rand;
+    callbacks.update_key                    = cb_update_key;
+    callbacks.handshake_confirmed           = cb_handshake_completed;
+    callbacks.delete_crypto_aead_ctx        = ngtcp2_crypto_delete_crypto_aead_ctx_cb;
+    callbacks.delete_crypto_cipher_ctx      = ngtcp2_crypto_delete_crypto_cipher_ctx_cb;
+    callbacks.version_negotiation           = ngtcp2_crypto_version_negotiation_cb;
+    callbacks.get_new_connection_id2        = cb_get_new_connection_id;
+    callbacks.get_path_challenge_data2      = ngtcp2_crypto_get_path_challenge_data2_cb;
+    callbacks.acked_stream_data_offset      = cb_acked_stream_data_offset;
+    callbacks.extend_max_stream_data        = cb_extend_max_stream_data;
+
+    ngtcp2_settings settings;
+    ngtcp2_settings_default(&settings);
+    settings.initial_ts = now_nanos();
+
+    ngtcp2_transport_params params;
+    ngtcp2_transport_params_default(&params);
+    params.initial_max_data                    = 32 * 1024 * 1024; // max cache size in all streams
+    params.initial_max_streams_bidi            = 100;
+    params.initial_max_stream_data_uni         = 64 * 1024;
+    params.initial_max_streams_uni             = 100;
+    params.initial_max_stream_data_bidi_local  = 1 * 1024 * 1024;  // max cache size in one stream
+    params.initial_max_stream_data_bidi_remote = 1 * 1024 * 1024;  // max cache size in one stream
+    params.max_idle_timeout = static_cast<ngtcp2_duration>(
+        m_endpoint.config().get_quic().max_idle_timeout_ms) * 1'000'000ULL;
+
+    ngtcp2_cid dcid, scid;
+    dcid.datalen = 18;
+    wolfSSL_RAND_bytes(dcid.data, 18);
+    scid.datalen = 17;
+    wolfSSL_RAND_bytes(scid.data, 17);
+
+    auto path = make_path(local_ep, remote_ep);
+
+    int rv = ngtcp2_conn_client_new(&m_conn, &dcid, &scid, &path, NGTCP2_PROTO_VER_V1,
+                                    &callbacks, &settings, &params, &tj_ngtcp2_mem, this);
+    if (rv != 0) {
+        _log_with_date_time(
+            "QuicConnection::init_client: ngtcp2_conn_client_new: " + tp::string(ngtcp2_strerror(rv)),
+            Log::ERROR);
+        wolfSSL_free(m_ssl);
+        m_ssl = nullptr;
+        return false;
+    }
+
+    ngtcp2_conn_set_tls_native_handle(m_conn, m_ssl);
+
+    pump_write(FUNC_NAME);
+    reschedule_loss_timer();
+    return true;
+}
+
+// ---- packet receive ---------------------------------------------------------
+
+void QuicConnection::on_packet(const uint8_t* data, std::size_t datalen,
+                               const boost::asio::ip::udp::endpoint& local_ep,
+                               const boost::asio::ip::udp::endpoint& remote_ep) {
+    if (m_closed || !m_conn) {
+        return;
+    }
+    m_in_read_pkt = true;
+    auto path = make_path(local_ep, remote_ep);
+    int  rv   = ngtcp2_conn_read_pkt(m_conn, &path, nullptr, data, datalen, now_nanos());
+    m_in_read_pkt = false;
+    if (rv != 0) {
+        if (rv != NGTCP2_ERR_DRAINING && rv != NGTCP2_ERR_DROP_CONN) {
+            _log_with_date_time(
+                "QuicConnection::on_packet: ngtcp2_conn_read_pkt: " + tp::string(ngtcp2_strerror(rv)),
+                Log::WARN);
+        }
+        if (rv == NGTCP2_ERR_DRAINING || rv == NGTCP2_ERR_CRYPTO) {
+            close();
+            return;
+        }
+    }
+    if (!m_closed && m_conn) {
+        on_pump_write(FUNC_NAME);
+    }
+}
+
+void QuicConnection::on_pump_write(const char* debug_path) {
+    if (m_closed || !m_conn) {
+        return;
+    }
+
+    if (m_in_pump_write) {
+        return;
+    }
+    m_in_pump_write = true;
+    
+    pump_write(debug_path);
+
+    if (m_h3) {
+        m_h3->pump_h3_response(debug_path);
+    }
+
+    // Give handlers a chance to retry buffered data (e.g. if QPACK was unblocked)
+    for (auto& [id, handler] : m_stream_handlers) {
+        handler->on_connection_pump();
+    }
+
+    m_in_pump_write = false;
+    reschedule_loss_timer();
+}
+
+// ---- pump_write : send ACK/Control/handshake packet without stream id --------------------------
+
+void QuicConnection::pump_write(const char* debug_path) {
+    if (m_closed || !m_conn) {
+        return;
+    }
+
+    ngtcp2_path_storage ps;
+    ngtcp2_path_storage_zero(&ps);
+    ngtcp2_pkt_info pi{};
+
+    bool ppe_pending = false;
+    for (;;) {
+        auto nwrite = ngtcp2_conn_write_pkt(m_conn, &ps.path, &pi, m_write_buf.data(), m_write_buf.size(),
+                                            now_nanos());
+        if (nwrite < 0) {
+            if (nwrite == NGTCP2_ERR_WRITE_MORE) {
+                ppe_pending = true;
+                continue;
+            }
+            if (ppe_pending) {
+                ngtcp2_conn_write_pkt(m_conn, &ps.path, &pi, m_write_buf.data(), m_write_buf.size(),
+                                      now_nanos());
+            }
+            _log_with_date_time(
+                "QuicConnection::pump_write: " + tp::string(ngtcp2_strerror(static_cast<int>(nwrite))) + 
+                " path" + tp::string(debug_path),
+                Log::WARN);
+            if (nwrite == NGTCP2_ERR_CLOSING || nwrite == NGTCP2_ERR_DRAINING) {
+                m_closed = true;
+            }
+            return;
+        }
+        ppe_pending = false;
+        if (nwrite == 0) {
+            break;
+        }
+        // Determine destination from the path returned by ngtcp2.
+        boost::asio::ip::udp::endpoint dest = m_peer;
+        if (ps.path.remote.addrlen == sizeof(sockaddr_in)) {
+            auto* sin = reinterpret_cast<sockaddr_in*>(ps.path.remote.addr);
+            dest      = boost::asio::ip::udp::endpoint(
+                boost::asio::ip::address_v4(ntohl(sin->sin_addr.s_addr)), ntohs(sin->sin_port));
+        } else if (ps.path.remote.addrlen == sizeof(sockaddr_in6)) {
+            auto* sin6 = reinterpret_cast<sockaddr_in6*>(ps.path.remote.addr);
+            boost::asio::ip::address_v6::bytes_type bytes;
+            std::memcpy(bytes.data(), &sin6->sin6_addr, 16);
+            dest = boost::asio::ip::udp::endpoint(boost::asio::ip::address_v6(bytes),
+                                                  ntohs(sin6->sin6_port));
+        }
+        m_endpoint.send_packet(dest, m_write_buf.data(), static_cast<std::size_t>(nwrite));
+    }
+}
+
+// ---- send_stream_data -------------------------------------------------------
+
+void QuicConnection::send_stream_data(int64_t stream_id, std::shared_ptr<ReadBufWithGuard> buf, bool fin, IoHandler sent_cb){
+    if (m_closed || !m_conn) {
+        if(sent_cb){
+            sent_cb(boost::asio::error::broken_pipe, 0);
+        }
+        return;
+    }
+
+    if (m_in_read_pkt) {
+        auto self = shared_from_this();
+        boost::asio::post(m_endpoint.io_context(), [this, self, stream_id, buf, fin, sent_cb]() {
+            send_stream_data(stream_id, buf, fin, sent_cb);
+        });
+        return;
+    }
+
+    if(!buf || buf->size() == 0){
+        auto sent = send_stream_data_impl(stream_id, nullptr, 0, fin);
+        if(sent < 0){
+            if(sent_cb){
+                sent_cb(boost::asio::error::broken_pipe, 0);
+            }
+        }else{
+            if(sent_cb){
+                sent_cb({}, 0);
+            }
+        }
+        return;
+    }
+
+    _log_with_date_time("[QuicConnection::send_stream_data] stream_id=" + tp::to_string(stream_id) + 
+        " buf_size=" + tp::to_string(buf ? buf->size() : 0) + " fin=" + tp::to_string(fin), Log::ALL);
+
+    // cache the data for ack
+    auto it = m_conn_unacked_bufs.find(stream_id);
+    std::shared_ptr<UnackedBuffers> ptr;
+    if(it == m_conn_unacked_bufs.end()){
+        ptr = TP_MAKE_SHARED(UnackedBuffers);
+        m_conn_unacked_bufs[stream_id] = ptr;
+    } else {
+        ptr = it->second;
+    }
+
+    auto& list = ptr->buffers;
+    auto unacked_ptr = TP_MAKE_SHARED(UnackedBuf, m_endpoint.io_context());
+    unacked_ptr->m_stream_id = stream_id;
+    unacked_ptr->m_buf = buf;
+    unacked_ptr->m_fin = fin;
+    unacked_ptr->m_ack_offset = ptr->curr_written;
+    unacked_ptr->m_bytes_acked = 0;
+    unacked_ptr->m_sent_cb = std::move(sent_cb);
+    unacked_ptr->m_conn = shared_from_this();
+    
+    list.emplace_back(unacked_ptr);
+
+    ptr->curr_written += buf ? buf->size() : 0;
+
+    if(!ptr->m_sending){
+        ptr->m_sending = true;
+        unacked_ptr->send();
+    }
+    
+}
+
+bool QuicConnection::UnackedBuf::is_sending() const {
+    return m_sending_offset < m_buf->size();
+}
+
+void QuicConnection::UnackedBuf::cancel_timer() {
+    if (!m_timer_running) return;
+    m_timer_running = false;
+    m_write_timer.cancel();
+}
+
+void QuicConnection::UnackedBuf::send(){
+    auto conn = m_conn.lock();
+    if(!conn){
+        if(m_sent_cb){
+            m_sent_cb(boost::asio::error::broken_pipe, 0);
+            m_sent_cb = nullptr;
+        }
+        return;
+    }
+
+    const auto& data = m_buf->to_string_view();
+    const uint8_t* ptr = (const uint8_t*)data.data() + m_sending_offset;
+    std::size_t len = data.length() - m_sending_offset;
+
+    auto sent = conn->send_stream_data_impl(m_stream_id, ptr, len, m_fin);
+    if(sent < 0){
+        if(m_sent_cb){
+            m_sent_cb(boost::asio::error::broken_pipe, 0);
+            m_sent_cb = nullptr;
+        }
+        
+        cancel_timer();
+        conn->remove_unacked_buff(m_stream_id);
+    }else if((std::size_t)sent >= len){
+        // finished, and wait for ack since now
+        m_sending_offset += sent;
+        if(m_sent_cb){
+            m_sent_cb({}, m_sending_offset);
+            m_sent_cb = nullptr;
+        }
+
+        cancel_timer();
+        conn->send_next_unacked_buff(m_stream_id, this);
+    }else{
+        // wait for a while and send again
+        m_sending_offset += sent;
+
+        const std::size_t MAX_RETRY_DELAY_MS = 3000;
+        const std::size_t MIN_RETRY_DELAY_MS = 50;
+
+        if (sent > 0) {
+            m_retry_delay_ms = MIN_RETRY_DELAY_MS;
+        } else {
+            if(m_retry_delay_ms == MAX_RETRY_DELAY_MS){
+
+                // we won't try again, call the callback with error
+                _log_with_date_time("UnackedBuf retry MAX_RETRY_DELAY_MS reached, stream=" 
+                    + tp::to_string(m_stream_id) + " sent=" + tp::to_string(sent) + 
+                    " offset=" + tp::to_string(m_sending_offset) + 
+                    " fin=" + tp::to_string(m_fin) + " buf_size=" + 
+                    tp::to_string(m_buf ? m_buf->size() : 0), 
+                    Log::WARN);
+
+                if(m_sent_cb){
+                    m_sent_cb(boost::asio::error::operation_aborted, m_sending_offset);
+                    m_sent_cb = nullptr;
+                }
+                cancel_timer();
+                conn->remove_unacked_buff(m_stream_id);
+                return;
+            }
+            m_retry_delay_ms = std::min<std::size_t>(m_retry_delay_ms * 2, MAX_RETRY_DELAY_MS);
+        }
+
+        if (!m_timer_running) {
+            m_timer_running = true;
+            m_write_timer.expires_after(std::chrono::milliseconds(m_retry_delay_ms));
+            m_write_timer.async_wait(
+                [unacked = this->shared_from_this(), sent](boost::system::error_code ec){
+                    unacked->m_timer_running = false;
+                    if(ec){
+                        if (unacked->m_sent_cb) {
+                            unacked->m_sent_cb(boost::asio::error::operation_aborted, unacked->m_sending_offset);
+                            unacked->m_sent_cb = nullptr;
+                        }
+                        auto conn = unacked->m_conn.lock();
+                        if(conn){
+                            conn->remove_unacked_buff(unacked->m_stream_id);
+                        }
+                        return;
+                    }
+
+                    _log_with_date_time("UnackedBuf retry send stream_id=" + 
+                        tp::to_string(unacked->m_stream_id) + " sent=" + tp::to_string(sent) + 
+                        " offset=" + tp::to_string(unacked->m_sending_offset) + 
+                        " fin=" + tp::to_string(unacked->m_fin) + " buf_size=" + 
+                        tp::to_string(unacked->m_buf ? unacked->m_buf->size() : 0), 
+                        Log::ALL);
+
+                    unacked->send();
+                }
+            );
+        }
+    }
+
+    if(sent > 0){
+        conn->on_pump_write(FUNC_NAME);
+    }
+}
+
+void QuicConnection::send_next_unacked_buff(int64_t stream_id, UnackedBuf* buf_finished){
+    auto stream_id_it = m_conn_unacked_bufs.find(stream_id);
+    if(stream_id_it != m_conn_unacked_bufs.end()){
+        auto& list = stream_id_it->second->buffers;
+        for(auto it = list.begin(); it != list.end(); ++it){
+            if(it->get() == buf_finished){
+                it++;
+                if(it != list.end()){
+                    (*it)->send();
+                }else{
+                    stream_id_it->second->m_sending = false;
+                }
+                break;
+            }
+        }
+    }
+}
+void QuicConnection::remove_unacked_buff(int64_t stream_id){
+    auto it = m_conn_unacked_bufs.find(stream_id);
+    if(it != m_conn_unacked_bufs.end()){
+        // all buffered data with same stream id will be destroyed
+        m_conn_unacked_bufs.erase(it);
+    }
+}
+
+int64_t QuicConnection::send_stream_vecs(int64_t stream_id, 
+    const ngtcp2_vec* datav, std::size_t datavcnt, bool fin, const char* debug_path){
+    return send_stream_vecs_impl(stream_id, datav, datavcnt, fin, debug_path);
+}
+
+int64_t QuicConnection::send_stream_data_impl(int64_t stream_id, const uint8_t* data, std::size_t datalen,
+                                      bool fin) {
+    if (m_closed || !m_conn) {
+        return -1;
+    }
+
+    _log_with_date_time("send_stream_data_impl enter: stream_id=" + tp::to_string(stream_id) + 
+                    " datalen=" + tp::to_string(datalen) + " fin=" + tp::to_string(fin), Log::ALL);
+
+    ngtcp2_path_storage ps;
+    ngtcp2_path_storage_zero(&ps);
+    ngtcp2_pkt_info pi{};
+
+    std::size_t written = 0;
+    bool ppe_pending = false;  // true when WRITE_MORE was returned, ngtcp2 PPE_PENDING flag is set
+
+    // Flush PPE on any exit path to ensure PPE_PENDING is cleared before read_pkt can be called.
+    // ngtcp2 asserts PPE_PENDING==0 at the top of ngtcp2_conn_read_pkt_versioned.
+    // IMPORTANT: must reuse the same ps/pi/buf as the WRITE_MORE call per ngtcp2 contract.
+    auto flush_ppe = [&]() {
+        if (!ppe_pending) return;
+        ppe_pending = false;
+        auto flush_nwrite = ngtcp2_conn_writev_stream(m_conn, &ps.path, &pi, m_write_buf.data(), m_write_buf.size(),
+                                                      nullptr, 0, -1, nullptr, 0, now_nanos());
+        if (flush_nwrite > 0) {
+            m_endpoint.send_packet(m_peer, m_write_buf.data(), static_cast<std::size_t>(flush_nwrite));
+        }
+    };
+
+    for (;;) {
+        std::size_t remain = datalen - written;
+        ngtcp2_vec vec;
+        vec.base = const_cast<uint8_t*>(data + written);
+        vec.len  = remain;
+        ngtcp2_ssize pdatalen = -1;
+
+        uint32_t flags = 0;
+        if (fin) {
+            // mark fin tag for all data, ngtcp2 will process correctly
+            flags |= NGTCP2_WRITE_STREAM_FLAG_FIN;
+        } else {
+            flags |= NGTCP2_WRITE_STREAM_FLAG_MORE;
+        }
+
+        if (flags & NGTCP2_WRITE_STREAM_FLAG_MORE) {
+            ppe_pending = true;
+        }
+
+        auto nwrite = ngtcp2_conn_writev_stream(m_conn, &ps.path, &pi, m_write_buf.data(), m_write_buf.size(),
+                                                &pdatalen, flags,
+                                                stream_id, &vec, 1, now_nanos());
+
+        if (nwrite == NGTCP2_ERR_WRITE_MORE) {
+            _log_with_date_time("send_stream_data_impl: WRITE_MORE stream=" + 
+                tp::to_string(stream_id) + " pdatalen=" + tp::to_string(pdatalen), Log::ALL);
+            ppe_pending = true;
+            if (pdatalen > 0) written += pdatalen;
+            if (written == datalen && !fin) {
+                break;
+            }
+            continue;
+        }
+
+        if (nwrite < 0) {
+            if (nwrite == NGTCP2_ERR_STREAM_DATA_BLOCKED) {
+                _log_with_date_time("send_stream_data_impl: STREAM_DATA_BLOCKED stream=" + tp::to_string(stream_id) + 
+                    " written=" + tp::to_string(written), Log::ALL);
+                // PPE_PENDING may be set from a previous WRITE_MORE; must flush before returning.
+                flush_ppe();
+                return static_cast<int64_t>(written);
+            }
+            _log_with_date_time(
+                "send_stream_data_impl error=" + tp::string(ngtcp2_strerror(static_cast<int>(nwrite))) +
+                " stream=" + tp::to_string(stream_id) + " written=" + tp::to_string(written),
+                Log::ALL);
+            if (nwrite != NGTCP2_ERR_STREAM_SHUT_WR) {
+                _log_with_date_time(
+                    "send_stream_data_impl error=" + tp::string(ngtcp2_strerror(static_cast<int>(nwrite))) +
+                    " stream=" + tp::to_string(stream_id),
+                    Log::WARN);
+            }
+            flush_ppe();
+            if (written > 0) return static_cast<int64_t>(written);
+            return -1;
+        }
+
+        ppe_pending = false;  // successful writev clears internal PPE_PENDING
+        if (nwrite > 0) {
+            m_endpoint.send_packet(m_peer, m_write_buf.data(), static_cast<std::size_t>(nwrite));
+        }
+
+        if (pdatalen > 0) {
+            written += pdatalen;
+        }
+
+        if (written == datalen) {
+            break;
+        }
+
+        if (pdatalen <= 0) {
+            _log_with_date_time("send_stream_data_impl: loop break due to pdatalen<=0 stream=" + tp::to_string(stream_id) + 
+                " written=" + tp::to_string(written), Log::ALL);
+            // Flow control, congestion control, or no more data for this stream in current packets.
+            // DO NOT loop if we didn't send any stream data, to avoid infinite loop on connection-level frames.
+            break;
+        }
+    }
+
+    flush_ppe();
+    _log_with_date_time("send_stream_data_impl leave: stream_id=" + tp::to_string(stream_id) + " written=" + tp::to_string(written), Log::ALL);
+    return static_cast<int64_t>(written);
+}
+
+
+int64_t QuicConnection::send_stream_vecs_impl(int64_t stream_id,
+                                          const ngtcp2_vec* datav,
+                                          std::size_t datavcnt, bool fin, const char* debug_path) {
+    if (m_closed || !m_conn) {
+        return -1;
+    }
+
+    _log_with_date_time("send_stream_vecs_impl enter: stream_id=" + tp::to_string(stream_id) + 
+                    " datavcnt=" + tp::to_string(datavcnt) + " fin=" + tp::to_string(fin) + 
+                    " path=" + tp::string(debug_path), Log::ALL);
+
+    // Calculate total data length across all vectors
+    std::size_t total_len = 0;
+    for (std::size_t i = 0; i < datavcnt; ++i) {
+        total_len += datav[i].len;
+    }
+
+    ngtcp2_path_storage ps;
+    ngtcp2_path_storage_zero(&ps);
+    ngtcp2_pkt_info pi{};
+
+    std::size_t written = 0;
+    bool ppe_pending = false;  // true when WRITE_MORE was returned, ngtcp2 PPE_PENDING flag is set
+
+    // Flush PPE on any exit path to ensure PPE_PENDING is cleared before read_pkt can be called.
+    // ngtcp2 asserts PPE_PENDING==0 at the top of ngtcp2_conn_read_pkt_versioned.
+    // IMPORTANT: must reuse the same ps/pi/buf as the WRITE_MORE call per ngtcp2 contract.
+    auto flush_ppe = [&]() {
+        if (!ppe_pending) return;
+        ppe_pending = false;
+        auto flush_nwrite = ngtcp2_conn_writev_stream(m_conn, &ps.path, &pi, m_write_buf.data(), m_write_buf.size(),
+                                                      nullptr, 0, -1, nullptr, 0, now_nanos());
+        if (flush_nwrite > 0) {
+            m_endpoint.send_packet(m_peer, m_write_buf.data(), static_cast<std::size_t>(flush_nwrite));
+        }
+    };
+
+    for (;;) {
+        // Calculate the slice of active vecs for this iteration
+        std::size_t skip = written;
+        std::size_t start_idx = 0;
+        std::size_t first_vec_offset = 0;
+        bool found = false;
+
+        for (std::size_t i = 0; i < datavcnt; ++i) {
+            if (skip < datav[i].len) {
+                start_idx = i;
+                first_vec_offset = skip;
+                found = true;
+                break;
+            }
+            skip -= datav[i].len;
+        }
+
+        tp::vector<ngtcp2_vec> active_vecs;
+        if (found) {
+            active_vecs.reserve(datavcnt - start_idx);
+            
+            // Slice the first vector to skip already sent bytes
+            ngtcp2_vec first_vec;
+            first_vec.base = datav[start_idx].base + first_vec_offset;
+            first_vec.len = datav[start_idx].len - first_vec_offset;
+            active_vecs.push_back(first_vec);
+
+            // Copy subsequent unsent vectors
+            for (std::size_t i = start_idx + 1; i < datavcnt; ++i) {
+                active_vecs.push_back(datav[i]);
+            }
+        } else {
+            // If all data was sent but we still need to send the fin tag, 
+            // push an empty vector to match send_stream_data_impl behavior.
+            ngtcp2_vec empty_vec;
+            empty_vec.base = nullptr;
+            empty_vec.len = 0;
+            active_vecs.push_back(empty_vec);
+        }
+
+        ngtcp2_ssize pdatalen = -1;
+
+        uint32_t flags = 0;
+        if (fin) {
+            // mark fin tag for all data, ngtcp2 will process correctly
+            flags |= NGTCP2_WRITE_STREAM_FLAG_FIN;
+        } else {
+            flags |= NGTCP2_WRITE_STREAM_FLAG_MORE;
+        }
+
+        if (flags & NGTCP2_WRITE_STREAM_FLAG_MORE) {
+            ppe_pending = true;
+        }
+
+        auto nwrite = ngtcp2_conn_writev_stream(m_conn, &ps.path, &pi, m_write_buf.data(), m_write_buf.size(),
+                                                &pdatalen, flags,
+                                                stream_id, active_vecs.data(), active_vecs.size(), now_nanos());
+
+        if (nwrite == NGTCP2_ERR_WRITE_MORE) {
+            _log_with_date_time("send_stream_vecs_impl: WRITE_MORE stream=" + 
+                tp::to_string(stream_id) + " pdatalen=" + tp::to_string(pdatalen) + 
+                " path=" + tp::string(debug_path), Log::ALL);
+            ppe_pending = true;
+            if (pdatalen > 0) written += pdatalen;
+            if (written == total_len && !fin) {
+                break;
+            }
+            continue;
+        }
+
+        if (nwrite < 0) {
+            if (nwrite == NGTCP2_ERR_STREAM_DATA_BLOCKED) {
+                _log_with_date_time("send_stream_vecs_impl: STREAM_DATA_BLOCKED stream=" + tp::to_string(stream_id) + 
+                    " written=" + tp::to_string(written) + 
+                    " path=" + tp::string(debug_path), Log::ALL);
+                // PPE_PENDING may be set from a previous WRITE_MORE; must flush before returning.
+                flush_ppe();
+                return static_cast<int64_t>(written);
+            }
+            _log_with_date_time(
+                "send_stream_vecs_impl error=" + tp::string(ngtcp2_strerror(static_cast<int>(nwrite))) +
+                " stream=" + tp::to_string(stream_id) + " written=" + tp::to_string(written) + 
+                " path=" + tp::string(debug_path),
+                Log::ALL);
+            if (nwrite != NGTCP2_ERR_STREAM_SHUT_WR) {
+                _log_with_date_time(
+                    "send_stream_vecs_impl error=" + tp::string(ngtcp2_strerror(static_cast<int>(nwrite))) +
+                    " stream=" + tp::to_string(stream_id) + " path=" + tp::string(debug_path),
+                    Log::WARN);
+            }
+            flush_ppe();
+            if (written > 0) return static_cast<int64_t>(written);
+            return -1;
+        }
+
+        ppe_pending = false;  // successful writev clears internal PPE_PENDING
+        if (nwrite > 0) {
+            m_endpoint.send_packet(m_peer, m_write_buf.data(), static_cast<std::size_t>(nwrite));
+        }
+
+        if (pdatalen > 0) {
+            written += pdatalen;
+        }
+
+        if (written == total_len) {
+            break;
+        }
+
+        if (pdatalen <= 0) {
+            _log_with_date_time("send_stream_vecs_impl: loop break due to pdatalen<=0 stream=" + tp::to_string(stream_id) + 
+                " written=" + tp::to_string(written) + 
+                " path=" + tp::string(debug_path), Log::ALL);
+            // Flow control, congestion control, or no more data for this stream in current packets.
+            // DO NOT loop if we didn't send any stream data, to avoid infinite loop on connection-level frames.
+            break;
+        }
+    }
+
+    flush_ppe();
+    _log_with_date_time("send_stream_vecs_impl leave: stream_id=" + tp::to_string(stream_id) + 
+    " written=" + tp::to_string(written) + 
+                    " path=" + tp::string(debug_path), Log::ALL);
+    return static_cast<int64_t>(written);
+}
+
+// ---- open_bidi_stream -------------------------------------------------------
+
+int64_t QuicConnection::open_bidi_stream() {
+    if (!m_conn) {
+        return -1;
+    }
+    int64_t stream_id = -1;
+    if (ngtcp2_conn_open_bidi_stream(m_conn, &stream_id, nullptr) != 0) {
+        return -1;
+    }
+    return stream_id;
+}
+
+void QuicConnection::set_stream_handler(int64_t stream_id, std::shared_ptr<QuicStreamHandler> handler) {
+    // Unregister any stale h3 mapping before overwriting, keeping m_streams consistent.
+    if (m_h3) {
+        m_h3->unregister_stream(stream_id);
+    }
+    m_stream_handlers[stream_id] = std::move(handler);
+}
+
+int64_t QuicConnection::open_uni_stream() {
+    if (!m_conn) return -1;
+    int64_t id = -1;
+    if (ngtcp2_conn_open_uni_stream(m_conn, &id, nullptr) != 0) return -1;
+    return id;
+}
+
+QuicToHttp3Connect& QuicConnection::get_or_create_h3() {
+    if (!m_h3) {
+        m_h3 = std::make_unique<QuicToHttp3Connect>(*this);
+        if (m_h3->init() && m_handshake_done && m_is_server) {
+            int64_t ctrl = open_uni_stream();
+            int64_t qenc = open_uni_stream();
+            int64_t qdec = open_uni_stream();
+            if (ctrl >= 0 && qenc >= 0 && qdec >= 0) {
+                m_h3->bind_control_streams(ctrl, qenc, qdec);
+            }
+            m_h3->pump_h3_response(FUNC_NAME);
+            pump_write(FUNC_NAME);
+        }
+    }
+    return *m_h3;
+}
+
+void QuicConnection::remove_stream_handler(int64_t stream_id) {
+    m_stream_handlers.erase(stream_id);
+}
+
+bool QuicConnection::forward_to_h1_upstream(int64_t stream_id, const uint8_t* data, std::size_t len, bool fin) {
+    if (m_conn_type == ConnType::unknown) {
+        m_conn_type = ConnType::other;
+    }
+    const auto& config = m_endpoint.config();
+    const auto& h1_cfg = config.get_quic().h1_stream;
+    tp::string host;
+    tp::string port_str;
+
+    if (!h1_cfg.empty()) {
+        auto colon_pos = h1_cfg.rfind(':');
+        host = (colon_pos == tp::string::npos) ? h1_cfg : h1_cfg.substr(0, colon_pos);
+        port_str = (colon_pos == tp::string::npos) ? "80" : h1_cfg.substr(colon_pos + 1);
+    } else if (!config.get_remote_addr().empty()) {
+        host = config.get_remote_addr();
+        port_str = tp::to_string(config.get_remote_port());
+    } else {
+        _log_with_date_time("QuicConnection: stream " + tp::to_string(stream_id) +
+                                " h1_stream not configured, dropping",
+                            Log::WARN);
+        return false;
+    }
+
+    _log_with_date_time("QuicConnection: stream " + tp::to_string(stream_id) +
+                            " " + (h1_cfg.empty() ? "falling back to " : "forwarding to ") 
+                            + "h1_stream " + host + ":" + port_str,
+                        Log::INFO);
+
+    auto& h3_mgr = get_or_create_h3();
+    if (!h3_mgr.is_valid()) {
+        _log_with_date_time("QuicConnection: stream " + tp::to_string(stream_id) +
+                                " h3 manager init failed, dropping",
+                            Log::ERROR);
+        return false;
+    }
+
+    auto h3_handler = TP_MAKE_SHARED(QuicUpstreamHandler, shared_from_this(), stream_id, m_endpoint.io_context(), host, port_str);
+
+    // Call set_stream_handler FIRST, because it performs stale mapping cleanup
+    // which includes calling h3_mgr->unregister_stream(stream_id).
+    set_stream_handler(stream_id, h3_handler);
+    h3_mgr.register_stream(stream_id, h3_handler);
+
+    if (data && len > 0) {
+        h3_handler->on_stream_data(data, len, fin);
+    } else if (fin) {
+        h3_handler->on_stream_data(nullptr, 0, true);
+    }
+
+    if (!is_closed() && !is_quic_client_uni_stream(stream_id)) {
+        // data is error so that handler is destroyed in h3_handler->on_stream_data
+        h3_handler->h1_start();
+    }
+    return true;
+}
+
+// ---- close ------------------------------------------------------------------
+
+void QuicConnection::close(uint64_t app_error_code) {
+    if (m_closed) {
+        return;
+    }
+    if (m_in_read_pkt) {
+        auto self = shared_from_this();
+        boost::asio::post(m_endpoint.io_context(), [this, self, app_error_code]() {
+            close(app_error_code);
+        });
+        return;
+    }
+    m_closed = true;
+    m_loss_timer.cancel();
+
+    for (auto& [id, bufs] : m_conn_unacked_bufs) {
+        if (bufs) {
+            for (auto& buf : bufs->buffers) {
+                buf->cancel_timer();
+            }
+        }
+    }
+    m_conn_unacked_bufs.clear();
+
+    if(on_close_cb){
+        // Delay connection cleanup by 5 seconds to allow pending asynchronous operations 
+        // (such as H1 fallback resolver and connects) to finish gracefully.
+        m_loss_timer.expires_after(std::chrono::seconds(5));
+        auto self = shared_from_this();
+        m_loss_timer.async_wait([this, self](const boost::system::error_code& ec) {
+            if (!ec) {
+                if (on_close_cb) {
+                    on_close_cb(this);
+                    on_close_cb = nullptr;
+                }
+            }
+        });
+    }
+    
+    
+    _log_with_date_time("QuicConnection: closing connection with error code " + 
+                            tp::to_string(app_error_code) + " to peer " + 
+                            tp::string(m_peer.address().to_string().c_str()) + ":" + 
+                            tp::to_string(m_peer.port()),
+                        Log::INFO);
+
+    if (m_conn) {
+        ngtcp2_path_storage ps;
+        ngtcp2_path_storage_zero(&ps);
+        ngtcp2_pkt_info pi{};
+        ngtcp2_ccerr    ccerr;
+        if (app_error_code == 0) {
+            ngtcp2_ccerr_default(&ccerr);
+        } else {
+            ccerr.type       = NGTCP2_CCERR_TYPE_APPLICATION;
+            ccerr.error_code = app_error_code;
+            ccerr.reasonlen  = 0;
+            ccerr.reason     = nullptr;
+        }
+        auto nwrite = ngtcp2_conn_write_connection_close(m_conn, &ps.path, &pi, m_write_buf.data(),
+                                                         m_write_buf.size(), &ccerr, now_nanos());
+        if (nwrite > 0) {
+            m_endpoint.send_packet(m_peer, m_write_buf.data(), static_cast<std::size_t>(nwrite));
+        }
+    }
+}
+
+// ---- handshake_completed ----------------------------------------------------
+
+void QuicConnection::on_handshake_completed_impl() {
+    if (m_handshake_done) {
+        return;
+    }
+    m_handshake_done = true;
+    const unsigned char* alpn = nullptr;
+    unsigned int alpnlen = 0;
+    wolfSSL_get0_alpn_selected(m_ssl, &alpn, &alpnlen);
+    tp::string alpn_str = alpn ? tp::string(reinterpret_cast<const char*>(alpn), alpnlen) : "none";
+
+    _log_with_date_time("QuicConnection: handshake completed (role=" +
+                            tp::string(m_is_server ? "server" : "client") + ", peer=" +
+                            tp::string(m_peer.address().to_string().c_str()) + ":" +
+                            tp::to_string(m_peer.port()) + ", alpn=" + alpn_str + ")",
+                        Log::INFO);
+
+    (void)alpn;
+    (void)alpnlen;
+
+    if (on_handshake_completed_cb) {
+        on_handshake_completed_cb();
+    }
+    if (!m_is_server) {
+        uint32_t ping_ms = m_endpoint.config().get_quic().ping_interval_ms;
+        if (ping_ms > 0) {
+            ngtcp2_conn_set_keep_alive_timeout(m_conn,
+                static_cast<ngtcp2_duration>(ping_ms) * 1'000'000ULL);
+        }
+    }
+}
+
+// ---- loss timer -------------------------------------------------------------
+
+void QuicConnection::reschedule_loss_timer() {
+    if (m_closed || !m_conn) {
+        return;
+    }
+
+    auto expiry = ngtcp2_conn_get_expiry2(m_conn);
+    if (expiry == UINT64_MAX) {
+        if (m_last_timer_expiry != UINT64_MAX) {
+            m_loss_timer.cancel();
+            m_last_timer_expiry = UINT64_MAX;
+        }
+        return;
+    }
+
+    if (expiry == m_last_timer_expiry) {
+        return;
+    }
+
+    auto now_ns    = now_nanos();
+    auto delay_ns  = expiry > now_ns ? expiry - now_ns : 0;
+    auto delay_dur = std::chrono::nanoseconds(delay_ns);
+
+    m_last_timer_expiry = expiry;
+
+    m_loss_timer.expires_after(delay_dur);
+    auto self = shared_from_this();
+    m_loss_timer.async_wait([this, self](const boost::system::error_code& ec) {
+        if (ec) {
+            if (ec != boost::asio::error::operation_aborted) {
+                _log_with_date_time("QuicConnection: loss timer wait error: " + tp::string(ec.message().c_str()), Log::WARN);
+            }
+            return;
+        }
+        if (m_closed) {
+            return;
+        }
+        auto now = now_nanos();
+        m_last_timer_expiry = 0; // reset
+        auto rv = ngtcp2_conn_handle_expiry(m_conn, now);
+        if (rv != 0) {
+            _log_with_date_time(
+                "QuicConnection: ngtcp2_conn_handle_expiry: " + tp::string(ngtcp2_strerror(rv)),
+                Log::WARN);
+            if (rv == NGTCP2_ERR_IDLE_CLOSE || rv == NGTCP2_ERR_DROP_CONN) {
+                close();
+                return;
+            }
+        }
+
+        on_pump_write(FUNC_NAME);
+    });
+}
+
+
+
+void QuicConnection::stream_extend_window(int64_t stream_id, std::size_t n) {
+    if (m_conn && !m_closed && n > 0) {
+        ngtcp2_conn_extend_max_stream_offset(m_conn, stream_id, n);
+        ngtcp2_conn_extend_max_offset(m_conn, n);
+        // Trigger active pump write to immediately transmit window updates (MAX_DATA / MAX_STREAM_DATA) to prevent deadlock.
+        // Note: ngtcp2 has internal coalescing and thresholds for window updates (usually 1/2 of initial window size).
+        // It won't actually queue frames or generate UDP packets until the threshold is crossed, 
+        // avoiding traffic waste from small incremental window updates.
+        if (!m_in_read_pkt) {
+            on_pump_write(FUNC_NAME);
+        }
+    }
+}
+
+void QuicConnection::conn_extend_window(std::size_t n) {
+    if (m_conn && !m_closed && n > 0) {
+        ngtcp2_conn_extend_max_offset(m_conn, n);
+        // Trigger active pump write to immediately transmit window updates (MAX_DATA / MAX_STREAM_DATA) to prevent deadlock.
+        // Note: ngtcp2 has internal coalescing and thresholds for window updates (usually 1/2 of initial window size).
+        // It won't actually queue frames or generate UDP packets until the threshold is crossed, 
+        // avoiding traffic waste from small incremental window updates.
+        if (!m_in_read_pkt) {
+            on_pump_write(FUNC_NAME);
+        }
+    }
+}
+
+void QuicConnection::reset_stream(int64_t stream_id, uint64_t app_error_code) {
+    if (m_conn && !m_closed) {
+        int rv = ngtcp2_conn_shutdown_stream(m_conn, 0, stream_id, app_error_code);
+        if (rv != 0 && rv != NGTCP2_ERR_STREAM_NOT_FOUND) {
+            _log_with_date_time("QuicConnection: ngtcp2_conn_shutdown_stream failed for stream " + 
+                                tp::to_string(stream_id) + ": " + tp::string(ngtcp2_strerror(rv)), Log::WARN);
+        }
+        if (!m_in_read_pkt) {
+            on_pump_write(FUNC_NAME);
+        }
+    }
+}
+
+void QuicConnection::on_extend_max_stream_data(int64_t stream_id, uint64_t max_data) {
+    _log_with_date_time("on_extend_max_stream_data: stream=" + tp::to_string(stream_id) + 
+                        " max_data=" + tp::to_string(max_data), Log::ALL);
+    if (m_h3) {
+        m_h3->unblock_stream(stream_id);
+    }
+    on_pump_write(FUNC_NAME);
+}
+
+bool QuicConnection::is_stream_flow_control_blocked(int64_t stream_id) const {
+    if (!m_conn) return false;
+    return ngtcp2_conn_get_max_stream_data_left(m_conn, stream_id) == 0;
+}

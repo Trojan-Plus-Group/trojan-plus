@@ -59,11 +59,11 @@ crt/
 win32-build/
 linux64-build
 html/
+build-quic/
 
 #for fulltest
 /tests/LinuxFullTest/html
 *.output
-*.tmpjson
 tombstone*
 
 # for clangd Android

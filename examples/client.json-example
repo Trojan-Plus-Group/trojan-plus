@@ -30,11 +30,15 @@
         "fast_open": false,
         "fast_open_qlen": 20
     },
+
     "experimental": {
         "pipeline_num": 0,
         "pipeline_timeout": 600,
         "pipeline_ack_window": 200,
         "pipeline_loadbalance_configs": [],
         "pipeline_proxy_icmp": false
+    },
+    "quic": {
+        "enabled": false
     }
 }

@@ -1,2 +1,8 @@
 # Allow config files in tests
 !*.json
+*.tmp.json
+*.tmp2.json
+*.tmpb.json
+*.tmpjson
+_t*_aioquic_client.py
+*.log

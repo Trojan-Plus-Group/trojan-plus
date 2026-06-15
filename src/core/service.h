@@ -37,6 +37,11 @@
 #include "session/session.h"
 #include "session/udpforwardsession.h"
 #include "mem/memallocator.h"
+#ifdef ENABLE_QUIC
+#include "quic/quic_client_endpoint.h"
+#include "quic/quic_server_endpoint.h"
+#include "quic/quic_tls_ctx.h"
+#endif
 
 class TUNDev;
 class DNSServer;
@@ -70,6 +75,13 @@ class Service {
 
     SendingDataAllocator m_sending_data_allocator;
 
+#ifdef ENABLE_QUIC
+    std::shared_ptr<QuicTlsCtx> m_quic_tls_ctx;
+    std::shared_ptr<QuicServerEndpoint> m_quic_server;
+    std::shared_ptr<QuicClientEndpoint> m_quic_client;
+    void prepare_quic_endpoint();
+#endif
+
     const Config& config;
 
   public:
@@ -97,5 +109,12 @@ class Service {
     Pipeline* search_default_pipeline();
 
     SendingDataAllocator& get_sending_data_allocator() { return m_sending_data_allocator; }
+
+#ifdef ENABLE_QUIC
+    std::shared_ptr<QuicClientEndpoint> get_quic_client() const { return m_quic_client; }
+    void reconnect_quic_client();
+#else
+    std::shared_ptr<QuicClientEndpoint> get_quic_client() const { return nullptr; }
+#endif
 };
 #endif // _SERVICE_H_

@@ -28,6 +28,7 @@
 #include "proto/udppacket.h"
 #include "ssl/sslsession.h"
 #include "mem/memallocator.h"
+#include <memory>
 
 using namespace boost::asio::ip;
 using namespace boost::asio::ssl;
@@ -37,7 +38,7 @@ ClientSession::ClientSession(Service* _service, const Config& config, context& s
       status(HANDSHAKE),
       first_packet_recv(false),
       in_socket(_service->get_io_context()),
-      out_socket(_service->get_io_context(), ssl_context),
+      m_ssl_ctx(ssl_context),
       udp_socket(_service->get_io_context()) {
     set_session_name("ClientSession");
     get_pipeline_component().allocate_session_id();
@@ -56,7 +57,7 @@ bool ClientSession::prepare_session() {
         destroy();
         return false;
     }
-    get_config().prepare_ssl_reuse(out_socket);
+    // prepare_ssl_reuse is now called inside TlsOutboundTransport::async_connect.
     return true;
 }
 
@@ -67,13 +68,32 @@ void ClientSession::start() {
 }
 void ClientSession::recv_ack_cmd(size_t ack_count) {
     SocketSession::recv_ack_cmd(ack_count);
-    if (get_pipeline_component().is_wait_for_pipeline_ack()) {
+    if (pipeline_session && get_pipeline_component().is_wait_for_pipeline_ack()) {
         in_async_read();
     }
 }
+std::shared_ptr<ReadBufWithGuard> ClientSession::get_in_read_buf(tp::streambuf* copy_src /*= nullptr*/){
+    std::shared_ptr<ReadBufWithGuard> ret;
 
+    if((m_out && m_out->is_via_quic())){
+        // should be quic, return a new buff for ack
+        ret = TP_MAKE_SHARED(ReadBufWithGuard);
+    }else{
+        if(!in_read_buf){
+            in_read_buf = TP_MAKE_SHARED(ReadBufWithGuard);
+        }
+        ret = in_read_buf;
+        ret->consume_all();
+    }
+
+    if(copy_src){
+        streambuf_append(*ret, *copy_src);
+    }
+
+    return ret;
+}
 void ClientSession::in_async_read() {
-    if (get_pipeline_component().is_using_pipeline() && status == FORWARD) {
+    if (pipeline_session && get_pipeline_component().is_using_pipeline() && status == FORWARD) {
         if (!get_pipeline_component().pre_call_ack_func()) {
             _log_with_endpoint_DEBUG(get_in_endpoint(), "session_id: " + tp::to_string(get_session_id()) +
                                                           " Cannot ClientSession::in_async_read ! Is waiting for ack");
@@ -83,13 +103,13 @@ void ClientSession::in_async_read() {
           "session_id: " + tp::to_string(get_session_id()) +
             " Permit to ClientSession::in_async_read! ack:" + tp::to_string(get_pipeline_component().pipeline_ack_counter));
     }
-
-    in_read_buf.begin_read(__FILE__, __LINE__);
-    in_read_buf.consume_all();
+    
+    auto read_buf = get_in_read_buf();
+    read_buf->begin_read(__FILE__, __LINE__);
     auto self = shared_from_this();
     in_socket.async_read_some(
-      in_read_buf.prepare(MAX_BUF_LENGTH), tp::bind_mem_alloc([this, self](const boost::system::error_code error, size_t length) {
-          in_read_buf.end_read();
+      read_buf->prepare(MAX_BUF_LENGTH), tp::bind_mem_alloc([this, self, read_buf](const boost::system::error_code error, size_t length) {
+          read_buf->end_read();
           if (error == boost::asio::error::operation_aborted) {
               return;
           }
@@ -98,8 +118,8 @@ void ClientSession::in_async_read() {
               destroy();
               return;
           }
-          in_read_buf.commit(length);
-          in_recv(in_read_buf);
+          read_buf->commit(length);
+          in_recv(read_buf);
       }));
 }
 
@@ -111,7 +131,7 @@ void ClientSession::in_async_write(const std::string_view& data, size_t ack_coun
 
     _write_data_to_file_DEBUG(get_session_id(), "ClientSession_in_async_write", data);
 
-    if (get_pipeline_component().is_using_pipeline() && status == FORWARD) {
+    if (pipeline_session && get_pipeline_component().is_using_pipeline() && status == FORWARD) {
         get_pipeline_component().set_async_writing_data(true);
     }
 
@@ -126,7 +146,7 @@ void ClientSession::in_async_write(const std::string_view& data, size_t ack_coun
               return;
           }
 
-          if (get_pipeline_component().is_using_pipeline() && status == FORWARD) {
+          if (pipeline_session && get_pipeline_component().is_using_pipeline() && status == FORWARD) {
 
               if (get_pipeline_component().is_write_close_future() &&
                   !get_pipeline_component().get_pipeline_data_cache().has_queued_data()) {
@@ -156,14 +176,14 @@ void ClientSession::in_async_write(const std::string_view& data, size_t ack_coun
 }
 
 void ClientSession::out_async_read() {
-    if (get_pipeline_component().is_using_pipeline()) {
+    if (pipeline_session && get_pipeline_component().is_using_pipeline()) {
         get_pipeline_component().get_pipeline_data_cache().async_read(
           [this](const std::string_view& data, size_t ack_count) { out_recv(data, ack_count); });
     } else {
         out_read_buf.begin_read(__FILE__, __LINE__);
         out_read_buf.consume_all();
         auto self = shared_from_this();
-        out_socket.async_read_some(
+        m_out->async_read_some(
           out_read_buf.prepare(MAX_BUF_LENGTH), tp::bind_mem_alloc([this, self](const boost::system::error_code error, size_t length) {
               out_read_buf.end_read();
               if (error) {
@@ -177,18 +197,15 @@ void ClientSession::out_async_read() {
     }
 }
 
-void ClientSession::out_async_write(const std::string_view& data) {
+void ClientSession::out_async_write(std::shared_ptr<ReadBufWithGuard> buf) {
 
-    _write_data_to_file_DEBUG("ClientSession::out_async_write status: " + tp::to_string((int)status) +
-                              " session_id: " + tp::to_string(get_session_id()) + " length: " + tp::to_string(data.length()) +
-                              " checksum: " + tp::to_string(get_checksum(data)));
-
-    _write_data_to_file_DEBUG(get_session_id(), "ClientSession_out_async_write", data);
+    _write_data_to_file_DEBUG(get_session_id(), "ClientSession_out_async_write", buf);
 
     auto self = shared_from_this();
-    if (get_pipeline_component().is_using_pipeline()) {
+    if (pipeline_session && get_pipeline_component().is_using_pipeline()) {
         get_service()->session_async_send_to_pipeline(
-          *this, PipelineRequest::DATA, data, tp::bind_mem_alloc([this, self](const boost::system::error_code error) {
+          *this, PipelineRequest::DATA, streambuf_to_string_view(*buf), 
+          tp::bind_mem_alloc([this, self](const boost::system::error_code error) {
               if (error) {
                   output_debug_info_ec(error);
                   destroy();
@@ -197,17 +214,17 @@ void ClientSession::out_async_write(const std::string_view& data) {
               out_sent();
           }));
     } else {
-        auto data_copy = get_service()->get_sending_data_allocator().allocate(data);
-        boost::asio::async_write(
-          out_socket, data_copy->data(), tp::bind_mem_alloc([this, self, data_copy](const boost::system::error_code error, size_t) {
-              get_service()->get_sending_data_allocator().free(data_copy);
+        
+        // data_copy keeps the string alive; m_out reads from the string_view asynchronously.
+        m_out->async_write(
+          buf, [this, self](const boost::system::error_code error, size_t) {
               if (error) {
                   output_debug_info_ec(error);
                   destroy();
                   return;
               }
               out_sent();
-          }));
+          });
     }
 }
 
@@ -265,7 +282,7 @@ static const tp::string socks5_request_reply_failed("\x05\x07\x00\x01\x00\x00\x0
 static const tp::string socks5_request_reply_succ_tcp("\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00", 10);
 static const tp::string socks5_request_reply_succ_udp_header("\x05\x00\x00", 3);
 
-void ClientSession::in_recv(const std::string_view& data) {
+void ClientSession::in_recv(std::shared_ptr<ReadBufWithGuard> buf) {
     _write_data_to_file_DEBUG("ClientSession::in_recv status: " + tp::to_string((int)status) +
                               " session_id: " + tp::to_string(get_session_id()) + " length: " + tp::to_string(data.length()) +
                               " checksum: " + tp::to_string(get_checksum(data)));
@@ -273,12 +290,13 @@ void ClientSession::in_recv(const std::string_view& data) {
 
     switch (status) {
         case HANDSHAKE: {
-            if (socks5_is_invalid_handshake_data(data)) {
+            if (socks5_is_invalid_handshake_data(*buf)) {
                 _log_with_endpoint(
                   get_in_endpoint(), "session_id: " + tp::to_string(get_session_id()) + " unknown protocol", Log::ERROR);
                 destroy();
                 return;
             }
+            const auto data = buf->to_string_view();
             bool has_method = false;
             for (int i = 2; i < data[1] + 2; ++i) {
                 if (data[i] == 0) {
@@ -297,14 +315,14 @@ void ClientSession::in_recv(const std::string_view& data) {
             break;
         }
         case REQUEST: {
-            if (socks5_is_invalid_quest_data(data)) {
+            if (socks5_is_invalid_quest_data(*buf)) {
                 _log_with_endpoint(
                   get_in_endpoint(), "session_id: " + tp::to_string(get_session_id()) + " bad request", Log::ERROR);
                 destroy();
                 return;
             }
             out_write_buf.consume(out_write_buf.size());
-
+            const auto data = buf->to_string_view();
             streambuf_append(out_write_buf, get_config().get_password().cbegin()->first);
             streambuf_append(out_write_buf, "\r\n");
             streambuf_append(out_write_buf, data[1]);
@@ -371,14 +389,15 @@ void ClientSession::in_recv(const std::string_view& data) {
             break;
         }
         case CONNECT: {
-            get_stat().inc_sent_len(data.length());
+            get_stat().inc_sent_len(buf->size());
             first_packet_recv = true;
-            streambuf_append(out_write_buf, data);
+            const tp::streambuf& append = *buf;
+            streambuf_append(out_write_buf, append);
             break;
         }
         case FORWARD: {
-            get_stat().inc_sent_len(data.length());
-            out_async_write(data);
+            get_stat().inc_sent_len(buf->size());
+            out_async_write(buf);
             break;
         }
         case UDP_FORWARD: {
@@ -420,13 +439,16 @@ void ClientSession::in_sent() {
 
 void ClientSession::request_remote() {
     auto self = shared_from_this();
-    auto cb   = [this, self]() {
+    auto pipeline_init_cb   = [this, self]() {
+        pipeline_session = true;
+
         boost::system::error_code ec;
         if (is_udp_forward_session()) {
             if (!first_packet_recv) {
                 udp_socket.cancel(ec);
             }
             status = UDP_FORWARD;
+            in_async_read(); // detect ctrl TCP close → destroy() → FIN on QUIC stream
         } else {
             if (!first_packet_recv) {
                 in_socket.cancel(ec);
@@ -435,14 +457,85 @@ void ClientSession::request_remote() {
         }
 
         out_async_read();
-        out_async_write(streambuf_to_string_view(out_write_buf));
+        out_async_write(get_in_read_buf(&out_write_buf));
     };
 
-    if (get_pipeline_component().is_using_pipeline()) {
-        cb();
+    bool pipeline_assigned = get_pipeline_component().is_using_pipeline();
+    bool try_quic_first = false;
+
+#ifdef ENABLE_QUIC
+    auto& quic_config = get_config().get_quic();
+    if(quic_config.enabled){
+        auto quic_client = get_service()->get_quic_client();
+        if(quic_client){
+            if(quic_client->is_connected()){
+                try_quic_first = true;
+            }else{
+                if(!quic_client->is_known_unreachable()){
+                    get_service()->reconnect_quic_client();
+                }
+            }
+        }
+    }
+    
+    if (try_quic_first || quic_config.debug_disable_tcp) {
+        pipeline_assigned = false;
+    }
+#endif
+
+    if (try_quic_first) {
+        // Lazily create the outbound transport on first use so that in_ep is available.
+        if (!m_out) {
+            m_out = create_outbound_transport(
+                get_service()->get_io_context(),
+                m_ssl_ctx,
+                get_config(),
+                get_in_endpoint(),
+                get_service()->get_quic_client());
+        }
+        m_out->async_connect(
+            get_config().get_remote_addr(),
+            static_cast<uint16_t>(get_config().get_remote_port()),
+            pipeline_init_cb,
+            [this, self, pipeline_init_cb, pipeline_assigned]() {
+                if (m_out && m_out->is_via_quic()) {
+                    _log_with_endpoint(get_in_endpoint(),
+                        "session_id: " + tp::to_string(get_session_id()) +
+                        " QUIC stream open failed, falling back to " +
+                        (pipeline_assigned ? "pipeline" : "destroy"),
+                        Log::WARN);
+                    m_out->cancel();
+                    m_out->close();
+                    m_out.reset();
+                    if (pipeline_assigned) {
+                        pipeline_init_cb();
+                    } else {
+                        destroy();
+                    }
+                } else {
+                    destroy();
+                }
+            });
+        return;
+    }
+
+    if (pipeline_assigned) {
+        pipeline_init_cb();
     } else {
-        connect_remote_server_ssl(self, get_config().get_remote_addr(), tp::to_string(get_config().get_remote_port()),
-          get_resolver(), out_socket, get_in_endpoint(), cb);
+        // Lazily create the outbound transport on first use so that in_ep is available.
+        if (!m_out) {
+            m_out = create_outbound_transport(
+                get_service()->get_io_context(),
+                m_ssl_ctx,
+                get_config(),
+                get_in_endpoint(),
+                get_service()->get_quic_client());
+        }
+        m_out->async_connect(
+            get_config().get_remote_addr(),
+            static_cast<uint16_t>(get_config().get_remote_port()),
+            pipeline_init_cb,
+            [this, self]() { destroy(); });
     }
 }
 
@@ -515,7 +608,8 @@ void ClientSession::udp_recv(const std::string_view& data, const udp::endpoint&)
         streambuf_append(udp_recv_buf, "\r\n");
         streambuf_append(udp_recv_buf, data.substr(address_len + 3));
 
-        out_async_write(streambuf_to_string_view(udp_recv_buf));
+
+        out_async_write(get_in_read_buf(&udp_recv_buf));
     }
 }
 
@@ -587,9 +681,12 @@ void ClientSession::destroy(bool pipeline_call /*= false*/) {
         udp_socket.close(ec);
     }
 
-    shutdown_ssl_socket(this, out_socket);
+    if (m_out) {
+        m_out->cancel();
+        m_out->close();
+    }
 
-    if (!pipeline_call && get_pipeline_component().is_using_pipeline()) {
+    if (!pipeline_call && pipeline_session && get_pipeline_component().is_using_pipeline()) {
         get_service()->session_destroy_in_pipeline(*this);
     }
 }

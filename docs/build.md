@@ -62,6 +62,9 @@ The `cmake ..` command can be extended with the following options:
 - `ENABLE_REUSE_PORT` (Only on Linux)
     - `-DENABLE_REUSE_PORT=ON`: build with `SO_REUSEPORT` support (default).
     - `-DENABLE_REUSE_PORT=OFF`: build without `SO_REUSEPORT` support.
+- `ENABLE_QUIC` (Experimental)
+    - `-DENABLE_QUIC=ON`: build with QUIC support (requires wolfSSL and ngtcp2) (default).
+    - `-DENABLE_QUIC=OFF`: build without QUIC support.
 - `ENABLE_SSL_KEYLOG` (OpenSSL >= 1.1.1)
     - `-DENABLE_SSL_KEYLOG=ON`: build with SSL KeyLog support (default).
     - `-DENABLE_SSL_KEYLOG=OFF`: build without SSL KeyLog support.

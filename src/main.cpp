@@ -32,6 +32,26 @@
 #include "core/version.h"
 #include "mem/memallocator.h"
 
+#ifdef ENABLE_QUIC
+#include <wolfssl/options.h>
+#include <wolfssl/ssl.h>
+
+extern "C" {
+static void* tj_wolfssl_malloc(size_t size) {
+    return tp::get_tj_mem_allocator().malloc(size, "wolfssl", 0);
+}
+
+static void tj_wolfssl_free(void* ptr) {
+    tp::get_tj_mem_allocator().free(ptr);
+}
+
+static void* tj_wolfssl_realloc(void* ptr, size_t size) {
+    return tp::get_tj_mem_allocator().realloc(ptr, size, "wolfssl", 0);
+}
+}
+#endif
+
+
 using namespace boost::asio;
 namespace po = boost::program_options;
 
@@ -62,10 +82,33 @@ void signal_async_wait(signal_set& sig, Service& service, bool& restart) {
                 service.reload_cert();
                 signal_async_wait(sig, service, restart);
                 break;
+#ifdef SIGINFO
+            case SIGINFO:
+                {
+                    std::string stat = tp::get_tj_mem_allocator().show_stat();
+                    _log_with_date_time("Memory statistics:\n" + stat, Log::WARN);
+                }
+                signal_async_wait(sig, service, restart);
+                break;
+#endif
 #endif // _WIN32
         }
     }));
 }
+
+#ifndef _WIN32
+#include <execinfo.h>
+#include <signal.h>
+#include <unistd.h>
+
+void crash_handler(int sig) {
+    void* array[50];
+    size_t size = backtrace(array, 50);
+    fprintf(stderr, "Error: signal %d:\n", sig);
+    backtrace_symbols_fd(array, size, STDERR_FILENO);
+    exit(1);
+}
+#endif
 
 // global service to avoid calling Service::~Service for Android,
 // to speed up Android VPN disconnection. io_context::~io_context might hang for 30 - 50 sec
@@ -73,6 +116,15 @@ void signal_async_wait(signal_set& sig, Service& service, bool& restart) {
 static std::shared_ptr<Service> g_service;
 
 int main_impl(int argc, const char* argv[]) {
+#ifdef ENABLE_QUIC
+    wolfSSL_SetAllocators(tj_wolfssl_malloc, tj_wolfssl_free, tj_wolfssl_realloc);
+#endif
+#ifndef _WIN32
+    signal(SIGSEGV, crash_handler);
+    signal(SIGABRT, crash_handler);
+    signal(SIGILL,  crash_handler);
+    signal(SIGFPE,  crash_handler);
+#endif
     try {
         Log::log("Trojan Plus v" + Version::get_version() + " starts.", Log::FATAL);
         tp::string config_file;
@@ -128,6 +180,11 @@ int main_impl(int argc, const char* argv[]) {
 #else  // ENABLE_REUSE_PORT
             Log::log("[Disabled] TCP Port Reuse Support", Log::FATAL);
 #endif // ENABLE_REUSE_PORT
+#ifdef ENABLE_QUIC
+            Log::log(" [Enabled] QUIC Support (ngtcp2 + wolfSSL)", Log::FATAL);
+#else  // ENABLE_QUIC
+            Log::log("[Disabled] QUIC Support (ngtcp2 + wolfSSL)", Log::FATAL);
+#endif // ENABLE_QUIC
             Log::log("SSL Library Information", Log::FATAL);
             Log::log(tp::string("\tVersion: wolfSSL ") + LIBWOLFSSL_VERSION_STRING, Log::FATAL);
             exit(EXIT_SUCCESS);
@@ -147,6 +204,11 @@ int main_impl(int argc, const char* argv[]) {
             } else {
                 config.load(config_file);
             }
+            if (config.get_log_level() == Log::ALL) {
+                tp::get_tj_mem_allocator().set_trace_file_line_enable(true);
+            } else {
+                tp::get_tj_mem_allocator().set_trace_file_line_enable(false);
+            }
             g_service = TP_MAKE_SHARED(Service, config, test);
 
             if (test) {
@@ -161,6 +223,9 @@ int main_impl(int argc, const char* argv[]) {
             sig.add(SIGHUP);
             sig.add(SIGUSR1);
             sig.add(SIGUSR2); // for Android Close
+#ifdef SIGINFO
+            sig.add(SIGINFO);
+#endif
 #endif                        // _WIN32
             signal_async_wait(sig, *g_service, restart);
             g_service->run();

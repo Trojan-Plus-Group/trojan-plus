@@ -9,6 +9,7 @@ It's compatible with [original trojan](https://github.com/trojan-gfw/trojan) wit
 * [Pipeline Mode to decrease latency](https://github.com/Trojan-Plus-Group/trojan-plus/wiki/Why-we-need-Pipeline-mode)
 * [Loadbalance for 2+ servers to increase bandwidth](https://github.com/Trojan-Plus-Group/trojan-plus/wiki/Why-we-need-load-balance-mode)
 * [Proxy ICMP message](https://github.com/Trojan-Plus-Group/trojan-plus/wiki/Can-we-proxy-ICMP-message-(To-transfer-ping))
+* **QUIC (HTTP/3) Support**: Enhanced security and performance with Trojan-over-QUIC and HTTP/3 backend fallback.
 
 Trojan plus can be used as client or server to connect original trojan server or client, so if you just upgrade trojan plus binary with old config file, it can work all the same, we has optimized original trojan project a lot, especially in NAT mode.
 
@@ -29,6 +30,8 @@ Trojan plus project's best running environment is Linux system in NAT mode (migh
 * [CMake](https://cmake.org/) >= 3.10.2
 * [Boost](http://www.boost.org/) >= 1.77.0 ( 1.85.0 recommend )
 * [wolfSSL](https://www.wolfssl.com/) (included as a submodule)
+* [ngtcp2](https://github.com/ngtcp2/ngtcp2) (included as a submodule)
+* [nghttp3](https://github.com/ngtcp2/nghttp3) (included as a submodule)
 **Note:** This project uses Git submodules (e.g., `badvpn`, `GSL`). Please ensure you initialize them before building:
 ```bash
 git submodule update --init --recursive
@@ -50,6 +53,9 @@ Here's a [config wiki](https://github.com/Trojan-Plus-Group/trojan-plus/wiki/Con
 * [wolfssl](https://www.wolfssl.com/)
 * [mimalloc](https://github.com/microsoft/mimalloc)
 * [GSL](https://github.com/microsoft/GSL)
+* [ngtcp2](https://github.com/ngtcp2/ngtcp2)
+* [nghttp3](https://github.com/ngtcp2/nghttp3)
+
 
 ## Performance Tips
 
