@@ -385,11 +385,15 @@ inline string to_string(double value);
 
 template <typename T>
 string to_string(T value) {
+    (void)value;
     using U = std::decay_t<T>;
 
     if constexpr (std::is_same_v<U, bool>) {
         return value ? string("true") : string("false");
     } 
+    else if constexpr (std::is_convertible_v<U, string>) {
+        return string(value);
+    }
     else if constexpr (std::is_enum_v<U>) {
         return tp::to_string(static_cast<std::underlying_type_t<U>>(value));
     } 
