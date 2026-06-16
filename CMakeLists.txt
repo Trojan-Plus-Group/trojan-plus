@@ -359,6 +359,7 @@ endif()
 # (e.g. mimalloc) are not affected by this override.
 set(BUILD_SHARED_LIBS_SAVED ${BUILD_SHARED_LIBS})
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(_GNU_SOURCE ON CACHE BOOL "Enable GNU Source for wolfSSL" FORCE)
 add_subdirectory(wolfssl EXCLUDE_FROM_ALL)
 set(BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS_SAVED} CACHE BOOL "" FORCE)
 
