@@ -5,15 +5,15 @@ Test cases:
   T1:  e2e_basic_proxy              - QUIC handshake + HTTP GET proxy
   T2:  e2e_multistream              - concurrent streams over one QUIC connection
   T3:  e2e_post_data                - HTTP POST through QUIC
-  T4:  h1_stream_fallback         - non-trojan traffic forwarded to h1_stream
+  T4:  h1_upstream_fallback         - non-trojan traffic forwarded to h1_upstream
   T5:  idle_timeout                 - connection closes after max_idle_timeout_ms
-  T6:  h1_stream_unconfigured_drop - non-trojan traffic dropped when h1_stream is empty
+  T6:  h1_upstream_unconfigured_drop - non-trojan traffic dropped when h1_upstream is empty
   T7:  alpn_negotiation             - verify ALPN token in logs
   T8:  quic_disabled                - quic.enabled=false falls back to TLS
   T9:  client_retry_no_server       - retry_connect_timeout_ms > 0 fires; = 0 does not
   T11: tcp_target_unreachable       - server logs error and drops session on TCP connect fail
   T12: large_file_transfer          - 300 KB file exercises QUIC flow-control back-pressure
-  T13: h1_stream_dns_failure      - h1_stream with invalid hostname → resolve error, no crash
+  T13: h1_upstream_dns_failure      - h1_upstream with invalid hostname → resolve error, no crash
   T14: multiple_quic_connections    - two independent QUIC clients connect to same server concurrently
   T18: bidirectional_stream_close   - TCP and UDP proxy streams close cleanly via FIN (log-confirmed)
   T19: quic_ping_keepalive          - PING keep-alive prevents idle close (Part A: no ping→idle close; Part B: ping→no idle close, second request succeeds)
@@ -207,8 +207,8 @@ def _kill_port(port):
         pass
 
 
-def start_h1_stream_mock():
-    """Start the h1_stream TCP mock server (kills any stale process on that port first)."""
+def start_h1_upstream_mock():
+    """Start the h1_upstream TCP mock server (kills any stale process on that port first)."""
     _kill_port(H1_STREAM_PORT)
     time.sleep(0.3)
     log_file = open("config/quic_h1mock.output", "w+")
@@ -220,11 +220,11 @@ def start_h1_stream_mock():
     proc._log_file = log_file
     proc._log_path = "config/quic_h1mock.output"
     if not wait_for_log("config/quic_h1mock.output", r"listening on .*:" + str(H1_STREAM_PORT), timeout=8):
-        print_time_log(f"h1_stream TCP mock server failed to start on {H1_STREAM_PORT}")
+        print_time_log(f"h1_upstream TCP mock server failed to start on {H1_STREAM_PORT}")
         proc.kill()
         log_file.close()
         return None
-    print_time_log(f"h1_stream TCP mock server ready on {H1_STREAM_PORT}")
+    print_time_log(f"h1_upstream TCP mock server ready on {H1_STREAM_PORT}")
     return proc
 
 
@@ -530,17 +530,17 @@ def test_e2e_post_data(binary_path):
         close_process(server, dump)
 
 
-def test_h1_stream_fallback(binary_path):
-    """T4: HTTP/3 traffic forwarded to h1_stream."""
-    print_time_log("[T4] h1_stream_fallback: starting...")
+def test_h1_upstream_fallback(binary_path):
+    """T4: HTTP/3 traffic forwarded to h1_upstream."""
+    print_time_log("[T4] h1_upstream_fallback: starting...")
 
-    # Server with h1_stream pointing to mock TCP server.
+    # Server with h1_upstream pointing to mock TCP server.
     srv_cfg = patch_quic_config("quic_server_config.json", {
         "remote_port": HTTP_TARGET_PORT,
-        "quic": {"enabled": True, "h1_stream": f"127.0.0.1:{H1_STREAM_PORT}"},
+        "quic": {"enabled": True, "h1_upstream": f"127.0.0.1:{H1_STREAM_PORT}"},
     })
 
-    mock = start_h1_stream_mock()
+    mock = start_h1_upstream_mock()
     server, srv_log = start_trojan(binary_path, srv_cfg)
     dump = False
     try:
@@ -576,7 +576,7 @@ def test_h1_stream_fallback(binary_path):
         # Verify server log shows HTTP upstream forwarding.
         m = wait_for_log(srv_log, r"HTTP upstream connected to", timeout=10)
         if not m:
-            print_time_log("[T4] FAIL: h1_stream forwarding log not found")
+            print_time_log("[T4] FAIL: h1_upstream forwarding log not found")
             dump = True
             return False
 
@@ -584,7 +584,7 @@ def test_h1_stream_fallback(binary_path):
         m2 = wait_for_log("config/quic_h1mock.output",
                           r"received \d+ bytes", timeout=5)
         if not m2:
-            print_time_log("[T4] FAIL: h1_stream TCP mock did not receive data")
+            print_time_log("[T4] FAIL: h1_upstream TCP mock did not receive data")
             dump = True
             return False
 
@@ -592,7 +592,7 @@ def test_h1_stream_fallback(binary_path):
         m3 = wait_for_log("config/quic_h1mock.output",
                           r"sent response", timeout=5)
         if not m3:
-            print_time_log("[T4] FAIL: h1_stream TCP mock did not send response")
+            print_time_log("[T4] FAIL: h1_upstream TCP mock did not send response")
             dump = True
             return False
 
@@ -603,7 +603,7 @@ def test_h1_stream_fallback(binary_path):
             dump = True
             return False
 
-        print_time_log("[T4] h1_stream_fallback PASSED")
+        print_time_log("[T4] h1_upstream_fallback PASSED")
         return True
     except Exception:
         traceback.print_exc()
@@ -663,23 +663,23 @@ def test_idle_timeout(binary_path):
         close_process(server, dump)
 
 
-def test_h1_stream_unconfigured_drop(binary_path):
-    """T6: Non-trojan traffic with h1_stream='' → server falls back to remote_addr (Trojan decoy), stays alive.
+def test_h1_upstream_unconfigured_drop(binary_path):
+    """T6: Non-trojan traffic with h1_upstream='' → server falls back to remote_addr (Trojan decoy), stays alive.
 
     QuicProxySession::forward_to_h1_upstream() in src/quic/quic_session.cpp:
-      * h1_stream non-empty           → forward there (covered by T4)
-      * h1_stream empty, remote_addr  → fall back to remote_addr:remote_port
+      * h1_upstream non-empty           → forward there (covered by T4)
+      * h1_upstream empty, remote_addr  → fall back to remote_addr:remote_port
                                           (classic Trojan decoy anti-probing)
       * neither configured              → log "not configured, dropping" + destroy()
 
     A real server config always has remote_addr set, so the implicit fallback
     is the actual unconfigured-h3-upstream behavior to verify here.
     """
-    print_time_log("[T6] h1_stream_unconfigured_drop: starting...")
+    print_time_log("[T6] h1_upstream_unconfigured_drop: starting...")
 
     srv_cfg = patch_quic_config("quic_server_config.json", {
         "remote_port": HTTP_TARGET_PORT,
-        "quic": {"enabled": True, "h1_stream": ""},
+        "quic": {"enabled": True, "h1_upstream": ""},
     })
     # Client with WRONG password so the server cannot authenticate the Trojan
     # request and falls into forward_to_h1_upstream() → remote_addr fallback.
@@ -707,7 +707,7 @@ def test_h1_stream_unconfigured_drop(binary_path):
             return False
 
         # Send a request – the wrong password causes an auth failure on the server,
-        # which triggers forward_to_h1_upstream(). With h1_stream empty, it
+        # which triggers forward_to_h1_upstream(). With h1_upstream empty, it
         # falls back to remote_addr:remote_port (the configured HTTP target).
         try:
             url = f"http://127.0.0.1:{HTTP_TARGET_PORT}/"
@@ -717,13 +717,13 @@ def test_h1_stream_unconfigured_drop(binary_path):
                   # urllib's perspective; client-side parse failure is expected.
 
         # The server must log the invalid-password fallback.
-        if not wait_for_log(srv_log, r"invalid password, forwarding to h1_stream", timeout=10):
-            print_time_log("[T6] FAIL: 'invalid password, forwarding to h1_stream' not found in server log")
+        if not wait_for_log(srv_log, r"invalid password, forwarding to h1_upstream", timeout=10):
+            print_time_log("[T6] FAIL: 'invalid password, forwarding to h1_upstream' not found in server log")
             dump = True
             return False
 
         # And it must fall back to remote_addr:remote_port (the legacy Trojan decoy path).
-        fallback_pat = r"falling back to h1_stream 127\.0\.0\.1:" + str(HTTP_TARGET_PORT)
+        fallback_pat = r"falling back to h1_upstream 127\.0\.0\.1:" + str(HTTP_TARGET_PORT)
         if not wait_for_log(srv_log, fallback_pat, timeout=5):
             print_time_log(f"[T6] FAIL: server did not fall back to remote_addr:{HTTP_TARGET_PORT}")
             dump = True
@@ -735,7 +735,7 @@ def test_h1_stream_unconfigured_drop(binary_path):
             dump = True
             return False
 
-        print_time_log("[T6] h1_stream_unconfigured_drop PASSED")
+        print_time_log("[T6] h1_upstream_unconfigured_drop PASSED")
         return True
     except Exception:
         traceback.print_exc()
@@ -1085,19 +1085,19 @@ def test_large_file_transfer(binary_path):
         close_process(server, dump)
 
 
-def test_h1_stream_dns_failure(binary_path):
-    """T13: h1_stream hostname doesn't resolve → session destroyed, server stays alive.
+def test_h1_upstream_dns_failure(binary_path):
+    """T13: h1_upstream hostname doesn't resolve → session destroyed, server stays alive.
 
     QuicProxySession::forward_to_h1_upstream() calls async_resolve on the
-    h1_stream address.  If DNS fails, the error is logged and destroy() is
+    h1_upstream address.  If DNS fails, the error is logged and destroy() is
     called.  The server process must not crash.
     """
-    print_time_log("[T13] h1_stream_dns_failure: starting...")
+    print_time_log("[T13] h1_upstream_dns_failure: starting...")
 
-    # Configure h1_stream with an unresolvable hostname.
+    # Configure h1_upstream with an unresolvable hostname.
     srv_cfg = patch_quic_config("quic_server_config.json", {
         "remote_port": HTTP_TARGET_PORT,
-        "quic": {"enabled": True, "h1_stream": "quic-test-h1-stream.invalid:443"},
+        "quic": {"enabled": True, "h1_upstream": "quic-test-h1-stream.invalid:443"},
     })
     # Wrong password forces the server into forward_to_h1_upstream().
     cli_cfg = patch_quic_config("quic_client_config.json", {
@@ -1131,19 +1131,19 @@ def test_h1_stream_dns_failure(binary_path):
             pass  # Expected: DNS fails, session is dropped.
 
         # DNS resolution for .invalid can be slow on some resolvers; allow up to 20 s.
-        m = wait_for_log(srv_log, r"h1_stream TCP resolve failed", timeout=20)
+        m = wait_for_log(srv_log, r"h1_upstream TCP resolve failed", timeout=20)
         if not m:
-            print_time_log("[T13] FAIL: 'h1_stream TCP resolve failed' not in server log")
+            print_time_log("[T13] FAIL: 'h1_upstream TCP resolve failed' not in server log")
             dump = True
             return False
 
         # Server must remain alive.
         if server.poll() is not None:
-            print_time_log("[T13] FAIL: server crashed after h1_stream DNS failure")
+            print_time_log("[T13] FAIL: server crashed after h1_upstream DNS failure")
             dump = True
             return False
 
-        print_time_log("[T13] h1_stream_dns_failure PASSED")
+        print_time_log("[T13] h1_upstream_dns_failure PASSED")
         return True
     except Exception:
         traceback.print_exc()
@@ -1253,16 +1253,16 @@ def test_no_crlf_fallback(binary_path):
     This test verifies that if non-Trojan traffic is sent (no CRLF), the server
     falls back to H3. If that traffic is also invalid H3 (garbage), the server
     must close the connection with H3_FRAME_ERROR and NOT forward any data
-    to the h1_stream mock.
+    to the h1_upstream mock.
     """
     print_time_log("[T15] test_no_crlf_fallback: starting...")
 
     srv_cfg = patch_quic_config("quic_server_config.json", {
         "remote_port": HTTP_TARGET_PORT,
-        "quic": {"enabled": True, "h1_stream": f"127.0.0.1:{H1_STREAM_PORT}"},
+        "quic": {"enabled": True, "h1_upstream": f"127.0.0.1:{H1_STREAM_PORT}"},
     })
 
-    mock = start_h1_stream_mock()
+    mock = start_h1_upstream_mock()
     server, srv_log = start_trojan(binary_path, srv_cfg)
 
     try:
@@ -1325,7 +1325,7 @@ def test_no_crlf_fallback(binary_path):
         else:
             print_time_log("[T15] aioquic client reported expected error string")
 
-        # 1. Verify server fell back to h1_stream.
+        # 1. Verify server fell back to h1_upstream.
         m = wait_for_log(srv_log, r"(no CRLF in|first byte not hex)", timeout=10)
         if not m:
             print_time_log("[T15] FAIL: 'no CRLF in' not found in server log")
@@ -1341,17 +1341,17 @@ def test_no_crlf_fallback(binary_path):
             return False
         print_time_log("[T15] Standard H3 error handling verified (H3_FRAME_ERROR logged)")
 
-        # 3. Verify h1_stream mock DID NOT receive any data.
+        # 3. Verify h1_upstream mock DID NOT receive any data.
         # We check the mock log for "received" or "accepted connection".
         mock_log_path = "config/quic_h1mock.output"
         if os.path.exists(mock_log_path):
             with open(mock_log_path, "r") as f:
                 content = f.read()
                 if "received" in content:
-                    print_time_log("[T15] FAIL: h1_stream mock received data unexpectedly")
+                    print_time_log("[T15] FAIL: h1_upstream mock received data unexpectedly")
                     dump = True
                     return False
-        print_time_log("[T15] h1_stream mock remained idle as expected")
+        print_time_log("[T15] h1_upstream mock remained idle as expected")
 
         # Server must stay alive.
         if server.poll() is not None:
@@ -1399,7 +1399,7 @@ def test_quic_load_test(binary_path):
     srv_cfg = patch_quic_config("quic_server_config.json", {
         "remote_port": HTTP_TARGET_PORT,
         "quic": {
-            "h1_stream": f"127.0.0.1:{HTTP_TARGET_PORT}",
+            "h1_upstream": f"127.0.0.1:{HTTP_TARGET_PORT}",
             "alpn_token": "h3"
         }
     })
@@ -2232,15 +2232,15 @@ ALL_TESTS = [
     ("T1",  test_e2e_basic_proxy),
     ("T2",  test_e2e_multistream),
     ("T3",  test_e2e_post_data),
-    ("T4",  test_h1_stream_fallback),
+    ("T4",  test_h1_upstream_fallback),
     ("T5",  test_idle_timeout),
-    ("T6",  test_h1_stream_unconfigured_drop),
+    ("T6",  test_h1_upstream_unconfigured_drop),
     ("T7",  test_alpn_negotiation),
     ("T8",  test_quic_disabled),
     ("T9",  test_client_retry_no_server),
     ("T11", test_tcp_target_unreachable),
     ("T12", test_large_file_transfer),
-    ("T13", test_h1_stream_dns_failure),
+    ("T13", test_h1_upstream_dns_failure),
     ("T14", test_multiple_quic_connections),
     ("T15", test_no_crlf_fallback),
     ("T16", test_quic_load_test),

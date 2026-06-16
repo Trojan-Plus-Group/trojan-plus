@@ -1161,7 +1161,7 @@ bool QuicConnection::forward_to_h1_upstream(int64_t stream_id, const uint8_t* da
         m_conn_type = ConnType::other;
     }
     const auto& config = m_endpoint.config();
-    const auto& h1_cfg = config.get_quic().h1_stream;
+    const auto& h1_cfg = config.get_quic().h1_upstream;
     tp::string host;
     tp::string port_str;
 
@@ -1174,14 +1174,14 @@ bool QuicConnection::forward_to_h1_upstream(int64_t stream_id, const uint8_t* da
         port_str = tp::to_string(config.get_remote_port());
     } else {
         _log_with_date_time("QuicConnection: stream " + tp::to_string(stream_id) +
-                                " h1_stream not configured, dropping",
+                                " h1_upstream not configured, dropping",
                             Log::WARN);
         return false;
     }
 
     _log_with_date_time("QuicConnection: stream " + tp::to_string(stream_id) +
                             " " + (h1_cfg.empty() ? "falling back to " : "forwarding to ") 
-                            + "h1_stream " + host + ":" + port_str,
+                            + "h1_upstream " + host + ":" + port_str,
                         Log::INFO);
 
     auto& h3_mgr = get_or_create_h3();

@@ -46,6 +46,6 @@
     },
     "quic": {
         "enabled": false,
-        "h1_stream": ""
+        "h1_upstream": ""
     }
 }

@@ -106,7 +106,7 @@ class Config {
         uint32_t   max_datagram_size;         // per-packet size hint
         uint32_t   recv_buffer_size;          // UDP recv buffer bytes
         uint32_t   send_buffer_size;          // UDP send buffer bytes
-        tp::string h1_stream;               // server: real HTTP/1 backend for non-trojan traffic
+        tp::string h1_upstream;               // server: real HTTP/1 backend for non-trojan traffic
         bool       debug_disable_tcp;         // debug: disable tcp, only allow quic
         uint32_t   ping_interval_ms;          // QUIC PING keep-alive interval, 0 = disabled
     };

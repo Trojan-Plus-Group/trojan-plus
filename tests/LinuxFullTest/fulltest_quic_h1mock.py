@@ -1,5 +1,5 @@
 """
-Mock TCP HTTP server for QUIC h1_stream fallback testing.
+Mock TCP HTTP server for QUIC h1_upstream fallback testing.
 
 In trojan-plus, QuicProxySession::forward_to_h1_upstream() now:
 1. Uses nghttp3 to decode HTTP/3 frames from QUIC streams
@@ -14,7 +14,7 @@ import os
 import socket
 import traceback
 
-print("QUIC h1_stream mock server early start check", flush=True)
+print("QUIC h1_upstream mock server early start check", flush=True)
 
 try:
     current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -29,7 +29,7 @@ try:
             sys.exit(1)
 
         port = int(sys.argv[1])
-        print_time_log(f"h1_stream TCP mock server starting on port {port}")
+        print_time_log(f"h1_upstream TCP mock server starting on port {port}")
 
         try:
             # Use SOCK_STREAM for TCP
@@ -37,7 +37,7 @@ try:
                 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 s.bind(('127.0.0.1', port))
                 s.listen(8)
-                print_time_log(f"h1_stream TCP mock server listening on 127.0.0.1:{port}")
+                print_time_log(f"h1_upstream TCP mock server listening on 127.0.0.1:{port}")
 
                 # Loop accepting connections so that spurious probes (e.g. SOCKS5
                 # port-readiness checks that reach the trojan client and trigger
@@ -47,7 +47,7 @@ try:
 
                 def handle_client(conn, addr):
                     conn.settimeout(2.0)
-                    print_time_log(f"h1_stream TCP mock server accepted connection from {addr}")
+                    print_time_log(f"h1_upstream TCP mock server accepted connection from {addr}")
                     try:
                         request = b""
                         try:
@@ -60,7 +60,7 @@ try:
                             pass
 
                         if b"HTTP/" in request:
-                            print_time_log(f"h1_stream TCP mock server received {len(request)} bytes from {addr}")
+                            print_time_log(f"h1_upstream TCP mock server received {len(request)} bytes from {addr}")
                             response = (
                                 "HTTP/1.1 200 OK\r\n"
                                 "Content-Type: text/plain\r\n"
@@ -70,22 +70,22 @@ try:
                                 "H1 Stream Fallback!"
                             )
                             conn.sendall(response.encode('utf-8'))
-                            print_time_log(f"h1_stream TCP mock server sent response to {addr}")
+                            print_time_log(f"h1_upstream TCP mock server sent response to {addr}")
                     except Exception as e:
-                        print_time_log(f"h1_stream TCP mock server runtime error handling {addr}: {e}")
+                        print_time_log(f"h1_upstream TCP mock server runtime error handling {addr}: {e}")
                     finally:
                         try:
                             conn.close()
                         except Exception:
                             pass
-                        print_time_log(f"h1_stream TCP mock server closed connection from {addr}")
+                        print_time_log(f"h1_upstream TCP mock server closed connection from {addr}")
 
                 while True:
                     conn, addr = s.accept()
                     threading.Thread(target=handle_client, args=(conn, addr), daemon=True).start()
 
         except Exception as e:
-            print_time_log(f"h1_stream TCP mock server runtime error: {e}")
+            print_time_log(f"h1_upstream TCP mock server runtime error: {e}")
             traceback.print_exc()
             sys.exit(1)
 
@@ -93,6 +93,6 @@ try:
         main()
 
 except Exception as e:
-    print(f"h1_stream TCP mock server fatal boot error: {e}", flush=True)
+    print(f"h1_upstream TCP mock server fatal boot error: {e}", flush=True)
     traceback.print_exc()
     sys.exit(1)

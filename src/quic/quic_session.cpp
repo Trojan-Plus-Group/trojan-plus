@@ -91,7 +91,7 @@ void QuicProxySession::try_parse_request(std::string_view data, bool fin) {
         if (!is_valid_hex) {
             _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) +
                                     " first byte not hex (" + tp::to_string((int)first_char) + ") len=" + tp::to_string(data.length()) + 
-                                    ", falling back to h1_stream",
+                                    ", falling back to h1_upstream",
                                 Log::INFO);
             forward_to_h1_upstream(data, fin);
             return;
@@ -99,13 +99,13 @@ void QuicProxySession::try_parse_request(std::string_view data, bool fin) {
     }
 
     // Wait for at least the first CRLF (end of password) before deciding if it's Trojan.
-    // This avoids premature fallback to h1_stream if the password is split across packets.
+    // This avoids premature fallback to h1_upstream if the password is split across packets.
     size_t first_crlf = data.find("\r\n");
     if (first_crlf == tp::string::npos) {
         if (data.length() > kMaxPasswordLineBytes || fin) {
             _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) +
                                     " no CRLF in " + tp::to_string(kMaxPasswordLineBytes) +
-                                    " bytes" + tp::to_string(fin ? " (fin)" : "") + ", falling back to h1_stream",
+                                    " bytes" + tp::to_string(fin ? " (fin)" : "") + ", falling back to h1_upstream",
                                 Log::WARN);
             forward_to_h1_upstream(data, fin);
         }
@@ -114,7 +114,7 @@ void QuicProxySession::try_parse_request(std::string_view data, bool fin) {
     if (first_crlf > kMaxPasswordLineBytes) {
         _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) +
                                 " password line exceeds " + tp::to_string(kMaxPasswordLineBytes) +
-                                " bytes, falling back to h1_stream",
+                                " bytes, falling back to h1_upstream",
                             Log::WARN);
         forward_to_h1_upstream(data, fin);
         return;
@@ -125,7 +125,7 @@ void QuicProxySession::try_parse_request(std::string_view data, bool fin) {
     if (parsed == -1) {
         // If it has a CRLF but still fails to parse as Trojan, it's definitely non-trojan.
         _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) +
-                                " parse failed, forwarding to h1_stream",
+                                " parse failed, forwarding to h1_upstream",
                             Log::INFO);
         forward_to_h1_upstream(data, fin);
         return;
@@ -138,7 +138,7 @@ void QuicProxySession::try_parse_request(std::string_view data, bool fin) {
     auto it = m_config.get_password().find(req.password);
     if (it == m_config.get_password().end()) {
         _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) +
-                                " invalid password, forwarding to h1_stream",
+                                " invalid password, forwarding to h1_upstream",
                             Log::WARN);
         // m_quic_recv_buf still holds the original raw bytes (not yet consumed), forward verbatim.
         forward_to_h1_upstream(data, fin);

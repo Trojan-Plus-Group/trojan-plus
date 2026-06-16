@@ -82,7 +82,7 @@ class Http1UpstreamConn : public std::enable_shared_from_this<Http1UpstreamConn>
 
     // Append an HTTP/1.1 byte chunk to the write queue. stream_bytes is the
     // QUIC inbound credit associated with this chunk (returned via
-    // on_h1_stream_credit when the write is acknowledged by TCP). fin=true
+    // on_h1_upstream_credit when the write is acknowledged by TCP). fin=true
     // shuts down the send half after the queue drains.
     void send_request_chunk(tp::string data, std::size_t stream_bytes, bool fin);
 
