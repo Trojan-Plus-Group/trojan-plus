@@ -104,7 +104,7 @@ class Http1UpstreamConn : public std::enable_shared_from_this<Http1UpstreamConn>
   private:
     void start_async_read();
     void on_tcp_read_done(const boost::system::error_code& ec, std::size_t bytes);
-    void parse_tcp_data(std::size_t bytes);
+    void parse_tcp_data();
     void do_tcp_write();
     void close_socket();
     void on_connect_done(const boost::system::error_code& ec);
@@ -129,8 +129,10 @@ class Http1UpstreamConn : public std::enable_shared_from_this<Http1UpstreamConn>
 
     // Read side
     tp::string                    m_tcp_read_buf;
+    std::size_t                   m_unconsumed_bytes{0};
     tp::tj_unique_ptr<H1RespParser> m_resp_parser;
     bool                          m_headers_delivered{false};
+    bool                          m_shutdown_pending{false};
     tp::string                    m_parse_buf;
     tp::list<tp::string>          m_body_out_chunks;
     std::size_t                   m_front_chunk_offset{0};

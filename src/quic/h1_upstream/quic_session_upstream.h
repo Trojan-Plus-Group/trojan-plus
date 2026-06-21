@@ -99,6 +99,7 @@ class QuicUpstreamHandler : public QuicStreamHandler,
     bool       m_has_content_length{false};
     bool       m_fin_sent{false};
     bool       m_destroyed{false};
+    bool       m_resp_headers_submitted{false};
 
     // Pending H3 frame bytes received via on_stream_data, awaiting feed.
     tp::streambuf m_h3_in_buf;

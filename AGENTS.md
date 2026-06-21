@@ -59,6 +59,8 @@ python3 fulltest_main.py /path/to/build/trojan -g -n
 
 # QUIC tests
 python3 fulltest_main.py /path/to/build/trojan -q
+
+# QUIC tests for single testcase T4
 python3 fulltest_main.py /path/to/build/trojan -q T4
 
 # Fallback test

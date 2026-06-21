@@ -106,6 +106,7 @@ void Http1UpstreamConn::destroy() {
 }
 
 void Http1UpstreamConn::close_socket() {
+    m_shutdown_pending = false;
     if (m_tcp_socket.is_open()) {
         boost::system::error_code ec;
         ec = m_tcp_socket.shutdown(boost::asio::socket_base::shutdown_both, ec);
@@ -187,10 +188,14 @@ void Http1UpstreamConn::do_tcp_write() {
     m_write_in_progress = true;
     auto& front         = m_write_queue.front();
 
-    // Pure-FIN entry: shutdown send half, no async_write.
+    // Pure-FIN entry: shutdown send half if headers already delivered, else pending.
     if (front.data.empty() && front.fin) {
-        boost::system::error_code ec;
-        ec = m_tcp_socket.shutdown(boost::asio::socket_base::shutdown_send, ec);
+        if (m_headers_delivered) {
+            boost::system::error_code ec;
+            m_tcp_socket.shutdown(boost::asio::socket_base::shutdown_send, ec);
+        } else {
+            m_shutdown_pending = true;
+        }
         std::size_t credit = front.stream_bytes;
         m_write_queue.pop_front();
         if (credit > 0 && m_observer) m_observer->h1_on_stream_credit(credit);
@@ -220,8 +225,12 @@ void Http1UpstreamConn::do_tcp_write() {
             }
             if (m_destroyed) return;
             if (fin) {
-                boost::system::error_code ec2;
-                ec2 = m_tcp_socket.shutdown(boost::asio::socket_base::shutdown_send, ec2);
+                if (m_headers_delivered) {
+                    boost::system::error_code ec2;
+                    m_tcp_socket.shutdown(boost::asio::socket_base::shutdown_send, ec2);
+                } else {
+                    m_shutdown_pending = true;
+                }
             }
             do_tcp_write();
         });
@@ -236,8 +245,18 @@ void Http1UpstreamConn::start_async_read() {
 
     m_read_in_progress = true;
     auto self          = shared_from_this();
+    
+    std::size_t space_left = kTcpBufSize - m_unconsumed_bytes;
+    if (space_left == 0) {
+        _log_with_date_time("Http1UpstreamConn: parse buffer full, dropping connection", Log::ERROR);
+        m_read_in_progress = false;
+        set_read_state(ReadState::Error);
+        if (m_observer) m_observer->h1_on_error(boost::asio::error::no_buffer_space);
+        return;
+    }
+
     m_tcp_socket.async_read_some(
-        boost::asio::buffer(&m_tcp_read_buf[0], kTcpBufSize),
+        boost::asio::buffer(&m_tcp_read_buf[m_unconsumed_bytes], space_left),
         [this, self](const boost::system::error_code& ec, std::size_t bytes) {
             m_read_in_progress = false;
             on_tcp_read_done(ec, bytes);
@@ -247,10 +266,12 @@ void Http1UpstreamConn::start_async_read() {
 void Http1UpstreamConn::on_tcp_read_done(const boost::system::error_code& ec, std::size_t bytes) {
     if (m_destroyed) return;
 
+    m_unconsumed_bytes += bytes;
+
     if (ec) {
         // Treat EOF / peer-reset as graceful EOF — flush any tail bytes first.
         if (ec == boost::asio::error::eof || ec == boost::asio::error::connection_reset) {
-            if (bytes > 0) parse_tcp_data(bytes);
+            if (m_unconsumed_bytes > 0) parse_tcp_data();
             if (m_destroyed) return;
             set_read_state(ReadState::Eof);
             if (m_observer) m_observer->h1_on_eof();
@@ -263,7 +284,7 @@ void Http1UpstreamConn::on_tcp_read_done(const boost::system::error_code& ec, st
         return;
     }
 
-    parse_tcp_data(bytes);
+    parse_tcp_data();
     if (m_destroyed) return;
     if (m_read_state == ReadState::Eof || m_read_state == ReadState::Error) return;
 
@@ -275,33 +296,38 @@ void Http1UpstreamConn::on_tcp_read_done(const boost::system::error_code& ec, st
     }
 }
 
-void Http1UpstreamConn::parse_tcp_data(std::size_t bytes) {
+void Http1UpstreamConn::parse_tcp_data() {
     boost::system::error_code ec;
     std::size_t               consumed       = 0;
     bool                      any_body_added = false;
 
-    while (consumed < bytes) {
+    while (consumed < m_unconsumed_bytes) {
         if (!m_headers_delivered) {
             // Header phase: tell Beast no body buffer; it will buffer headers internally.
             m_resp_parser->get().body().data = nullptr;
             m_resp_parser->get().body().size = 0;
 
             std::size_t n = m_resp_parser->put(
-                boost::asio::buffer(m_tcp_read_buf.data() + consumed, bytes - consumed), ec);
+                boost::asio::buffer(m_tcp_read_buf.data() + consumed, m_unconsumed_bytes - consumed), ec);
             consumed += n;
 
-            if (ec && ec != boost::beast::http::error::need_buffer) {
+            if (ec && ec != boost::beast::http::error::need_buffer && ec != boost::beast::http::error::need_more) {
                 _log_with_date_time(
                     "Http1UpstreamConn: header parse error: " + tp::string(ec.message().c_str()),
                     Log::ERROR);
                 set_read_state(ReadState::Error);
                 if (m_observer) m_observer->h1_on_error(ec);
-                return;
+                break; // break instead of return to ensure buffer is shifted
             }
             if (m_resp_parser->is_header_done()) {
                 m_headers_delivered = true;
+                if (m_shutdown_pending) {
+                    boost::system::error_code ec_shutdown;
+                    m_tcp_socket.shutdown(boost::asio::socket_base::shutdown_send, ec_shutdown);
+                    m_shutdown_pending = false;
+                }
                 if (m_observer) m_observer->h1_on_resp_headers(*m_resp_parser);
-                if (m_destroyed) return;
+                if (m_destroyed) break;
                 // continue loop — there may be body bytes already in the same buffer
             } else {
                 // headers not yet complete; buffer fully consumed
@@ -314,7 +340,7 @@ void Http1UpstreamConn::parse_tcp_data(std::size_t bytes) {
             m_resp_parser->get().body().size = m_parse_buf.size();
 
             std::size_t n = m_resp_parser->put(
-                boost::asio::buffer(m_tcp_read_buf.data() + consumed, bytes - consumed), ec);
+                boost::asio::buffer(m_tcp_read_buf.data() + consumed, m_unconsumed_bytes - consumed), ec);
             consumed += n;
 
             std::size_t body_bytes = m_parse_buf.size() - m_resp_parser->get().body().size;
@@ -323,28 +349,43 @@ void Http1UpstreamConn::parse_tcp_data(std::size_t bytes) {
                 any_body_added = true;
             }
 
-            if (ec && ec != boost::beast::http::error::need_buffer) {
-                if (ec == boost::beast::http::error::end_of_stream) {
-                    set_read_state(ReadState::Eof);
-                    if (any_body_added && m_observer) m_observer->h1_on_body_data_available();
-                    if (m_destroyed) return;
-                    if (m_observer) m_observer->h1_on_eof();
-                    return;
+            if (ec && ec != boost::beast::http::error::need_buffer && ec != boost::beast::http::error::need_more) {
+                // Log detailed diagnostics for chunked parse errors.
+                if (Log::level <= Log::ERROR && ec != boost::beast::http::error::end_of_stream) {
+                    tp::string hex_tail;
+                    std::size_t dump_start = (consumed > 32) ? consumed - 32 : 0;
+                    std::size_t dump_end   = std::min(consumed + 32, m_unconsumed_bytes);
+                    for (std::size_t i = dump_start; i < dump_end; ++i) {
+                        char hx[4];
+                        snprintf(hx, sizeof(hx), "%02x ", static_cast<unsigned char>(m_tcp_read_buf[i]));
+                        hex_tail += hx;
+                    }
+                    _log_with_date_time("Http1UpstreamConn: body parse error: " +
+                                            tp::string(ec.message().c_str()) +
+                                            " consumed=" + tp::to_string(consumed) +
+                                            " unconsumed_bytes=" + tp::to_string(m_unconsumed_bytes) +
+                                            " n=" + tp::to_string(n) +
+                                            " body_bytes=" + tp::to_string(body_bytes) +
+                                            " buffered=" + tp::to_string(m_buffered_bytes) +
+                                            " is_done=" + tp::to_string(m_resp_parser->is_done()) +
+                                            " hex_around_consumed=[" + hex_tail + "]",
+                                        Log::ERROR);
                 }
-                _log_with_date_time("Http1UpstreamConn: body parse error: " +
-                                        tp::string(ec.message().c_str()),
-                                    Log::ERROR);
-                set_read_state(ReadState::Error);
-                if (m_observer) m_observer->h1_on_error(ec);
-                return;
+                
+                if (ec != boost::beast::http::error::end_of_stream) {
+                    // Set error state, but let buffer shifting logic run below before we invoke callbacks
+                    set_read_state(ReadState::Error);
+                    break;
+                }
+                
+                // End of stream
+                set_read_state(ReadState::Eof);
+                break;
             }
 
             if (m_resp_parser->is_done()) {
                 set_read_state(ReadState::Eof);
-                if (any_body_added && m_observer) m_observer->h1_on_body_data_available();
-                if (m_destroyed) return;
-                if (m_observer) m_observer->h1_on_eof();
-                return;
+                break;
             }
 
             if (n == 0) {
@@ -354,7 +395,23 @@ void Http1UpstreamConn::parse_tcp_data(std::size_t bytes) {
         }
     }
 
+    if (consumed > 0) {
+        std::size_t remaining = m_unconsumed_bytes - consumed;
+        if (remaining > 0) {
+            std::memmove(&m_tcp_read_buf[0], &m_tcp_read_buf[consumed], remaining);
+        }
+        m_unconsumed_bytes = remaining;
+    }
+
     if (any_body_added && m_observer) m_observer->h1_on_body_data_available();
+    
+    if (m_destroyed) return;
+
+    if (m_read_state == ReadState::Eof) {
+        if (m_observer) m_observer->h1_on_eof();
+    } else if (m_read_state == ReadState::Error) {
+        if (m_observer) m_observer->h1_on_error(ec);
+    }
 }
 
 nghttp3_ssize Http1UpstreamConn::pull_body_chunks(nghttp3_vec* vec, std::size_t veccnt,

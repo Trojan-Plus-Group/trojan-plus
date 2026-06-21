@@ -1,0 +1,913 @@
+Trojan Plus v10.3.0 starts.
+[2026-06-21 18:16:47.005628] [ALL] [config.cpp:326] [config] has loaded [127.0.0.1:8001] in hashCode: -35736874
+[2026-06-21 18:16:47.103976] [INFO] [quic_tls_ctx.cpp:126] QuicTlsCtx: server certificate and key loaded
+[2026-06-21 18:16:47.104038] [INFO] [quic_tls_ctx.cpp:99] QuicTlsCtx: initialized (role=server, alpn=h3)
+[2026-06-21 18:16:47.104126] [WARN] [service.cpp:291] [quic] server endpoint prepared (Phase 1 skeleton)
+[2026-06-21 18:16:47.104383] [FATAL] [service.cpp:212] trojan plus service (server) started at 0.0.0.0:3443
+[2026-06-21 18:16:47.104491] [INFO] [quic_endpoint.cpp:89] QuicEndpoint: bound UDP 0.0.0.0:3443
+[2026-06-21 18:16:47.104521] [INFO] [quic_server_endpoint.cpp:60] QuicServerEndpoint: listening on UDP 0.0.0.0:3443
+[2026-06-21 18:16:56.558837] [INFO] [quic_server_endpoint.cpp:149] QuicServerEndpoint: new connection for DCID 5a55030ac595dc05ab3c86de146e948d15110107
+[2026-06-21 18:16:56.558913] [INFO] [quic_connection.cpp:300] QuicConnection: QuicConnection constructed for peer 127.0.0.1:50880
+[2026-06-21 18:16:56.559831] [INFO] [quic_server_endpoint.cpp:230] QuicServerEndpoint: added initial DCID 5a55030ac595dc05ab3c86de146e948d15110107
+[2026-06-21 18:16:56.559881] [INFO] [quic_server_endpoint.cpp:234] QuicServerEndpoint: added server SCID 4d4766c6070a4f336b87e3c7e3759a4e1753
+[2026-06-21 18:16:56.566163] [INFO] [quic_server_endpoint.cpp:206] QuicServerEndpoint: added NEW CID e664a6b5c906f77d80980f0dd06cf117af07
+[2026-06-21 18:16:56.568549] [INFO] [quic_connection.cpp:1299] QuicConnection: handshake completed (role=server, peer=127.0.0.1:50880, alpn=h3)
+[2026-06-21 18:16:56.568730] [INFO] [quic_connection.cpp:1185] QuicConnection: stream 2 falling back to h1_upstream 127.0.0.1:8001
+[2026-06-21 18:16:56.568802] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 3 produced 1 vecs path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:56.568829] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=3 datavcnt=1 fin=false path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:56.569188] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=3 pdatalen=18 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:56.569279] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=3 written=18 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:56.569311] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 11 produced 1 vecs path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:56.569330] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=11 datavcnt=1 fin=false path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:56.569352] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=11 pdatalen=1 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:56.569397] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=11 written=1 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:56.569423] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 7 produced 1 vecs path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:56.569441] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=7 datavcnt=1 fin=false path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:56.569464] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=7 pdatalen=1 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:56.569577] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=7 written=1 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:56.569669] [INFO] [quic_session_upstream.cpp:35] QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=2
+[2026-06-21 18:16:56.569716] [INFO] [quic_connection.cpp:1185] QuicConnection: stream 10 falling back to h1_upstream 127.0.0.1:8001
+[2026-06-21 18:16:56.569751] [INFO] [quic_session_upstream.cpp:35] QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=10
+[2026-06-21 18:16:56.569792] [INFO] [quic_connection.cpp:1185] QuicConnection: stream 6 falling back to h1_upstream 127.0.0.1:8001
+[2026-06-21 18:16:56.569827] [INFO] [quic_session_upstream.cpp:35] QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=6
+[2026-06-21 18:16:56.569943] [INFO] [quic_connection.cpp:1185] QuicConnection: stream 0 falling back to h1_upstream 127.0.0.1:8001
+[2026-06-21 18:16:56.569977] [INFO] [quic_session_upstream.cpp:35] QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=0
+[2026-06-21 18:16:56.570086] [ALL] [quic_connection.cpp:1415] on_extend_max_stream_data: stream=0 max_data=10485760
+[2026-06-21 18:16:56.570121] [ALL] [quic_to_http3_connect.cpp:244] QuicToHttp3Connect::unblock_stream: stream 0 unblocked
+[2026-06-21 18:16:56.570186] [INFO] [quic_session_upstream.cpp:413] QuicUpstreamHandler: stream 0 on_h3_end_headers fin=true
+[2026-06-21 18:16:56.570377] [INFO] [quic_http1_upstream_conn.cpp:52] HTTP upstream connected to 127.0.0.1:8001
+[2026-06-21 18:16:56.570423] [INFO] [quic_session_upstream.cpp:282] QuicUpstreamHandler: stream 0 HTTP upstream connected
+[2026-06-21 18:16:57.050049] [INFO] [quic_session_upstream.cpp:191] QuicUpstreamHandler: stream 0 submitting H3 response status=200
+[2026-06-21 18:16:57.050124] [ALL] [quic_to_http3_connect.cpp:127] QuicToHttp3Connect: submitted response for stream 0 has_body=true
+[2026-06-21 18:16:57.050181] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 0 produced 2 vecs path=QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespParser &)
+[2026-06-21 18:16:57.050206] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=0 datavcnt=2 fin=false path=QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespParser &)
+[2026-06-21 18:16:57.050230] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=0 pdatalen=220 path=QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespParser &)
+[2026-06-21 18:16:57.050303] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=0 written=220 path=QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespParser &)
+[2026-06-21 18:16:57.050357] [ALL] [quic_http1_upstream_conn.cpp:127] buffer_chunk_append: chunk size=8192 data_ptr=4034017372176
+[2026-06-21 18:16:57.050381] [ALL] [quic_http1_upstream_conn.cpp:127] buffer_chunk_append: chunk size=3100 data_ptr=4034014674960
+[2026-06-21 18:16:57.050404] [ALL] [quic_http1_upstream_conn.cpp:459] pull_body_chunks: vec[0] base=4034017372176 len=8192 (offset from chunk start: 0)
+[2026-06-21 18:16:57.050423] [ALL] [quic_http1_upstream_conn.cpp:459] pull_body_chunks: vec[1] base=4034014674960 len=3100 (offset from chunk start: 0)
+[2026-06-21 18:16:57.050441] [ALL] [quic_http1_upstream_conn.cpp:476] pull_body_chunks: pulled 11292 bytes, new m_body_read_offset=11292
+[2026-06-21 18:16:57.050460] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 0 produced 3 vecs path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:16:57.050479] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=0 datavcnt=3 fin=false path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:16:57.050823] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=0 pdatalen=891 path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:16:57.050903] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=0 written=11295 path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:16:57.050950] [INFO] [quic_session_upstream.cpp:309] QuicUpstreamHandler: stream 0 upstream EOF
+[2026-06-21 18:16:57.050977] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=0 datavcnt=0 fin=true path=QuicUpstreamHandler::h1_on_eof()
+[2026-06-21 18:16:57.051024] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=0 written=0 path=QuicUpstreamHandler::h1_on_eof()
+[2026-06-21 18:16:57.051078] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1153 body bytes on stream 0
+[2026-06-21 18:16:57.051131] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1153 m_front_chunk_offset=0 m_body_read_offset=11292 m_body_out_chunks.size()=2
+[2026-06-21 18:16:57.051156] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=1153 m_body_read_offset=10139 m_body_out_chunks.size()=2
+[2026-06-21 18:16:57.051176] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:57.051199] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=1153 m_body_read_offset=10139 m_body_out_chunks.size()=2
+[2026-06-21 18:16:57.051215] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=2309 m_body_read_offset=8983 m_body_out_chunks.size()=2
+[2026-06-21 18:16:57.051232] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:57.051250] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=2309 m_body_read_offset=8983 m_body_out_chunks.size()=2
+[2026-06-21 18:16:57.051266] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=3465 m_body_read_offset=7827 m_body_out_chunks.size()=2
+[2026-06-21 18:16:57.051283] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:57.051299] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=3465 m_body_read_offset=7827 m_body_out_chunks.size()=2
+[2026-06-21 18:16:57.051315] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=4621 m_body_read_offset=6671 m_body_out_chunks.size()=2
+[2026-06-21 18:16:57.051331] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:57.051348] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=4621 m_body_read_offset=6671 m_body_out_chunks.size()=2
+[2026-06-21 18:16:57.051364] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=5777 m_body_read_offset=5515 m_body_out_chunks.size()=2
+[2026-06-21 18:16:57.051381] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:57.051397] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=5777 m_body_read_offset=5515 m_body_out_chunks.size()=2
+[2026-06-21 18:16:57.051413] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=6933 m_body_read_offset=4359 m_body_out_chunks.size()=2
+[2026-06-21 18:16:57.051430] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:57.051447] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=6933 m_body_read_offset=4359 m_body_out_chunks.size()=2
+[2026-06-21 18:16:57.051463] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=8089 m_body_read_offset=3203 m_body_out_chunks.size()=2
+[2026-06-21 18:16:57.051614] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 103 body bytes on stream 0
+[2026-06-21 18:16:57.051665] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=103 m_front_chunk_offset=8089 m_body_read_offset=3203 m_body_out_chunks.size()=2
+[2026-06-21 18:16:57.051694] [ALL] [quic_http1_upstream_conn.cpp:148] buffer_chunk_drop_front: popping chunk size=8192 data_ptr=4034017372176
+[2026-06-21 18:16:57.051719] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=0 m_body_read_offset=3100 m_body_out_chunks.size()=1
+[2026-06-21 18:16:57.051744] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1053 body bytes on stream 0
+[2026-06-21 18:16:57.051778] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1053 m_front_chunk_offset=0 m_body_read_offset=3100 m_body_out_chunks.size()=1
+[2026-06-21 18:16:57.051870] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=1053 m_body_read_offset=2047 m_body_out_chunks.size()=1
+[2026-06-21 18:16:57.051897] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:57.051917] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=1053 m_body_read_offset=2047 m_body_out_chunks.size()=1
+[2026-06-21 18:16:57.051935] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=2209 m_body_read_offset=891 m_body_out_chunks.size()=1
+[2026-06-21 18:16:57.051989] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 891 body bytes on stream 0
+[2026-06-21 18:16:57.052013] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=891 m_front_chunk_offset=2209 m_body_read_offset=891 m_body_out_chunks.size()=1
+[2026-06-21 18:16:57.052031] [ALL] [quic_http1_upstream_conn.cpp:148] buffer_chunk_drop_front: popping chunk size=3100 data_ptr=4034014674960
+[2026-06-21 18:16:57.052048] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=0 m_body_read_offset=0 m_body_out_chunks.size()=0
+[2026-06-21 18:16:57.052093] [INFO] [quic_session_upstream.cpp:40] QuicUpstreamHandler: QuicUpstreamHandler destructed stream_id=0
+[2026-06-21 18:16:57.052192] [INFO] [quic_connection.cpp:1260] QuicConnection: closing connection with error code 0 to peer 127.0.0.1:50880
+[2026-06-21 18:16:57.188458] [INFO] [quic_server_endpoint.cpp:149] QuicServerEndpoint: new connection for DCID 403d18b42d072b7a480f3a14fb5c79ec69bddd48
+[2026-06-21 18:16:57.188513] [INFO] [quic_connection.cpp:300] QuicConnection: QuicConnection constructed for peer 127.0.0.1:52103
+[2026-06-21 18:16:57.189140] [INFO] [quic_server_endpoint.cpp:230] QuicServerEndpoint: added initial DCID 403d18b42d072b7a480f3a14fb5c79ec69bddd48
+[2026-06-21 18:16:57.189173] [INFO] [quic_server_endpoint.cpp:234] QuicServerEndpoint: added server SCID af5334f720596ef454f3bfb1797eed4f6612
+[2026-06-21 18:16:57.194501] [INFO] [quic_server_endpoint.cpp:206] QuicServerEndpoint: added NEW CID 83bdc4e4028ab8d59c6eece57a48d164983e
+[2026-06-21 18:16:57.196318] [INFO] [quic_connection.cpp:1299] QuicConnection: handshake completed (role=server, peer=127.0.0.1:52103, alpn=h3)
+[2026-06-21 18:16:57.196374] [INFO] [quic_connection.cpp:1185] QuicConnection: stream 2 falling back to h1_upstream 127.0.0.1:8001
+[2026-06-21 18:16:57.196405] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 3 produced 1 vecs path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:57.196424] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=3 datavcnt=1 fin=false path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:57.196743] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=3 pdatalen=18 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:57.196800] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=3 written=18 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:57.196824] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 11 produced 1 vecs path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:57.196840] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=11 datavcnt=1 fin=false path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:57.196857] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=11 pdatalen=1 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:57.196895] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=11 written=1 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:57.196915] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 7 produced 1 vecs path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:57.196951] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=7 datavcnt=1 fin=false path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:57.196969] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=7 pdatalen=1 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:57.197007] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=7 written=1 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:57.197042] [INFO] [quic_session_upstream.cpp:35] QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=2
+[2026-06-21 18:16:57.197067] [INFO] [quic_connection.cpp:1185] QuicConnection: stream 10 falling back to h1_upstream 127.0.0.1:8001
+[2026-06-21 18:16:57.197093] [INFO] [quic_session_upstream.cpp:35] QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=10
+[2026-06-21 18:16:57.197112] [INFO] [quic_connection.cpp:1185] QuicConnection: stream 6 falling back to h1_upstream 127.0.0.1:8001
+[2026-06-21 18:16:57.197133] [INFO] [quic_session_upstream.cpp:35] QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=6
+[2026-06-21 18:16:57.197222] [INFO] [quic_connection.cpp:1185] QuicConnection: stream 0 falling back to h1_upstream 127.0.0.1:8001
+[2026-06-21 18:16:57.197262] [INFO] [quic_session_upstream.cpp:35] QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=0
+[2026-06-21 18:16:57.197353] [ALL] [quic_connection.cpp:1415] on_extend_max_stream_data: stream=0 max_data=10485760
+[2026-06-21 18:16:57.197376] [ALL] [quic_to_http3_connect.cpp:244] QuicToHttp3Connect::unblock_stream: stream 0 unblocked
+[2026-06-21 18:16:57.197404] [INFO] [quic_session_upstream.cpp:413] QuicUpstreamHandler: stream 0 on_h3_end_headers fin=true
+[2026-06-21 18:16:57.197510] [INFO] [quic_http1_upstream_conn.cpp:52] HTTP upstream connected to 127.0.0.1:8001
+[2026-06-21 18:16:57.197543] [INFO] [quic_session_upstream.cpp:282] QuicUpstreamHandler: stream 0 HTTP upstream connected
+[2026-06-21 18:16:57.376504] [INFO] [quic_session_upstream.cpp:191] QuicUpstreamHandler: stream 0 submitting H3 response status=200
+[2026-06-21 18:16:57.376591] [ALL] [quic_to_http3_connect.cpp:127] QuicToHttp3Connect: submitted response for stream 0 has_body=true
+[2026-06-21 18:16:57.376647] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 0 produced 2 vecs path=QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespParser &)
+[2026-06-21 18:16:57.376678] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=0 datavcnt=2 fin=false path=QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespParser &)
+[2026-06-21 18:16:57.376708] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=0 pdatalen=220 path=QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespParser &)
+[2026-06-21 18:16:57.376803] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=0 written=220 path=QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespParser &)
+[2026-06-21 18:16:57.376851] [ALL] [quic_http1_upstream_conn.cpp:127] buffer_chunk_append: chunk size=8192 data_ptr=4034017372176
+[2026-06-21 18:16:57.376893] [ALL] [quic_http1_upstream_conn.cpp:127] buffer_chunk_append: chunk size=3100 data_ptr=4034014689296
+[2026-06-21 18:16:57.376921] [ALL] [quic_http1_upstream_conn.cpp:459] pull_body_chunks: vec[0] base=4034017372176 len=8192 (offset from chunk start: 0)
+[2026-06-21 18:16:57.376944] [ALL] [quic_http1_upstream_conn.cpp:459] pull_body_chunks: vec[1] base=4034014689296 len=3100 (offset from chunk start: 0)
+[2026-06-21 18:16:57.376966] [ALL] [quic_http1_upstream_conn.cpp:476] pull_body_chunks: pulled 11292 bytes, new m_body_read_offset=11292
+[2026-06-21 18:16:57.376990] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 0 produced 3 vecs path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:16:57.377013] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=0 datavcnt=3 fin=false path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:16:57.377470] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=0 pdatalen=891 path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:16:57.377603] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=0 written=11295 path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:16:57.377662] [INFO] [quic_session_upstream.cpp:309] QuicUpstreamHandler: stream 0 upstream EOF
+[2026-06-21 18:16:57.377694] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=0 datavcnt=0 fin=true path=QuicUpstreamHandler::h1_on_eof()
+[2026-06-21 18:16:57.377755] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=0 written=0 path=QuicUpstreamHandler::h1_on_eof()
+[2026-06-21 18:16:57.377822] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1153 body bytes on stream 0
+[2026-06-21 18:16:57.377851] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1153 m_front_chunk_offset=0 m_body_read_offset=11292 m_body_out_chunks.size()=2
+[2026-06-21 18:16:57.377873] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=1153 m_body_read_offset=10139 m_body_out_chunks.size()=2
+[2026-06-21 18:16:57.377895] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:57.377917] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=1153 m_body_read_offset=10139 m_body_out_chunks.size()=2
+[2026-06-21 18:16:57.377938] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=2309 m_body_read_offset=8983 m_body_out_chunks.size()=2
+[2026-06-21 18:16:57.377959] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:57.377979] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=2309 m_body_read_offset=8983 m_body_out_chunks.size()=2
+[2026-06-21 18:16:57.377999] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=3465 m_body_read_offset=7827 m_body_out_chunks.size()=2
+[2026-06-21 18:16:57.378020] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:57.378041] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=3465 m_body_read_offset=7827 m_body_out_chunks.size()=2
+[2026-06-21 18:16:57.378061] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=4621 m_body_read_offset=6671 m_body_out_chunks.size()=2
+[2026-06-21 18:16:57.378081] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:57.378102] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=4621 m_body_read_offset=6671 m_body_out_chunks.size()=2
+[2026-06-21 18:16:57.378122] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=5777 m_body_read_offset=5515 m_body_out_chunks.size()=2
+[2026-06-21 18:16:57.378142] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:57.378163] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=5777 m_body_read_offset=5515 m_body_out_chunks.size()=2
+[2026-06-21 18:16:57.378183] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=6933 m_body_read_offset=4359 m_body_out_chunks.size()=2
+[2026-06-21 18:16:57.378269] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:57.378302] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=6933 m_body_read_offset=4359 m_body_out_chunks.size()=2
+[2026-06-21 18:16:57.378323] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=8089 m_body_read_offset=3203 m_body_out_chunks.size()=2
+[2026-06-21 18:16:57.378370] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 103 body bytes on stream 0
+[2026-06-21 18:16:57.378399] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=103 m_front_chunk_offset=8089 m_body_read_offset=3203 m_body_out_chunks.size()=2
+[2026-06-21 18:16:57.378437] [ALL] [quic_http1_upstream_conn.cpp:148] buffer_chunk_drop_front: popping chunk size=8192 data_ptr=4034017372176
+[2026-06-21 18:16:57.378453] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=0 m_body_read_offset=3100 m_body_out_chunks.size()=1
+[2026-06-21 18:16:57.378469] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1053 body bytes on stream 0
+[2026-06-21 18:16:57.378485] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1053 m_front_chunk_offset=0 m_body_read_offset=3100 m_body_out_chunks.size()=1
+[2026-06-21 18:16:57.378501] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=1053 m_body_read_offset=2047 m_body_out_chunks.size()=1
+[2026-06-21 18:16:57.378517] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:57.378534] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=1053 m_body_read_offset=2047 m_body_out_chunks.size()=1
+[2026-06-21 18:16:57.378550] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=2209 m_body_read_offset=891 m_body_out_chunks.size()=1
+[2026-06-21 18:16:57.378607] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 891 body bytes on stream 0
+[2026-06-21 18:16:57.378629] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=891 m_front_chunk_offset=2209 m_body_read_offset=891 m_body_out_chunks.size()=1
+[2026-06-21 18:16:57.378646] [ALL] [quic_http1_upstream_conn.cpp:148] buffer_chunk_drop_front: popping chunk size=3100 data_ptr=4034014689296
+[2026-06-21 18:16:57.378662] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=0 m_body_read_offset=0 m_body_out_chunks.size()=0
+[2026-06-21 18:16:57.378698] [INFO] [quic_session_upstream.cpp:40] QuicUpstreamHandler: QuicUpstreamHandler destructed stream_id=0
+[2026-06-21 18:16:57.378790] [INFO] [quic_connection.cpp:1260] QuicConnection: closing connection with error code 0 to peer 127.0.0.1:52103
+[2026-06-21 18:16:57.514318] [INFO] [quic_server_endpoint.cpp:149] QuicServerEndpoint: new connection for DCID 566e1c7178e96a38741489e31ce72b64c9d05f4b
+[2026-06-21 18:16:57.515361] [INFO] [quic_connection.cpp:300] QuicConnection: QuicConnection constructed for peer 127.0.0.1:61022
+[2026-06-21 18:16:57.516169] [INFO] [quic_server_endpoint.cpp:230] QuicServerEndpoint: added initial DCID 566e1c7178e96a38741489e31ce72b64c9d05f4b
+[2026-06-21 18:16:57.516214] [INFO] [quic_server_endpoint.cpp:234] QuicServerEndpoint: added server SCID 37a5918569a04bea41d180ccb9f4c90d2762
+[2026-06-21 18:16:57.521507] [INFO] [quic_server_endpoint.cpp:206] QuicServerEndpoint: added NEW CID 12e23af4bd7be334c9c9ce2c36113f668f09
+[2026-06-21 18:16:57.538818] [INFO] [quic_connection.cpp:1299] QuicConnection: handshake completed (role=server, peer=127.0.0.1:61022, alpn=h3)
+[2026-06-21 18:16:57.556727] [INFO] [quic_connection.cpp:1185] QuicConnection: stream 2 falling back to h1_upstream 127.0.0.1:8001
+[2026-06-21 18:16:57.556780] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 3 produced 1 vecs path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:57.556802] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=3 datavcnt=1 fin=false path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:57.557158] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=3 pdatalen=18 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:57.557242] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=3 written=18 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:57.557266] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 11 produced 1 vecs path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:57.557282] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=11 datavcnt=1 fin=false path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:57.557300] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=11 pdatalen=1 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:57.557338] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=11 written=1 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:57.557359] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 7 produced 1 vecs path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:57.557375] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=7 datavcnt=1 fin=false path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:57.557391] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=7 pdatalen=1 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:57.557426] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=7 written=1 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:57.557463] [INFO] [quic_session_upstream.cpp:35] QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=2
+[2026-06-21 18:16:57.557491] [INFO] [quic_connection.cpp:1185] QuicConnection: stream 10 falling back to h1_upstream 127.0.0.1:8001
+[2026-06-21 18:16:57.557549] [INFO] [quic_session_upstream.cpp:35] QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=10
+[2026-06-21 18:16:57.557594] [INFO] [quic_connection.cpp:1185] QuicConnection: stream 6 falling back to h1_upstream 127.0.0.1:8001
+[2026-06-21 18:16:57.557625] [INFO] [quic_session_upstream.cpp:35] QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=6
+[2026-06-21 18:16:57.557799] [INFO] [quic_connection.cpp:1185] QuicConnection: stream 0 falling back to h1_upstream 127.0.0.1:8001
+[2026-06-21 18:16:57.557841] [INFO] [quic_session_upstream.cpp:35] QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=0
+[2026-06-21 18:16:57.557949] [ALL] [quic_connection.cpp:1415] on_extend_max_stream_data: stream=0 max_data=10485760
+[2026-06-21 18:16:57.558066] [ALL] [quic_to_http3_connect.cpp:244] QuicToHttp3Connect::unblock_stream: stream 0 unblocked
+[2026-06-21 18:16:57.558167] [INFO] [quic_session_upstream.cpp:413] QuicUpstreamHandler: stream 0 on_h3_end_headers fin=true
+[2026-06-21 18:16:57.558302] [INFO] [quic_http1_upstream_conn.cpp:52] HTTP upstream connected to 127.0.0.1:8001
+[2026-06-21 18:16:57.558327] [INFO] [quic_session_upstream.cpp:282] QuicUpstreamHandler: stream 0 HTTP upstream connected
+[2026-06-21 18:16:58.060118] [INFO] [quic_session_upstream.cpp:191] QuicUpstreamHandler: stream 0 submitting H3 response status=200
+[2026-06-21 18:16:58.060203] [ALL] [quic_to_http3_connect.cpp:127] QuicToHttp3Connect: submitted response for stream 0 has_body=true
+[2026-06-21 18:16:58.060257] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 0 produced 2 vecs path=QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespParser &)
+[2026-06-21 18:16:58.060288] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=0 datavcnt=2 fin=false path=QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespParser &)
+[2026-06-21 18:16:58.060319] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=0 pdatalen=220 path=QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespParser &)
+[2026-06-21 18:16:58.060410] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=0 written=220 path=QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespParser &)
+[2026-06-21 18:16:58.060470] [ALL] [quic_http1_upstream_conn.cpp:127] buffer_chunk_append: chunk size=8192 data_ptr=4034017372176
+[2026-06-21 18:16:58.060529] [ALL] [quic_http1_upstream_conn.cpp:127] buffer_chunk_append: chunk size=3100 data_ptr=4034014696464
+[2026-06-21 18:16:58.060557] [ALL] [quic_http1_upstream_conn.cpp:459] pull_body_chunks: vec[0] base=4034017372176 len=8192 (offset from chunk start: 0)
+[2026-06-21 18:16:58.060580] [ALL] [quic_http1_upstream_conn.cpp:459] pull_body_chunks: vec[1] base=4034014696464 len=3100 (offset from chunk start: 0)
+[2026-06-21 18:16:58.060621] [ALL] [quic_http1_upstream_conn.cpp:476] pull_body_chunks: pulled 11292 bytes, new m_body_read_offset=11292
+[2026-06-21 18:16:58.060640] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 0 produced 3 vecs path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:16:58.060658] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=0 datavcnt=3 fin=false path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:16:58.061002] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=0 pdatalen=891 path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:16:58.061082] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=0 written=11295 path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:16:58.061130] [INFO] [quic_session_upstream.cpp:309] QuicUpstreamHandler: stream 0 upstream EOF
+[2026-06-21 18:16:58.061156] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=0 datavcnt=0 fin=true path=QuicUpstreamHandler::h1_on_eof()
+[2026-06-21 18:16:58.061205] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=0 written=0 path=QuicUpstreamHandler::h1_on_eof()
+[2026-06-21 18:16:58.061260] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1153 body bytes on stream 0
+[2026-06-21 18:16:58.061284] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1153 m_front_chunk_offset=0 m_body_read_offset=11292 m_body_out_chunks.size()=2
+[2026-06-21 18:16:58.061303] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=1153 m_body_read_offset=10139 m_body_out_chunks.size()=2
+[2026-06-21 18:16:58.061321] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:58.061340] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=1153 m_body_read_offset=10139 m_body_out_chunks.size()=2
+[2026-06-21 18:16:58.061357] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=2309 m_body_read_offset=8983 m_body_out_chunks.size()=2
+[2026-06-21 18:16:58.061374] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:58.061391] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=2309 m_body_read_offset=8983 m_body_out_chunks.size()=2
+[2026-06-21 18:16:58.061408] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=3465 m_body_read_offset=7827 m_body_out_chunks.size()=2
+[2026-06-21 18:16:58.061424] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:58.061441] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=3465 m_body_read_offset=7827 m_body_out_chunks.size()=2
+[2026-06-21 18:16:58.061458] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=4621 m_body_read_offset=6671 m_body_out_chunks.size()=2
+[2026-06-21 18:16:58.061474] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:58.061491] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=4621 m_body_read_offset=6671 m_body_out_chunks.size()=2
+[2026-06-21 18:16:58.061507] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=5777 m_body_read_offset=5515 m_body_out_chunks.size()=2
+[2026-06-21 18:16:58.061573] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:58.061598] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=5777 m_body_read_offset=5515 m_body_out_chunks.size()=2
+[2026-06-21 18:16:58.061616] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=6933 m_body_read_offset=4359 m_body_out_chunks.size()=2
+[2026-06-21 18:16:58.061633] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:58.061650] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=6933 m_body_read_offset=4359 m_body_out_chunks.size()=2
+[2026-06-21 18:16:58.061666] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=8089 m_body_read_offset=3203 m_body_out_chunks.size()=2
+[2026-06-21 18:16:58.061736] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 103 body bytes on stream 0
+[2026-06-21 18:16:58.061762] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=103 m_front_chunk_offset=8089 m_body_read_offset=3203 m_body_out_chunks.size()=2
+[2026-06-21 18:16:58.061780] [ALL] [quic_http1_upstream_conn.cpp:148] buffer_chunk_drop_front: popping chunk size=8192 data_ptr=4034017372176
+[2026-06-21 18:16:58.061798] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=0 m_body_read_offset=3100 m_body_out_chunks.size()=1
+[2026-06-21 18:16:58.061815] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1053 body bytes on stream 0
+[2026-06-21 18:16:58.061832] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1053 m_front_chunk_offset=0 m_body_read_offset=3100 m_body_out_chunks.size()=1
+[2026-06-21 18:16:58.061848] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=1053 m_body_read_offset=2047 m_body_out_chunks.size()=1
+[2026-06-21 18:16:58.061870] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:58.061898] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=1053 m_body_read_offset=2047 m_body_out_chunks.size()=1
+[2026-06-21 18:16:58.061917] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=2209 m_body_read_offset=891 m_body_out_chunks.size()=1
+[2026-06-21 18:16:58.061960] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 891 body bytes on stream 0
+[2026-06-21 18:16:58.061983] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=891 m_front_chunk_offset=2209 m_body_read_offset=891 m_body_out_chunks.size()=1
+[2026-06-21 18:16:58.062000] [ALL] [quic_http1_upstream_conn.cpp:148] buffer_chunk_drop_front: popping chunk size=3100 data_ptr=4034014696464
+[2026-06-21 18:16:58.062018] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=0 m_body_read_offset=0 m_body_out_chunks.size()=0
+[2026-06-21 18:16:58.062053] [INFO] [quic_session_upstream.cpp:40] QuicUpstreamHandler: QuicUpstreamHandler destructed stream_id=0
+[2026-06-21 18:16:58.062134] [INFO] [quic_connection.cpp:1260] QuicConnection: closing connection with error code 0 to peer 127.0.0.1:61022
+[2026-06-21 18:16:58.199924] [INFO] [quic_server_endpoint.cpp:149] QuicServerEndpoint: new connection for DCID c31e746fbb6010c679ed8a2a2219a4b1209e4b0d
+[2026-06-21 18:16:58.199977] [INFO] [quic_connection.cpp:300] QuicConnection: QuicConnection constructed for peer 127.0.0.1:53751
+[2026-06-21 18:16:58.200605] [INFO] [quic_server_endpoint.cpp:230] QuicServerEndpoint: added initial DCID c31e746fbb6010c679ed8a2a2219a4b1209e4b0d
+[2026-06-21 18:16:58.200638] [INFO] [quic_server_endpoint.cpp:234] QuicServerEndpoint: added server SCID b65fcb4d2cba0fe7719fb4c09b0261be553f
+[2026-06-21 18:16:58.205951] [INFO] [quic_server_endpoint.cpp:206] QuicServerEndpoint: added NEW CID 8752f2073ef899a5f60c7cfd0801c5521d76
+[2026-06-21 18:16:58.207753] [INFO] [quic_connection.cpp:1299] QuicConnection: handshake completed (role=server, peer=127.0.0.1:53751, alpn=h3)
+[2026-06-21 18:16:58.207813] [INFO] [quic_connection.cpp:1185] QuicConnection: stream 2 falling back to h1_upstream 127.0.0.1:8001
+[2026-06-21 18:16:58.207844] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 3 produced 1 vecs path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:58.207862] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=3 datavcnt=1 fin=false path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:58.208243] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=3 pdatalen=18 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:58.208371] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=3 written=18 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:58.208404] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 11 produced 1 vecs path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:58.208423] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=11 datavcnt=1 fin=false path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:58.208443] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=11 pdatalen=1 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:58.208484] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=11 written=1 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:58.208505] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 7 produced 1 vecs path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:58.208521] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=7 datavcnt=1 fin=false path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:58.208538] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=7 pdatalen=1 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:58.208574] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=7 written=1 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:58.208602] [INFO] [quic_session_upstream.cpp:35] QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=2
+[2026-06-21 18:16:58.208627] [INFO] [quic_connection.cpp:1185] QuicConnection: stream 10 falling back to h1_upstream 127.0.0.1:8001
+[2026-06-21 18:16:58.208663] [INFO] [quic_session_upstream.cpp:35] QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=10
+[2026-06-21 18:16:58.208682] [INFO] [quic_connection.cpp:1185] QuicConnection: stream 6 falling back to h1_upstream 127.0.0.1:8001
+[2026-06-21 18:16:58.208710] [INFO] [quic_session_upstream.cpp:35] QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=6
+[2026-06-21 18:16:58.208809] [INFO] [quic_connection.cpp:1185] QuicConnection: stream 0 falling back to h1_upstream 127.0.0.1:8001
+[2026-06-21 18:16:58.208842] [INFO] [quic_session_upstream.cpp:35] QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=0
+[2026-06-21 18:16:58.208951] [ALL] [quic_connection.cpp:1415] on_extend_max_stream_data: stream=0 max_data=10485760
+[2026-06-21 18:16:58.208991] [ALL] [quic_to_http3_connect.cpp:244] QuicToHttp3Connect::unblock_stream: stream 0 unblocked
+[2026-06-21 18:16:58.209102] [INFO] [quic_session_upstream.cpp:413] QuicUpstreamHandler: stream 0 on_h3_end_headers fin=true
+[2026-06-21 18:16:58.209357] [INFO] [quic_http1_upstream_conn.cpp:52] HTTP upstream connected to 127.0.0.1:8001
+[2026-06-21 18:16:58.209392] [INFO] [quic_session_upstream.cpp:282] QuicUpstreamHandler: stream 0 HTTP upstream connected
+[2026-06-21 18:16:58.468350] [INFO] [quic_session_upstream.cpp:191] QuicUpstreamHandler: stream 0 submitting H3 response status=200
+[2026-06-21 18:16:58.468435] [ALL] [quic_to_http3_connect.cpp:127] QuicToHttp3Connect: submitted response for stream 0 has_body=true
+[2026-06-21 18:16:58.468528] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 0 produced 2 vecs path=QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespParser &)
+[2026-06-21 18:16:58.468563] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=0 datavcnt=2 fin=false path=QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespParser &)
+[2026-06-21 18:16:58.468596] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=0 pdatalen=220 path=QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespParser &)
+[2026-06-21 18:16:58.468691] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=0 written=220 path=QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespParser &)
+[2026-06-21 18:16:58.468743] [ALL] [quic_http1_upstream_conn.cpp:127] buffer_chunk_append: chunk size=8192 data_ptr=4034017372176
+[2026-06-21 18:16:58.468771] [ALL] [quic_http1_upstream_conn.cpp:127] buffer_chunk_append: chunk size=3100 data_ptr=4034014696464
+[2026-06-21 18:16:58.468795] [ALL] [quic_http1_upstream_conn.cpp:459] pull_body_chunks: vec[0] base=4034017372176 len=8192 (offset from chunk start: 0)
+[2026-06-21 18:16:58.468818] [ALL] [quic_http1_upstream_conn.cpp:459] pull_body_chunks: vec[1] base=4034014696464 len=3100 (offset from chunk start: 0)
+[2026-06-21 18:16:58.468840] [ALL] [quic_http1_upstream_conn.cpp:476] pull_body_chunks: pulled 11292 bytes, new m_body_read_offset=11292
+[2026-06-21 18:16:58.468868] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 0 produced 3 vecs path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:16:58.468895] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=0 datavcnt=3 fin=false path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:16:58.469395] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=0 pdatalen=891 path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:16:58.469494] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=0 written=11295 path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:16:58.469553] [INFO] [quic_session_upstream.cpp:309] QuicUpstreamHandler: stream 0 upstream EOF
+[2026-06-21 18:16:58.469585] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=0 datavcnt=0 fin=true path=QuicUpstreamHandler::h1_on_eof()
+[2026-06-21 18:16:58.469645] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=0 written=0 path=QuicUpstreamHandler::h1_on_eof()
+[2026-06-21 18:16:58.469712] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1153 body bytes on stream 0
+[2026-06-21 18:16:58.469746] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1153 m_front_chunk_offset=0 m_body_read_offset=11292 m_body_out_chunks.size()=2
+[2026-06-21 18:16:58.469782] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=1153 m_body_read_offset=10139 m_body_out_chunks.size()=2
+[2026-06-21 18:16:58.469800] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:58.469818] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=1153 m_body_read_offset=10139 m_body_out_chunks.size()=2
+[2026-06-21 18:16:58.469834] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=2309 m_body_read_offset=8983 m_body_out_chunks.size()=2
+[2026-06-21 18:16:58.469851] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:58.469868] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=2309 m_body_read_offset=8983 m_body_out_chunks.size()=2
+[2026-06-21 18:16:58.469883] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=3465 m_body_read_offset=7827 m_body_out_chunks.size()=2
+[2026-06-21 18:16:58.469978] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:58.470004] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=3465 m_body_read_offset=7827 m_body_out_chunks.size()=2
+[2026-06-21 18:16:58.470022] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=4621 m_body_read_offset=6671 m_body_out_chunks.size()=2
+[2026-06-21 18:16:58.470039] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:58.470058] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=4621 m_body_read_offset=6671 m_body_out_chunks.size()=2
+[2026-06-21 18:16:58.470075] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=5777 m_body_read_offset=5515 m_body_out_chunks.size()=2
+[2026-06-21 18:16:58.470116] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:58.470140] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=5777 m_body_read_offset=5515 m_body_out_chunks.size()=2
+[2026-06-21 18:16:58.470156] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=6933 m_body_read_offset=4359 m_body_out_chunks.size()=2
+[2026-06-21 18:16:58.470173] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:58.470189] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=6933 m_body_read_offset=4359 m_body_out_chunks.size()=2
+[2026-06-21 18:16:58.470205] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=8089 m_body_read_offset=3203 m_body_out_chunks.size()=2
+[2026-06-21 18:16:58.470244] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 103 body bytes on stream 0
+[2026-06-21 18:16:58.470266] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=103 m_front_chunk_offset=8089 m_body_read_offset=3203 m_body_out_chunks.size()=2
+[2026-06-21 18:16:58.470283] [ALL] [quic_http1_upstream_conn.cpp:148] buffer_chunk_drop_front: popping chunk size=8192 data_ptr=4034017372176
+[2026-06-21 18:16:58.470299] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=0 m_body_read_offset=3100 m_body_out_chunks.size()=1
+[2026-06-21 18:16:58.470315] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1053 body bytes on stream 0
+[2026-06-21 18:16:58.470332] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1053 m_front_chunk_offset=0 m_body_read_offset=3100 m_body_out_chunks.size()=1
+[2026-06-21 18:16:58.470348] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=1053 m_body_read_offset=2047 m_body_out_chunks.size()=1
+[2026-06-21 18:16:58.470364] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:58.470381] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=1053 m_body_read_offset=2047 m_body_out_chunks.size()=1
+[2026-06-21 18:16:58.470397] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=2209 m_body_read_offset=891 m_body_out_chunks.size()=1
+[2026-06-21 18:16:58.470462] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 891 body bytes on stream 0
+[2026-06-21 18:16:58.470505] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=891 m_front_chunk_offset=2209 m_body_read_offset=891 m_body_out_chunks.size()=1
+[2026-06-21 18:16:58.470571] [ALL] [quic_http1_upstream_conn.cpp:148] buffer_chunk_drop_front: popping chunk size=3100 data_ptr=4034014696464
+[2026-06-21 18:16:58.470603] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=0 m_body_read_offset=0 m_body_out_chunks.size()=0
+[2026-06-21 18:16:58.470667] [INFO] [quic_session_upstream.cpp:40] QuicUpstreamHandler: QuicUpstreamHandler destructed stream_id=0
+[2026-06-21 18:16:58.470780] [INFO] [quic_connection.cpp:1260] QuicConnection: closing connection with error code 0 to peer 127.0.0.1:53751
+[2026-06-21 18:16:58.609218] [INFO] [quic_server_endpoint.cpp:149] QuicServerEndpoint: new connection for DCID fd31e4eaf77273bc86125ea968285f753ee5e668
+[2026-06-21 18:16:58.609281] [INFO] [quic_connection.cpp:300] QuicConnection: QuicConnection constructed for peer 127.0.0.1:52544
+[2026-06-21 18:16:58.609938] [INFO] [quic_server_endpoint.cpp:230] QuicServerEndpoint: added initial DCID fd31e4eaf77273bc86125ea968285f753ee5e668
+[2026-06-21 18:16:58.609972] [INFO] [quic_server_endpoint.cpp:234] QuicServerEndpoint: added server SCID 555262fb8f27ca3551cb43035e9d37e1a203
+[2026-06-21 18:16:58.615082] [INFO] [quic_server_endpoint.cpp:206] QuicServerEndpoint: added NEW CID 9984d02db8c2b12fbd1a497672473ed14614
+[2026-06-21 18:16:58.616910] [INFO] [quic_connection.cpp:1299] QuicConnection: handshake completed (role=server, peer=127.0.0.1:52544, alpn=h3)
+[2026-06-21 18:16:58.616966] [INFO] [quic_connection.cpp:1185] QuicConnection: stream 2 falling back to h1_upstream 127.0.0.1:8001
+[2026-06-21 18:16:58.617005] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 3 produced 1 vecs path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:58.617025] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=3 datavcnt=1 fin=false path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:58.617345] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=3 pdatalen=18 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:58.617402] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=3 written=18 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:58.617425] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 11 produced 1 vecs path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:58.617441] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=11 datavcnt=1 fin=false path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:58.617458] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=11 pdatalen=1 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:58.617495] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=11 written=1 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:58.617515] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 7 produced 1 vecs path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:58.617530] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=7 datavcnt=1 fin=false path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:58.617546] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=7 pdatalen=1 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:58.617581] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=7 written=1 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:58.617616] [INFO] [quic_session_upstream.cpp:35] QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=2
+[2026-06-21 18:16:58.617639] [INFO] [quic_connection.cpp:1185] QuicConnection: stream 10 falling back to h1_upstream 127.0.0.1:8001
+[2026-06-21 18:16:58.617659] [INFO] [quic_session_upstream.cpp:35] QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=10
+[2026-06-21 18:16:58.617676] [INFO] [quic_connection.cpp:1185] QuicConnection: stream 6 falling back to h1_upstream 127.0.0.1:8001
+[2026-06-21 18:16:58.617708] [INFO] [quic_session_upstream.cpp:35] QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=6
+[2026-06-21 18:16:58.617798] [INFO] [quic_connection.cpp:1185] QuicConnection: stream 0 falling back to h1_upstream 127.0.0.1:8001
+[2026-06-21 18:16:58.617833] [INFO] [quic_session_upstream.cpp:35] QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=0
+[2026-06-21 18:16:58.617945] [ALL] [quic_connection.cpp:1415] on_extend_max_stream_data: stream=0 max_data=10485760
+[2026-06-21 18:16:58.617969] [ALL] [quic_to_http3_connect.cpp:244] QuicToHttp3Connect::unblock_stream: stream 0 unblocked
+[2026-06-21 18:16:58.618077] [INFO] [quic_session_upstream.cpp:413] QuicUpstreamHandler: stream 0 on_h3_end_headers fin=true
+[2026-06-21 18:16:58.618307] [INFO] [quic_http1_upstream_conn.cpp:52] HTTP upstream connected to 127.0.0.1:8001
+[2026-06-21 18:16:58.618347] [INFO] [quic_session_upstream.cpp:282] QuicUpstreamHandler: stream 0 HTTP upstream connected
+[2026-06-21 18:16:59.001843] [INFO] [quic_session_upstream.cpp:191] QuicUpstreamHandler: stream 0 submitting H3 response status=200
+[2026-06-21 18:16:59.001928] [ALL] [quic_to_http3_connect.cpp:127] QuicToHttp3Connect: submitted response for stream 0 has_body=true
+[2026-06-21 18:16:59.001984] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 0 produced 2 vecs path=QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespParser &)
+[2026-06-21 18:16:59.002015] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=0 datavcnt=2 fin=false path=QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespParser &)
+[2026-06-21 18:16:59.002047] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=0 pdatalen=220 path=QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespParser &)
+[2026-06-21 18:16:59.002141] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=0 written=220 path=QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespParser &)
+[2026-06-21 18:16:59.002305] [ALL] [quic_http1_upstream_conn.cpp:127] buffer_chunk_append: chunk size=8192 data_ptr=4034017644560
+[2026-06-21 18:16:59.002368] [ALL] [quic_http1_upstream_conn.cpp:127] buffer_chunk_append: chunk size=3100 data_ptr=4034014696464
+[2026-06-21 18:16:59.002403] [ALL] [quic_http1_upstream_conn.cpp:459] pull_body_chunks: vec[0] base=4034017644560 len=8192 (offset from chunk start: 0)
+[2026-06-21 18:16:59.002430] [ALL] [quic_http1_upstream_conn.cpp:459] pull_body_chunks: vec[1] base=4034014696464 len=3100 (offset from chunk start: 0)
+[2026-06-21 18:16:59.002453] [ALL] [quic_http1_upstream_conn.cpp:476] pull_body_chunks: pulled 11292 bytes, new m_body_read_offset=11292
+[2026-06-21 18:16:59.002479] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 0 produced 3 vecs path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:16:59.002503] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=0 datavcnt=3 fin=false path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:16:59.002996] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=0 pdatalen=891 path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:16:59.003095] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=0 written=11295 path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:16:59.003146] [INFO] [quic_session_upstream.cpp:309] QuicUpstreamHandler: stream 0 upstream EOF
+[2026-06-21 18:16:59.003173] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=0 datavcnt=0 fin=true path=QuicUpstreamHandler::h1_on_eof()
+[2026-06-21 18:16:59.003222] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=0 written=0 path=QuicUpstreamHandler::h1_on_eof()
+[2026-06-21 18:16:59.003278] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1153 body bytes on stream 0
+[2026-06-21 18:16:59.003302] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1153 m_front_chunk_offset=0 m_body_read_offset=11292 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.003321] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=1153 m_body_read_offset=10139 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.003363] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:59.003384] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=1153 m_body_read_offset=10139 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.003401] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=2309 m_body_read_offset=8983 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.003418] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:59.003435] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=2309 m_body_read_offset=8983 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.003452] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=3465 m_body_read_offset=7827 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.003469] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:59.003486] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=3465 m_body_read_offset=7827 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.003502] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=4621 m_body_read_offset=6671 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.003519] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:59.003536] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=4621 m_body_read_offset=6671 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.003552] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=5777 m_body_read_offset=5515 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.003627] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:59.003654] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=5777 m_body_read_offset=5515 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.003671] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=6933 m_body_read_offset=4359 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.003689] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:59.003706] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=6933 m_body_read_offset=4359 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.003722] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=8089 m_body_read_offset=3203 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.003739] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 103 body bytes on stream 0
+[2026-06-21 18:16:59.003756] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=103 m_front_chunk_offset=8089 m_body_read_offset=3203 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.003773] [ALL] [quic_http1_upstream_conn.cpp:148] buffer_chunk_drop_front: popping chunk size=8192 data_ptr=4034017644560
+[2026-06-21 18:16:59.003791] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=0 m_body_read_offset=3100 m_body_out_chunks.size()=1
+[2026-06-21 18:16:59.003807] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1053 body bytes on stream 0
+[2026-06-21 18:16:59.003824] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1053 m_front_chunk_offset=0 m_body_read_offset=3100 m_body_out_chunks.size()=1
+[2026-06-21 18:16:59.003841] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=1053 m_body_read_offset=2047 m_body_out_chunks.size()=1
+[2026-06-21 18:16:59.003858] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:59.003891] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=1053 m_body_read_offset=2047 m_body_out_chunks.size()=1
+[2026-06-21 18:16:59.003910] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=2209 m_body_read_offset=891 m_body_out_chunks.size()=1
+[2026-06-21 18:16:59.003978] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 891 body bytes on stream 0
+[2026-06-21 18:16:59.004004] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=891 m_front_chunk_offset=2209 m_body_read_offset=891 m_body_out_chunks.size()=1
+[2026-06-21 18:16:59.004021] [ALL] [quic_http1_upstream_conn.cpp:148] buffer_chunk_drop_front: popping chunk size=3100 data_ptr=4034014696464
+[2026-06-21 18:16:59.004038] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=0 m_body_read_offset=0 m_body_out_chunks.size()=0
+[2026-06-21 18:16:59.004076] [INFO] [quic_session_upstream.cpp:40] QuicUpstreamHandler: QuicUpstreamHandler destructed stream_id=0
+[2026-06-21 18:16:59.004154] [INFO] [quic_connection.cpp:1260] QuicConnection: closing connection with error code 0 to peer 127.0.0.1:52544
+[2026-06-21 18:16:59.139974] [INFO] [quic_server_endpoint.cpp:149] QuicServerEndpoint: new connection for DCID 15d467f2497d2b630eca0c285af8f281b219ab0b
+[2026-06-21 18:16:59.140031] [INFO] [quic_connection.cpp:300] QuicConnection: QuicConnection constructed for peer 127.0.0.1:54641
+[2026-06-21 18:16:59.140654] [INFO] [quic_server_endpoint.cpp:230] QuicServerEndpoint: added initial DCID 15d467f2497d2b630eca0c285af8f281b219ab0b
+[2026-06-21 18:16:59.140686] [INFO] [quic_server_endpoint.cpp:234] QuicServerEndpoint: added server SCID e71934b37e2c901cf70030f2d3f29fbe9b28
+[2026-06-21 18:16:59.146023] [INFO] [quic_server_endpoint.cpp:206] QuicServerEndpoint: added NEW CID 0e7db5e95c062f27051e3fc06dfd16dca88d
+[2026-06-21 18:16:59.147841] [INFO] [quic_connection.cpp:1299] QuicConnection: handshake completed (role=server, peer=127.0.0.1:54641, alpn=h3)
+[2026-06-21 18:16:59.147896] [INFO] [quic_connection.cpp:1185] QuicConnection: stream 2 falling back to h1_upstream 127.0.0.1:8001
+[2026-06-21 18:16:59.147926] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 3 produced 1 vecs path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:59.147944] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=3 datavcnt=1 fin=false path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:59.148263] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=3 pdatalen=18 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:59.148319] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=3 written=18 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:59.148343] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 11 produced 1 vecs path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:59.148359] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=11 datavcnt=1 fin=false path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:59.148376] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=11 pdatalen=1 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:59.148414] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=11 written=1 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:59.148434] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 7 produced 1 vecs path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:59.148449] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=7 datavcnt=1 fin=false path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:59.148465] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=7 pdatalen=1 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:59.148500] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=7 written=1 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:59.148561] [INFO] [quic_session_upstream.cpp:35] QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=2
+[2026-06-21 18:16:59.148590] [INFO] [quic_connection.cpp:1185] QuicConnection: stream 10 falling back to h1_upstream 127.0.0.1:8001
+[2026-06-21 18:16:59.148618] [INFO] [quic_session_upstream.cpp:35] QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=10
+[2026-06-21 18:16:59.148636] [INFO] [quic_connection.cpp:1185] QuicConnection: stream 6 falling back to h1_upstream 127.0.0.1:8001
+[2026-06-21 18:16:59.148654] [INFO] [quic_session_upstream.cpp:35] QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=6
+[2026-06-21 18:16:59.148749] [INFO] [quic_connection.cpp:1185] QuicConnection: stream 0 falling back to h1_upstream 127.0.0.1:8001
+[2026-06-21 18:16:59.148788] [INFO] [quic_session_upstream.cpp:35] QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=0
+[2026-06-21 18:16:59.148874] [ALL] [quic_connection.cpp:1415] on_extend_max_stream_data: stream=0 max_data=10485760
+[2026-06-21 18:16:59.148898] [ALL] [quic_to_http3_connect.cpp:244] QuicToHttp3Connect::unblock_stream: stream 0 unblocked
+[2026-06-21 18:16:59.148927] [INFO] [quic_session_upstream.cpp:413] QuicUpstreamHandler: stream 0 on_h3_end_headers fin=true
+[2026-06-21 18:16:59.149085] [INFO] [quic_http1_upstream_conn.cpp:52] HTTP upstream connected to 127.0.0.1:8001
+[2026-06-21 18:16:59.149119] [INFO] [quic_session_upstream.cpp:282] QuicUpstreamHandler: stream 0 HTTP upstream connected
+[2026-06-21 18:16:59.360526] [INFO] [quic_session_upstream.cpp:191] QuicUpstreamHandler: stream 0 submitting H3 response status=200
+[2026-06-21 18:16:59.360610] [ALL] [quic_to_http3_connect.cpp:127] QuicToHttp3Connect: submitted response for stream 0 has_body=true
+[2026-06-21 18:16:59.360664] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 0 produced 2 vecs path=QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespParser &)
+[2026-06-21 18:16:59.360693] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=0 datavcnt=2 fin=false path=QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespParser &)
+[2026-06-21 18:16:59.360724] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=0 pdatalen=220 path=QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespParser &)
+[2026-06-21 18:16:59.360817] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=0 written=220 path=QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespParser &)
+[2026-06-21 18:16:59.360878] [ALL] [quic_http1_upstream_conn.cpp:127] buffer_chunk_append: chunk size=8192 data_ptr=4034017654800
+[2026-06-21 18:16:59.360917] [ALL] [quic_http1_upstream_conn.cpp:127] buffer_chunk_append: chunk size=3100 data_ptr=4034014703632
+[2026-06-21 18:16:59.360944] [ALL] [quic_http1_upstream_conn.cpp:459] pull_body_chunks: vec[0] base=4034017654800 len=8192 (offset from chunk start: 0)
+[2026-06-21 18:16:59.360968] [ALL] [quic_http1_upstream_conn.cpp:459] pull_body_chunks: vec[1] base=4034014703632 len=3100 (offset from chunk start: 0)
+[2026-06-21 18:16:59.360989] [ALL] [quic_http1_upstream_conn.cpp:476] pull_body_chunks: pulled 11292 bytes, new m_body_read_offset=11292
+[2026-06-21 18:16:59.361013] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 0 produced 3 vecs path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:16:59.361035] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=0 datavcnt=3 fin=false path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:16:59.361395] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=0 pdatalen=891 path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:16:59.361468] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=0 written=11295 path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:16:59.361522] [INFO] [quic_session_upstream.cpp:309] QuicUpstreamHandler: stream 0 upstream EOF
+[2026-06-21 18:16:59.361552] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=0 datavcnt=0 fin=true path=QuicUpstreamHandler::h1_on_eof()
+[2026-06-21 18:16:59.361610] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=0 written=0 path=QuicUpstreamHandler::h1_on_eof()
+[2026-06-21 18:16:59.361675] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1153 body bytes on stream 0
+[2026-06-21 18:16:59.361704] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1153 m_front_chunk_offset=0 m_body_read_offset=11292 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.361726] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=1153 m_body_read_offset=10139 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.361748] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:59.361770] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=1153 m_body_read_offset=10139 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.361791] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=2309 m_body_read_offset=8983 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.361811] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:59.361832] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=2309 m_body_read_offset=8983 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.361852] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=3465 m_body_read_offset=7827 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.361885] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:59.361901] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=3465 m_body_read_offset=7827 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.361917] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=4621 m_body_read_offset=6671 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.361933] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:59.361950] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=4621 m_body_read_offset=6671 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.361966] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=5777 m_body_read_offset=5515 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.361982] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:59.361999] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=5777 m_body_read_offset=5515 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.362015] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=6933 m_body_read_offset=4359 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.362030] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:59.362047] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=6933 m_body_read_offset=4359 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.362063] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=8089 m_body_read_offset=3203 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.362131] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 103 body bytes on stream 0
+[2026-06-21 18:16:59.362157] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=103 m_front_chunk_offset=8089 m_body_read_offset=3203 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.362177] [ALL] [quic_http1_upstream_conn.cpp:148] buffer_chunk_drop_front: popping chunk size=8192 data_ptr=4034017654800
+[2026-06-21 18:16:59.362195] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=0 m_body_read_offset=3100 m_body_out_chunks.size()=1
+[2026-06-21 18:16:59.362211] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1053 body bytes on stream 0
+[2026-06-21 18:16:59.362228] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1053 m_front_chunk_offset=0 m_body_read_offset=3100 m_body_out_chunks.size()=1
+[2026-06-21 18:16:59.362244] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=1053 m_body_read_offset=2047 m_body_out_chunks.size()=1
+[2026-06-21 18:16:59.362264] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:59.362281] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=1053 m_body_read_offset=2047 m_body_out_chunks.size()=1
+[2026-06-21 18:16:59.362297] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=2209 m_body_read_offset=891 m_body_out_chunks.size()=1
+[2026-06-21 18:16:59.362313] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 891 body bytes on stream 0
+[2026-06-21 18:16:59.362330] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=891 m_front_chunk_offset=2209 m_body_read_offset=891 m_body_out_chunks.size()=1
+[2026-06-21 18:16:59.362347] [ALL] [quic_http1_upstream_conn.cpp:148] buffer_chunk_drop_front: popping chunk size=3100 data_ptr=4034014703632
+[2026-06-21 18:16:59.362363] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=0 m_body_read_offset=0 m_body_out_chunks.size()=0
+[2026-06-21 18:16:59.362408] [INFO] [quic_connection.cpp:1260] QuicConnection: closing connection with error code 0 to peer 127.0.0.1:54641
+[2026-06-21 18:16:59.496551] [INFO] [quic_server_endpoint.cpp:149] QuicServerEndpoint: new connection for DCID dbc8c2a6747ca8504bf8342af2233ab7b4df2adf
+[2026-06-21 18:16:59.496604] [INFO] [quic_connection.cpp:300] QuicConnection: QuicConnection constructed for peer 127.0.0.1:62004
+[2026-06-21 18:16:59.497227] [INFO] [quic_server_endpoint.cpp:230] QuicServerEndpoint: added initial DCID dbc8c2a6747ca8504bf8342af2233ab7b4df2adf
+[2026-06-21 18:16:59.497260] [INFO] [quic_server_endpoint.cpp:234] QuicServerEndpoint: added server SCID be192ee8637a7b75d7cc3e9b303eb12f6d83
+[2026-06-21 18:16:59.502477] [INFO] [quic_server_endpoint.cpp:206] QuicServerEndpoint: added NEW CID 6ce769154d6ad527532543f073fcef7b0912
+[2026-06-21 18:16:59.504275] [INFO] [quic_connection.cpp:1299] QuicConnection: handshake completed (role=server, peer=127.0.0.1:62004, alpn=h3)
+[2026-06-21 18:16:59.504332] [INFO] [quic_connection.cpp:1185] QuicConnection: stream 2 falling back to h1_upstream 127.0.0.1:8001
+[2026-06-21 18:16:59.504363] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 3 produced 1 vecs path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:59.504381] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=3 datavcnt=1 fin=false path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:59.504704] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=3 pdatalen=18 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:59.504764] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=3 written=18 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:59.504788] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 11 produced 1 vecs path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:59.504803] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=11 datavcnt=1 fin=false path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:59.504820] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=11 pdatalen=1 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:59.504861] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=11 written=1 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:59.504881] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 7 produced 1 vecs path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:59.504896] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=7 datavcnt=1 fin=false path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:59.504913] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=7 pdatalen=1 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:59.504947] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=7 written=1 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:16:59.504981] [INFO] [quic_session_upstream.cpp:35] QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=2
+[2026-06-21 18:16:59.505004] [INFO] [quic_connection.cpp:1185] QuicConnection: stream 10 falling back to h1_upstream 127.0.0.1:8001
+[2026-06-21 18:16:59.505030] [INFO] [quic_session_upstream.cpp:35] QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=10
+[2026-06-21 18:16:59.505048] [INFO] [quic_connection.cpp:1185] QuicConnection: stream 6 falling back to h1_upstream 127.0.0.1:8001
+[2026-06-21 18:16:59.505073] [INFO] [quic_session_upstream.cpp:35] QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=6
+[2026-06-21 18:16:59.505162] [INFO] [quic_connection.cpp:1185] QuicConnection: stream 0 falling back to h1_upstream 127.0.0.1:8001
+[2026-06-21 18:16:59.505196] [INFO] [quic_session_upstream.cpp:35] QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=0
+[2026-06-21 18:16:59.505284] [ALL] [quic_connection.cpp:1415] on_extend_max_stream_data: stream=0 max_data=10485760
+[2026-06-21 18:16:59.505307] [ALL] [quic_to_http3_connect.cpp:244] QuicToHttp3Connect::unblock_stream: stream 0 unblocked
+[2026-06-21 18:16:59.505335] [INFO] [quic_session_upstream.cpp:413] QuicUpstreamHandler: stream 0 on_h3_end_headers fin=true
+[2026-06-21 18:16:59.505442] [INFO] [quic_http1_upstream_conn.cpp:52] HTTP upstream connected to 127.0.0.1:8001
+[2026-06-21 18:16:59.505467] [INFO] [quic_session_upstream.cpp:282] QuicUpstreamHandler: stream 0 HTTP upstream connected
+[2026-06-21 18:16:59.874048] [INFO] [quic_session_upstream.cpp:191] QuicUpstreamHandler: stream 0 submitting H3 response status=200
+[2026-06-21 18:16:59.874132] [ALL] [quic_to_http3_connect.cpp:127] QuicToHttp3Connect: submitted response for stream 0 has_body=true
+[2026-06-21 18:16:59.874186] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 0 produced 2 vecs path=QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespParser &)
+[2026-06-21 18:16:59.874216] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=0 datavcnt=2 fin=false path=QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespParser &)
+[2026-06-21 18:16:59.874246] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=0 pdatalen=220 path=QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespParser &)
+[2026-06-21 18:16:59.874339] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=0 written=220 path=QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespParser &)
+[2026-06-21 18:16:59.874386] [ALL] [quic_http1_upstream_conn.cpp:127] buffer_chunk_append: chunk size=8192 data_ptr=4034017634320
+[2026-06-21 18:16:59.874413] [ALL] [quic_http1_upstream_conn.cpp:127] buffer_chunk_append: chunk size=3100 data_ptr=4034014710800
+[2026-06-21 18:16:59.874438] [ALL] [quic_http1_upstream_conn.cpp:459] pull_body_chunks: vec[0] base=4034017634320 len=8192 (offset from chunk start: 0)
+[2026-06-21 18:16:59.874473] [ALL] [quic_http1_upstream_conn.cpp:459] pull_body_chunks: vec[1] base=4034014710800 len=3100 (offset from chunk start: 0)
+[2026-06-21 18:16:59.874500] [ALL] [quic_http1_upstream_conn.cpp:476] pull_body_chunks: pulled 11292 bytes, new m_body_read_offset=11292
+[2026-06-21 18:16:59.874525] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 0 produced 3 vecs path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:16:59.874549] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=0 datavcnt=3 fin=false path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:16:59.875142] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=0 pdatalen=891 path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:16:59.875336] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=0 written=11295 path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:16:59.875425] [INFO] [quic_session_upstream.cpp:309] QuicUpstreamHandler: stream 0 upstream EOF
+[2026-06-21 18:16:59.875512] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=0 datavcnt=0 fin=true path=QuicUpstreamHandler::h1_on_eof()
+[2026-06-21 18:16:59.875648] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=0 written=0 path=QuicUpstreamHandler::h1_on_eof()
+[2026-06-21 18:16:59.875779] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1153 body bytes on stream 0
+[2026-06-21 18:16:59.875847] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1153 m_front_chunk_offset=0 m_body_read_offset=11292 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.875874] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=1153 m_body_read_offset=10139 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.875902] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:59.875949] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=1153 m_body_read_offset=10139 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.875983] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=2309 m_body_read_offset=8983 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.876004] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:59.876022] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=2309 m_body_read_offset=8983 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.876040] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=3465 m_body_read_offset=7827 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.876057] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:59.876075] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=3465 m_body_read_offset=7827 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.876092] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=4621 m_body_read_offset=6671 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.876109] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:59.876126] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=4621 m_body_read_offset=6671 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.876143] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=5777 m_body_read_offset=5515 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.876159] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:59.876177] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=5777 m_body_read_offset=5515 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.876193] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=6933 m_body_read_offset=4359 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.876213] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:59.876231] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=6933 m_body_read_offset=4359 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.876247] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=8089 m_body_read_offset=3203 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.876264] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 103 body bytes on stream 0
+[2026-06-21 18:16:59.876281] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=103 m_front_chunk_offset=8089 m_body_read_offset=3203 m_body_out_chunks.size()=2
+[2026-06-21 18:16:59.876298] [ALL] [quic_http1_upstream_conn.cpp:148] buffer_chunk_drop_front: popping chunk size=8192 data_ptr=4034017634320
+[2026-06-21 18:16:59.876315] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=0 m_body_read_offset=3100 m_body_out_chunks.size()=1
+[2026-06-21 18:16:59.876331] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1053 body bytes on stream 0
+[2026-06-21 18:16:59.876348] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1053 m_front_chunk_offset=0 m_body_read_offset=3100 m_body_out_chunks.size()=1
+[2026-06-21 18:16:59.876365] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=1053 m_body_read_offset=2047 m_body_out_chunks.size()=1
+[2026-06-21 18:16:59.876382] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:16:59.876399] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=1053 m_body_read_offset=2047 m_body_out_chunks.size()=1
+[2026-06-21 18:16:59.876415] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=2209 m_body_read_offset=891 m_body_out_chunks.size()=1
+[2026-06-21 18:16:59.876510] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 891 body bytes on stream 0
+[2026-06-21 18:16:59.876538] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=891 m_front_chunk_offset=2209 m_body_read_offset=891 m_body_out_chunks.size()=1
+[2026-06-21 18:16:59.876556] [ALL] [quic_http1_upstream_conn.cpp:148] buffer_chunk_drop_front: popping chunk size=3100 data_ptr=4034014710800
+[2026-06-21 18:16:59.876573] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=0 m_body_read_offset=0 m_body_out_chunks.size()=0
+[2026-06-21 18:16:59.876612] [INFO] [quic_session_upstream.cpp:40] QuicUpstreamHandler: QuicUpstreamHandler destructed stream_id=0
+[2026-06-21 18:16:59.876696] [INFO] [quic_connection.cpp:1260] QuicConnection: closing connection with error code 0 to peer 127.0.0.1:62004
+[2026-06-21 18:17:00.010997] [INFO] [quic_server_endpoint.cpp:149] QuicServerEndpoint: new connection for DCID 83dd9265028b95881d9dbb9327bda7fb1f62e2fa
+[2026-06-21 18:17:00.011055] [INFO] [quic_connection.cpp:300] QuicConnection: QuicConnection constructed for peer 127.0.0.1:58328
+[2026-06-21 18:17:00.011687] [INFO] [quic_server_endpoint.cpp:230] QuicServerEndpoint: added initial DCID 83dd9265028b95881d9dbb9327bda7fb1f62e2fa
+[2026-06-21 18:17:00.011720] [INFO] [quic_server_endpoint.cpp:234] QuicServerEndpoint: added server SCID 02dac2549faf1a87e260a5dcc412e32b745c
+[2026-06-21 18:17:00.016878] [INFO] [quic_server_endpoint.cpp:206] QuicServerEndpoint: added NEW CID 4a15ab31fab8c6c7d00003d455d69f051a96
+[2026-06-21 18:17:00.018669] [INFO] [quic_connection.cpp:1299] QuicConnection: handshake completed (role=server, peer=127.0.0.1:58328, alpn=h3)
+[2026-06-21 18:17:00.018731] [INFO] [quic_connection.cpp:1185] QuicConnection: stream 2 falling back to h1_upstream 127.0.0.1:8001
+[2026-06-21 18:17:00.018763] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 3 produced 1 vecs path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:17:00.018784] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=3 datavcnt=1 fin=false path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:17:00.019184] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=3 pdatalen=18 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:17:00.019264] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=3 written=18 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:17:00.019291] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 11 produced 1 vecs path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:17:00.019397] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=11 datavcnt=1 fin=false path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:17:00.019422] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=11 pdatalen=1 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:17:00.019474] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=11 written=1 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:17:00.019497] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 7 produced 1 vecs path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:17:00.019514] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=7 datavcnt=1 fin=false path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:17:00.019531] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=7 pdatalen=1 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:17:00.019572] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=7 written=1 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:17:00.019600] [INFO] [quic_session_upstream.cpp:35] QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=2
+[2026-06-21 18:17:00.019631] [INFO] [quic_connection.cpp:1185] QuicConnection: stream 10 falling back to h1_upstream 127.0.0.1:8001
+[2026-06-21 18:17:00.019672] [INFO] [quic_session_upstream.cpp:35] QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=10
+[2026-06-21 18:17:00.019691] [INFO] [quic_connection.cpp:1185] QuicConnection: stream 6 falling back to h1_upstream 127.0.0.1:8001
+[2026-06-21 18:17:00.019717] [INFO] [quic_session_upstream.cpp:35] QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=6
+[2026-06-21 18:17:00.019819] [INFO] [quic_connection.cpp:1185] QuicConnection: stream 0 falling back to h1_upstream 127.0.0.1:8001
+[2026-06-21 18:17:00.019852] [INFO] [quic_session_upstream.cpp:35] QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=0
+[2026-06-21 18:17:00.019947] [ALL] [quic_connection.cpp:1415] on_extend_max_stream_data: stream=0 max_data=10485760
+[2026-06-21 18:17:00.019971] [ALL] [quic_to_http3_connect.cpp:244] QuicToHttp3Connect::unblock_stream: stream 0 unblocked
+[2026-06-21 18:17:00.019999] [INFO] [quic_session_upstream.cpp:413] QuicUpstreamHandler: stream 0 on_h3_end_headers fin=true
+[2026-06-21 18:17:00.020129] [INFO] [quic_http1_upstream_conn.cpp:52] HTTP upstream connected to 127.0.0.1:8001
+[2026-06-21 18:17:00.020164] [INFO] [quic_session_upstream.cpp:282] QuicUpstreamHandler: stream 0 HTTP upstream connected
+[2026-06-21 18:17:00.392875] [INFO] [quic_session_upstream.cpp:191] QuicUpstreamHandler: stream 0 submitting H3 response status=200
+[2026-06-21 18:17:00.392963] [ALL] [quic_to_http3_connect.cpp:127] QuicToHttp3Connect: submitted response for stream 0 has_body=true
+[2026-06-21 18:17:00.393019] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 0 produced 2 vecs path=QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespParser &)
+[2026-06-21 18:17:00.393049] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=0 datavcnt=2 fin=false path=QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespParser &)
+[2026-06-21 18:17:00.393080] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=0 pdatalen=220 path=QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespParser &)
+[2026-06-21 18:17:00.393181] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=0 written=220 path=QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespParser &)
+[2026-06-21 18:17:00.393242] [ALL] [quic_http1_upstream_conn.cpp:127] buffer_chunk_append: chunk size=8192 data_ptr=4034017634320
+[2026-06-21 18:17:00.393272] [ALL] [quic_http1_upstream_conn.cpp:127] buffer_chunk_append: chunk size=3100 data_ptr=4034014710800
+[2026-06-21 18:17:00.393297] [ALL] [quic_http1_upstream_conn.cpp:459] pull_body_chunks: vec[0] base=4034017634320 len=8192 (offset from chunk start: 0)
+[2026-06-21 18:17:00.393321] [ALL] [quic_http1_upstream_conn.cpp:459] pull_body_chunks: vec[1] base=4034014710800 len=3100 (offset from chunk start: 0)
+[2026-06-21 18:17:00.393343] [ALL] [quic_http1_upstream_conn.cpp:476] pull_body_chunks: pulled 11292 bytes, new m_body_read_offset=11292
+[2026-06-21 18:17:00.393366] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 0 produced 3 vecs path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:17:00.393389] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=0 datavcnt=3 fin=false path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:17:00.393752] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=0 pdatalen=891 path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:17:00.393823] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=0 written=11295 path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:17:00.393875] [INFO] [quic_session_upstream.cpp:309] QuicUpstreamHandler: stream 0 upstream EOF
+[2026-06-21 18:17:00.393904] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=0 datavcnt=0 fin=true path=QuicUpstreamHandler::h1_on_eof()
+[2026-06-21 18:17:00.393963] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=0 written=0 path=QuicUpstreamHandler::h1_on_eof()
+[2026-06-21 18:17:00.394030] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1153 body bytes on stream 0
+[2026-06-21 18:17:00.394059] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1153 m_front_chunk_offset=0 m_body_read_offset=11292 m_body_out_chunks.size()=2
+[2026-06-21 18:17:00.394083] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=1153 m_body_read_offset=10139 m_body_out_chunks.size()=2
+[2026-06-21 18:17:00.394105] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:17:00.394126] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=1153 m_body_read_offset=10139 m_body_out_chunks.size()=2
+[2026-06-21 18:17:00.394147] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=2309 m_body_read_offset=8983 m_body_out_chunks.size()=2
+[2026-06-21 18:17:00.394168] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:17:00.394189] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=2309 m_body_read_offset=8983 m_body_out_chunks.size()=2
+[2026-06-21 18:17:00.394210] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=3465 m_body_read_offset=7827 m_body_out_chunks.size()=2
+[2026-06-21 18:17:00.394230] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:17:00.394251] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=3465 m_body_read_offset=7827 m_body_out_chunks.size()=2
+[2026-06-21 18:17:00.394272] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=4621 m_body_read_offset=6671 m_body_out_chunks.size()=2
+[2026-06-21 18:17:00.394296] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:17:00.394318] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=4621 m_body_read_offset=6671 m_body_out_chunks.size()=2
+[2026-06-21 18:17:00.394338] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=5777 m_body_read_offset=5515 m_body_out_chunks.size()=2
+[2026-06-21 18:17:00.394359] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:17:00.394380] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=5777 m_body_read_offset=5515 m_body_out_chunks.size()=2
+[2026-06-21 18:17:00.394400] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=6933 m_body_read_offset=4359 m_body_out_chunks.size()=2
+[2026-06-21 18:17:00.394421] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:17:00.394443] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=6933 m_body_read_offset=4359 m_body_out_chunks.size()=2
+[2026-06-21 18:17:00.394464] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=8089 m_body_read_offset=3203 m_body_out_chunks.size()=2
+[2026-06-21 18:17:00.394553] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 103 body bytes on stream 0
+[2026-06-21 18:17:00.394586] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=103 m_front_chunk_offset=8089 m_body_read_offset=3203 m_body_out_chunks.size()=2
+[2026-06-21 18:17:00.394611] [ALL] [quic_http1_upstream_conn.cpp:148] buffer_chunk_drop_front: popping chunk size=8192 data_ptr=4034017634320
+[2026-06-21 18:17:00.394635] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=0 m_body_read_offset=3100 m_body_out_chunks.size()=1
+[2026-06-21 18:17:00.394656] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1053 body bytes on stream 0
+[2026-06-21 18:17:00.394676] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1053 m_front_chunk_offset=0 m_body_read_offset=3100 m_body_out_chunks.size()=1
+[2026-06-21 18:17:00.394697] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=1053 m_body_read_offset=2047 m_body_out_chunks.size()=1
+[2026-06-21 18:17:00.394720] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:17:00.394741] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=1053 m_body_read_offset=2047 m_body_out_chunks.size()=1
+[2026-06-21 18:17:00.394762] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=2209 m_body_read_offset=891 m_body_out_chunks.size()=1
+[2026-06-21 18:17:00.394814] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 891 body bytes on stream 0
+[2026-06-21 18:17:00.394842] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=891 m_front_chunk_offset=2209 m_body_read_offset=891 m_body_out_chunks.size()=1
+[2026-06-21 18:17:00.394863] [ALL] [quic_http1_upstream_conn.cpp:148] buffer_chunk_drop_front: popping chunk size=3100 data_ptr=4034014710800
+[2026-06-21 18:17:00.394884] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=0 m_body_read_offset=0 m_body_out_chunks.size()=0
+[2026-06-21 18:17:00.394927] [INFO] [quic_session_upstream.cpp:40] QuicUpstreamHandler: QuicUpstreamHandler destructed stream_id=0
+[2026-06-21 18:17:00.395025] [INFO] [quic_connection.cpp:1260] QuicConnection: closing connection with error code 0 to peer 127.0.0.1:58328
+[2026-06-21 18:17:00.530814] [INFO] [quic_server_endpoint.cpp:149] QuicServerEndpoint: new connection for DCID ac113858da2087e949067d9e0a9df773b3c6daa8
+[2026-06-21 18:17:00.530868] [INFO] [quic_connection.cpp:300] QuicConnection: QuicConnection constructed for peer 127.0.0.1:64549
+[2026-06-21 18:17:00.531484] [INFO] [quic_server_endpoint.cpp:230] QuicServerEndpoint: added initial DCID ac113858da2087e949067d9e0a9df773b3c6daa8
+[2026-06-21 18:17:00.531517] [INFO] [quic_server_endpoint.cpp:234] QuicServerEndpoint: added server SCID 34df87d4133cd48da742fe679eb4872208f2
+[2026-06-21 18:17:00.536743] [INFO] [quic_server_endpoint.cpp:206] QuicServerEndpoint: added NEW CID 70754f69da149f4c65834cce21d7cbad4bea
+[2026-06-21 18:17:00.538540] [INFO] [quic_connection.cpp:1299] QuicConnection: handshake completed (role=server, peer=127.0.0.1:64549, alpn=h3)
+[2026-06-21 18:17:00.538597] [INFO] [quic_connection.cpp:1185] QuicConnection: stream 2 falling back to h1_upstream 127.0.0.1:8001
+[2026-06-21 18:17:00.538634] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 3 produced 1 vecs path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:17:00.538655] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=3 datavcnt=1 fin=false path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:17:00.538976] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=3 pdatalen=18 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:17:00.539032] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=3 written=18 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:17:00.539056] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 11 produced 1 vecs path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:17:00.539071] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=11 datavcnt=1 fin=false path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:17:00.539088] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=11 pdatalen=1 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:17:00.539125] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=11 written=1 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:17:00.539145] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 7 produced 1 vecs path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:17:00.539161] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=7 datavcnt=1 fin=false path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:17:00.539177] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=7 pdatalen=1 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:17:00.539216] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=7 written=1 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:17:00.539252] [INFO] [quic_session_upstream.cpp:35] QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=2
+[2026-06-21 18:17:00.539277] [INFO] [quic_connection.cpp:1185] QuicConnection: stream 10 falling back to h1_upstream 127.0.0.1:8001
+[2026-06-21 18:17:00.539297] [INFO] [quic_session_upstream.cpp:35] QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=10
+[2026-06-21 18:17:00.539314] [INFO] [quic_connection.cpp:1185] QuicConnection: stream 6 falling back to h1_upstream 127.0.0.1:8001
+[2026-06-21 18:17:00.539346] [INFO] [quic_session_upstream.cpp:35] QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=6
+[2026-06-21 18:17:00.539438] [INFO] [quic_connection.cpp:1185] QuicConnection: stream 0 falling back to h1_upstream 127.0.0.1:8001
+[2026-06-21 18:17:00.539471] [INFO] [quic_session_upstream.cpp:35] QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=0
+[2026-06-21 18:17:00.539558] [ALL] [quic_connection.cpp:1415] on_extend_max_stream_data: stream=0 max_data=10485760
+[2026-06-21 18:17:00.539582] [ALL] [quic_to_http3_connect.cpp:244] QuicToHttp3Connect::unblock_stream: stream 0 unblocked
+[2026-06-21 18:17:00.539610] [INFO] [quic_session_upstream.cpp:413] QuicUpstreamHandler: stream 0 on_h3_end_headers fin=true
+[2026-06-21 18:17:00.539712] [INFO] [quic_http1_upstream_conn.cpp:52] HTTP upstream connected to 127.0.0.1:8001
+[2026-06-21 18:17:00.539746] [INFO] [quic_session_upstream.cpp:282] QuicUpstreamHandler: stream 0 HTTP upstream connected
+[2026-06-21 18:17:00.741740] [INFO] [quic_session_upstream.cpp:191] QuicUpstreamHandler: stream 0 submitting H3 response status=200
+[2026-06-21 18:17:00.741926] [ALL] [quic_to_http3_connect.cpp:127] QuicToHttp3Connect: submitted response for stream 0 has_body=true
+[2026-06-21 18:17:00.742027] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 0 produced 2 vecs path=QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespParser &)
+[2026-06-21 18:17:00.742154] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=0 datavcnt=2 fin=false path=QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespParser &)
+[2026-06-21 18:17:00.742215] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=0 pdatalen=220 path=QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespParser &)
+[2026-06-21 18:17:00.742316] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=0 written=220 path=QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespParser &)
+[2026-06-21 18:17:00.742365] [ALL] [quic_http1_upstream_conn.cpp:127] buffer_chunk_append: chunk size=8192 data_ptr=4034017634320
+[2026-06-21 18:17:00.742393] [ALL] [quic_http1_upstream_conn.cpp:127] buffer_chunk_append: chunk size=3100 data_ptr=4034014710800
+[2026-06-21 18:17:00.742419] [ALL] [quic_http1_upstream_conn.cpp:459] pull_body_chunks: vec[0] base=4034017634320 len=8192 (offset from chunk start: 0)
+[2026-06-21 18:17:00.742443] [ALL] [quic_http1_upstream_conn.cpp:459] pull_body_chunks: vec[1] base=4034014710800 len=3100 (offset from chunk start: 0)
+[2026-06-21 18:17:00.742465] [ALL] [quic_http1_upstream_conn.cpp:476] pull_body_chunks: pulled 11292 bytes, new m_body_read_offset=11292
+[2026-06-21 18:17:00.742489] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 0 produced 3 vecs path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:17:00.742512] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=0 datavcnt=3 fin=false path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:17:00.742880] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=0 pdatalen=891 path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:17:00.742953] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=0 written=11295 path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:17:00.742986] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=0 datavcnt=0 fin=true path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:17:00.743043] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=0 written=0 path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:17:00.743075] [INFO] [quic_session_upstream.cpp:309] QuicUpstreamHandler: stream 0 upstream EOF
+[2026-06-21 18:17:00.743152] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1153 body bytes on stream 0
+[2026-06-21 18:17:00.743183] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1153 m_front_chunk_offset=0 m_body_read_offset=11292 m_body_out_chunks.size()=2
+[2026-06-21 18:17:00.743207] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=1153 m_body_read_offset=10139 m_body_out_chunks.size()=2
+[2026-06-21 18:17:00.743229] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:17:00.743251] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=1153 m_body_read_offset=10139 m_body_out_chunks.size()=2
+[2026-06-21 18:17:00.743272] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=2309 m_body_read_offset=8983 m_body_out_chunks.size()=2
+[2026-06-21 18:17:00.743298] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:17:00.743320] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=2309 m_body_read_offset=8983 m_body_out_chunks.size()=2
+[2026-06-21 18:17:00.743340] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=3465 m_body_read_offset=7827 m_body_out_chunks.size()=2
+[2026-06-21 18:17:00.743361] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:17:00.743382] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=3465 m_body_read_offset=7827 m_body_out_chunks.size()=2
+[2026-06-21 18:17:00.743403] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=4621 m_body_read_offset=6671 m_body_out_chunks.size()=2
+[2026-06-21 18:17:00.743423] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:17:00.743445] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=4621 m_body_read_offset=6671 m_body_out_chunks.size()=2
+[2026-06-21 18:17:00.743465] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=5777 m_body_read_offset=5515 m_body_out_chunks.size()=2
+[2026-06-21 18:17:00.743485] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:17:00.743506] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=5777 m_body_read_offset=5515 m_body_out_chunks.size()=2
+[2026-06-21 18:17:00.743527] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=6933 m_body_read_offset=4359 m_body_out_chunks.size()=2
+[2026-06-21 18:17:00.743547] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:17:00.743568] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=6933 m_body_read_offset=4359 m_body_out_chunks.size()=2
+[2026-06-21 18:17:00.743589] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=8089 m_body_read_offset=3203 m_body_out_chunks.size()=2
+[2026-06-21 18:17:00.743609] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 103 body bytes on stream 0
+[2026-06-21 18:17:00.743631] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=103 m_front_chunk_offset=8089 m_body_read_offset=3203 m_body_out_chunks.size()=2
+[2026-06-21 18:17:00.743651] [ALL] [quic_http1_upstream_conn.cpp:148] buffer_chunk_drop_front: popping chunk size=8192 data_ptr=4034017634320
+[2026-06-21 18:17:00.743672] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=0 m_body_read_offset=3100 m_body_out_chunks.size()=1
+[2026-06-21 18:17:00.743692] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1053 body bytes on stream 0
+[2026-06-21 18:17:00.743713] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1053 m_front_chunk_offset=0 m_body_read_offset=3100 m_body_out_chunks.size()=1
+[2026-06-21 18:17:00.743733] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=1053 m_body_read_offset=2047 m_body_out_chunks.size()=1
+[2026-06-21 18:17:00.743754] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:17:00.743774] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=1053 m_body_read_offset=2047 m_body_out_chunks.size()=1
+[2026-06-21 18:17:00.743795] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=2209 m_body_read_offset=891 m_body_out_chunks.size()=1
+[2026-06-21 18:17:00.743885] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 891 body bytes on stream 0
+[2026-06-21 18:17:00.743941] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=891 m_front_chunk_offset=2209 m_body_read_offset=891 m_body_out_chunks.size()=1
+[2026-06-21 18:17:00.743967] [ALL] [quic_http1_upstream_conn.cpp:148] buffer_chunk_drop_front: popping chunk size=3100 data_ptr=4034014710800
+[2026-06-21 18:17:00.743989] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=0 m_body_read_offset=0 m_body_out_chunks.size()=0
+[2026-06-21 18:17:00.744035] [INFO] [quic_session_upstream.cpp:40] QuicUpstreamHandler: QuicUpstreamHandler destructed stream_id=0
+[2026-06-21 18:17:00.744153] [INFO] [quic_connection.cpp:1260] QuicConnection: closing connection with error code 0 to peer 127.0.0.1:64549
+[2026-06-21 18:17:00.919063] [INFO] [quic_server_endpoint.cpp:149] QuicServerEndpoint: new connection for DCID f5db99a3800739df8067b0652e1bca00195b3a68
+[2026-06-21 18:17:00.919129] [INFO] [quic_connection.cpp:300] QuicConnection: QuicConnection constructed for peer 127.0.0.1:60490
+[2026-06-21 18:17:00.919806] [INFO] [quic_server_endpoint.cpp:230] QuicServerEndpoint: added initial DCID f5db99a3800739df8067b0652e1bca00195b3a68
+[2026-06-21 18:17:00.919844] [INFO] [quic_server_endpoint.cpp:234] QuicServerEndpoint: added server SCID 2bf052c58d518ef39fceca604b3b859ae058
+[2026-06-21 18:17:00.925249] [INFO] [quic_server_endpoint.cpp:206] QuicServerEndpoint: added NEW CID 05df0a13730897b7024e9f53092806067919
+[2026-06-21 18:17:00.927093] [INFO] [quic_connection.cpp:1299] QuicConnection: handshake completed (role=server, peer=127.0.0.1:60490, alpn=h3)
+[2026-06-21 18:17:00.927160] [INFO] [quic_connection.cpp:1185] QuicConnection: stream 2 falling back to h1_upstream 127.0.0.1:8001
+[2026-06-21 18:17:00.927192] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 3 produced 1 vecs path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:17:00.927211] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=3 datavcnt=1 fin=false path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:17:00.927551] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=3 pdatalen=18 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:17:00.927612] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=3 written=18 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:17:00.927638] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 11 produced 1 vecs path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:17:00.927655] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=11 datavcnt=1 fin=false path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:17:00.927672] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=11 pdatalen=1 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:17:00.927712] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=11 written=1 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:17:00.927733] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 7 produced 1 vecs path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:17:00.927749] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=7 datavcnt=1 fin=false path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:17:00.927765] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=7 pdatalen=1 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:17:00.927800] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=7 written=1 path=&QuicConnection::get_or_create_h3()
+[2026-06-21 18:17:00.927835] [INFO] [quic_session_upstream.cpp:35] QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=2
+[2026-06-21 18:17:00.927862] [INFO] [quic_connection.cpp:1185] QuicConnection: stream 10 falling back to h1_upstream 127.0.0.1:8001
+[2026-06-21 18:17:00.927891] [INFO] [quic_session_upstream.cpp:35] QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=10
+[2026-06-21 18:17:00.927913] [INFO] [quic_connection.cpp:1185] QuicConnection: stream 6 falling back to h1_upstream 127.0.0.1:8001
+[2026-06-21 18:17:00.927931] [INFO] [quic_session_upstream.cpp:35] QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=6
+[2026-06-21 18:17:00.928024] [INFO] [quic_connection.cpp:1185] QuicConnection: stream 0 falling back to h1_upstream 127.0.0.1:8001
+[2026-06-21 18:17:00.928066] [INFO] [quic_session_upstream.cpp:35] QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=0
+[2026-06-21 18:17:00.928163] [ALL] [quic_connection.cpp:1415] on_extend_max_stream_data: stream=0 max_data=10485760
+[2026-06-21 18:17:00.928187] [ALL] [quic_to_http3_connect.cpp:244] QuicToHttp3Connect::unblock_stream: stream 0 unblocked
+[2026-06-21 18:17:00.928216] [INFO] [quic_session_upstream.cpp:413] QuicUpstreamHandler: stream 0 on_h3_end_headers fin=true
+[2026-06-21 18:17:00.928324] [INFO] [quic_http1_upstream_conn.cpp:52] HTTP upstream connected to 127.0.0.1:8001
+[2026-06-21 18:17:00.928349] [INFO] [quic_session_upstream.cpp:282] QuicUpstreamHandler: stream 0 HTTP upstream connected
+[2026-06-21 18:17:01.127029] [INFO] [quic_session_upstream.cpp:191] QuicUpstreamHandler: stream 0 submitting H3 response status=200
+[2026-06-21 18:17:01.127113] [ALL] [quic_to_http3_connect.cpp:127] QuicToHttp3Connect: submitted response for stream 0 has_body=true
+[2026-06-21 18:17:01.127169] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 0 produced 2 vecs path=QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespParser &)
+[2026-06-21 18:17:01.127200] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=0 datavcnt=2 fin=false path=QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespParser &)
+[2026-06-21 18:17:01.127232] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=0 pdatalen=220 path=QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespParser &)
+[2026-06-21 18:17:01.127322] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=0 written=220 path=QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespParser &)
+[2026-06-21 18:17:01.127386] [ALL] [quic_http1_upstream_conn.cpp:127] buffer_chunk_append: chunk size=8192 data_ptr=4034018430992
+[2026-06-21 18:17:01.127429] [ALL] [quic_http1_upstream_conn.cpp:127] buffer_chunk_append: chunk size=3100 data_ptr=4034014717968
+[2026-06-21 18:17:01.127457] [ALL] [quic_http1_upstream_conn.cpp:459] pull_body_chunks: vec[0] base=4034018430992 len=8192 (offset from chunk start: 0)
+[2026-06-21 18:17:01.127480] [ALL] [quic_http1_upstream_conn.cpp:459] pull_body_chunks: vec[1] base=4034014717968 len=3100 (offset from chunk start: 0)
+[2026-06-21 18:17:01.127502] [ALL] [quic_http1_upstream_conn.cpp:476] pull_body_chunks: pulled 11292 bytes, new m_body_read_offset=11292
+[2026-06-21 18:17:01.127525] [ALL] [quic_to_http3_connect.cpp:153] QuicToHttp3Connect: pump_h3_response stream 0 produced 3 vecs path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:17:01.127548] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=0 datavcnt=3 fin=false path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:17:01.127975] [ALL] [quic_connection.cpp:1046] send_stream_vecs_impl: WRITE_MORE stream=0 pdatalen=891 path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:17:01.128081] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=0 written=11295 path=QuicUpstreamHandler::h1_on_body_data_available()
+[2026-06-21 18:17:01.128142] [INFO] [quic_session_upstream.cpp:309] QuicUpstreamHandler: stream 0 upstream EOF
+[2026-06-21 18:17:01.128176] [ALL] [quic_connection.cpp:957] send_stream_vecs_impl enter: stream_id=0 datavcnt=0 fin=true path=QuicUpstreamHandler::h1_on_eof()
+[2026-06-21 18:17:01.128249] [ALL] [quic_connection.cpp:1106] send_stream_vecs_impl leave: stream_id=0 written=0 path=QuicUpstreamHandler::h1_on_eof()
+[2026-06-21 18:17:01.128318] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1153 body bytes on stream 0
+[2026-06-21 18:17:01.128353] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1153 m_front_chunk_offset=0 m_body_read_offset=11292 m_body_out_chunks.size()=2
+[2026-06-21 18:17:01.128377] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=1153 m_body_read_offset=10139 m_body_out_chunks.size()=2
+[2026-06-21 18:17:01.128400] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:17:01.128422] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=1153 m_body_read_offset=10139 m_body_out_chunks.size()=2
+[2026-06-21 18:17:01.128443] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=2309 m_body_read_offset=8983 m_body_out_chunks.size()=2
+[2026-06-21 18:17:01.128465] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:17:01.128486] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=2309 m_body_read_offset=8983 m_body_out_chunks.size()=2
+[2026-06-21 18:17:01.128506] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=3465 m_body_read_offset=7827 m_body_out_chunks.size()=2
+[2026-06-21 18:17:01.128527] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:17:01.128549] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=3465 m_body_read_offset=7827 m_body_out_chunks.size()=2
+[2026-06-21 18:17:01.128569] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=4621 m_body_read_offset=6671 m_body_out_chunks.size()=2
+[2026-06-21 18:17:01.128590] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:17:01.128611] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=4621 m_body_read_offset=6671 m_body_out_chunks.size()=2
+[2026-06-21 18:17:01.128632] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=5777 m_body_read_offset=5515 m_body_out_chunks.size()=2
+[2026-06-21 18:17:01.128722] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:17:01.128755] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=5777 m_body_read_offset=5515 m_body_out_chunks.size()=2
+[2026-06-21 18:17:01.128778] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=6933 m_body_read_offset=4359 m_body_out_chunks.size()=2
+[2026-06-21 18:17:01.128799] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:17:01.128820] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=6933 m_body_read_offset=4359 m_body_out_chunks.size()=2
+[2026-06-21 18:17:01.128854] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=8089 m_body_read_offset=3203 m_body_out_chunks.size()=2
+[2026-06-21 18:17:01.128871] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 103 body bytes on stream 0
+[2026-06-21 18:17:01.128888] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=103 m_front_chunk_offset=8089 m_body_read_offset=3203 m_body_out_chunks.size()=2
+[2026-06-21 18:17:01.128905] [ALL] [quic_http1_upstream_conn.cpp:148] buffer_chunk_drop_front: popping chunk size=8192 data_ptr=4034018430992
+[2026-06-21 18:17:01.128921] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=0 m_body_read_offset=3100 m_body_out_chunks.size()=1
+[2026-06-21 18:17:01.128937] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1053 body bytes on stream 0
+[2026-06-21 18:17:01.128953] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1053 m_front_chunk_offset=0 m_body_read_offset=3100 m_body_out_chunks.size()=1
+[2026-06-21 18:17:01.128972] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=1053 m_body_read_offset=2047 m_body_out_chunks.size()=1
+[2026-06-21 18:17:01.129030] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 1156 body bytes on stream 0
+[2026-06-21 18:17:01.129053] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=1156 m_front_chunk_offset=1053 m_body_read_offset=2047 m_body_out_chunks.size()=1
+[2026-06-21 18:17:01.129070] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=2209 m_body_read_offset=891 m_body_out_chunks.size()=1
+[2026-06-21 18:17:01.129087] [ALL] [quic_to_http3_connect.cpp:348] QuicToHttp3Connect: acked 891 body bytes on stream 0
+[2026-06-21 18:17:01.129104] [ALL] [quic_http1_upstream_conn.cpp:135] buffer_chunk_drop_front: n=891 m_front_chunk_offset=2209 m_body_read_offset=891 m_body_out_chunks.size()=1
+[2026-06-21 18:17:01.129120] [ALL] [quic_http1_upstream_conn.cpp:148] buffer_chunk_drop_front: popping chunk size=3100 data_ptr=4034014717968
+[2026-06-21 18:17:01.129137] [ALL] [quic_http1_upstream_conn.cpp:169] buffer_chunk_drop_front: done. new m_front_chunk_offset=0 m_body_read_offset=0 m_body_out_chunks.size()=0
+[2026-06-21 18:17:01.129534] [INFO] [quic_session_upstream.cpp:40] QuicUpstreamHandler: QuicUpstreamHandler destructed stream_id=0
+[2026-06-21 18:17:01.129629] [INFO] [quic_connection.cpp:1260] QuicConnection: closing connection with error code 0 to peer 127.0.0.1:60490
+[2026-06-21 18:17:02.052089] [INFO] [quic_connection.cpp:306] QuicConnection: ~QuicConnection destructed for peer 127.0.0.1:50880
+[2026-06-21 18:17:02.052202] [INFO] [quic_session_upstream.cpp:40] QuicUpstreamHandler: QuicUpstreamHandler destructed stream_id=6
+[2026-06-21 18:17:02.052236] [INFO] [quic_session_upstream.cpp:40] QuicUpstreamHandler: QuicUpstreamHandler destructed stream_id=10
+[2026-06-21 18:17:02.052257] [INFO] [quic_session_upstream.cpp:40] QuicUpstreamHandler: QuicUpstreamHandler destructed stream_id=2
+[2026-06-21 18:17:02.378844] [INFO] [quic_connection.cpp:306] QuicConnection: ~QuicConnection destructed for peer 127.0.0.1:52103
+[2026-06-21 18:17:02.378946] [INFO] [quic_session_upstream.cpp:40] QuicUpstreamHandler: QuicUpstreamHandler destructed stream_id=6
+[2026-06-21 18:17:02.378977] [INFO] [quic_session_upstream.cpp:40] QuicUpstreamHandler: QuicUpstreamHandler destructed stream_id=10
+[2026-06-21 18:17:02.378998] [INFO] [quic_session_upstream.cpp:40] QuicUpstreamHandler: QuicUpstreamHandler destructed stream_id=2
+[2026-06-21 18:17:03.062381] [INFO] [quic_connection.cpp:306] QuicConnection: ~QuicConnection destructed for peer 127.0.0.1:61022
+[2026-06-21 18:17:03.062485] [INFO] [quic_session_upstream.cpp:40] QuicUpstreamHandler: QuicUpstreamHandler destructed stream_id=6
+[2026-06-21 18:17:03.062517] [INFO] [quic_session_upstream.cpp:40] QuicUpstreamHandler: QuicUpstreamHandler destructed stream_id=10
+[2026-06-21 18:17:03.062539] [INFO] [quic_session_upstream.cpp:40] QuicUpstreamHandler: QuicUpstreamHandler destructed stream_id=2
+[2026-06-21 18:17:03.471674] [INFO] [quic_connection.cpp:306] QuicConnection: ~QuicConnection destructed for peer 127.0.0.1:53751
+[2026-06-21 18:17:03.471759] [INFO] [quic_session_upstream.cpp:40] QuicUpstreamHandler: QuicUpstreamHandler destructed stream_id=6
+[2026-06-21 18:17:03.471786] [INFO] [quic_session_upstream.cpp:40] QuicUpstreamHandler: QuicUpstreamHandler destructed stream_id=10
+[2026-06-21 18:17:03.471804] [INFO] [quic_session_upstream.cpp:40] QuicUpstreamHandler: QuicUpstreamHandler destructed stream_id=2
+[2026-06-21 18:17:04.004929] [INFO] [quic_connection.cpp:306] QuicConnection: ~QuicConnection destructed for peer 127.0.0.1:52544
+[2026-06-21 18:17:04.005052] [INFO] [quic_session_upstream.cpp:40] QuicUpstreamHandler: QuicUpstreamHandler destructed stream_id=6
+[2026-06-21 18:17:04.005090] [INFO] [quic_session_upstream.cpp:40] QuicUpstreamHandler: QuicUpstreamHandler destructed stream_id=10
+[2026-06-21 18:17:04.005147] [INFO] [quic_session_upstream.cpp:40] QuicUpstreamHandler: QuicUpstreamHandler destructed stream_id=2
+[2026-06-21 18:17:04.363327] [INFO] [quic_connection.cpp:306] QuicConnection: ~QuicConnection destructed for peer 127.0.0.1:54641
+[2026-06-21 18:17:04.363507] [INFO] [quic_session_upstream.cpp:40] QuicUpstreamHandler: QuicUpstreamHandler destructed stream_id=6
+[2026-06-21 18:17:04.363564] [INFO] [quic_session_upstream.cpp:40] QuicUpstreamHandler: QuicUpstreamHandler destructed stream_id=0
+[2026-06-21 18:17:04.363627] [INFO] [quic_session_upstream.cpp:40] QuicUpstreamHandler: QuicUpstreamHandler destructed stream_id=10
+[2026-06-21 18:17:04.363669] [INFO] [quic_session_upstream.cpp:40] QuicUpstreamHandler: QuicUpstreamHandler destructed stream_id=2
+[2026-06-21 18:17:04.877400] [INFO] [quic_connection.cpp:306] QuicConnection: ~QuicConnection destructed for peer 127.0.0.1:62004
+[2026-06-21 18:17:04.877538] [INFO] [quic_session_upstream.cpp:40] QuicUpstreamHandler: QuicUpstreamHandler destructed stream_id=6
+[2026-06-21 18:17:04.877573] [INFO] [quic_session_upstream.cpp:40] QuicUpstreamHandler: QuicUpstreamHandler destructed stream_id=10
+[2026-06-21 18:17:04.877595] [INFO] [quic_session_upstream.cpp:40] QuicUpstreamHandler: QuicUpstreamHandler destructed stream_id=2
+[2026-06-21 18:17:05.395195] [INFO] [quic_connection.cpp:306] QuicConnection: ~QuicConnection destructed for peer 127.0.0.1:58328
+[2026-06-21 18:17:05.395312] [INFO] [quic_session_upstream.cpp:40] QuicUpstreamHandler: QuicUpstreamHandler destructed stream_id=6
+[2026-06-21 18:17:05.395351] [INFO] [quic_session_upstream.cpp:40] QuicUpstreamHandler: QuicUpstreamHandler destructed stream_id=10
+[2026-06-21 18:17:05.395379] [INFO] [quic_session_upstream.cpp:40] QuicUpstreamHandler: QuicUpstreamHandler destructed stream_id=2
+[2026-06-21 18:17:05.744820] [INFO] [quic_connection.cpp:306] QuicConnection: ~QuicConnection destructed for peer 127.0.0.1:64549
+[2026-06-21 18:17:05.744940] [INFO] [quic_session_upstream.cpp:40] QuicUpstreamHandler: QuicUpstreamHandler destructed stream_id=6
+[2026-06-21 18:17:05.744980] [INFO] [quic_session_upstream.cpp:40] QuicUpstreamHandler: QuicUpstreamHandler destructed stream_id=10
+[2026-06-21 18:17:05.745007] [INFO] [quic_session_upstream.cpp:40] QuicUpstreamHandler: QuicUpstreamHandler destructed stream_id=2
+[2026-06-21 18:17:06.130038] [INFO] [quic_connection.cpp:306] QuicConnection: ~QuicConnection destructed for peer 127.0.0.1:60490
+[2026-06-21 18:17:06.130169] [INFO] [quic_session_upstream.cpp:40] QuicUpstreamHandler: QuicUpstreamHandler destructed stream_id=6
+[2026-06-21 18:17:06.130212] [INFO] [quic_session_upstream.cpp:40] QuicUpstreamHandler: QuicUpstreamHandler destructed stream_id=10
+[2026-06-21 18:17:06.130241] [INFO] [quic_session_upstream.cpp:40] QuicUpstreamHandler: QuicUpstreamHandler destructed stream_id=2
+[2026-06-21 18:24:39.757246] [WARN] [main.cpp:67] got signal: 15
+[2026-06-21 18:24:39.757415] [WARN] [service.cpp:228] trojan service stopped
+[2026-06-21 18:24:39.757466] [WARN] [main.cpp:236] trojan service exit.
+[2026-06-21 18:24:39.757622] [ALL] [service.cpp:751] ~Service called
+[2026-06-21 18:24:39.757783] [ALL] [session.cpp:42] [tcp] ~ServerSession called, current all sessions:  0

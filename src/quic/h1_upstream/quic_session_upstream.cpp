@@ -30,6 +30,7 @@ QuicUpstreamHandler::QuicUpstreamHandler(
       m_stream_id(stream_id),
       m_io_ctx(io_ctx) {
     m_h1_conn = TP_MAKE_SHARED(Http1UpstreamConn, io_ctx, host, port_str, this);
+    m_resp_headers_submitted = false;
     _log_with_date_time("QuicUpstreamHandler: QuicUpstreamHandler constructed stream_id=" + 
                         tp::to_string(stream_id), Log::INFO);
 }
@@ -215,6 +216,7 @@ int QuicUpstreamHandler::h3_submit_response_headers(Http1UpstreamConn::H1RespPar
     int rv = h3->submit_response(m_stream_id, hdrs, has_body);
     if (rv != 0) return rv;
 
+    m_resp_headers_submitted = true;
     h3_pump_response(FUNC_NAME);
     return 0;
 }
@@ -305,6 +307,23 @@ void QuicUpstreamHandler::h1_on_eof() {
     _log_with_date_time(
         "QuicUpstreamHandler: stream " + tp::to_string(m_stream_id) + " upstream EOF",
         Log::INFO);
+
+    if (!m_resp_headers_submitted) {
+        auto locked_conn = m_conn_ptr.lock();
+        if (locked_conn && !locked_conn->is_closed()) {
+            if (auto* h3 = locked_conn->h3_if_exists()) {
+                tp::vector<std::pair<tp::string, tp::string>> hdrs;
+                hdrs.push_back({":status", "502"});
+                h3->submit_response(m_stream_id, hdrs, false);
+                locked_conn->on_pump_write(FUNC_NAME);
+            } else {
+                locked_conn->reset_stream(m_stream_id, NGHTTP3_H3_INTERNAL_ERROR);
+            }
+        }
+        destroy();
+        return;
+    }
+
     if (m_h3_out_state == H3OutState::BlockedByNghttp3) {
         m_h3_out_state   = H3OutState::Active;
         auto locked_conn = m_conn_ptr.lock();
@@ -350,6 +369,7 @@ int QuicUpstreamHandler::h3_on_begin_headers() {
     m_chunked_body       = false;
     m_has_content_length = false;
     m_fin_sent           = false;
+    m_resp_headers_submitted = false;
     return 0;
 }
 

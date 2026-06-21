@@ -2,8 +2,8 @@
     "run_type": "server",
     "local_addr": "0.0.0.0",
     "local_port": 3443,
-    "remote_addr": "",
-    "remote_port": 80,
+    "remote_addr": "127.0.0.1",
+    "remote_port": 8001,
     "password": [
         "password1",
         "password2"
@@ -45,7 +45,6 @@
         "pipeline_proxy_icmp": false
     },
     "quic": {
-        "enabled": true,
-        "alpn_token": "h3"
+        "enabled": true
     }
 }
