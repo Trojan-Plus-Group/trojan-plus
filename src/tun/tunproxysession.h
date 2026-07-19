@@ -22,6 +22,7 @@
 #ifndef _TUN_PROXY_SESSION_H_
 #define _TUN_PROXY_SESSION_H_
 
+#include "quic/outbound_transport.h"
 #include "tun/tunsession.h"
 
 class TUNProxySession : public TUNSession {
@@ -30,6 +31,7 @@ class TUNProxySession : public TUNSession {
 
     SSLSocket m_out_socket;
     boost::asio::ip::tcp::resolver m_out_resolver;
+    std::shared_ptr<OutboundTransport> m_out;
 
     void out_async_read();
     void try_out_async_read();

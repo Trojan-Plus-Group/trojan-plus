@@ -647,14 +647,14 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, tp::str
     }
 
     if (Log::keylog != nullptr) {
-#ifdef ENABLE_SSL_KEYLOG
+#if defined(ENABLE_SSL_KEYLOG) && !defined(ENABLE_QUIC)
         SSL_CTX_set_keylog_callback(native_context, [](const SSL*, const char* line) {
             fprintf(Log::keylog, "%s\n", line);
             fflush(Log::keylog);
         });
-#else  // ENABLE_SSL_KEYLOG
+#else
         _log_with_date_time("SSL KeyLog is not supported", Log::WARN);
-#endif // ENABLE_SSL_KEYLOG
+#endif
     }
 
     _unguard;
