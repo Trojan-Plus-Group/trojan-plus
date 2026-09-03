@@ -361,6 +361,11 @@ set(BUILD_SHARED_LIBS_SAVED ${BUILD_SHARED_LIBS})
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(_GNU_SOURCE ON CACHE BOOL "Enable GNU Source for wolfSSL" FORCE)
 add_subdirectory(wolfssl EXCLUDE_FROM_ALL)
+
+if(CMAKE_C_COMPILER_ID STREQUAL "GNU" AND
+   CMAKE_C_COMPILER_VERSION VERSION_GREATER_EQUAL 14)
+    target_compile_options(wolfssl PRIVATE -Wno-error=maybe-uninitialized)
+endif()
 set(BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS_SAVED} CACHE BOOL "" FORCE)
 
 # wolfSSL 5.9.1 does not expose secure renegotiation as a CMake option (listed as TODO).
