@@ -12,6 +12,9 @@
 - 原始结果只新增，不覆盖；结果统一放入 `results/<run_id>/`。
 - 未完成正确性和基线测试前，不修改 QUIC 传输代码。
 - 失败结果同样保留，记录命令、退出码、日志和环境。
+- 所有跨洋命令设置连接/总超时，最多重试 2 次，间隔 3 秒、10 秒；每次尝试单独保存。
+- 单个带宽样本总流量不得超过 50 MB；单项含重试必须在 3 分钟内结束。
+- TCP/HTTP 优先按字节限制；UDP 必须满足 `bitrate × duration <= 50 MB`。
 - 密码、私钥、TLS keylog 不提交仓库；测试结束删除远端临时凭据。
 
 ## 当前状态
@@ -135,7 +138,7 @@
 
 ### R1.2 iperf3 TCP
 
-每项预热一次、正式五次，时长 30 秒，忽略前 5 秒。
+每项预热一次、正式五次。TCP 使用总量 `-n 50M`；每次尝试硬超时 170 秒，最多重试 2 次。
 
 - [ ] client 到 server，单流。
 - [ ] server 到 client，单流 `-R`。
@@ -230,17 +233,17 @@ TCP TLS 和 QUIC 分别执行：
 - [ ] 在远端 localhost 启动固定 byte source。
 - [ ] 1 MiB：TCP/QUIC 各五轮。
 - [ ] 10 MiB：TCP/QUIC 各五轮。
-- [ ] 100 MiB：TCP/QUIC 各五轮。
-- [ ] 1 GiB：TCP/QUIC 各五轮。
+- [ ] 25 MiB：TCP/QUIC 各五轮。
+- [ ] 50 MiB：TCP/QUIC 各五轮。
 - [ ] 轮换执行 TCP、QUIC，避免时间偏差。
 - [ ] 每轮校验长度和 SHA-256。
 - [ ] 汇总 connect、TTFB、total、goodput。
 
 ### R2.4 第三方体验对照
 
-- [ ] Cloudflare 直连，100 MiB，五轮。
-- [ ] Cloudflare TCP TLS 代理，100 MiB，五轮。
-- [ ] Cloudflare QUIC 代理，100 MiB，五轮。
+- [ ] Cloudflare 直连，50 MB，五轮。
+- [ ] Cloudflare TCP TLS 代理，50 MB，五轮。
+- [ ] Cloudflare QUIC 代理，50 MB，五轮。
 - [ ] 记录远端出口到 CDN 可能不同，不把该结果作为唯一证据。
 - [ ] 检查本地 `speedtest --help` 是否支持 proxy。
 - [ ] 仅在明确支持时执行 speedtest TCP/QUIC 对照。
@@ -271,10 +274,10 @@ TCP TLS 和 QUIC 分别执行：
 
 - 状态：未开始。
 - Run ID：待填写。
-- TCP 100 MiB 中位数：待填写。
-- QUIC 100 MiB 中位数：待填写。
-- TCP 1 GiB 中位数：待填写。
-- QUIC 1 GiB 中位数：待填写。
+- TCP 25 MiB 中位数：待填写。
+- QUIC 25 MiB 中位数：待填写。
+- TCP 50 MiB 中位数：待填写。
+- QUIC 50 MiB 中位数：待填写。
 - QUIC/TCP 比例：待填写。
 - 下一轮唯一目标：并发对照，判断单 stream 限制。
 
@@ -286,7 +289,7 @@ TCP TLS 和 QUIC 分别执行：
 
 - 代码、配置、网络条件与 R2 相同。
 - 唯一变量：并发 stream 数。
-- 每流：100 MiB。
+- 每组总量：50 MiB，由所有 stream 平分。
 
 ## 任务
 
@@ -584,11 +587,11 @@ TCP TLS 与 QUIC 分别执行：
 ### 远程验证
 
 - [ ] 1 MiB 正确性。
-- [ ] 100 MiB 单流五轮。
-- [ ] 1 GiB steady-state 五轮。
-- [ ] 4/16/64 并发。
+- [ ] 25 MiB 单流五轮。
+- [ ] 50 MiB steady-state 五轮。
+- [ ] 4/16/64 并发，每组总量 50 MiB。
 - [ ] 双向传输。
-- [ ] 30–60 分钟长稳。
+- [ ] 30–60 分钟长稳，循环独立的 25/50 MiB 样本。
 - [ ] 停流后观察 RSS 5–10 分钟。
 - [ ] 空闲、keepalive、重连。
 - [ ] 保存 CPU、RSS、UDP drop、P95 latency。
@@ -642,7 +645,7 @@ TCP TLS 与 QUIC 分别执行：
 ## 内存专项
 
 - [ ] 本地 T16 通过。
-- [ ] 远端固定负载至少 60 分钟。
+- [ ] 远端循环 25/50 MiB 独立样本至少 60 分钟。
 - [ ] 每分钟记录 RSS/PSS。
 - [ ] 记录 active connection/stream 数。
 - [ ] 停流后观察 5–10 分钟。
@@ -668,7 +671,7 @@ TCP TLS 与 QUIC 分别执行：
 - [ ] 原始网络、TCP TLS、QUIC 三组结果齐全。
 - [ ] 修复前后使用同一测试环境和配置。
 - [ ] 所有正式样本至少五轮。
-- [ ] 100 MiB、1 GiB 内容校验通过。
+- [ ] 1/10/25/50 MiB 内容校验通过，长稳每个样本独立校验。
 - [ ] 1/4/16/64 并发通过。
 - [ ] 长稳和内存门禁通过。
 - [ ] 本地完整 QUIC 测试通过。

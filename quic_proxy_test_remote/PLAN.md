@@ -149,6 +149,10 @@ quic_proxy_test_remote/
 8. 同时采集客户端和服务端指标；单边日志不足以定位公网 UDP 丢包。
 9. 每次只改变一个变量。
 10. 修改代码后先跑本地完整 QUIC 测试，再跑远程短测、压力和长稳测试。
+11. 北京到美国链路质量较差；所有跨洋命令设置明确连接/总超时，并允许最多 2 次有限重试，重试间隔使用 3 秒、10 秒退避。
+12. 单个带宽测试样本传输总量不得超过 50 MB，单项包含重试必须在 3 分钟内结束。
+13. 超时、断流和重试均作为结果保存，不用重试后的成功样本覆盖首次失败。
+14. 优先按字节数限制 TCP/HTTP 测试；UDP 按 `bitrate × duration <= 50 MB` 计算时长。
 
 ## 7. 阶段 0：准备与安全检查
 
@@ -219,18 +223,18 @@ traceroute 172.236.226.35
 iperf3 -s -p 5201 --one-off
 ```
 
-本地正向与反向，每项至少五轮：
+本地正向与反向，每项至少五轮。使用 `-n 50M` 限制每个样本总量，外层命令设置 170 秒硬超时和最多 2 次重试：
 
 ```bash
-iperf3 -c 172.236.226.35 -p 5201 -t 30 -O 5 --get-server-output --json
-iperf3 -c 172.236.226.35 -p 5201 -t 30 -O 5 -R --get-server-output --json
+iperf3 -c 172.236.226.35 -p 5201 -n 50M -O 2 --get-server-output --json
+iperf3 -c 172.236.226.35 -p 5201 -n 50M -O 2 -R --get-server-output --json
 ```
 
-补充 1、4、8 并行流：
+补充 1、4、8 并行流。`-n 50M` 是全部 stream 合计总量，不是每 stream 50 MB：
 
 ```bash
-iperf3 -c 172.236.226.35 -p 5201 -t 30 -O 5 -P 4 --get-server-output --json
-iperf3 -c 172.236.226.35 -p 5201 -t 30 -O 5 -P 8 --get-server-output --json
+iperf3 -c 172.236.226.35 -p 5201 -n 50M -O 2 -P 4 --get-server-output --json
+iperf3 -c 172.236.226.35 -p 5201 -n 50M -O 2 -P 8 --get-server-output --json
 ```
 
 记录吞吐、retransmits、cwnd 和 CPU。单流慢、多流快通常指向单流拥塞窗口或 RTT 限制。
@@ -239,13 +243,14 @@ iperf3 -c 172.236.226.35 -p 5201 -t 30 -O 5 -P 8 --get-server-output --json
 
 iperf3 UDP 服务控制通道仍使用 TCP 5201，因此云防火墙需要同时允许 TCP/UDP 5201。
 
-逐级探测 10、25、50、100、200 Mbit/s：
+逐级探测 10、25、50、100、200 Mbit/s。每档动态限制时长，确保理论发送量不超过 50 MB：10M/25M/50M 使用 20/12/8 秒，100M/200M 使用 4/2 秒。弱链路首轮优先 10M、25M、50M；高档仅在低档稳定后执行：
 
 ```bash
-iperf3 -c 172.236.226.35 -p 5201 -u -b 10M -t 30 -O 5 --get-server-output --json
-iperf3 -c 172.236.226.35 -p 5201 -u -b 50M -t 30 -O 5 --get-server-output --json
-iperf3 -c 172.236.226.35 -p 5201 -u -b 100M -t 30 -O 5 --get-server-output --json
-iperf3 -c 172.236.226.35 -p 5201 -u -b 200M -t 30 -O 5 --get-server-output --json
+iperf3 -c 172.236.226.35 -p 5201 -u -b 10M -t 20 -O 2 --get-server-output --json
+iperf3 -c 172.236.226.35 -p 5201 -u -b 25M -t 12 -O 2 --get-server-output --json
+iperf3 -c 172.236.226.35 -p 5201 -u -b 50M -t 8 -O 2 --get-server-output --json
+iperf3 -c 172.236.226.35 -p 5201 -u -b 100M -t 4 --get-server-output --json
+iperf3 -c 172.236.226.35 -p 5201 -u -b 200M -t 2 --get-server-output --json
 ```
 
 再测反向 `-R`。记录实际吞吐、loss、jitter、out-of-order。不要用 UDP 发送目标速率作为实际带宽。
@@ -363,8 +368,10 @@ speedtest --proxy=socks5://127.0.0.1:9081
 
 - 1 MiB：观察启动与握手。
 - 10 MiB：观察 slow start。
-- 100 MiB：常规吞吐。
-- 1 GiB：steady-state 和内存。
+- 25 MiB：常规吞吐。
+- 50 MiB：单样本 steady-state 上限。
+
+长稳和内存测试通过循环 25/50 MiB 独立样本实现；每个样本单独记录，不创建超过 50 MB 的单次传输。
 
 每个大小按直连公网目标、TCP TLS、QUIC 顺序轮换至少五次。校验返回长度和 SHA-256，禁止只测速度不测完整性。
 
@@ -459,7 +466,7 @@ tcpdump -i any -nn -s 128 -w <run-id>-quic.pcap 'udp port 3443'
 ### 12.3 单流与多流
 
 - 1、4、16、64 stream。
-- 每流固定 100 MiB。
+- 每组总量固定 50 MiB，由并发 stream 平分，避免并发数增加时总流量失控。
 
 判断：多流显著绕过单流上限，则重点验证 flow-control window 和每 stream producer 调度。
 
@@ -532,17 +539,17 @@ python3 -u tests/LinuxFullTest/fulltest_quic.py build/trojan
 ### 远程门禁
 
 1. 1 MiB 正确性短测。
-2. 100 MiB 单流 A/B。
-3. 4/16/64 并发。
+2. 50 MiB 单流 A/B。
+3. 4/16/64 并发，每组总量 50 MiB。
 4. 双向传输。
-5. 30–60 分钟 steady-state。
+5. 30–60 分钟 steady-state，循环独立的 25/50 MiB 样本。
 6. 空闲、keepalive、重连。
 7. 进程 CPU/RSS、UDP drop、错误日志。
 
 ### 内存门禁
 
 - 本地复跑 T16。
-- 远端持续循环 1 GiB 或固定时长传输。
+- 远端持续循环独立的 25/50 MiB 样本；单样本不得超过 50 MB。
 - 采集每分钟 RSS/PSS，而非只取测试首尾。
 - 停流后观察至少 5–10 分钟回落。
 - 若 RSS 持续线性增长，再用 ASan/LSan 或 heap profiler 定位；不要只扩大 T16 百分比阈值。
@@ -555,7 +562,7 @@ python3 -u tests/LinuxFullTest/fulltest_quic.py build/trojan
 4. 启动远端 Trojan server。
 5. 启动本地 TCP TLS 与 QUIC 两个 SOCKS5 client。
 6. 验证握手、协议和内容正确性。
-7. 跑固定 byte source：1 MiB、10 MiB、100 MiB、1 GiB。
+7. 跑固定 byte source：1 MiB、10 MiB、25 MiB、50 MiB。
 8. 跑直连公网、TCP TLS、QUIC 的 Cloudflare curl 体验对照。
 9. 跑并发 1/4/16/64。
 10. 同步采集 CPU、RSS、UDP errors、接口 drops 和短时抓包。
@@ -583,7 +590,7 @@ python3 -u tests/LinuxFullTest/fulltest_quic.py build/trojan
 
 - 远程 QUIC 单流和 aggregate throughput 有稳定、可重复提升。
 - 与原始网络能力及 TCP TLS 差距得到量化解释。
-- 100 MiB、1 GiB 内容完整性无错误。
+- 1/10/25/50 MiB 内容完整性无错误，长稳循环中每个样本独立校验。
 - 1/4/16/64 并发无 stream open、close 或 fallback 回归。
 - localhost 全量 QUIC 测试通过。
 - 跨洋短测、长稳、空闲恢复和双向传输通过。
