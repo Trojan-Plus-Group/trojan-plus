@@ -15,14 +15,23 @@ import sys
 import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+REPO_ROOT = ROOT.parent
+TROJAN_BINARY = REPO_ROOT / "build" / "trojan"
 RESULT_DIRS = ("metadata", "baseline", "direct", "tcp-tls", "quic", "logs", "captures")
 RUN_ID_RE = re.compile(r"^\d{8}T\d{6}Z-[0-9a-f]{7,40}-r\d+$")
 HOST = "172.236.226.35"
 SSH_USER = "root"
 SSH_PORT = 9922
 IPERF_PORT = 5201
+TROJAN_REMOTE_PORT = 3443
+TROJAN_LOCAL_PORT_TCP = 9081
+TROJAN_LOCAL_PORT_QUIC = 9080
+BYTESOURCE_PORT = 8001
+R2_DEFAULT_SIZES = (1 << 20, 5 << 20, 10 << 20, 15 << 20)
+R2_MAX_SAMPLE_BYTES = 15 << 20
+ITEM_TIMEOUT = 170
 RETRY_DELAYS = (3, 10)
-ITEM_TIMEOUT = 180
+DEFAULT_ATTEMPT_TIMEOUT = 140
 
 
 def utc_now():
@@ -43,6 +52,59 @@ def sha256(path):
         for chunk in iter(lambda: source.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def sha256_bytes(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def bytesource_payload(n):
+    if n < 0:
+        raise ValueError("payload size must be non-negative")
+    return bytes(((i * 31 + 7) & 0xFF) for i in range(n))
+
+
+def bytesource_sha256(n):
+    return sha256_bytes(bytesource_payload(n))
+
+
+def write_json(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=4) + "\n")
+    return path
+
+
+def load_json(path):
+    return json.loads(path.read_text())
+
+
+def local_lsof(port, timeout=5):
+    try:
+        completed = subprocess.run(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN"], text=True, capture_output=True, timeout=timeout, check=False)
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return False
+    if completed.returncode != 0:
+        return False
+    needle = f":{port} (LISTEN)"
+    return needle in completed.stdout
+
+
+def wait_local_port(port, process=None, timeout=30):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if process is not None and process.poll() is not None:
+            return False
+        if local_lsof(port):
+            return process is None or process.poll() is None
+        time.sleep(0.5)
+    return False
+
+
+def parse_int(value):
+    text = value.strip()
+    if not text:
+        raise ValueError("empty integer")
+    return int(text)
 
 
 def render(template_name, output, values):
@@ -106,11 +168,11 @@ def ssh(remote_command):
     return ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-p", str(SSH_PORT), f"{SSH_USER}@{HOST}", remote_command]
 
 
-def execute_attempt(command, output_prefix, timeout, commands_file, item, attempt):
+def execute_attempt(command, output_prefix, timeout, commands_file, item, attempt, input_data=None):
     started = utc_now()
     start = time.monotonic()
     try:
-        completed = subprocess.run(command, text=True, capture_output=True, timeout=timeout, check=False)
+        completed = subprocess.run(command, text=True, input=input_data, capture_output=True, timeout=timeout, check=False)
         stdout = completed.stdout
         stderr = completed.stderr
         exit_code = completed.returncode
@@ -241,6 +303,329 @@ def summarize(items, results):
     return summary
 
 
+def scp(local_path, remote_path):
+    return ["scp", "-P", str(SSH_PORT), str(local_path), f"{SSH_USER}@{HOST}:{remote_path}"]
+
+
+def remote_mktemp(prefix, mode="700"):
+    quoted_prefix = shlex.quote(prefix)
+    quoted_mode = shlex.quote(mode)
+    return f"umask 077 && dir=$(mktemp -d -p /tmp {quoted_prefix}.XXXXXX) && chmod {quoted_mode} \"$dir\" && printf '%s\\n' \"$dir\""
+
+
+def ensure_remote_dir(remote_dir, results, commands_file, name):
+    output_prefix = results / "metadata" / "trojan" / f"{name}-mktemp"
+    record, output = execute_attempt(ssh(remote_mktemp(name)), output_prefix, 30, commands_file, f"{name}-mktemp", 1)
+    if record["exit_code"] != 0 or not output.strip():
+        raise RuntimeError(f"failed to create remote temp dir: {name}")
+    return output.strip().splitlines()[-1]
+
+
+def scp_files(local_paths, remote_dir, results, commands_file, name):
+    target_dir = remote_dir if not str(remote_dir).endswith("/") else remote_dir
+    for local_path in local_paths:
+        command = scp(local_path, f"{target_dir}/{pathlib.Path(local_path).name}")
+        item_name = f"{name}-{pathlib.Path(local_path).name}"
+        output_prefix = results / "metadata" / "trojan" / item_name
+        record, _ = execute_attempt(command, output_prefix, 30, commands_file, item_name, 1)
+        if record["exit_code"] != 0:
+            raise RuntimeError(f"scp failed for {local_path}")
+    return target_dir
+
+
+def trojan_deploy(args):
+    results = ROOT / "results" / args.run_id
+    runtime = ROOT / "runtime" / args.run_id
+    if not (results / "metadata" / "manifest.json").is_file():
+        raise FileNotFoundError(f"prepared run not found: {args.run_id}")
+    commands_file = results / "metadata" / "commands.jsonl"
+    sources = [runtime / "server.json", runtime / "server.crt", runtime / "server.key"]
+    for path in sources:
+        if not path.is_file():
+            raise FileNotFoundError(f"missing prepared file: {path}")
+    remote_dir = ensure_remote_dir("/tmp/trojan-r2", results, commands_file, "trojan-deploy")
+    scp_files(sources, remote_dir, results, commands_file, "trojan-deploy")
+    server = load_json(runtime / "server.json")
+    server["ssl"]["cert"] = f"{remote_dir}/server.crt"
+    server["ssl"]["key"] = f"{remote_dir}/server.key"
+    server_text = json.dumps(server, indent=4) + "\n"
+    json.loads(server_text)
+    command = ssh(f"cat > {shlex.quote(remote_dir + '/server.json')} && chmod 600 {shlex.quote(remote_dir + '/server.json')}")
+    record, _ = execute_attempt(command, results / "metadata" / "trojan" / "trojan-deploy-server-json", 30, commands_file, "trojan-deploy-server-json", 1, server_text)
+    if record["exit_code"] != 0:
+        raise RuntimeError("failed to write deployed server.json")
+    record_payload = {"run_id": args.run_id, "remote_dir": remote_dir, "files": [path.name for path in sources], "transferred_utc": utc_now()}
+    write_json(results / "metadata" / "trojan-deploy.json", record_payload)
+    print(posix(results / "metadata" / "trojan-deploy.json"))
+    print(remote_dir)
+
+
+def start_remote_named(name, remote_dir, command_tail, results, commands_file, marker):
+    remote_log = f"{remote_dir}/{name}.log"
+    quoted_log = shlex.quote(remote_log)
+    remote = (
+        f"cd {shlex.quote(remote_dir)}; "
+        f"nohup {command_tail} >{quoted_log} 2>&1 </dev/null & "
+        f"pid=$!; sleep 1; test -r /proc/$pid/cmdline || exit 74; "
+        f"tr '\\0' ' ' </proc/$pid/cmdline; printf '\\n%s\\n' \"$pid\""
+    )
+    item = run_item(ssh(remote), results / "logs" / name, f"{name}-start", commands_file, attempt_timeout=30)
+    if not item["valid"]:
+        raise RuntimeError(f"remote {name} failed to start")
+    stdout_path = results / item["attempts"][-1]["stdout"]
+    lines = stdout_path.read_text().splitlines()
+    pid = int(lines[-1])
+    cmdline = " ".join(lines[:-1])
+    if marker not in cmdline:
+        raise RuntimeError(f"remote {name} cmdline mismatch: {cmdline!r}")
+    payload = {"name": name, "pid": pid, "cmdline": cmdline, "remote_dir": remote_dir, "remote_log": remote_log, "marker": marker, "started_utc": utc_now()}
+    write_json(results / "metadata" / f"{name}.json", payload)
+    return payload
+
+
+def stop_remote_named(name, results, commands_file):
+    metadata_path = results / "metadata" / f"{name}.json"
+    if not metadata_path.is_file():
+        return {"name": name, "skipped": True, "reason": "no metadata"}
+    payload = load_json(metadata_path)
+    pid = int(payload["pid"])
+    marker = payload["marker"]
+    quoted_marker = shlex.quote(marker)
+    remote = (
+        f"pid={pid}; test -r /proc/$pid/cmdline || exit 0; "
+        f"cmd=$(tr '\\0' ' ' </proc/$pid/cmdline); "
+        f"case \"$cmd\" in *{quoted_marker}*) kill \"$pid\"; "
+        f"for n in 1 2 3 4 5; do test ! -e /proc/$pid && break; sleep 1; done; "
+        f"test ! -e /proc/$pid;; "
+        f"*) printf '%s\\n' \"$cmd\" >&2; exit 75;; esac"
+    )
+    item = run_item(ssh(remote), results / "logs" / name, f"{name}-stop", commands_file, attempt_timeout=20)
+    return {"name": name, "stopped": item["valid"], "attempts": item["attempts"]}
+
+
+def trojan_start(args):
+    results = ROOT / "results" / args.run_id
+    if not (results / "metadata" / "trojan-deploy.json").is_file():
+        raise FileNotFoundError("trojan-deploy must run before trojan-start")
+    commands_file = results / "metadata" / "commands.jsonl"
+    deploy = load_json(results / "metadata" / "trojan-deploy.json")
+    remote_dir = deploy["remote_dir"]
+    manifest = load_json(results / "metadata" / "manifest.json")
+    binary = f"{manifest['remote']['repo']}/build/trojan"
+    marker = f"{binary} -c server.json"
+    payload = start_remote_named("trojan-server", remote_dir, f"{shlex.quote(binary)} -c server.json -l trojan-server.log", results, commands_file, marker)
+    payload["server_config"] = f"{remote_dir}/server.json"
+    payload["listen_port"] = TROJAN_REMOTE_PORT
+    write_json(results / "metadata" / "trojan-server.json", payload)
+    print(posix(results / "metadata" / "trojan-server.json"))
+    return payload
+
+
+def trojan_stop(args):
+    results = ROOT / "results" / args.run_id
+    if not (results / "metadata" / "trojan-server.json").is_file():
+        raise FileNotFoundError("trojan-server metadata missing")
+    commands_file = results / "metadata" / "commands.jsonl"
+    outcome = stop_remote_named("trojan-server", results, commands_file)
+    write_json(results / "metadata" / "trojan-server-stop.json", outcome)
+    print(posix(results / "metadata" / "trojan-server-stop.json"))
+
+
+BYTESOURCE_SCRIPT = (
+    "import sys, re\n"
+    "from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer\n"
+    "block = bytes(((i * 31 + 7) & 0xFF) for i in range(65536))\n"
+    "class H(BaseHTTPRequestHandler):\n"
+    "    def do_GET(self):\n"
+    "        m = re.fullmatch(r'/(\\d+)', self.path)\n"
+    "        if not m:\n"
+    "            self.send_response(400); self.send_header('Content-Length', '0'); self.end_headers(); return\n"
+    "        n = int(m.group(1))\n"
+    "        self.send_response(200); self.send_header('Content-Length', str(n)); self.end_headers()\n"
+    "        sent = 0\n"
+    "        while sent < n:\n"
+    "            chunk = block[:min(len(block), n - sent)]\n"
+    "            self.wfile.write(chunk)\n"
+    "            sent += len(chunk)\n"
+    "    def log_message(self, *a, **k):\n"
+    "        pass\n"
+    "port = int(sys.argv[1]) if len(sys.argv) > 1 else 8001\n"
+    "ThreadingHTTPServer(('127.0.0.1', port), H).serve_forever()\n"
+)
+
+
+def bytesource_start(args):
+    results = ROOT / "results" / args.run_id
+    if not (results / "metadata" / "trojan-deploy.json").is_file():
+        raise FileNotFoundError("trojan-deploy must run before bytesource-start")
+    commands_file = results / "metadata" / "commands.jsonl"
+    deploy = load_json(results / "metadata" / "trojan-deploy.json")
+    remote_dir = deploy["remote_dir"]
+    script_name = "bytesource.py"
+    script_remote = f"{remote_dir}/{script_name}"
+    write_remote = f"cat > {shlex.quote(script_remote)} <<'__BYTESOURCE_EOF__'\n{BYTESOURCE_SCRIPT}__BYTESOURCE_EOF__"
+    output_prefix = results / "logs" / "bytesource" / "bytesource-upload"
+    record, _ = execute_attempt(ssh(write_remote), output_prefix, 30, commands_file, "bytesource-upload", 1)
+    if record["exit_code"] != 0:
+        raise RuntimeError("failed to upload bytesource script")
+    marker = f"python3 {script_name} {BYTESOURCE_PORT}"
+    payload = start_remote_named("bytesource", remote_dir, f"python3 {script_name} {BYTESOURCE_PORT}", results, commands_file, marker)
+    payload["script"] = script_remote
+    payload["port"] = BYTESOURCE_PORT
+    payload["bind"] = "127.0.0.1"
+    write_json(results / "metadata" / "bytesource.json", payload)
+    print(posix(results / "metadata" / "bytesource.json"))
+    return payload
+
+
+def bytesource_stop(args):
+    results = ROOT / "results" / args.run_id
+    if not (results / "metadata" / "bytesource.json").is_file():
+        raise FileNotFoundError("bytesource metadata missing")
+    commands_file = results / "metadata" / "commands.jsonl"
+    outcome = stop_remote_named("bytesource", results, commands_file)
+    write_json(results / "metadata" / "bytesource-stop.json", outcome)
+    print(posix(results / "metadata" / "bytesource-stop.json"))
+
+
+def start_local_client(runtime, protocol, port, results, commands_file):
+    config_path = runtime / f"client-{protocol}.json"
+    if not config_path.is_file():
+        raise FileNotFoundError(f"client config missing: {config_path}")
+    if local_lsof(port):
+        raise RuntimeError(f"local port already in use: {port}")
+    log_path = results / "logs" / f"client-{protocol}.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    process = subprocess.Popen([str(TROJAN_BINARY), "-c", str(config_path), "-l", str(log_path)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    started_utc = utc_now()
+    if not wait_local_port(port, process=process, timeout=30):
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+        raise RuntimeError(f"local trojan client {protocol} did not listen on {port}")
+    record = {"protocol": protocol, "pid": process.pid, "port": port, "config": posix(config_path), "binary": posix(TROJAN_BINARY), "log": posix(log_path), "started_utc": started_utc, "process": process}
+    write_json(results / "metadata" / f"client-{protocol}.json", {k: v for k, v in record.items() if k != "process"})
+    return record
+
+
+def stop_local_client(client, results, commands_file):
+    process = client["process"]
+    protocol = client["protocol"]
+    process.terminate()
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
+    write_json(results / "metadata" / f"client-{protocol}-stop.json", {"protocol": protocol, "pid": client["pid"], "port": client["port"], "stopped_utc": utc_now(), "exit_code": process.returncode})
+    return {"protocol": protocol, "stopped": True, "exit_code": process.returncode}
+
+
+def valid_trojan(record, output, output_path, expected_size):
+    if record["exit_code"] != 0:
+        return False
+    if not output_path.is_file():
+        return False
+    if output_path.stat().st_size != expected_size:
+        return False
+    expected_sha = bytesource_sha256(expected_size)
+    actual_sha = sha256(output_path) if output_path.stat().st_size else ""
+    return actual_sha == expected_sha
+
+
+def summarize_trojan(record, output, output_path, expected_size, run_number, protocol):
+    port = TROJAN_LOCAL_PORT_TCP if protocol == "tcp" else TROJAN_LOCAL_PORT_QUIC
+    url = f"http://127.0.0.1:{BYTESOURCE_PORT}/{expected_size}"
+    actual_size = output_path.stat().st_size if output_path.exists() else 0
+    actual_sha = sha256(output_path) if output_path.exists() and actual_size else ""
+    expected_sha = bytesource_sha256(expected_size)
+    valid = valid_trojan(record, output, output_path, expected_size)
+    return {"run": run_number, "protocol": protocol, "bytes": expected_size, "port": port, "url": url, "exit_code": record["exit_code"], "duration_seconds": record["duration_seconds"], "started_utc": record["started_utc"], "ended_utc": record["ended_utc"], "actual_size": actual_size, "expected_size": expected_size, "actual_sha256": actual_sha, "expected_sha256": expected_sha, "valid": valid}
+
+
+def trojan_test(args):
+    results = ROOT / "results" / args.run_id
+    runtime = ROOT / "runtime" / args.run_id
+    if not (results / "metadata" / "manifest.json").is_file():
+        raise FileNotFoundError(f"prepared run not found: {args.run_id}")
+    commands_file = results / "metadata" / "commands.jsonl"
+    size = int(args.bytes)
+    if size < 1 or size > R2_MAX_SAMPLE_BYTES:
+        raise ValueError(f"bytes must be in [1, {R2_MAX_SAMPLE_BYTES}]")
+    protocol = args.protocol
+    if protocol not in ("tcp", "quic"):
+        raise ValueError("protocol must be 'tcp' or 'quic'")
+    port = TROJAN_LOCAL_PORT_TCP if protocol == "tcp" else TROJAN_LOCAL_PORT_QUIC
+    target_dir = results / "trojan-tests" / f"{protocol}"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    output_path = target_dir / f"{size}-{args.run}.bin"
+    log_prefix = target_dir / f"{size}-{args.run}"
+    url = f"http://127.0.0.1:{BYTESOURCE_PORT}/{size}"
+    command = ["curl", "-sS", "-o", str(output_path), "--socks5-hostname", f"127.0.0.1:{port}", url]
+    record, output = execute_attempt(command, log_prefix, DEFAULT_ATTEMPT_TIMEOUT, commands_file, f"trojan-test-{protocol}-{size}", args.run)
+    summary = summarize_trojan(record, output, output_path, size, args.run, protocol)
+    write_json(target_dir / f"{size}-{args.run}.json", summary)
+    print(posix(target_dir / f"{size}-{args.run}.json"))
+    return summary
+
+
+def r2(args):
+    if args.runs < 1:
+        raise ValueError("runs must be >= 1")
+    results = ROOT / "results" / args.run_id
+    runtime = ROOT / "runtime" / args.run_id
+    if not (results / "metadata" / "manifest.json").is_file():
+        raise FileNotFoundError(f"prepared run not found: {args.run_id}")
+    if not (results / "metadata" / "trojan-deploy.json").is_file():
+        raise FileNotFoundError("trojan-deploy must run before r2")
+    commands_file = results / "metadata" / "commands.jsonl"
+    bytesource_payload_meta = None
+    trojan_server_meta = None
+    tcp_client = None
+    quic_client = None
+    sizes = tuple(args.sizes or R2_DEFAULT_SIZES)
+    if any(size < 1 or size > R2_MAX_SAMPLE_BYTES for size in sizes):
+        raise ValueError(f"sizes must be in [1, {R2_MAX_SAMPLE_BYTES}]")
+    summary = {"run_id": args.run_id, "started_utc": utc_now(), "runs": args.runs, "sizes": list(sizes), "samples": []}
+    try:
+        bytesource_start_args = argparse.Namespace(run_id=args.run_id)
+        bytesource_payload_meta = bytesource_start(bytesource_start_args)
+        trojan_start_args = argparse.Namespace(run_id=args.run_id)
+        trojan_server_meta = trojan_start(trojan_start_args)
+        tcp_client = start_local_client(runtime, "tcp", TROJAN_LOCAL_PORT_TCP, results, commands_file)
+        quic_client = start_local_client(runtime, "quic", TROJAN_LOCAL_PORT_QUIC, results, commands_file)
+        for run_number in range(1, args.runs + 1):
+            for size in sizes:
+                for protocol in ("tcp", "quic"):
+                    test_args = argparse.Namespace(run_id=args.run_id, bytes=size, protocol=protocol, run=run_number)
+                    sample = trojan_test(test_args)
+                    summary["samples"].append(sample)
+    finally:
+        summary["ended_utc"] = utc_now()
+        for client in (tcp_client, quic_client):
+            if client is not None:
+                try:
+                    stop_local_client(client, results, commands_file)
+                except Exception as error:
+                    print(f"client stop failed: {error}", file=sys.stderr)
+        if trojan_server_meta is not None:
+            try:
+                trojan_stop(argparse.Namespace(run_id=args.run_id))
+            except Exception as error:
+                print(f"trojan stop failed: {error}", file=sys.stderr)
+        if bytesource_payload_meta is not None:
+            try:
+                bytesource_stop(argparse.Namespace(run_id=args.run_id))
+            except Exception as error:
+                print(f"bytesource stop failed: {error}", file=sys.stderr)
+    summary["valid_sample_count"] = sum(1 for sample in summary["samples"] if sample["valid"])
+    summary["invalid_sample_count"] = sum(1 for sample in summary["samples"] if not sample["valid"])
+    write_json(results / "r2-summary.json", summary)
+    print(posix(results / "r2-summary.json"))
+
+
 def baseline(args):
     if args.warmup < 0 or args.runs < 1:
         raise ValueError("warmup must be >= 0 and runs must be >= 1")
@@ -302,6 +687,25 @@ def parse_args():
     command.add_argument("--run-id", required=True)
     command.add_argument("--warmup", default=1, type=int)
     command.add_argument("--runs", default=1, type=int)
+    command = subparsers.add_parser("trojan-deploy")
+    command.add_argument("--run-id", required=True)
+    command = subparsers.add_parser("trojan-start")
+    command.add_argument("--run-id", required=True)
+    command = subparsers.add_parser("trojan-stop")
+    command.add_argument("--run-id", required=True)
+    command = subparsers.add_parser("bytesource-start")
+    command.add_argument("--run-id", required=True)
+    command = subparsers.add_parser("bytesource-stop")
+    command.add_argument("--run-id", required=True)
+    command = subparsers.add_parser("trojan-test")
+    command.add_argument("--run-id", required=True)
+    command.add_argument("--protocol", required=True, choices=("tcp", "quic"))
+    command.add_argument("--bytes", required=True, type=int)
+    command.add_argument("--run", default=1, type=int)
+    command = subparsers.add_parser("r2")
+    command.add_argument("--run-id", required=True)
+    command.add_argument("--runs", default=1, type=int)
+    command.add_argument("--sizes", nargs="+", type=int)
     return parser.parse_args()
 
 
@@ -311,6 +715,20 @@ def main():
         prepare(args)
     elif args.command == "baseline":
         baseline(args)
+    elif args.command == "trojan-deploy":
+        trojan_deploy(args)
+    elif args.command == "trojan-start":
+        trojan_start(args)
+    elif args.command == "trojan-stop":
+        trojan_stop(args)
+    elif args.command == "bytesource-start":
+        bytesource_start(args)
+    elif args.command == "bytesource-stop":
+        bytesource_stop(args)
+    elif args.command == "trojan-test":
+        trojan_test(args)
+    elif args.command == "r2":
+        r2(args)
 
 
 if __name__ == "__main__":

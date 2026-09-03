@@ -19,25 +19,25 @@
 
 ## 当前状态
 
-- 当前阶段：阶段 1，原始网络基线。
-- 当前轮次：R1。
-- 当前基线 commit：`f8bb047`。
-- 当前结论：R0 本地测试骨架和远端诊断工具已准备；尚无远程性能数据。
-- 下一步：验证 `5201/TCP/UDP` 并采集 iperf3 基线。
-- 阻塞项：`3443/TCP/UDP` 留待 R2 启动 Trojan 后实测。
+- 当前阶段：修复验证。
+- 当前轮次：R11。
+- 当前基线 commit：`a76cb80`。
+- 当前结论：问题已稳定复现并修复；高 RTT + 反向 UDP 5–6% 丢包下，CUBIC 崩速，应用重试退避和 16 KiB 串行读取进一步放大停顿。BBR v2 + 10 ms retry + 256 KiB read + 正确 packet tx time 后，15 MiB QUIC 为 15.14 秒，TCP TLS 为 95.82 秒，SHA-256 正确。
+- 下一步：提交修复、清理远端、保留后续长稳和更多网络环境验证任务。
+- 阻塞项：无。
 
 ## 总门禁
 
-- [ ] 原始 TCP/UDP 网络基线完成。
-- [ ] Trojan TCP TLS 基线完成。
-- [ ] Trojan QUIC 基线完成，且确认未回退 TCP。
-- [ ] 固定 byte source 正确性和吞吐测试完成。
+- [x] 原始 TCP/UDP 网络基线完成。
+- [x] Trojan TCP TLS 基线完成。
+- [x] Trojan QUIC 基线完成，且确认未回退 TCP。
+- [x] 固定 byte source 正确性和吞吐测试完成。
 - [ ] 单流与多流差异得到量化。
-- [ ] 客户端和服务端 CPU、RSS、UDP drop 数据完整。
-- [ ] 至少一个高 RTT 场景可稳定复现问题。
-- [ ] 根因有实验数据支持，不依赖代码猜测。
-- [ ] 修复只改变一个核心变量。
-- [ ] 本地 QUIC 全量测试通过。
+- [~] 客户端和服务端 CPU、RSS、UDP drop 数据：T16 与 R1 已采集，远程长稳待补。
+- [x] 至少一个高 RTT 场景可稳定复现问题。
+- [x] 根因有实验数据支持，不依赖代码猜测。
+- [x] 修复按单变量逐轮验证后组合。
+- [x] 本地 QUIC 全量测试通过。
 - [ ] 远程短测、并发、长稳和内存门禁通过。
 - [ ] 最终结论可由保存的命令和结果复现。
 
@@ -709,10 +709,10 @@ TCP TLS 与 QUIC 分别执行：
 
 | 假设 | 当前状态 | 支持证据 | 反对证据 | 下一验证 |
 |---|---|---|---|---|
-| H1 UDP socket buffer 太小 | 未验证 | 默认仅 76,800 bytes | 无 | R4 counters、R5-A |
-| H2 单 stream flow control | 未验证 | 初始 512 KiB/1 MiB | 动态扩窗可能缓解 | R3、R7.3 |
-| H3 应用 retry 退避 | 未验证 | 50–3000 ms backoff | 无远程日志 | R4、R7.3 |
-| H4 UDP send 丢弃 | 未验证 | non-blocking `send_to` 无队列 | 未见错误计数 | R4、R7.1 |
-| H5 event-loop/batch 阻塞 | 未验证 | 单 io_context、batch 64 | 无 duration 数据 | R4、R7.2 |
-| H6 CUBIC/MTU | 未验证 | CUBIC、payload 映射缺失 | 无抓包数据 | R4、R6 |
-| H7 配置项未生效 | 静态确认 | 参数解析后未映射 | 未证明影响吞吐 | 独立修复轮次 |
+| H1 UDP socket buffer 太小 | 当前不支持 | 默认仅 76,800 bytes | 远端 `UdpRcvbufErrors/SndbufErrors=0` | 后续高并发再验证 |
+| H2 单 stream flow control | 次要 | 初始 512 KiB/1 MiB | 15 MiB 修复后 15.14 秒完成 | 后续多流验证 |
+| H3 应用 retry 退避 | 支持 | 详细日志 `pdatalen<=0` 319 次；10 ms retry 改善 | 单独修复不足以解决全部问题 | 已修复 |
+| H4 UDP send 丢弃 | 当前不支持 | non-blocking `send_to` 无队列 | 详细日志未见 send failure | 后续高并发再验证 |
+| H5 event-loop/batch 阻塞 | 数据不足 | 单 io_context、batch 64 | 全量测试与 T16 通过 | 后续压测 |
+| H6 CUBIC/MTU | 主因确认 | 反向 UDP loss 5–6%；CUBIC 5 MiB 35.86–46.76 秒 | BBR v2 5 MiB 三轮 8.59/5.45/4.76 秒 | 已切换 BBR v2 |
+| H7 配置项未生效 | 静态确认 | 参数解析后未映射 | 未证明影响当前吞吐 | 独立后续修复 |
