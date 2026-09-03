@@ -160,18 +160,20 @@ void QuicEndpoint::stop() {
     }
 }
 
-void QuicEndpoint::send_packet(const boost::asio::ip::udp::endpoint& dest,
+bool QuicEndpoint::send_packet(const boost::asio::ip::udp::endpoint& dest,
                                const uint8_t* data, std::size_t len) {
     if (!m_socket.is_open() || len == 0) {
-        return;
+        return false;
     }
     boost::system::error_code ec;
-    m_socket.send_to(boost::asio::buffer(data, len), dest, 0, ec);
+    auto sent = m_socket.send_to(boost::asio::buffer(data, len), dest, 0, ec);
     if (ec) {
         _log_with_date_time("QuicEndpoint::send_packet to " + dest.address().to_string() + ":" +
-                              tp::to_string(dest.port()) + " failed: " + tp::string(ec.message().c_str()),
+                               tp::to_string(dest.port()) + " failed: " + tp::string(ec.message().c_str()),
                             Log::WARN);
+        return false;
     }
+    return sent == len;
 }
 
 boost::asio::ip::udp::endpoint QuicEndpoint::local_endpoint() const {

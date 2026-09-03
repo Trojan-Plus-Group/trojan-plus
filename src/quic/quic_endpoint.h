@@ -49,7 +49,7 @@ class QuicEndpoint : public std::enable_shared_from_this<QuicEndpoint> {
     const uint8_t* stateless_reset_secret() const { return m_stateless_reset_secret; }
 
     // Send a UDP datagram to the given remote endpoint (called by QuicConnection::pump_write).
-    void send_packet(const boost::asio::ip::udp::endpoint& dest,
+    bool send_packet(const boost::asio::ip::udp::endpoint& dest,
                      const uint8_t* data, std::size_t len);
 
     // Local endpoint of the bound UDP socket (needed to build ngtcp2 path).
