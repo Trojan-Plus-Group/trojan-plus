@@ -624,8 +624,10 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, tp::str
               native_context, (unsigned char*)(ssl.alpn.c_str()), (unsigned int)ssl.alpn.length());
         }
         if (ssl.reuse_session) {
+#ifndef BOOST_ASIO_USE_WOLFSSL
             SSL_CTX_set_session_cache_mode(native_context, SSL_SESS_CACHE_CLIENT);
             SSLSession::set_callback(native_context);
+#endif
             if (!ssl.session_ticket) {
                 SSL_CTX_set_options(native_context, SSL_OP_NO_TICKET);
             }
@@ -666,12 +668,14 @@ void Config::prepare_ssl_reuse(SSLSocket& socket) const {
     if (!ssl.sni.empty()) {
         SSL_set_tlsext_host_name(ssl_handle, ssl.sni.c_str());
     }
+#ifndef BOOST_ASIO_USE_WOLFSSL
     if (ssl.reuse_session) {
         auto* session = SSLSession::get_session();
         if (session != nullptr) {
             SSL_set_session(ssl_handle, session);
         }
     }
+#endif
     _unguard;
 }
 
