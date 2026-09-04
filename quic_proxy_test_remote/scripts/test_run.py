@@ -162,6 +162,105 @@ class JsonRoundTripTest(unittest.TestCase):
             self.assertEqual(RUNNER.load_json(target), payload)
 
 
+class ConcurrencyPureFunctionTest(unittest.TestCase):
+    def test_split_total_bytes_exact(self):
+        sizes = RUNNER.split_total_bytes(15_000_000, 64)
+        self.assertEqual(len(sizes), 64)
+        self.assertEqual(sum(sizes), 15_000_000)
+        self.assertLessEqual(max(sizes) - min(sizes), 1)
+
+    def test_split_total_bytes_limits(self):
+        with self.assertRaises(ValueError):
+            RUNNER.split_total_bytes(0, 1)
+        with self.assertRaises(ValueError):
+            RUNNER.split_total_bytes(50_000_001, 1)
+        with self.assertRaises(ValueError):
+            RUNNER.split_total_bytes(1, 0)
+
+    def test_group_summary(self):
+        samples = [
+            {"valid": True, "duration_seconds": 1.0, "expected_size": 60},
+            {"valid": True, "duration_seconds": 3.0, "expected_size": 40},
+            {"valid": False, "duration_seconds": 2.0, "expected_size": 20},
+        ]
+        summary = RUNNER.concurrency_group_summary(samples, 4.0, 120)
+        self.assertEqual(summary["valid_bytes"], 100)
+        self.assertEqual(summary["aggregate_bits_per_second"], 200)
+        self.assertEqual(summary["p50_duration_seconds"], 2)
+        self.assertEqual(summary["p95_duration_seconds"], 2.9)
+        self.assertEqual(summary["failure_count"], 1)
+
+
+class AdditionalPureFunctionTest(unittest.TestCase):
+    def test_linear_slope_per_minute(self):
+        self.assertEqual(RUNNER.linear_slope_per_minute([(0, 100), (60, 220), (120, 340)]), 120)
+        self.assertIsNone(RUNNER.linear_slope_per_minute([(0, 100)]))
+
+    def test_series_summary(self):
+        summary = RUNNER.series_summary([(0, 300), (60, 100), (120, 200)])
+        self.assertEqual(summary["first"], 300)
+        self.assertEqual(summary["last"], 200)
+        self.assertEqual(summary["min"], 100)
+        self.assertEqual(summary["max"], 300)
+        self.assertEqual(summary["linear_slope_bytes_per_minute"], -50)
+
+    def test_parse_proc_memory(self):
+        output = "VmRSS:\t123 kB\n=== SMAPS_ROLLUP ===\nPss: 45 kB\n"
+        self.assertEqual(RUNNER.parse_proc_memory(output), {"rss_bytes": 125952, "pss_bytes": 46080})
+
+    def test_cloudflare_length_validation(self):
+        metrics = {"size_download": 5000000}
+        self.assertTrue(RUNNER.valid_cloudflare_sample(0, 5000000, 5000000, metrics))
+        self.assertFalse(RUNNER.valid_cloudflare_sample(0, 4999999, 5000000, metrics))
+        self.assertFalse(RUNNER.valid_cloudflare_sample(0, 5000000, 5000000, None))
+
+
+class NetemPureFunctionTest(unittest.TestCase):
+    def test_parameter_matrix(self):
+        RUNNER.validate_netem_parameters("tcp", 20, 0, 1 << 20)
+        RUNNER.validate_netem_parameters("quic", 300, 1, 15 << 20)
+        for values in (("both", 20, 0, 1), ("tcp", 21, 0, 1), ("tcp", 20, 0.2, 1), ("tcp", 20, 0, 0), ("tcp", 20, 0, (15 << 20) + 1)):
+            with self.assertRaises(ValueError):
+                RUNNER.validate_netem_parameters(*values)
+
+    def test_route_parse(self):
+        output = '114.248.4.218\n[{"dst":"114.248.4.218","gateway":"172.236.226.1","dev":"eth0","prefsrc":"172.236.226.35","flags":[]}]\n'
+        self.assertEqual(RUNNER.parse_netem_route(output), ("114.248.4.218", "eth0"))
+
+    def test_route_parse_pretty_json(self):
+        output = '114.248.4.218\n[\n  {\n    "dst": "114.248.4.218",\n    "gateway": "172.236.226.1",\n    "dev": "eth0",\n    "prefsrc": "172.236.226.35",\n    "flags": []\n  }\n]\n'
+        self.assertEqual(RUNNER.parse_netem_route(output), ("114.248.4.218", "eth0"))
+
+    def test_route_parse_rejects_unsafe_results(self):
+        invalid = (
+            'not-an-ip\n[{"dst":"114.248.4.218","dev":"eth0"}]\n',
+            '2001:db8::1\n[{"dst":"2001:db8::1","dev":"eth0"}]\n',
+            '114.248.4.218\n[]\n',
+            '114.248.4.218\n[{"dst":"114.248.4.218","dev":"eth0"},{"dst":"114.248.4.218","dev":"eth1"}]\n',
+            '114.248.4.218\n[{"dst":"203.0.113.9","dev":"eth0"}]\n',
+            '114.248.4.218\n[{"dst":"114.248.4.218","dev":"eth0;bad"}]\n',
+        )
+        for output in invalid:
+            with self.assertRaises(ValueError):
+                RUNNER.parse_netem_route(output)
+
+    def test_tcp_commands_are_precisely_scoped(self):
+        commands = RUNNER.netem_commands("eth0", "203.0.113.9", "tcp", 100, 0.1, "ifbabcdef12", 32123)
+        setup = commands["setup"]
+        self.assertIn("dev eth0 egress protocol ip pref 32123 flower", setup)
+        self.assertIn("dst_ip 203.0.113.9/32", setup)
+        self.assertIn("ip_proto tcp src_port 3443", setup)
+        self.assertIn("action mirred egress redirect dev ifbabcdef12", setup)
+        self.assertIn("dev ifbabcdef12 root netem delay 100ms loss 0.1%", setup)
+        self.assertNotIn("dev eth0 root netem", setup)
+        self.assertNotIn("qdisc del dev eth0", commands["cleanup"])
+        self.assertNotIn("qdisc del dev eth0 clsact", commands["cleanup"])
+
+    def test_quic_uses_udp(self):
+        setup = RUNNER.netem_commands("enp1s0", "198.51.100.2", "quic", 20, 0, "ifb12345678", 30001)["setup"]
+        self.assertIn("dst_ip 198.51.100.2/32 ip_proto udp src_port 3443", setup)
+
+
 class ConstantsTest(unittest.TestCase):
     def test_r2_max_enforced(self):
         self.assertEqual(RUNNER.R2_MAX_SAMPLE_BYTES, 15 * 1024 * 1024)

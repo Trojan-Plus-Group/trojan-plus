@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 
 import argparse
+import concurrent.futures
 import datetime
 import hashlib
+import ipaddress
 import json
 import os
 import pathlib
@@ -12,6 +14,7 @@ import shlex
 import statistics
 import subprocess
 import sys
+import threading
 import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -29,6 +32,16 @@ TROJAN_LOCAL_PORT_QUIC = 9080
 BYTESOURCE_PORT = 8001
 R2_DEFAULT_SIZES = (1 << 20, 5 << 20, 10 << 20, 15 << 20)
 R2_MAX_SAMPLE_BYTES = 15 << 20
+CONCURRENCY_DEFAULT_STREAMS = (1, 4, 16, 64)
+CONCURRENCY_DEFAULT_TOTAL_BYTES = 15_000_000
+CONCURRENCY_MAX_TOTAL_BYTES = 50_000_000
+CLOUDFLARE_DEFAULT_BYTES = 5_000_000
+CLOUDFLARE_MAX_BYTES = 50_000_000
+SOAK_DEFAULT_SAMPLE_BYTES = 1 << 20
+SOAK_MAX_SAMPLE_BYTES = 15 << 20
+NETEM_DELAYS = (20, 100, 200, 300)
+NETEM_LOSSES = (0, 0.01, 0.1, 0.5, 1)
+NETEM_DEFAULT_BYTES = 1 << 20
 ITEM_TIMEOUT = 170
 RETRY_DELAYS = (3, 10)
 DEFAULT_ATTEMPT_TIMEOUT = 140
@@ -66,6 +79,111 @@ def bytesource_payload(n):
 
 def bytesource_sha256(n):
     return sha256_bytes(bytesource_payload(n))
+
+
+def split_total_bytes(total_bytes, streams):
+    if total_bytes < 1 or total_bytes > CONCURRENCY_MAX_TOTAL_BYTES:
+        raise ValueError(f"total-bytes must be in [1, {CONCURRENCY_MAX_TOTAL_BYTES}]")
+    if streams < 1:
+        raise ValueError("streams must be >= 1")
+    quotient, remainder = divmod(total_bytes, streams)
+    return [quotient + (index < remainder) for index in range(streams)]
+
+
+def concurrency_group_summary(samples, elapsed_seconds, total_bytes):
+    valid_samples = [sample for sample in samples if sample["valid"]]
+    durations = [sample["duration_seconds"] for sample in valid_samples]
+    failures = len(samples) - len(valid_samples)
+    valid_bytes = sum(sample["expected_size"] for sample in valid_samples)
+    return {
+        "total_bytes": total_bytes,
+        "valid_bytes": valid_bytes,
+        "elapsed_seconds": elapsed_seconds,
+        "aggregate_bits_per_second": valid_bytes * 8 / elapsed_seconds if elapsed_seconds > 0 else None,
+        "p50_duration_seconds": percentile(durations, 0.5),
+        "p95_duration_seconds": percentile(durations, 0.95),
+        "failure_count": failures,
+        "samples": samples,
+    }
+
+
+def linear_slope_per_minute(points):
+    if len(points) < 2:
+        return None
+    xs = [point[0] for point in points]
+    ys = [point[1] for point in points]
+    x_mean = statistics.mean(xs)
+    y_mean = statistics.mean(ys)
+    denominator = sum((value - x_mean) ** 2 for value in xs)
+    if denominator == 0:
+        return None
+    return sum((x - x_mean) * (y - y_mean) for x, y in points) / denominator * 60
+
+
+def series_summary(points):
+    values = [point[1] for point in points]
+    return {"first": values[0] if values else None, "last": values[-1] if values else None, "min": min(values) if values else None, "max": max(values) if values else None, "linear_slope_bytes_per_minute": linear_slope_per_minute(points)}
+
+
+def parse_ps_rss(output):
+    fields = output.split()
+    return int(fields[1]) * 1024 if len(fields) >= 2 else None
+
+
+def parse_proc_memory(output):
+    sections = output.split("=== SMAPS_ROLLUP ===", 1)
+    status = sections[0]
+    smaps = sections[1] if len(sections) == 2 else ""
+    rss = re.search(r"^VmRSS:\s+(\d+)\s+kB$", status, re.MULTILINE)
+    pss = re.search(r"^Pss:\s+(\d+)\s+kB$", smaps, re.MULTILINE)
+    return {"rss_bytes": int(rss.group(1)) * 1024 if rss else None, "pss_bytes": int(pss.group(1)) * 1024 if pss else None}
+
+
+def validate_netem_parameters(protocol, delay_ms, loss_percent, size):
+    if protocol not in ("tcp", "quic"):
+        raise ValueError("protocol must be 'tcp' or 'quic'")
+    if delay_ms not in NETEM_DELAYS:
+        raise ValueError(f"delay-ms must be one of {NETEM_DELAYS}")
+    if loss_percent not in NETEM_LOSSES:
+        raise ValueError(f"loss-percent must be one of {NETEM_LOSSES}")
+    if size < 1 or size > R2_MAX_SAMPLE_BYTES:
+        raise ValueError(f"bytes must be in [1, {R2_MAX_SAMPLE_BYTES}]")
+
+
+def netem_commands(interface, client_ip, protocol, delay_ms, loss_percent, ifb, preference, watchdog_seconds=300):
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,15}", interface):
+        raise ValueError("invalid remote interface")
+    if not re.fullmatch(r"ifb[A-Za-z0-9]{1,11}", ifb):
+        raise ValueError("invalid IFB name")
+    address = str(ipaddress.IPv4Address(client_ip))
+    ip_protocol = "tcp" if protocol == "tcp" else "udp"
+    cleanup = f"tc filter del dev {interface} egress protocol ip pref {preference} flower 2>/dev/null || true; tc qdisc del dev {ifb} root 2>/dev/null || true; ip link set dev {ifb} down 2>/dev/null || true; ip link del dev {ifb} type ifb 2>/dev/null || true"
+    setup = f"command -v tc >/dev/null; command -v modprobe >/dev/null; modprobe ifb; tc qdisc show dev {interface} >/dev/null; tc qdisc add dev {interface} clsact 2>/dev/null || tc qdisc show dev {interface} | grep -q clsact; ip link add {ifb} type ifb; ip link set dev {ifb} up; tc qdisc add dev {ifb} root netem delay {delay_ms}ms loss {loss_percent}%; tc filter add dev {interface} egress protocol ip pref {preference} flower dst_ip {address}/32 ip_proto {ip_protocol} src_port {TROJAN_REMOTE_PORT} action mirred egress redirect dev {ifb}; nohup sh -c {shlex.quote(f'sleep {watchdog_seconds}; {cleanup}')} >/dev/null 2>&1 </dev/null & printf '%s\\n' $!"
+    return {"setup": setup, "cleanup": cleanup, "client_ip": address, "ip_protocol": ip_protocol, "interface": interface, "ifb": ifb, "preference": preference}
+
+
+def parse_netem_route(output):
+    client_text, separator, route_text = output.strip().partition("\n")
+    if not separator or not client_text or not route_text:
+        raise ValueError("remote route discovery returned unexpected output")
+    try:
+        client_ip = str(ipaddress.IPv4Address(client_text))
+        routes = json.loads(route_text)
+    except (ipaddress.AddressValueError, json.JSONDecodeError) as error:
+        raise ValueError("remote route discovery returned invalid IPv4 or JSON") from error
+    if not isinstance(routes, list) or len(routes) != 1 or not isinstance(routes[0], dict):
+        raise ValueError("remote route discovery must return exactly one route")
+    route = routes[0]
+    try:
+        destination = str(ipaddress.IPv4Address(route["dst"]))
+    except (KeyError, TypeError, ipaddress.AddressValueError) as error:
+        raise ValueError("remote route has invalid destination") from error
+    if destination != client_ip:
+        raise ValueError("remote route destination does not match client IPv4")
+    interface = route.get("dev")
+    if not isinstance(interface, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,15}", interface):
+        raise ValueError("remote route has invalid interface")
+    return client_ip, interface
 
 
 def write_json(path, data):
@@ -148,11 +266,14 @@ def prepare(args):
     render("client-tcp.json.template", client_tcp, client_values)
     commit = run(["git", "rev-parse", "HEAD"], repo)
     status = run(["git", "status", "--short", "--branch"], repo)
+    dirty_diff = subprocess.run(["git", "diff", "HEAD", "--binary", "--no-ext-diff"], cwd=repo, check=True, capture_output=True).stdout
+    if not TROJAN_BINARY.is_file():
+        raise FileNotFoundError(f"local binary missing: {TROJAN_BINARY}")
     manifest = {
         "run_id": args.run_id,
         "created_utc": utc_now(),
         "baseline_commit": commit,
-        "local": {"repo": posix(repo), "status": status},
+        "local": {"repo": posix(repo), "status": status, "binary": posix(TROJAN_BINARY), "binary_sha256": sha256(TROJAN_BINARY), "dirty_diff_sha256": sha256_bytes(dirty_diff)},
         "remote": {"host": HOST, "ssh_port": SSH_PORT, "user": SSH_USER, "repo": args.remote_repo, "runtime": args.remote_runtime},
         "build": {"type": "Release", "cmake_args": ["-DCMAKE_BUILD_TYPE=Release", "-DENABLE_QUIC=ON"]},
         "config_sha256": {"server": sha256(server), "client_quic": sha256(client_quic), "client_tcp": sha256(client_tcp)},
@@ -166,6 +287,9 @@ def prepare(args):
 
 def ssh(remote_command):
     return ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-p", str(SSH_PORT), f"{SSH_USER}@{HOST}", remote_command]
+
+
+COMMANDS_LOCK = threading.Lock()
 
 
 def execute_attempt(command, output_prefix, timeout, commands_file, item, attempt, input_data=None):
@@ -192,8 +316,9 @@ def execute_attempt(command, output_prefix, timeout, commands_file, item, attemp
     output_prefix.with_suffix(".stderr").write_text(stderr)
     record = {"item": item, "attempt": attempt, "command": command, "started_utc": started, "ended_utc": ended, "duration_seconds": time.monotonic() - start, "exit_code": exit_code, "timed_out": timed_out, "stdout": posix(output_prefix.with_suffix('.stdout').relative_to(commands_file.parent.parent)), "stderr": posix(output_prefix.with_suffix('.stderr').relative_to(commands_file.parent.parent))}
     output_prefix.with_suffix(".json").write_text(json.dumps(record, indent=4) + "\n")
-    with commands_file.open("a") as target:
-        target.write(json.dumps(record) + "\n")
+    with COMMANDS_LOCK:
+        with commands_file.open("a") as target:
+            target.write(json.dumps(record) + "\n")
     return record, stdout
 
 
@@ -354,7 +479,17 @@ def trojan_deploy(args):
     record, _ = execute_attempt(command, results / "metadata" / "trojan" / "trojan-deploy-server-json", 30, commands_file, "trojan-deploy-server-json", 1, server_text)
     if record["exit_code"] != 0:
         raise RuntimeError("failed to write deployed server.json")
-    record_payload = {"run_id": args.run_id, "remote_dir": remote_dir, "files": [path.name for path in sources], "transferred_utc": utc_now()}
+    identity_command = "printf 'hostname='; hostname; printf 'machine_id='; cat /etc/machine-id 2>/dev/null || true; printf 'boot_id='; cat /proc/sys/kernel/random/boot_id; printf 'kernel='; uname -srmo"
+    identity_record, identity_output = execute_attempt(ssh(identity_command), results / "metadata" / "trojan" / "remote-identity", 30, commands_file, "remote-identity", 1)
+    if identity_record["exit_code"] != 0:
+        raise RuntimeError("failed to collect remote identity")
+    identity_path = results / "metadata" / "remote-identity.txt"
+    identity_path.write_text(identity_output)
+    manifest_path = results / "metadata" / "manifest.json"
+    manifest = load_json(manifest_path)
+    manifest["remote_identity"] = {"captured_utc": utc_now(), "raw": posix(identity_path.relative_to(results)), "sha256": sha256(identity_path)}
+    write_json(manifest_path, manifest)
+    record_payload = {"run_id": args.run_id, "remote_dir": remote_dir, "files": [path.name for path in sources], "transferred_utc": utc_now(), "remote_identity": manifest["remote_identity"]}
     write_json(results / "metadata" / "trojan-deploy.json", record_payload)
     print(posix(results / "metadata" / "trojan-deploy.json"))
     print(remote_dir)
@@ -571,6 +706,327 @@ def trojan_test(args):
     return summary
 
 
+def local_client_snapshot(clients, path):
+    rows = []
+    for client in clients:
+        completed = subprocess.run(["ps", "-p", str(client["pid"]), "-o", "pid=,rss=,%cpu=,time=,comm="], text=True, capture_output=True, check=False)
+        rows.append({"protocol": client["protocol"], "pid": client["pid"], "exit_code": completed.returncode, "ps": completed.stdout.strip()})
+    write_json(path, {"captured_utc": utc_now(), "units": {"rss": "KiB", "cpu": "instantaneous_percent", "time": "cumulative_cpu_time"}, "clients": rows})
+    return path
+
+
+def concurrency_snapshot(results, commands_file, clients, server_pid, group, phase):
+    directory = results / "concurrency" / "observations" / group
+    local_path = local_client_snapshot(clients, directory / f"local-{phase}.json")
+    remote_command = f"printf '%s\\n' '=== UTC ==='; date -u +%Y-%m-%dT%H:%M:%SZ; printf '%s\\n' '=== STATUS ==='; cat /proc/{server_pid}/status; printf '%s\\n' '=== SMAPS_ROLLUP ==='; cat /proc/{server_pid}/smaps_rollup; printf '%s\\n' '=== SNMP ==='; cat /proc/net/snmp; printf '%s\\n' '=== SOFTNET ==='; cat /proc/net/softnet_stat; printf '%s\\n' '=== LINK ==='; ip -s link"
+    record, _ = execute_attempt(ssh(remote_command), directory / f"remote-{phase}", 30, commands_file, f"concurrency-{group}-{phase}", 1)
+    if record["exit_code"] != 0:
+        raise RuntimeError(f"remote observation failed: {group} {phase}")
+    return {"local": posix(local_path.relative_to(results)), "remote": record["stdout"], "remote_record": posix((directory / f"remote-{phase}.json").relative_to(results))}
+
+
+def run_concurrency_stream(results, commands_file, protocol, port, size, label, run_number, stream):
+    directory = results / "concurrency" / "downloads" / label
+    directory.mkdir(parents=True, exist_ok=True)
+    output_path = directory / f"stream-{stream:03d}.bin"
+    prefix = directory / f"stream-{stream:03d}"
+    command = ["curl", "-sS", "-o", str(output_path), "--socks5-hostname", f"127.0.0.1:{port}", f"http://127.0.0.1:{BYTESOURCE_PORT}/{size}"]
+    record, output = execute_attempt(command, prefix, DEFAULT_ATTEMPT_TIMEOUT, commands_file, f"concurrency-{label}-stream-{stream}", 1)
+    sample = summarize_trojan(record, output, output_path, size, run_number, protocol)
+    sample["stream"] = stream
+    sample["output"] = posix(output_path.relative_to(results))
+    write_json(prefix.with_suffix(".summary.json"), sample)
+    return sample
+
+
+def concurrency(args):
+    if args.warmup < 0 or args.runs < 1:
+        raise ValueError("warmup must be >= 0 and runs must be >= 1")
+    streams_values = tuple(args.streams or CONCURRENCY_DEFAULT_STREAMS)
+    if any(streams < 1 for streams in streams_values):
+        raise ValueError("streams must be >= 1")
+    split_total_bytes(args.total_bytes, 1)
+    results = ROOT / "results" / args.run_id
+    runtime = ROOT / "runtime" / args.run_id
+    if not (results / "metadata" / "manifest.json").is_file():
+        raise FileNotFoundError(f"prepared run not found: {args.run_id}")
+    if not (results / "metadata" / "trojan-deploy.json").is_file():
+        raise FileNotFoundError("trojan-deploy must run before concurrency")
+    commands_file = results / "metadata" / "commands.jsonl"
+    summary = {"run_id": args.run_id, "started_utc": utc_now(), "streams": list(streams_values), "total_bytes": args.total_bytes, "warmup": args.warmup, "runs": args.runs, "groups": []}
+    bytesource_meta = server_meta = tcp_client = quic_client = None
+    try:
+        bytesource_meta = bytesource_start(argparse.Namespace(run_id=args.run_id))
+        server_meta = trojan_start(argparse.Namespace(run_id=args.run_id))
+        tcp_client = start_local_client(runtime, "tcp", TROJAN_LOCAL_PORT_TCP, results, commands_file)
+        quic_client = start_local_client(runtime, "quic", TROJAN_LOCAL_PORT_QUIC, results, commands_file)
+        clients = [tcp_client, quic_client]
+        for warmup, count in ((True, args.warmup), (False, args.runs)):
+            phase = "warmup" if warmup else "run"
+            for number in range(1, count + 1):
+                for streams in streams_values:
+                    sizes = split_total_bytes(args.total_bytes, streams)
+                    for protocol, port in (("tcp", TROJAN_LOCAL_PORT_TCP), ("quic", TROJAN_LOCAL_PORT_QUIC)):
+                        label = f"{protocol}-s{streams}-{phase}{number}"
+                        before = concurrency_snapshot(results, commands_file, clients, server_meta["pid"], label, "before")
+                        start = time.monotonic()
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=streams) as executor:
+                            futures = [executor.submit(run_concurrency_stream, results, commands_file, protocol, port, size, label, number, index + 1) for index, size in enumerate(sizes)]
+                            samples = [future.result() for future in futures]
+                        elapsed = time.monotonic() - start
+                        after = concurrency_snapshot(results, commands_file, clients, server_meta["pid"], label, "after")
+                        group = concurrency_group_summary(samples, elapsed, args.total_bytes)
+                        group.update({"protocol": protocol, "streams": streams, "warmup": warmup, "run": number, "observations": {"before": before, "after": after}})
+                        write_json(results / "concurrency" / "groups" / f"{label}.json", group)
+                        summary["groups"].append(group)
+    finally:
+        summary["ended_utc"] = utc_now()
+        for client in (tcp_client, quic_client):
+            if client is not None:
+                try:
+                    stop_local_client(client, results, commands_file)
+                except Exception as error:
+                    print(f"client stop failed: {error}", file=sys.stderr)
+        if server_meta is not None:
+            try:
+                trojan_stop(argparse.Namespace(run_id=args.run_id))
+            except Exception as error:
+                print(f"trojan stop failed: {error}", file=sys.stderr)
+        if bytesource_meta is not None:
+            try:
+                bytesource_stop(argparse.Namespace(run_id=args.run_id))
+            except Exception as error:
+                print(f"bytesource stop failed: {error}", file=sys.stderr)
+        write_json(results / "concurrency" / "summary.json", summary)
+    print(posix(results / "concurrency" / "summary.json"))
+
+
+CURL_WRITE_OUT = '{"http_code":%{http_code},"size_download":%{size_download},"time_connect":%{time_connect},"time_starttransfer":%{time_starttransfer},"time_total":%{time_total},"speed_download":%{speed_download},"remote_ip":"%{remote_ip}","http_version":"%{http_version}"}'
+
+
+def valid_cloudflare_sample(exit_code, actual_size, expected_size, metrics):
+    return exit_code == 0 and actual_size == expected_size and metrics is not None and int(metrics.get("size_download", -1)) == expected_size
+
+
+def run_cloudflare_sample(results, commands_file, mode, size, warmup, number):
+    phase = "warmup" if warmup else "run"
+    directory = results / "cloudflare" / mode
+    label = f"{phase}{number}"
+    output_path = directory / f"{label}.bin"
+    prefix = directory / label
+    command = ["curl", "-sS", "--connect-timeout", "15", "--max-time", "170", "--retry", "2", "--retry-delay", "3", "-o", str(output_path), "--write-out", CURL_WRITE_OUT]
+    if mode != "direct":
+        port = TROJAN_LOCAL_PORT_TCP if mode == "tcp" else TROJAN_LOCAL_PORT_QUIC
+        command.extend(["--socks5-hostname", f"127.0.0.1:{port}"])
+    command.append(f"https://speed.cloudflare.com/__down?bytes={size}")
+    record, output = execute_attempt(command, prefix, 180, commands_file, f"cloudflare-{mode}-{label}", 1)
+    try:
+        metrics = json.loads(output)
+    except json.JSONDecodeError:
+        metrics = None
+    actual_size = output_path.stat().st_size if output_path.is_file() else 0
+    valid = valid_cloudflare_sample(record["exit_code"], actual_size, size, metrics)
+    sample = {"mode": mode, "warmup": warmup, "run": number, "expected_size": size, "actual_size": actual_size, "valid": valid, "exit_code": record["exit_code"], "metrics": metrics, "output": posix(output_path.relative_to(results)), "record": posix(prefix.with_suffix(".json").relative_to(results))}
+    write_json(prefix.with_suffix(".summary.json"), sample)
+    return sample
+
+
+def cloudflare(args):
+    if args.bytes < 1 or args.bytes > CLOUDFLARE_MAX_BYTES:
+        raise ValueError(f"bytes must be in [1, {CLOUDFLARE_MAX_BYTES}]")
+    if args.warmup < 0 or args.runs < 1:
+        raise ValueError("warmup must be >= 0 and runs must be >= 1")
+    results = ROOT / "results" / args.run_id
+    runtime = ROOT / "runtime" / args.run_id
+    if not (results / "metadata" / "trojan-deploy.json").is_file():
+        raise FileNotFoundError("trojan-deploy must run before cloudflare")
+    commands_file = results / "metadata" / "commands.jsonl"
+    summary = {"run_id": args.run_id, "started_utc": utc_now(), "bytes": args.bytes, "warmup": args.warmup, "runs": args.runs, "samples": []}
+    server_meta = tcp_client = quic_client = None
+    try:
+        server_meta = trojan_start(argparse.Namespace(run_id=args.run_id))
+        tcp_client = start_local_client(runtime, "tcp", TROJAN_LOCAL_PORT_TCP, results, commands_file)
+        quic_client = start_local_client(runtime, "quic", TROJAN_LOCAL_PORT_QUIC, results, commands_file)
+        for warmup, count in ((True, args.warmup), (False, args.runs)):
+            for number in range(1, count + 1):
+                for mode in ("direct", "tcp", "quic"):
+                    summary["samples"].append(run_cloudflare_sample(results, commands_file, mode, args.bytes, warmup, number))
+    finally:
+        summary["ended_utc"] = utc_now()
+        for client in (tcp_client, quic_client):
+            if client is not None:
+                try:
+                    stop_local_client(client, results, commands_file)
+                except Exception as error:
+                    print(f"client stop failed: {error}", file=sys.stderr)
+        if server_meta is not None:
+            try:
+                trojan_stop(argparse.Namespace(run_id=args.run_id))
+            except Exception as error:
+                print(f"trojan stop failed: {error}", file=sys.stderr)
+        summary["failure_count"] = sum(not sample["valid"] for sample in summary["samples"] if not sample["warmup"])
+        write_json(results / "cloudflare" / "summary.json", summary)
+    print(posix(results / "cloudflare" / "summary.json"))
+
+
+def collect_soak_observation(results, commands_file, clients, server_pid, index, elapsed_seconds, phase):
+    directory = results / "soak" / "observations"
+    local_path = local_client_snapshot(clients, directory / f"{index:05d}-local.json")
+    local = load_json(local_path)
+    remote_command = f"printf '%s\\n' '=== STATUS ==='; cat /proc/{server_pid}/status; printf '%s\\n' '=== SMAPS_ROLLUP ==='; cat /proc/{server_pid}/smaps_rollup; printf '%s\\n' '=== SNMP ==='; cat /proc/net/snmp"
+    record, output = execute_attempt(ssh(remote_command), directory / f"{index:05d}-remote", 30, commands_file, f"soak-observation-{index}", 1)
+    memory = parse_proc_memory(output) if record["exit_code"] == 0 else {"rss_bytes": None, "pss_bytes": None}
+    return {"index": index, "captured_utc": utc_now(), "elapsed_seconds": elapsed_seconds, "phase": phase, "local": [{"protocol": row["protocol"], "rss_bytes": parse_ps_rss(row["ps"]), "ps": row["ps"]} for row in local["clients"]], "remote": memory, "raw": {"local": posix(local_path.relative_to(results)), "remote": record["stdout"], "remote_record": posix((directory / f"{index:05d}-remote.json").relative_to(results))}}
+
+
+def soak_memory_summary(observations):
+    result = {"local": {}, "remote": {}}
+    for protocol in ("tcp", "quic"):
+        points = [(item["elapsed_seconds"], client["rss_bytes"]) for item in observations for client in item["local"] if client["protocol"] == protocol and client["rss_bytes"] is not None]
+        result["local"][protocol] = {"rss_bytes": series_summary(points)}
+    for key in ("rss_bytes", "pss_bytes"):
+        points = [(item["elapsed_seconds"], item["remote"][key]) for item in observations if item["remote"][key] is not None]
+        result["remote"][key] = series_summary(points)
+    return result
+
+
+def soak(args):
+    if args.minutes <= 0 or args.cooldown < 0:
+        raise ValueError("minutes must be > 0 and cooldown must be >= 0")
+    if args.bytes < 1 or args.bytes > SOAK_MAX_SAMPLE_BYTES:
+        raise ValueError(f"bytes must be in [1, {SOAK_MAX_SAMPLE_BYTES}]")
+    protocols = ("tcp", "quic") if args.protocol == "both" else (args.protocol,)
+    results = ROOT / "results" / args.run_id
+    runtime = ROOT / "runtime" / args.run_id
+    if not (results / "metadata" / "trojan-deploy.json").is_file():
+        raise FileNotFoundError("trojan-deploy must run before soak")
+    commands_file = results / "metadata" / "commands.jsonl"
+    summary = {"run_id": args.run_id, "started_utc": utc_now(), "minutes": args.minutes, "cooldown_minutes": args.cooldown, "bytes": args.bytes, "protocols": list(protocols), "samples": [], "observations": []}
+    bytesource_meta = server_meta = tcp_client = quic_client = None
+    stop_sampling = threading.Event()
+    sampling_thread = None
+    started = time.monotonic()
+    phase = {"value": "active"}
+    def sample_resources():
+        index = 1
+        while True:
+            try:
+                summary["observations"].append(collect_soak_observation(results, commands_file, [tcp_client, quic_client], server_meta["pid"], index, time.monotonic() - started, phase["value"]))
+            except Exception as error:
+                summary["observations"].append({"index": index, "captured_utc": utc_now(), "elapsed_seconds": time.monotonic() - started, "phase": phase["value"], "error": str(error)})
+            index += 1
+            if stop_sampling.wait(60):
+                break
+    try:
+        bytesource_meta = bytesource_start(argparse.Namespace(run_id=args.run_id))
+        server_meta = trojan_start(argparse.Namespace(run_id=args.run_id))
+        tcp_client = start_local_client(runtime, "tcp", TROJAN_LOCAL_PORT_TCP, results, commands_file)
+        quic_client = start_local_client(runtime, "quic", TROJAN_LOCAL_PORT_QUIC, results, commands_file)
+        sampling_thread = threading.Thread(target=sample_resources)
+        sampling_thread.start()
+        deadline = started + args.minutes * 60
+        number = 1
+        while time.monotonic() < deadline:
+            protocol = protocols[(number - 1) % len(protocols)]
+            test_args = argparse.Namespace(run_id=args.run_id, bytes=args.bytes, protocol=protocol, run=number)
+            summary["samples"].append(trojan_test(test_args))
+            number += 1
+        phase["value"] = "cooldown"
+        stop_sampling.wait(args.cooldown * 60)
+    finally:
+        stop_sampling.set()
+        if sampling_thread is not None:
+            sampling_thread.join()
+        summary["ended_utc"] = utc_now()
+        for client in (tcp_client, quic_client):
+            if client is not None:
+                try:
+                    stop_local_client(client, results, commands_file)
+                except Exception as error:
+                    print(f"client stop failed: {error}", file=sys.stderr)
+        if server_meta is not None:
+            try:
+                trojan_stop(argparse.Namespace(run_id=args.run_id))
+            except Exception as error:
+                print(f"trojan stop failed: {error}", file=sys.stderr)
+        if bytesource_meta is not None:
+            try:
+                bytesource_stop(argparse.Namespace(run_id=args.run_id))
+            except Exception as error:
+                print(f"bytesource stop failed: {error}", file=sys.stderr)
+        valid_observations = [item for item in summary["observations"] if "error" not in item]
+        summary["memory"] = soak_memory_summary(valid_observations)
+        summary["failure_count"] = sum(not sample["valid"] for sample in summary["samples"])
+        summary["observation_failure_count"] = len(summary["observations"]) - len(valid_observations)
+        write_json(results / "soak" / "summary.json", summary)
+    print(posix(results / "soak" / "summary.json"))
+
+
+def netem(args):
+    validate_netem_parameters(args.protocol, args.delay_ms, args.loss_percent, args.bytes)
+    results = ROOT / "results" / args.run_id
+    runtime = ROOT / "runtime" / args.run_id
+    if not (results / "metadata" / "trojan-deploy.json").is_file():
+        raise FileNotFoundError("trojan-deploy must run before netem")
+    commands_file = results / "metadata" / "commands.jsonl"
+    token = hashlib.sha256(f"{args.run_id}-{args.protocol}-{args.delay_ms}-{args.loss_percent}".encode()).hexdigest()[:8]
+    ifb = f"ifb{token[:8]}"[:15]
+    preference = 30000 + int(token[:4], 16) % 30000
+    summary = {"run_id": args.run_id, "started_utc": utc_now(), "protocol": args.protocol, "delay_ms": args.delay_ms, "loss_percent": args.loss_percent, "bytes": args.bytes}
+    bytesource_meta = server_meta = client = None
+    rules = None
+    watchdog_pid = None
+    try:
+        route_command = "set -- $SSH_CONNECTION; client=$1; case \"$client\" in *:*) exit 76;; esac; printf '%s\\n' \"$client\"; ip -json -4 route get \"$client\""
+        route_record, route_output = execute_attempt(ssh(route_command), results / "netem" / "route", 30, commands_file, "netem-route", 1)
+        if route_record["exit_code"] != 0:
+            raise RuntimeError("remote route discovery failed")
+        client_ip, interface = parse_netem_route(route_output)
+        rules = netem_commands(interface, client_ip, args.protocol, args.delay_ms, args.loss_percent, ifb, preference)
+        summary["scope"] = {key: rules[key] for key in ("client_ip", "ip_protocol", "interface", "ifb", "preference")}
+        setup_record, setup_output = execute_attempt(ssh(rules["setup"]), results / "netem" / "setup", 30, commands_file, "netem-setup", 1)
+        if setup_record["exit_code"] != 0:
+            raise RuntimeError("netem setup failed; ifb, flower, and mirred are required")
+        try:
+            watchdog_pid = int(setup_output.strip().splitlines()[-1])
+        except (IndexError, ValueError):
+            raise RuntimeError("netem watchdog PID missing")
+        verify_record, _ = execute_attempt(ssh("true"), results / "netem" / "second-ssh", 30, commands_file, "netem-second-ssh", 1)
+        if verify_record["exit_code"] != 0:
+            raise RuntimeError("second SSH verification failed")
+        bytesource_meta = bytesource_start(argparse.Namespace(run_id=args.run_id))
+        server_meta = trojan_start(argparse.Namespace(run_id=args.run_id))
+        port = TROJAN_LOCAL_PORT_TCP if args.protocol == "tcp" else TROJAN_LOCAL_PORT_QUIC
+        client = start_local_client(runtime, args.protocol, port, results, commands_file)
+        sample = trojan_test(argparse.Namespace(run_id=args.run_id, bytes=args.bytes, protocol=args.protocol, run=1))
+        summary["sample"] = sample
+    finally:
+        summary["ended_utc"] = utc_now()
+        if client is not None:
+            try:
+                stop_local_client(client, results, commands_file)
+            except Exception as error:
+                print(f"client stop failed: {error}", file=sys.stderr)
+        if server_meta is not None:
+            try:
+                trojan_stop(argparse.Namespace(run_id=args.run_id))
+            except Exception as error:
+                print(f"trojan stop failed: {error}", file=sys.stderr)
+        if bytesource_meta is not None:
+            try:
+                bytesource_stop(argparse.Namespace(run_id=args.run_id))
+            except Exception as error:
+                print(f"bytesource stop failed: {error}", file=sys.stderr)
+        if rules is not None:
+            cleanup = rules["cleanup"]
+            if watchdog_pid is not None:
+                cleanup = f"kill {watchdog_pid} 2>/dev/null || true; {cleanup}"
+            cleanup_record, _ = execute_attempt(ssh(cleanup), results / "netem" / "cleanup", 30, commands_file, "netem-cleanup", 1)
+            summary["cleanup_valid"] = cleanup_record["exit_code"] == 0
+        write_json(results / "netem" / "summary.json", summary)
+    print(posix(results / "netem" / "summary.json"))
+
+
 def r2(args):
     if args.runs < 1:
         raise ValueError("runs must be >= 1")
@@ -706,6 +1162,29 @@ def parse_args():
     command.add_argument("--run-id", required=True)
     command.add_argument("--runs", default=1, type=int)
     command.add_argument("--sizes", nargs="+", type=int)
+    command = subparsers.add_parser("concurrency")
+    command.add_argument("--run-id", required=True)
+    command.add_argument("--streams", nargs="+", type=int)
+    command.add_argument("--total-bytes", default=CONCURRENCY_DEFAULT_TOTAL_BYTES, type=int)
+    command.add_argument("--warmup", default=0, type=int)
+    command.add_argument("--runs", default=1, type=int)
+    command = subparsers.add_parser("cloudflare")
+    command.add_argument("--run-id", required=True)
+    command.add_argument("--bytes", default=CLOUDFLARE_DEFAULT_BYTES, type=int)
+    command.add_argument("--warmup", default=0, type=int)
+    command.add_argument("--runs", default=5, type=int)
+    command = subparsers.add_parser("soak")
+    command.add_argument("--run-id", required=True)
+    command.add_argument("--minutes", default=30, type=float)
+    command.add_argument("--cooldown", default=10, type=float)
+    command.add_argument("--bytes", default=SOAK_DEFAULT_SAMPLE_BYTES, type=int)
+    command.add_argument("--protocol", default="both", choices=("tcp", "quic", "both"))
+    command = subparsers.add_parser("netem")
+    command.add_argument("--run-id", required=True)
+    command.add_argument("--protocol", required=True, choices=("tcp", "quic"))
+    command.add_argument("--delay-ms", required=True, type=int, choices=NETEM_DELAYS)
+    command.add_argument("--loss-percent", required=True, type=float, choices=NETEM_LOSSES)
+    command.add_argument("--bytes", default=NETEM_DEFAULT_BYTES, type=int)
     return parser.parse_args()
 
 
@@ -729,6 +1208,14 @@ def main():
         trojan_test(args)
     elif args.command == "r2":
         r2(args)
+    elif args.command == "concurrency":
+        concurrency(args)
+    elif args.command == "cloudflare":
+        cloudflare(args)
+    elif args.command == "soak":
+        soak(args)
+    elif args.command == "netem":
+        netem(args)
 
 
 if __name__ == "__main__":
