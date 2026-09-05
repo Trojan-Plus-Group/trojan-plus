@@ -69,23 +69,65 @@ void QuicEndpoint::open_socket(const boost::asio::ip::udp::endpoint& bind_ep,
 
     const auto& q = m_config.get_quic();
     if (q.recv_buffer_size > 0) {
+        boost::system::error_code recv_ec;
         m_socket.set_option(
-            boost::asio::socket_base::receive_buffer_size(static_cast<int>(q.recv_buffer_size)), ec);
+            boost::asio::socket_base::receive_buffer_size(static_cast<int>(q.recv_buffer_size)), recv_ec);
+        if (recv_ec) {
+            _log_with_date_time("QuicEndpoint: set receive buffer " +
+                                    tp::to_string(q.recv_buffer_size) + " failed: " +
+                                    tp::string(recv_ec.message().c_str()),
+                                Log::WARN);
+        }
     }
     if (q.send_buffer_size > 0) {
+        boost::system::error_code send_ec;
         m_socket.set_option(
-            boost::asio::socket_base::send_buffer_size(static_cast<int>(q.send_buffer_size)), ec);
+            boost::asio::socket_base::send_buffer_size(static_cast<int>(q.send_buffer_size)), send_ec);
+        if (send_ec) {
+            _log_with_date_time("QuicEndpoint: set send buffer " +
+                                    tp::to_string(q.send_buffer_size) + " failed: " +
+                                    tp::string(send_ec.message().c_str()),
+                                Log::WARN);
+        }
     }
 
-    m_socket.non_blocking(true, ec);
-    if(ec){
-        _log_with_date_time("QuicEndpoint: set_option " + tp::string(ec.message().c_str()), Log::ERROR);
+    boost::asio::socket_base::receive_buffer_size actual_recv_buffer;
+    boost::system::error_code recv_get_ec;
+    m_socket.get_option(actual_recv_buffer, recv_get_ec);
+    if (recv_get_ec) {
+        _log_with_date_time("QuicEndpoint: get receive buffer failed: " +
+                                tp::string(recv_get_ec.message().c_str()),
+                            Log::WARN);
+    }
+
+    boost::asio::socket_base::send_buffer_size actual_send_buffer;
+    boost::system::error_code send_get_ec;
+    m_socket.get_option(actual_send_buffer, send_get_ec);
+    if (send_get_ec) {
+        _log_with_date_time("QuicEndpoint: get send buffer failed: " +
+                                tp::string(send_get_ec.message().c_str()),
+                            Log::WARN);
+    }
+
+    boost::system::error_code non_blocking_ec;
+    m_socket.non_blocking(true, non_blocking_ec);
+    if (non_blocking_ec) {
+        _log_with_date_time("QuicEndpoint: set non-blocking failed: " +
+                                tp::string(non_blocking_ec.message().c_str()),
+                            Log::ERROR);
         return;
     }
 
     _log_with_date_time("QuicEndpoint: bound UDP " +
-                        tp::string(bind_ep.address().to_string().c_str()) + ":" +
-                        tp::to_string(bind_ep.port()),
+                            tp::string(bind_ep.address().to_string().c_str()) + ":" +
+                            tp::to_string(bind_ep.port()) + " buffers requested recv=" +
+                            tp::to_string(q.recv_buffer_size) + " send=" +
+                            tp::to_string(q.send_buffer_size) + " actual recv=" +
+                            (recv_get_ec ? tp::string("unknown")
+                                         : tp::to_string(actual_recv_buffer.value())) +
+                            " send=" +
+                            (send_get_ec ? tp::string("unknown")
+                                         : tp::to_string(actual_send_buffer.value())),
                         Log::INFO);
 }
 

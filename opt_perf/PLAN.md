@@ -1,193 +1,253 @@
-# Trojan Plus 代理性能专项优化计划 (Performance Optimization Plan)
+# Trojan Plus 代理性能优化迭代计划
 
-本文档记录了关于 **“Trojan Plus 代理吞吐量仅有裸链路基线（iperf3 / 直连）30%～40%”** 的技术调查结论、架构瓶颈深度剖析，以及后续开展专项性能优化的分阶段实施方案。
+## 1. 目标与原则
 
----
+目标：在不损害协议正确性、稳定性和资源安全的前提下，提高跨洋高 RTT、弱丢包链路上的 TCP TLS 与 QUIC 单流吞吐。
 
-## 1. 调查背景与问题定义
+执行原则：
 
-### 1.1 问题现象
-在真实跨洋长时延网络（客户端与东京 Linode 服务器之间，RTT 约 80~120 ms，天然微弱丢包约 0.5%~1%）的实测中观察到：
-1. **Cloudflare 对照基准（R2 轮次）**：
-   - 直连（Direct）：中位吞吐量 **13.11 Mbps**；
-   - TCP TLS 代理：中位吞吐量 **5.62 Mbps**（仅为直连的 **42.8%**）；
-   - QUIC 代理：中位吞吐量 **6.91 Mbps**（仅为直连的 **52.7%**）。
-2. **多模式与 iperf3 对照（R36~R39 轮次，5MB 大文件单流）**：
-   - 物理网络原生 iperf3 基线：**4.88 ~ 6.27 Mbps**；
-   - TCP TLS 代理单流中位数：**1.35 ~ 1.95 Mbps**（仅为基线的 **21.5% ~ 39.9%**）；
-   - QUIC 代理单流中位数：稳定在 **6.51 ~ 7.15 Mbps**。
-3. **并发与单流的巨大反差**：
-   - 在 5 并发测试（R36）中，QUIC 聚合吞吐量瞬间飙升至 **32.61 Mbps**（反超 iperf3 单流基线 15 倍），这证实了**物理网络链路和远端主机的综合带宽潜力充足，性能瓶颈高度聚焦于“单流的流控、缓冲与调度模型”**。
+1. 每次只验证一个假设，禁止把 UDP buffer、QUIC flow control、Session chunk、双缓冲同时修改。
+2. 每个 Iteration 必须依次通过代码审查、本地全面测试、远程服务器测试、结果复核。
+3. 假设不成立、收益不显著、指标恶化或引入 Bug 时立即停止，不进入下一 Iteration；保留失败证据并重新规划。
+4. 允许为远程同步和阶段检查创建本地 commit；任何情况下不得 push。每个 Iteration 全部通过后再标记为验收完成。
+5. TCP TLS 与 QUIC 使用同一 commit、构建类型、证书、密码、目标、样本大小、并发数和相邻时间窗口。
+6. 正式性能测试每组至少五个有效样本，只比较 median、P10/P90、aggregate、P50/P95 和失败数，不使用最好结果代替统计。
+7. 原始结果只增不改；失败、超时和重试结果全部保留。
 
----
+## 2. 已确认事实与待验证假设
 
-## 2. 核心架构瓶颈深度剖析
+### 2.1 已确认事实
 
-代理单流吞吐折损 60%~70% 的根源由以下三大限制与架构机制共同导致：
+- `quic.recv_buffer_size` 与 `quic.send_buffer_size` 默认请求值为 `max_datagram_size * 64`，默认等于 76,800 bytes。
+- 每个 QUIC Endpoint 显式设置 UDP receive/send socket buffer，但当前错误码可能被后续 `non_blocking()` 调用覆盖。
+- 服务端初始双向 stream credit 为 512 KiB，客户端为 1 MiB；后续 credit 会随应用消费扩展，不是完全静态窗口。
+- Session 每个单向 relay 同时只有一次 read 和对应 write；下一次 read 等待上一块 write completion。
+- `MAX_BUF_LENGTH` 同时用于 TCP relay、UDP 和 TUN，不能直接全局放大。
+- QUIC partial write 当前使用固定 10 ms timer retry，可能产生额外调度空洞。
 
-### 2.1 瓶颈一：默认 UDP Socket Buffer 极小（硬性锁死 BDP 天花板）
-- **源码位置**：
-  - [src/core/config.cpp:233-234](file:///Users/tianzhizhi/Documents/trojan-project/trojan-plus/src/core/config.cpp#L233-L234)：
-    ```cpp
-    quic.recv_buffer_size = tree.get("quic.recv_buffer_size", quic.max_datagram_size * 64U); // 1200 * 64 = 76,800 字节 (~75 KB)
-    quic.send_buffer_size = tree.get("quic.send_buffer_size", quic.max_datagram_size * 64U); // 1200 * 64 = 76,800 字节 (~75 KB)
-    ```
-  - [src/quic/quic_endpoint.cpp:71-77](file:///Users/tianzhizhi/Documents/trojan-project/trojan-plus/src/quic/quic_endpoint.cpp#L71-L77)：
-    ```cpp
-    m_socket.set_option(boost::asio::socket_base::receive_buffer_size(static_cast<int>(q.recv_buffer_size)), ec);
-    m_socket.set_option(boost::asio::socket_base::send_buffer_size(static_cast<int>(q.send_buffer_size)), ec);
-    ```
-- **机理与推导**：
-  - 显式设置覆盖了 Linux 内核默认的 Socket 自动调优（Linux 默认会根据链路带宽时延自动扩充至数 MB）。
-  - 在跨洋链路上（以典型 RTT = 80 ms = 0.08 s 计算），76.8 KB 的缓冲区所能支撑的最大理论单连接在途吞吐量（BDP 限制）为：
-    $$\text{Throughput Limit} \le \frac{\text{Buffer Size}}{\text{RTT}} = \frac{76,800 \text{ Bytes} \times 8 \text{ bits}}{0.080 \text{ s}} \approx \mathbf{7.68 \text{ Mbps}}$$
-  - 这与实测中 QUIC 单流始终卡死在 6.5~7.5 Mbps 的结果完全吻合。
-- **Trade-off 真相（失衡）**：
-  Trojan-Plus 的 QUIC 架构中，全进程**仅维护一个全局 UDP Socket**（`QuicEndpoint::m_socket`），所有客户端与流复用此 Socket。如果将接收缓冲区从 75 KB 扩大至 2 MB，整机**仅多消耗 2 MB 物理内存**（占 1G 内存的 0.2%），却能直接将单流 BDP 吞吐上限从 7.6 Mbps 释放至 100+ Mbps。75 KB 是典型的严重负收益配置。
+### 2.2 待验证假设
 
----
+- UDP socket buffer 偏小是否造成内核 UDP drops 或吞吐限制。
+- QUIC partial write 的 10 ms retry 是否频繁触发并限制单流吞吐。
+- client/server 初始 stream credit 是否在对应上传、下载方向产生 flow-control blocked。
+- TCP relay chunk 从 8 KiB 增至 16/32 KiB 是否减少 handler、copy 和 syscall 开销。
+- 有界双槽流水线是否能在保持背压、顺序和生命周期正确性的同时提升吞吐。
 
-### 2.2 瓶颈二：QUIC 单流流控窗口（Flow Control Window）偏保守且静态
-- **源码位置**：
-  - [src/quic/quic_connection.cpp:389-390](file:///Users/tianzhizhi/Documents/trojan-project/trojan-plus/src/quic/quic_connection.cpp#L389-L390)（服务端）：
-    ```cpp
-    params.initial_max_stream_data_bidi_local  = 512 * 1024; // 512 KB
-    params.initial_max_stream_data_bidi_remote = 512 * 1024; // 512 KB
-    ```
-  - [src/quic/quic_connection.cpp:506-507](file:///Users/tianzhizhi/Documents/trojan-project/trojan-plus/src/quic/quic_connection.cpp#L506-L507)（客户端）：
-    ```cpp
-    params.initial_max_stream_data_bidi_local  = 1 * 1024 * 1024; // 1 MB
-    params.initial_max_stream_data_bidi_remote = 1 * 1024 * 1024; // 1 MB
-    ```
-- **机理与推导**：
-  - 单流流控是协议层信用额度（Credit），非实体内存预分配。
-  - 在 50 Mbps 吞吐下，512 KB 仅够传输约 40 毫秒。但在 80 ms RTT 链路上，发送端在 40 ms 内把 512 KB 打满后，必须遭遇 `STREAM_DATA_BLOCKED` 暂停发送，被迫等待对端跨洋发回 `MAX_STREAM_DATA` 帧。
-  - 往返更新的延迟导致传输速率呈高频“锯齿状”间歇停顿。
-- **Trade-off 真相**：
-  现代 QUIC 栈（如 quic-go）会根据消费速率动态伸缩单流窗口（从 512 KB 自动扩展到 4~6 MB）。Trojan-Plus 采用静态 512 KB/1 MB 配置，对跨洋高速长肥管道缺乏伸缩弹性。
+UDP socket buffer 不是 QUIC congestion window，不能使用 `socket buffer / RTT` 直接推导单连接吞吐硬上限。异步 write completion 也不等于等待远端 TCP/QUIC ACK。所有根因必须由运行时观测和单变量 A/B 证明。
 
----
+## 3. 统一测试门禁
 
-### 2.3 瓶颈三：应用层 8 KB 停等分块机制（Stop-and-Wait Chunking）
-- **源码位置**：
-  - [src/session/session.h:42](file:///Users/tianzhizhi/Documents/trojan-project/trojan-plus/src/session/session.h#L42)：
-    ```cpp
-    enum {
-        MAX_BUF_LENGTH = 8192, // 8 KB
-    };
-    ```
-  - [src/session/clientsession.cpp:187-196](file:///Users/tianzhizhi/Documents/trojan-project/trojan-plus/src/session/clientsession.cpp#L187-L196) & [src/session/serversession.cpp:177-185](file:///Users/tianzhizhi/Documents/trojan-project/trojan-plus/src/session/serversession.cpp#L177-L185)：
-    ```cpp
-    out_read_buf.prepare(MAX_BUF_LENGTH);
-    m_out->async_read_some(..., [this](...) {
-        out_recv(out_read_buf); // 调用 in_async_write()
-    });
-    ```
-  - [src/session/clientsession.cpp:426-429](file:///Users/tianzhizhi/Documents/trojan-project/trojan-plus/src/session/clientsession.cpp#L426-L429)：
-    ```cpp
-    void ClientSession::in_sent() {
-        if (status == FORWARD) {
-            out_async_read(); // 只有当下游数据写入完成触发 in_sent 回调后，才发起下一次上游读取！
-        }
-    }
-    ```
-- **机理与推导**：
-  - 这是一套**严格串行的“乒乓（Stop-and-Wait）”流水线**：读 8KB $\to$ 写 8KB $\to$ 等待写完成回调 $\to$ 再读 8KB。
-  - 缺乏**双缓冲（Double Buffering）或并行流水线**机制。当 8KB 数据跨洋发送等待 TCP/QUIC 栈确认时，上游目标站的读取处于完全饥饿停滞状态，导致管道中充满“气泡（空闲等待时间片）”。
-- **Trade-off 真相**：
-  8 KB 静态缓冲源于 2017 年早期版本为了在 64MB/128MB VPS 上支撑万级连接而做的极端节约内存设计。但结合停等机制后，对现代宽带代理的高吞吐造成了致命制约。
+### 3.1 本地全面测试
 
----
+每个 Iteration 修改后依次执行：
 
-## 3. 业界主流高性能代理对比矩阵
-
-| 维度 | Trojan-Plus 现状 | 现代业界标准 (Sing-box / Xray / Hysteria 2 / Envoy) | 架构评价与权衡合理性 |
-| :--- | :--- | :--- | :--- |
-| **UDP Socket 缓冲** | **76.8 KB**（强制覆盖系统默认） | **2 MB ～ 8 MB**（quic-go 启动要求 2.5MB+，Hysteria 设 4MB~8MB） | ❌ **严重失衡**：单 Socket 仅省 2MB 内存，却腰斩 60% 吞吐。 |
-| **单流流控窗口** | **512 KB**（静态固化值） | **1 MB ～ 6 MB**（支持随 RTT 和消费速率动态自适应伸缩） | ⚠️ **偏保守**：50Mbps 下 40ms 触顶，跨洋频繁等待 ACK。 |
-| **应用层单次分块** | **8 KB** | **16 KB ～ 64 KB**（结合内存池复用） | ⚠️ **偏小**：系统调用开销大，加剧单核 CPU 碎片化。 |
-| **应用层中继模型** | **严格串行停等（Ping-Pong）** | **并行双缓冲流水线（Pipelined / Concurrent Copy）** | ❌ **过时**：上游读与下游写互锁，未利用全双工能力。 |
-| **典型设计场景** | **64MB~128MB 远古机器 + 万级轻连接** | **512MB~2GB 现代主流主机 + 高速大吞吐** | 严重偏向极端内存节省，牺牲了跨洋单流性能。 |
-
----
-
-## 4. 分阶段优化方案与实施路线
-
-针对上述三个核心瓶颈，分为两个主要实施阶段开展优化，确保**步骤清晰、风险可控、指标可度量**。
-
-```mermaid
-flowchart TD
-    A[阶段一：参数与常量放宽] --> B[优化 UDP Socket Buffer 1~2MB]
-    A --> C[放宽 QUIC 单流流控 1~2MB]
-    A --> D[提升 Session 缓冲至 16/32KB]
-    B & C & D --> E[基线测试与 BDP 验证]
-    E --> F[阶段二：应用层双缓冲流水线]
-    F --> G[实现读写重叠 Double Buffering]
-    G --> H[消除停等气泡，吞吐达到基线 70%~90%]
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DENABLE_QUIC=ON
+cmake --build build -j 1
+python3 -m unittest \
+  quic_proxy_test_remote/scripts/test_run.py \
+  quic_proxy_test_remote/scripts/test_docker_modes.py
+cd tests/LinuxFullTest
+python3 -u fulltest_main.py ../../build/trojan -q all
+python3 -u fulltest_main.py ../../build/trojan -n
+python3 -u fulltest_main.py ../../build/trojan -f
 ```
 
----
+Linux 且具备权限时补充：
 
-### 阶段一：低风险配置与常量优化（Low-Hanging Fruit）
+```bash
+sudo python3 fulltest_main.py ../../build/trojan -d 5333
+sudo python3 fulltest_main.py ../../build/trojan -t -n -d 5333
+```
 
-**目标**：不改动异步状态机复杂架构，仅通过合理化配置参数，立竿见影释放 BDP 天花板。
+macOS DNS 测试按 runner 平台保护跳过。测试前确认 `18080`、`18083`、`9080`、`9081` 无用户业务。
 
-1. **UDP Socket 缓冲区自适应与放宽**：
-   - [src/core/config.cpp](file:///Users/tianzhizhi/Documents/trojan-project/trojan-plus/src/core/config.cpp)：将 `quic.recv_buffer_size` 和 `quic.send_buffer_size` 默认值从 `1200 * 64` 调整为 `1024 * 1024`（1 MB）或 `2048 * 1024`（2 MB），同时允许在配置文件的 `"quic"` 节点中自定义覆盖；
-   - [src/quic/quic_endpoint.cpp](file:///Users/tianzhizhi/Documents/trojan-project/trojan-plus/src/quic/quic_endpoint.cpp)：在 `set_option` 失败时（如遇系统 `rmem_max` 较小）打印非致命 Warn 日志，并退避使用系统当前最大允许值，不阻断运行。
-2. **QUIC 单流流控初始窗口统一放宽**：
-   - [src/quic/quic_connection.cpp](file:///Users/tianzhizhi/Documents/trojan-project/trojan-plus/src/quic/quic_connection.cpp)：
-     - 服务端：将 `initial_max_stream_data_bidi_local` 和 `initial_max_stream_data_bidi_remote` 从 512 KB 提升至 **1.5 MB ~ 2 MB**；
-     - 客户端：保持或提升至 **2 MB**。
-3. **Session 内存分块适度提升**：
-   - [src/session/session.h](file:///Users/tianzhizhi/Documents/trojan-project/trojan-plus/src/session/session.h)：将 `MAX_BUF_LENGTH` 从 8192 调整为 **16384 (16 KB)** 或 **32768 (32 KB)**；
-   - 依赖现有内存分配器（mimalloc），减少 50%~75% 的 Asio 读写系统调用频次。
+本地门禁：全部测试通过；零 crash、deadlock、unexpected reset、内容错误和资源门禁失败。
 
----
+### 3.2 远程环境确认
 
-### 阶段二：应用层异步双缓冲流水线改造（Double-Buffering Pipeline）
+每轮远程测试前重新确认：
 
-**目标**：彻底消除 8KB 停等气泡，实现全双工重叠流水线。
+```text
+REMOTE_HOST
+SSH_USER
+SSH_PORT
+REMOTE_REPO
+REMOTE_CPU_COUNT
+REMOTE_MEMORY
+REMOTE_BRANCH
+TEST_PORTS
+```
 
-1. **双缓冲流水线结构设计**：
-   - 在 `Session` / `ClientSession` / `ServerSession` 中引入双缓冲区交替机制：
-     - `Buffer A` 负责当前向对端异步写入；
-     - 与此同时，`Buffer B` 立即向数据源发起下一次 `async_read_some()`，无需等待 `Buffer A` 的写完成回调；
-   - 当 `Buffer B` 读满且 `Buffer A` 写完成时，二者交换角色。
-2. **应用层背压（Watermark Backpressure）**：
-   - 设立最高积压阈值（例如 128 KB 或 256 KB），当慢速接收端写不出去时才暂停上游读取，在无拥塞时保持 100% 流水线填满。
+保存两端 commit、dirty diff、构建类型、系统与工具版本。两端必须使用同一代码和 Release 构建。远端若为 1 CPU/1 GB，只允许：
 
----
+```bash
+cmake --build build -j 1
+```
 
-## 5. 远端 1G 小主机安全红线与防 OOM 保障
+同步仅使用 git bundle 与 fast-forward。禁止 reset、force 和任何 push；允许创建本地 commit。
 
-远端测试服务器仅有 **1 vCPU、954 MB 物理内存、2.5 GB Swap**，防 OOM 规范具有最高优先级。
+### 3.3 远程基础与代理测试矩阵
 
-### 5.1 内存增量精算
+每个 Iteration 先记录相邻时间窗口的原始网络基线：
 
-| 优化项 | 修改前物理占用 | 修改后物理占用 | 整机内存占比变化 (基于 954MB) | 风险评估 |
-| :--- | :--- | :--- | :--- | :--- |
-| **UDP Socket Buffer** | 76.8 KB | 2 MB | **+0.2%**（全局单 Socket，与连接数无关） | **极度安全** |
-| **单流流控窗口** | 512 KB 信用 | 2 MB 信用 | 0%（仅为信用额度，实际流量随到随发） | **安全**（无内存预留） |
-| **MAX_BUF_LENGTH (32KB)** | 8 KB / 连接 | 32 KB / 连接 | 100 个并发活跃连接仅增加约 **2.4 MB** | **极度安全** |
-| **双缓冲改造** | 单缓冲 8KB | 双缓冲 64KB | 100 个并发活跃连接仅增加约 **5.6 MB** | **安全**（结合连接数上限） |
+- ping 30 次和路由信息。
+- iperf3 TCP 正向/反向，1/4/8 streams，每项至少五轮。
+- iperf3 UDP 正向/反向，从 10/25/50 Mbit/s 开始；稳定后才测试更高档位。
 
-### 5.2 防护机制与门禁
-1. **单核安全构建规范**：远端编译必须严格遵循 `cmake --build build -j 1`，严禁并行构建，避免编译器触发 Linux OOM Killer。
-2. **RSS 内存熔断监控**：运行过程中守护监控 Trojan 进程 RSS，一旦超过 **64 MB**（正常运行仅约 15~30 MB）触发告警并安全释放。
-3. **版本控制红线**：严禁私自向 remote 执行 `git push`；所有变更均以本地 commit + `git bundle` 增量同步至测试机。
+代理正式矩阵：
 
----
+| 模式 | TCP 正式 | 强制 QUIC 正式 | TCP 压力 | QUIC 压力 |
+|---|---:|---:|---:|---:|
+| `client` | 5 × 5 MiB | 5 × 5 MiB | 200 请求/50 MB | 200 请求/50 MB |
+| `nat` | 5 × 5 MiB | 5 × 5 MiB | 200 请求/32 并发 | 200 请求/32 并发 |
+| `client_tun` | 5 × 5 MiB | 5 × 5 MiB | 200 请求/32 并发 | 200 请求/32 并发 |
 
-## 6. 验证与验收指标
+每个协议、模式、配置变量使用独立 Run ID。TCP 与强制 QUIC 分开 deploy。强制 QUIC 样本必须满足：
 
-当后续专项任务开启并实施优化后，按照以下指标进行验收：
+- client/server `debug_disable_tcp=true`。
+- 远端 UDP listener 存在，TCP listener 不存在。
+- client/server 日志包含 `handshake completed`。
+- ALPN 为 `h3`。
+- 零 TCP fallback。
 
-1. **单流吞吐基线占比提升**：
-   - 在同等跨洋网络下，5MB 文件单流下载中位吞吐由当前的 **6.5 ~ 7.5 Mbps** 提升至 **15 ~ 25+ Mbps**（达到原生 iperf3 基线的 **70%~90%**）。
-2. **多并发聚合吞吐**：
-   - 在 5~10 并发下，聚合吞吐保持稳定在 **30 ~ 50+ Mbps** 以上，且无任何数据校验错误（零 `bad record mac`）。
-3. **资源开销平稳**：
-   - 远端 1G 小主机物理内存峰值控制在 350 MB 以内（含系统其他基础进程），无任何 OOM 风险。
-4. **全量用例兼容性**：
-   - `fulltest_main.py -q all` 18 个测试用例、`-n` 标准模式用例、`-f` 回落用例全部 100% 通过。
+最低正确性要求：exit 0、HTTP 200、长度和 SHA-256 完整、零 fallback、零 crash/deadlock/unexpected reset。
+
+资源指标：client/server CPU、RSS/PSS、context switches、UDP errors、interface drops、softnet drops、吞吐、延迟。每组结束后按 metadata 精确清理并验证进程、listener、容器、route、iptables、TUN、namespace、qdisc 无残留。
+
+### 3.4 停止条件
+
+出现以下任一情况立即停止当前 Iteration：
+
+- 本地任一测试失败。
+- 远程内容长度或 hash 不一致。
+- 强制 QUIC 发生 TCP fallback。
+- crash、deadlock、unexpected reset 或 callback 重入问题。
+- TCP TLS 或并发 aggregate 中位数回退超过 5%。
+- UDP/kernel drops 明显恶化。
+- RSS/PSS 持续线性增长且 cooldown 不回落。
+- 单变量假设无数据支持或收益不足预设阈值。
+
+停止后保留结果，定位原因，更新计划；禁止带着未知回归继续下一步。
+
+## 4. Iteration 0：基线修正与可观测性
+
+### 4.1 代码范围
+
+不改性能参数，仅增加低开销观测：
+
+- UDP buffer 每次 `set_option()` 使用独立 error code。
+- 设置失败打印非致命 WARN。
+- 设置后使用 `get_option()` 记录实际 `SO_RCVBUF/SO_SNDBUF`。
+- 区分 `non_blocking()` 失败，避免错误码覆盖。
+- 后续诊断按需要增加累计计数，禁止正式性能轮逐包日志。
+
+观测目标：
+
+- 实际 socket buffer。
+- UDP receive/send 错误。
+- receive drain loop 触及批次上限次数。
+- QUIC flow-control blocked、partial write、10 ms retry 次数。
+- Session read size、write latency、source-read idle gap。
+
+### 4.2 验收
+
+- 本地全面门禁全部通过。
+- 远程三模式 TCP/强制 QUIC 正式与压力矩阵通过。
+- 观测日志不泄露密钥、不逐包刷屏、不显著影响性能。
+- 建立可复现基线，修正原计划中互相矛盾的绝对吞吐目标。
+
+通过后创建 Iteration 0 本地 commit，再进入 Iteration 1。
+
+## 5. Iteration 1：UDP socket buffer 单变量 A/B
+
+仅修改客户端与服务端 UDP socket buffer 配置，候选值：
+
+```text
+76,800 B
+256 KiB
+1 MiB
+2 MiB
+```
+
+每档执行本地全面门禁和远程矩阵，记录请求值、实际内核值、吞吐、CPU、RSS/PSS、UDP drops。
+
+成立条件：相对基线吞吐中位数提升至少 5%，或明确消除 `RcvbufErrors/SndbufErrors`，且无正确性和资源回归。否则停止扩大并重新规划。
+
+## 6. Iteration 2：QUIC retry 与 flow control
+
+先验证 10 ms partial-write retry：
+
+- 若大量触发，优先改为对应 ACK、pacing、flow-control unblock 或 socket write opportunity 驱动。
+- 若极少触发，不修改 retry 机制，转向 flow-control A/B。
+
+flow-control 分方向测试：
+
+```text
+client receive credit: 1 MiB / 2 MiB / 4 MiB
+server receive credit: 512 KiB / 1 MiB / 2 MiB
+```
+
+上传、下载独立统计。成立条件：blocked/retry 指标明显下降且目标方向吞吐中位数提升至少 10%；RSS/PSS 和队列内存无持续增长。
+
+## 7. Iteration 3：拆分并测试 TCP relay chunk
+
+不得直接放大全局 `MAX_BUF_LENGTH`。先拆分：
+
+```cpp
+TCP_RELAY_BUF_LENGTH = 8192 / 16384 / 32768;
+UDP/TUN limits unchanged;
+```
+
+保持单读单写状态机，只验证 chunk 大小。分别测试 TCP TLS、QUIC、pipeline、非 pipeline、上传和下载。
+
+成立条件：目标路径吞吐中位数提升至少 5%，handler/CPU 开销下降，无 UDP/TUN 行为变化。
+
+## 8. Iteration 4：有界双槽流水线
+
+按以下顺序逐项实施，每项均独立执行完整门禁：
+
+1. `ClientSession` TCP TLS 下载方向。
+2. `ClientSession` QUIC 下载方向。
+3. Client 上传方向。
+4. `ServerSession` 对称路径。
+5. Pipeline 兼容路径。
+
+约束：
+
+- 每方向最多一个 write in flight。
+- 只允许一个额外 read buffer，形成天然有界背压。
+- 严格保证 write ordering、partial completion、EOF/FIN、half-close、reset 和 destroy 生命周期。
+- callback exactly once。
+- 首版不引入通用 128/256 KiB watermark queue。
+
+任一子步骤失败，停止后续方向扩展。
+
+## 9. Iteration 5：参数固化与长稳
+
+仅保留已由单变量 A/B 证明有效的修改。TCP 与 QUIC 分别执行：
+
+- 至少 30 分钟 active。
+- 至少 10 分钟 cooldown。
+- 超过 256 次连接。
+- 每分钟记录 RSS/PSS 和 slope。
+- 每个样本校验长度与 SHA-256。
+
+Docker runner 未完整采集逐分钟 RSS/PSS 前，只能验收功能和并发，不能宣布内存长稳通过。
+
+## 10. 最终验收
+
+最终指标相对同轮、同方向原始网络基线计算，不预设与基线矛盾的绝对 Mbps：
+
+- QUIC 单流中位数相对优化前提升至少 20%。
+- QUIC 单流达到同方向 iperf3 单流中位数至少 70%。
+- TCP TLS 中位数不回退超过 5%。
+- 5/10 并发 aggregate 不回退超过 5%。
+- 全部内容长度/hash 正确。
+- 零 fallback、crash、deadlock、unexpected reset。
+- UDP/kernel/interface drops 不恶化。
+- Trojan RSS/PSS 无持续线性增长，cooldown 可回落。
+- 远端整机峰值内存低于 350 MiB，无 swap storm/OOM。
+- cleanup 后无本轮资源残留。
+
+最终全部通过后创建本地 commit；是否 push 由用户另行明确授权。
