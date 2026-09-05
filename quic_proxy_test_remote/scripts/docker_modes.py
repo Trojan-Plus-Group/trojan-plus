@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import hashlib
 import importlib.util
 import ipaddress
 import json
@@ -9,6 +10,7 @@ import re
 import socket
 import subprocess
 import sys
+import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 RUNNER_PATH = pathlib.Path(__file__).with_name("run.py")
@@ -124,8 +126,54 @@ def measure_iperf3_baseline():
                        capture_output=True, text=True, timeout=10)
 
 
+def image_source_hash():
+    digest = hashlib.sha256()
+    for path in (ROOT / "Dockerfile.template", ROOT / "docker-entry.sh"):
+        digest.update(path.name.encode())
+        digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
+def run_docker_with_progress(command, container, timeout):
+    started = time.monotonic()
+    process = subprocess.Popen(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    while process.poll() is None:
+        elapsed = int(time.monotonic() - started)
+        if elapsed >= timeout:
+            process.kill()
+            stdout, stderr = process.communicate()
+            raise subprocess.TimeoutExpired(command, timeout, stdout, stderr)
+        print(f"[*] Docker test running: container={container} elapsed={elapsed}s", flush=True)
+        time.sleep(min(5, timeout - elapsed))
+    stdout, stderr = process.communicate()
+    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+
+
 def build_image():
-    command_output(["docker", "build", "-t", IMAGE, "-f", str(ROOT / "Dockerfile.template"), str(ROOT)], 300)
+    source_hash = image_source_hash()
+    inspect = subprocess.run(
+        ["docker", "image", "inspect", IMAGE],
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=30,
+    )
+    current_hash = ""
+    if inspect.returncode == 0:
+        try:
+            current_hash = json.loads(inspect.stdout)[0]["Config"]["Labels"].get("trojan-plus.source-hash", "")
+        except (KeyError, IndexError, TypeError, json.JSONDecodeError):
+            pass
+    if current_hash == source_hash:
+        print(f"[*] Reusing Docker image {IMAGE} ({source_hash[:12]})")
+        return False
+    print(f"[*] Building Docker image {IMAGE} ({source_hash[:12]})")
+    command_output([
+        "docker", "build", "-t", IMAGE,
+        "--label", f"trojan-plus.source-hash={source_hash}",
+        "-f", str(ROOT / "Dockerfile.template"), str(ROOT)
+    ], 300)
+    return True
 
 
 def smoke(args):
@@ -153,7 +201,7 @@ def smoke(args):
         "cleanup": {}
     }
     try:
-        if with_iperf or requests > 1:
+        if with_iperf:
             print(f"[*] Measuring raw iperf3 download baseline against {HOST}:5201...")
             iperf_res = measure_iperf3_baseline()
             report["iperf_baseline"] = iperf_res
@@ -176,7 +224,7 @@ def smoke(args):
         server = runner.trojan_start(argparse.Namespace(run_id=args.run_id))
         commands = docker_commands(args.mode, args.protocol, args.run_id, runtime, target_ip, size, watchdog, requests, concurrency)
         container = commands["name"]
-        completed = subprocess.run(commands["run"], text=True, capture_output=True, timeout=watchdog + 10, check=False)
+        completed = run_docker_with_progress(commands["run"], container, watchdog + 10)
         if not completed.stdout.strip():
             raise RuntimeError(f"Docker mode failed: {completed.stderr.strip()}")
         payload = json.loads(completed.stdout)

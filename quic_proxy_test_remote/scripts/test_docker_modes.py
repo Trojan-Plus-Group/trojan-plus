@@ -1,6 +1,8 @@
 import importlib.util
 import pathlib
+import subprocess
 import unittest
+from unittest import mock
 
 
 PATH = pathlib.Path(__file__).with_name("docker_modes.py")
@@ -46,6 +48,42 @@ class DockerModesTest(unittest.TestCase):
         for value in ("", "x;rm", "x y", "../x", "x" * 65):
             with self.assertRaises(ValueError):
                 MODULE.validate_run_id(value)
+
+    def test_image_source_hash_is_stable(self):
+        self.assertEqual(MODULE.image_source_hash(), MODULE.image_source_hash())
+        self.assertEqual(len(MODULE.image_source_hash()), 64)
+
+    @mock.patch.object(MODULE, "command_output")
+    @mock.patch.object(MODULE.subprocess, "run")
+    def test_build_image_reuses_matching_image(self, run, command_output):
+        source_hash = MODULE.image_source_hash()
+        inspect = [{"Config": {"Labels": {"trojan-plus.source-hash": source_hash}}}]
+        run.return_value = subprocess.CompletedProcess([], 0, MODULE.json.dumps(inspect), "")
+        self.assertFalse(MODULE.build_image())
+        command_output.assert_not_called()
+
+    @mock.patch.object(MODULE, "command_output")
+    @mock.patch.object(MODULE.subprocess, "run")
+    def test_build_image_rebuilds_changed_image(self, run, command_output):
+        inspect = [{"Config": {"Labels": {"trojan-plus.source-hash": "old-hash"}}}]
+        run.return_value = subprocess.CompletedProcess([], 0, MODULE.json.dumps(inspect), "")
+        self.assertTrue(MODULE.build_image())
+        build = command_output.call_args.args[0]
+        self.assertIn("docker", build)
+        self.assertIn("build", build)
+        self.assertIn(f"trojan-plus.source-hash={MODULE.image_source_hash()}", build)
+
+    @mock.patch.object(MODULE.time, "sleep")
+    @mock.patch.object(MODULE.subprocess, "Popen")
+    def test_docker_progress_returns_completed_process(self, popen, sleep):
+        process = popen.return_value
+        process.poll.side_effect = [None, 0]
+        process.returncode = 0
+        process.communicate.return_value = ('{"valid":true}', "")
+        completed = MODULE.run_docker_with_progress(["docker", "run"], "test-container", 10)
+        self.assertEqual(completed.returncode, 0)
+        self.assertEqual(completed.stdout, '{"valid":true}')
+        sleep.assert_called_once()
 
 
 if __name__ == "__main__":

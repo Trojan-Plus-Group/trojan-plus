@@ -133,6 +133,7 @@ python3 fulltest_quic.py /path/to/build/trojan [all|T1|T2|...|T19]
 
 ### Manual Testing Suite
 - [quic_proxy_test/](quic_proxy_test/) - Local manual verification scripts (`start_server.sh`, `start_client.sh`, `start_http1.sh`)
+- [quic_proxy_test_remote/AGENTS.md](quic_proxy_test_remote/AGENTS.md) - Required workflow and safety rules for local/remote QUIC baselines, `client`/`nat`/`client_tun` comparisons, stress tests, result retention, and cleanup. Reconfirm remote host settings before every iteration.
 
 ---
 

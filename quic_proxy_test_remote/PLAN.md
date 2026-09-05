@@ -673,6 +673,31 @@ TCP TLS 与 QUIC 分为独立 server run：
   - `fulltest_main.py -n`：涵盖 Client 与 Forward 在 Pipeline/Non-Pipeline 模式下的 HTTP/UDP 代理和 RSS 检查，**100% 全部通过**。
   - `fulltest_main.py -f`：Fallback 模式测试，**100% 全部通过**。
   - `fulltest_main.py -d`（DNS 测试）：macOS 本地系统跳过（由于本地环境对多域名批量查询及未提权端口易发生超时卡死，测试脚本与规范已明确在 macOS 平台跳过该项）。
+- **关键 Bug 修复 9（QUIC endpoint DNS resolve 阶段首流仍误走 TCP）**：
+  - 问题：强制 QUIC client 启动后，首个请求可能在 UDP resolver 完成、`m_conn` 创建前到达；此时 `try_quic_first=true`，但 transport factory 因 `is_usable=false` 创建 `TlsOutboundTransport`，强制 QUIC server 没有 TCP listener，R44 首样本因此出现 curl exit 52、0 bytes。
+  - 修复（commit `7c44283`）：将 resolver 进行中的 `m_connecting` 纳入 `is_connecting()`/`is_usable()`，并允许 `open_bidi_stream()` 在 `m_conn` 创建前将请求排入 pending queue；resolver 与握手完成后统一 drain。
+  - 验证：R46 强制 QUIC 5 MiB 首样本及后续样本 **5/5 成功**，字节数和 SHA-256 全部匹配。
+- **Bug 5～8 补充审查与生命周期修复**：
+  - commit `e9768e4` 修复握手中 factory 误选 TCP、closed connection 阻塞重连、pending stream open 无法取消，以及非 `STREAM_ID_BLOCKED` 错误被永久排队。
+  - commit `a01ae04` 为放弃读取的 stream 发送 `STOP_SENDING`，统一完成 UnackedBuf callback，修复 stream/connection close 静默丢 callback、发送错误整队删除、loss timer 提前出口漏重排、closing/draining 绕过 teardown、endpoint stop 悬挂 pending open。
+- **Docker 验收执行器修复**：
+  - Docker image 使用 `Dockerfile.template` 与 `docker-entry.sh` 内容 SHA-256 label 缓存；输入未变化时复用 `trojan-plus-docker-modes`，输入变化才重新构建。
+  - 移除 `requests > 1` 隐式触发 iperf3；只有显式 `--with-iperf` 才运行基线，避免全局 `pkill` 误伤运行中的远端任务。
+  - Docker 测每 5 秒输出 container 与 elapsed 心跳；晚高峰慢样本不再表现为无输出卡死。
+- **本地全面测试（commit `7c44283` 产品代码）**：
+  - CMake 单线程 Release 增量构建通过；CTest 无顶层测试用例。
+  - 远程执行器 unittest **42/42 通过**。
+  - `fulltest_main.py -q all` **18/18 通过**；`-n` 与 `-f` 全部通过；`-d` 在 macOS 按既定规则跳过。
+- **本地到远程多模式压力验收（R42～R54）**：
+  - `client` TCP：R42 5 MiB **5/5 成功**；R43 200 并发请求、总量 50 MB，**200/200 成功**，aggregate 22.14 Mbps。
+  - `client` QUIC：R44 首样本失败并保留为 Bug 9 证据；修复后 R46 5 MiB **5/5 成功**；R45 200 并发请求、总量 50 MB，**200/200 成功**，aggregate 20.32 Mbps。
+  - `nat` TCP：R47 5 MiB **5/5 成功**；R48 200 请求、并发 32，**200/200 成功**。
+  - `nat` QUIC：R49 5 MiB **5/5 成功**；R50 200 请求、并发 32，**200/200 成功**。
+  - `client_tun` TCP：R51 5 MiB **5/5 成功**，晚高峰总耗时 117.34 秒；R52 200 请求、并发 32，**200/200 成功**。
+  - `client_tun` QUIC：R53 5 MiB **5/5 成功**，总耗时 9.10 秒；R54 200 请求、并发 32，**200/200 成功**，总耗时 10.88 秒。
+  - 最终有效压力样本合计：三个模式 TCP/强制 QUIC 共 **1230/1230 请求成功**；所有样本 HTTP 200、下载字节完整，无 crash、deadlock、异常 reset 或 TCP fallback。
+  - cleanup：Docker 测试容器为空；远端 `3443`、`5201`、`8001` 无 listener；无 Trojan、iperf3、byte source 测试进程遗留。
+  - 限制：Docker 模式当前未完整采集远端逐分钟 RSS/PSS 与 UDP error 快照，本轮结论覆盖功能、协议强制、内容完整性、并发稳定性和 cleanup，不宣称完成长稳内存门禁。
 
 ### 19.5 多模式验收
 
