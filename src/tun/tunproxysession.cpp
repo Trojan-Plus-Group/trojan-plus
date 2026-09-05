@@ -162,7 +162,7 @@ void TUNProxySession::start() {
     if (quic_config.enabled) {
         auto quic_client = get_service()->get_quic_client();
         if (quic_client) {
-            if (quic_client->is_connected()) {
+            if (quic_client->is_connected() || (!quic_client->is_known_unreachable() && (quic_config.debug_disable_tcp || quic_client->is_connecting()))) {
                 try_quic_first = true;
             } else if (!quic_client->is_known_unreachable()) {
                 get_service()->reconnect_quic_client();

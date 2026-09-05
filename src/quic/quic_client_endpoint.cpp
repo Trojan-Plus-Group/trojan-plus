@@ -81,8 +81,8 @@ void QuicClientEndpoint::connect_to_server() {
               auto pending = std::move(m_pending_stream_opens);
               m_pending_stream_opens.clear();
               for (auto& cb : pending) {
-                  auto sid = m_conn->open_bidi_stream();
-                  if (sid >= 0) {
+                  auto sid = m_conn ? m_conn->open_bidi_stream() : -1;
+                  if (cb) {
                       cb(sid);
                   }
               }
@@ -122,6 +122,13 @@ void QuicClientEndpoint::stream_extend_window(int64_t stream_id, std::size_t n) 
 
 void QuicClientEndpoint::mark_unreachable() {
     m_known_unreachable = true;
+    auto pending = std::move(m_pending_stream_opens);
+    m_pending_stream_opens.clear();
+    for (auto& cb : pending) {
+        if (cb) {
+            cb(-1);
+        }
+    }
     uint32_t retry_ms   = m_config.get_quic().retry_connect_timeout_ms;
     if (retry_ms == 0 || !m_running) {
         return;

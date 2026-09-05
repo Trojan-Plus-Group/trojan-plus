@@ -55,12 +55,24 @@ for n in $(seq 1 60); do
     fi
     if [ "$mode" = nat ]; then
         if ss -H -ltn sport = :12345 | grep -q .; then
+            if [ "$protocol" = quic ]; then
+                for q in $(seq 1 50); do
+                    grep -q "handshake completed" /tmp/trojan.log 2>/dev/null && break
+                    sleep 0.1
+                done
+            fi
             ready=true
             break
         fi
     elif ip link show tun0 >/dev/null 2>&1; then
         ip link set tun0 up
         ip route replace "$target_ip/32" dev tun0
+        if [ "$protocol" = quic ]; then
+            for q in $(seq 1 50); do
+                grep -q "handshake completed" /tmp/trojan.log 2>/dev/null && break
+                sleep 0.1
+            done
+        fi
         ready=true
         break
     fi

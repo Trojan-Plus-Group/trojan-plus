@@ -187,7 +187,7 @@ class QuicStreamTransport : public OutboundTransport,
         // Register data handler before opening the stream so we never miss data.
         // We use a sentinel stream_id = -2 until the real sid is assigned.
         auto self = shared_from_this();
-        auto sid  = ep->open_bidi_stream(
+        ep->open_bidi_stream(
             [this, self, on_success = std::move(on_success),
              on_error_deferred = on_error](int64_t sid) mutable {
                 auto ep = m_endpoint.lock();
@@ -204,12 +204,6 @@ class QuicStreamTransport : public OutboundTransport,
                 // Post to avoid potential re-entrancy if called synchronously.
                 boost::asio::post(m_io_ctx, std::move(on_success));
             });
-
-        // If open_bidi_stream returned -1 immediately (endpoint not connected
-        // and nothing was deferred), fire the error callback now.
-        if (sid < 0 && !ep->is_connected()) {
-            boost::asio::post(m_io_ctx, std::move(on_error));
-        }
     }
 
     void async_read_some(boost::asio::mutable_buffer buf, IoHandler handler) override {
