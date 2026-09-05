@@ -208,13 +208,7 @@ int QuicConnection::cb_stream_close(ngtcp2_conn* /*conn*/, uint32_t /*flags*/, i
         self->on_stream_close_cb(stream_id);
     }
 
-    auto it_buf = self->m_conn_unacked_bufs.find(stream_id);
-    if (it_buf != self->m_conn_unacked_bufs.end()) {
-        for (auto& buf : it_buf->second->buffers) {
-            buf->cancel_timer();
-        }
-        self->m_conn_unacked_bufs.erase(it_buf);
-    }
+    self->fail_unacked_buffers(stream_id, boost::asio::error::broken_pipe);
 
     if (!ngtcp2_conn_is_local_stream2(self->m_conn, stream_id)) {
         if (ngtcp2_is_bidi_stream(stream_id)) {
@@ -574,6 +568,11 @@ void QuicConnection::on_pump_write(const char* debug_path) {
     
     pump_write(debug_path);
 
+    if (m_closed) {
+        m_in_pump_write = false;
+        return;
+    }
+
     if (m_h3) {
         m_h3->pump_h3_response(debug_path);
     }
@@ -621,7 +620,7 @@ void QuicConnection::pump_write(const char* debug_path) {
                 " path" + tp::string(debug_path),
                 Log::WARN);
             if (nwrite == NGTCP2_ERR_CLOSING || nwrite == NGTCP2_ERR_DRAINING) {
-                m_closed = true;
+                close();
             }
             return;
         }
@@ -724,13 +723,17 @@ void QuicConnection::UnackedBuf::cancel_timer() {
     m_write_timer.cancel();
 }
 
+void QuicConnection::UnackedBuf::complete(const boost::system::error_code& ec, std::size_t n) {
+    auto cb = std::move(m_sent_cb);
+    if (cb) {
+        cb(ec, n);
+    }
+}
+
 void QuicConnection::UnackedBuf::send(){
     auto conn = m_conn.lock();
     if(!conn){
-        if(m_sent_cb){
-            m_sent_cb(boost::asio::error::broken_pipe, 0);
-            m_sent_cb = nullptr;
-        }
+        complete(boost::asio::error::broken_pipe, 0);
         return;
     }
 
@@ -740,13 +743,8 @@ void QuicConnection::UnackedBuf::send(){
 
     auto sent = conn->send_stream_data_impl(m_stream_id, ptr, len, m_fin);
     if(sent < 0){
-        if(m_sent_cb){
-            m_sent_cb(boost::asio::error::broken_pipe, 0);
-            m_sent_cb = nullptr;
-        }
-        
         cancel_timer();
-        conn->remove_unacked_buff(m_stream_id);
+        conn->fail_unacked_buffers(m_stream_id, boost::asio::error::broken_pipe);
     }else if((std::size_t)sent >= len){
         // finished, and wait for ack since now
         m_sending_offset += sent;
@@ -770,14 +768,7 @@ void QuicConnection::UnackedBuf::send(){
                 [unacked = this->shared_from_this(), sent](boost::system::error_code ec){
                     unacked->m_timer_running = false;
                     if(ec){
-                        if (unacked->m_sent_cb) {
-                            unacked->m_sent_cb(boost::asio::error::operation_aborted, unacked->m_sending_offset);
-                            unacked->m_sent_cb = nullptr;
-                        }
-                        auto conn = unacked->m_conn.lock();
-                        if(conn){
-                            conn->remove_unacked_buff(unacked->m_stream_id);
-                        }
+                        unacked->complete(boost::asio::error::operation_aborted, unacked->m_sending_offset);
                         return;
                     }
 
@@ -812,11 +803,27 @@ void QuicConnection::send_next_unacked_buff(int64_t stream_id, UnackedBuf* /*buf
         stream_id_it->second->m_sending = false;
     }
 }
-void QuicConnection::remove_unacked_buff(int64_t stream_id){
+void QuicConnection::fail_unacked_buffers(int64_t stream_id, const boost::system::error_code& ec) {
     auto it = m_conn_unacked_bufs.find(stream_id);
-    if(it != m_conn_unacked_bufs.end()){
-        // all buffered data with same stream id will be destroyed
-        m_conn_unacked_bufs.erase(it);
+    if (it == m_conn_unacked_bufs.end()) {
+        return;
+    }
+    auto bufs = std::move(it->second);
+    m_conn_unacked_bufs.erase(it);
+    for (auto& buf : bufs->buffers) {
+        buf->cancel_timer();
+        buf->complete(ec, buf->m_sending_offset);
+    }
+}
+
+void QuicConnection::fail_all_unacked_buffers(const boost::system::error_code& ec) {
+    auto pending = std::move(m_conn_unacked_bufs);
+    m_conn_unacked_bufs.clear();
+    for (auto& [id, bufs] : pending) {
+        for (auto& buf : bufs->buffers) {
+            buf->cancel_timer();
+            buf->complete(ec, buf->m_sending_offset);
+        }
     }
 }
 
@@ -896,6 +903,7 @@ int64_t QuicConnection::send_stream_data_impl(int64_t stream_id, const uint8_t* 
                     " written=" + tp::to_string(written), Log::ALL);
                 // PPE_PENDING may be set from a previous WRITE_MORE; must flush before returning.
                 flush_ppe();
+                reschedule_loss_timer();
                 return static_cast<int64_t>(written);
             }
             _log_with_date_time(
@@ -909,6 +917,7 @@ int64_t QuicConnection::send_stream_data_impl(int64_t stream_id, const uint8_t* 
                     Log::WARN);
             }
             flush_ppe();
+            reschedule_loss_timer();
             if (written > 0) return static_cast<int64_t>(written);
             return -1;
         }
@@ -1058,6 +1067,7 @@ int64_t QuicConnection::send_stream_vecs_impl(int64_t stream_id,
                     " path=" + tp::string(debug_path), Log::ALL);
                 // PPE_PENDING may be set from a previous WRITE_MORE; must flush before returning.
                 flush_ppe();
+                reschedule_loss_timer();
                 return static_cast<int64_t>(written);
             }
             _log_with_date_time(
@@ -1072,6 +1082,7 @@ int64_t QuicConnection::send_stream_vecs_impl(int64_t stream_id,
                     Log::WARN);
             }
             flush_ppe();
+            reschedule_loss_timer();
             if (written > 0) return static_cast<int64_t>(written);
             return -1;
         }
@@ -1232,14 +1243,7 @@ void QuicConnection::close(uint64_t app_error_code) {
     m_closed = true;
     m_loss_timer.cancel();
 
-    for (auto& [id, bufs] : m_conn_unacked_bufs) {
-        if (bufs) {
-            for (auto& buf : bufs->buffers) {
-                buf->cancel_timer();
-            }
-        }
-    }
-    m_conn_unacked_bufs.clear();
+    fail_all_unacked_buffers(boost::asio::error::broken_pipe);
 
     if(on_close_cb){
         // Delay connection cleanup by 5 seconds to allow pending asynchronous operations 
@@ -1409,6 +1413,19 @@ void QuicConnection::reset_stream(int64_t stream_id, uint64_t app_error_code) {
                                 tp::to_string(stream_id) + ": " + tp::string(ngtcp2_strerror(rv)), Log::WARN);
         }
         if (!m_in_read_pkt) {
+            on_pump_write(FUNC_NAME);
+        }
+    }
+}
+
+void QuicConnection::stop_reading_stream(int64_t stream_id, uint64_t app_error_code) {
+    if (m_conn && !m_closed) {
+        int rv = ngtcp2_conn_shutdown_stream_read(m_conn, 0, stream_id, app_error_code);
+        if (rv != 0) {
+            _log_with_date_time("QuicConnection: ngtcp2_conn_shutdown_stream_read failed for stream " +
+                                tp::to_string(stream_id) + ": " + tp::string(ngtcp2_strerror(rv)), Log::WARN);
+        }
+        if (!m_in_read_pkt && !m_in_pump_write) {
             on_pump_write(FUNC_NAME);
         }
     }

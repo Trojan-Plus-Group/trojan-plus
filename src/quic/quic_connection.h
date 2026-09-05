@@ -108,6 +108,7 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
 
     // Manually reset a stream with an error code.
     void reset_stream(int64_t stream_id, uint64_t app_error_code);
+    void stop_reading_stream(int64_t stream_id, uint64_t app_error_code);
 
     [[nodiscard]] bool is_closed() const { return m_closed; }
     [[nodiscard]] bool is_handshake_done() const { return m_handshake_done; }
@@ -220,6 +221,7 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
       UnackedBuf(boost::asio::io_context& io_ctx):m_write_timer(io_ctx), m_timer_running(false), m_retry_delay_ms(50){}
       void send();
       void cancel_timer();
+      void complete(const boost::system::error_code& ec, std::size_t n);
       bool is_sending() const;
       std::size_t m_sending_offset{0};
     };
@@ -231,7 +233,8 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
       bool m_sending{false};
     };
 
-    void remove_unacked_buff(int64_t stream_id);
+    void fail_unacked_buffers(int64_t stream_id, const boost::system::error_code& ec);
+    void fail_all_unacked_buffers(const boost::system::error_code& ec);
     void send_next_unacked_buff(int64_t stream_id, UnackedBuf* buf_finished);
 
     tp::unordered_map<int64_t, std::shared_ptr<QuicStreamHandler>> m_stream_handlers;

@@ -44,6 +44,16 @@ void QuicClientEndpoint::start() {
     connect_to_server();
 }
 
+void QuicClientEndpoint::stop() {
+    m_retry_timer.cancel();
+    fail_all_pending_streams();
+    auto conn = std::move(m_conn);
+    QuicEndpoint::stop();
+    if (conn && !conn->is_closed()) {
+        conn->close();
+    }
+}
+
 void QuicClientEndpoint::connect_to_server() {
     if (m_conn && m_conn->is_closed()) {
         m_conn.reset();
@@ -126,6 +136,12 @@ bool QuicClientEndpoint::is_connected() const { return m_conn && !m_conn->is_clo
 void QuicClientEndpoint::stream_extend_window(int64_t stream_id, std::size_t n) {
     if (m_conn) {
         m_conn->stream_extend_window(stream_id, n);
+    }
+}
+
+void QuicClientEndpoint::stop_reading_stream(int64_t stream_id, uint64_t app_error_code) {
+    if (m_conn) {
+        m_conn->stop_reading_stream(stream_id, app_error_code);
     }
 }
 

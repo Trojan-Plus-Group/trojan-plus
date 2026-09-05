@@ -282,6 +282,7 @@ class QuicStreamTransport : public OutboundTransport,
                     ep->stream_extend_window(m_stream_id, m_recv_buf.size());
                     m_recv_buf.consume(m_recv_buf.size());
                 }
+                ep->stop_reading_stream(m_stream_id, 0);
                 ep->remove_stream_data_handler(m_stream_id);
                 ep->send_stream_data(m_stream_id, nullptr, true, nullptr);
             }

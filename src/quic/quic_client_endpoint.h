@@ -30,6 +30,7 @@ class QuicClientEndpoint : public QuicEndpoint {
                        std::shared_ptr<QuicTlsCtx> tls_ctx);
 
     void start() override;
+    void stop() override;
 
     using PendingStreamOpenId = uint64_t;
 
@@ -48,6 +49,7 @@ class QuicClientEndpoint : public QuicEndpoint {
 
     // Extend QUIC flow control window for a stream (call after consuming data).
     void stream_extend_window(int64_t stream_id, std::size_t n);
+    void stop_reading_stream(int64_t stream_id, uint64_t app_error_code);
 
     // True after QUIC handshake with server completes.
     [[nodiscard]] bool is_connected() const;
