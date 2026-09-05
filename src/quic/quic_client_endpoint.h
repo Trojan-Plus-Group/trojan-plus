@@ -31,10 +31,10 @@ class QuicClientEndpoint : public QuicEndpoint {
 
     void start() override;
 
-    // Try to open a bidi stream. Returns -1 if not yet connected / failed.
-    // The stream_data_handler is called with (data, len, fin) when data arrives.
-    // The connected_handler is called once the stream is open and ready.
-    int64_t open_bidi_stream(std::function<void(int64_t /*stream_id*/)> on_stream_ready);
+    using PendingStreamOpenId = uint64_t;
+
+    PendingStreamOpenId open_bidi_stream(std::function<void(int64_t /*stream_id*/)> on_stream_ready);
+    void cancel_pending_stream_open(PendingStreamOpenId id);
 
     // Send data on an open stream.
     void send_stream_data(int64_t stream_id, std::shared_ptr<ReadBufWithGuard> buf, bool fin, IoHandler sent_cb);
@@ -76,8 +76,13 @@ class QuicClientEndpoint : public QuicEndpoint {
     tp::unordered_map<int64_t, std::function<void(const uint8_t*, std::size_t, bool)>>
         m_stream_data_cb;
 
-    // Deferred stream-open requests (waiting for handshake or stream flow credit).
-    tp::deque<std::function<void(int64_t)>> m_pending_stream_opens;
+    struct PendingStreamOpen {
+        PendingStreamOpenId id;
+        std::function<void(int64_t)> callback;
+    };
+
+    tp::deque<PendingStreamOpen> m_pending_stream_opens;
+    PendingStreamOpenId m_next_pending_stream_open_id{1};
 
     boost::asio::ip::udp::endpoint m_server_ep;
 };

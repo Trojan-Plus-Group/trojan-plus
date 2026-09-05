@@ -59,9 +59,8 @@ class OutboundTransport {
 };
 
 // Create the appropriate transport for the given service configuration.
-// If QUIC is enabled, preferred, and the QuicClientEndpoint has already
-// completed the handshake, returns a QuicStreamTransport; otherwise returns
-// a TlsOutboundTransport.
+// If QUIC is enabled and the QuicClientEndpoint is usable, returns a
+// QuicStreamTransport; otherwise returns a TlsOutboundTransport.
 std::shared_ptr<OutboundTransport> create_outbound_transport(
     boost::asio::io_context&       io_ctx,
     boost::asio::ssl::context&     ssl_ctx,

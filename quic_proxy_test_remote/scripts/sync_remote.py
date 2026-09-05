@@ -95,10 +95,10 @@ def sync_bundle(branch="fix_quic"):
 
 
 def build_remote(jobs=1):
-    if jobs > 1:
+    if jobs != 1:
         print(
-            f"[!] WARNING: Remote host is 1 CPU, 1G RAM. Parallel build (-j {jobs}) "
-            "previously triggered kernel OOM-killer terminating systemd. Clamping jobs to 1.",
+            f"[!] WARNING: Remote host is 1 CPU, 1G RAM. Build jobs (-j {jobs}) "
+            "must be 1. Clamping jobs to 1.",
             file=sys.stderr
         )
         jobs = 1

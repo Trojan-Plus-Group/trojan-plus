@@ -82,8 +82,7 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     // Returns the stream ID, or -1 on error.
     int64_t open_uni_stream();
 
-    // Open a new client-initiated bidi stream. Returns -1 on error.
-    int64_t open_bidi_stream();
+    int open_bidi_stream(int64_t& stream_id);
 
     // Handler management
     void set_stream_handler(int64_t stream_id, std::shared_ptr<QuicStreamHandler> handler);

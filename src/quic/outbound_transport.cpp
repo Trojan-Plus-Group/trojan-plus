@@ -184,15 +184,21 @@ class QuicStreamTransport : public OutboundTransport,
             return;
         }
 
-        // Register data handler before opening the stream so we never miss data.
-        // We use a sentinel stream_id = -2 until the real sid is assigned.
         auto self = shared_from_this();
-        ep->open_bidi_stream(
+        m_connect_pending = true;
+        auto pending_id = ep->open_bidi_stream(
             [this, self, on_success = std::move(on_success),
-             on_error_deferred = on_error](int64_t sid) mutable {
+             on_error_deferred = std::move(on_error)](int64_t sid) mutable {
+                m_connect_pending = false;
+                m_pending_open_id = 0;
                 auto ep = m_endpoint.lock();
+                if (m_closed) {
+                    if (sid >= 0 && ep) {
+                        ep->send_stream_data(sid, nullptr, true, nullptr);
+                    }
+                    return;
+                }
                 if (sid < 0 || !ep) {
-                    // Endpoint returned failure inside the deferred callback.
                     boost::asio::post(m_io_ctx, std::move(on_error_deferred));
                     return;
                 }
@@ -201,9 +207,11 @@ class QuicStreamTransport : public OutboundTransport,
                     sid, [this, self](const uint8_t* data, std::size_t len, bool fin) {
                         on_data(data, len, fin);
                     });
-                // Post to avoid potential re-entrancy if called synchronously.
                 boost::asio::post(m_io_ctx, std::move(on_success));
             });
+        if (m_connect_pending) {
+            m_pending_open_id = pending_id;
+        }
     }
 
     void async_read_some(boost::asio::mutable_buffer buf, IoHandler handler) override {
@@ -253,12 +261,22 @@ class QuicStreamTransport : public OutboundTransport,
     }
 
     void cancel() override {
+        m_closed = true;
+        if (auto ep = m_endpoint.lock()) {
+            ep->cancel_pending_stream_open(m_pending_open_id);
+        }
+        m_pending_open_id = 0;
+        m_connect_pending = false;
         m_has_pending     = false;
         m_pending_handler = {};
     }
 
     void close() override {
+        m_closed = true;
         if (auto ep = m_endpoint.lock()) {
+            ep->cancel_pending_stream_open(m_pending_open_id);
+            m_pending_open_id = 0;
+            m_connect_pending = false;
             if (m_stream_id >= 0) {
                 if (m_recv_buf.size() > 0) {
                     ep->stream_extend_window(m_stream_id, m_recv_buf.size());
@@ -321,8 +339,11 @@ class QuicStreamTransport : public OutboundTransport,
     tp::streambuf            m_recv_buf;
     boost::asio::mutable_buffer m_pending_buf{};
     IoHandler                m_pending_handler;
+    QuicClientEndpoint::PendingStreamOpenId m_pending_open_id{0};
+    bool                     m_connect_pending{false};
     bool                     m_has_pending{false};
     bool                     m_fin_received{false};
+    bool                     m_closed{false};
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -339,7 +360,7 @@ std::shared_ptr<OutboundTransport> create_outbound_transport(
 #ifdef ENABLE_QUIC
     if (quic_client != nullptr &&
         config.get_quic().enabled &&
-        quic_client->is_connected()) {
+        quic_client->is_usable()) {
         return TP_MAKE_SHARED(QuicStreamTransport, io_ctx, quic_client);
     }
 #endif

@@ -45,6 +45,9 @@ void QuicClientEndpoint::start() {
 }
 
 void QuicClientEndpoint::connect_to_server() {
+    if (m_conn && m_conn->is_closed()) {
+        m_conn.reset();
+    }
     if (m_connecting || m_conn) {
         return;
     }
@@ -90,8 +93,11 @@ void QuicClientEndpoint::connect_to_server() {
               drain_pending_stream_opens();
           };
 
-          m_conn->on_close_cb = [this, self](QuicConnection*) {
-              fail_all_pending_streams();
+          m_conn->on_close_cb = [this, self](QuicConnection* conn) {
+              if (m_conn.get() != conn) {
+                  return;
+              }
+              m_conn.reset();
               mark_unreachable();
           };
 
@@ -128,15 +134,15 @@ void QuicClientEndpoint::drain_pending_stream_opens() {
         return;
     }
     while (!m_pending_stream_opens.empty()) {
-        auto sid = m_conn->open_bidi_stream();
-        if (sid < 0) {
-            // Still stream-blocked, wait for next MAX_STREAMS from peer
+        int64_t sid = -1;
+        auto rv = m_conn->open_bidi_stream(sid);
+        if (rv == NGTCP2_ERR_STREAM_ID_BLOCKED) {
             break;
         }
-        auto cb = std::move(m_pending_stream_opens.front());
+        auto pending = std::move(m_pending_stream_opens.front());
         m_pending_stream_opens.pop_front();
-        if (cb) {
-            cb(sid);
+        if (pending.callback) {
+            pending.callback(rv == 0 ? sid : -1);
         }
     }
 }
@@ -144,9 +150,9 @@ void QuicClientEndpoint::drain_pending_stream_opens() {
 void QuicClientEndpoint::fail_all_pending_streams() {
     auto pending = std::move(m_pending_stream_opens);
     m_pending_stream_opens.clear();
-    for (auto& cb : pending) {
-        if (cb) {
-            cb(-1);
+    for (auto& item : pending) {
+        if (item.callback) {
+            item.callback(-1);
         }
     }
 }
@@ -170,33 +176,48 @@ void QuicClientEndpoint::mark_unreachable() {
     });
 }
 
-int64_t QuicClientEndpoint::open_bidi_stream(std::function<void(int64_t)> on_stream_ready) {
+QuicClientEndpoint::PendingStreamOpenId QuicClientEndpoint::open_bidi_stream(
+  std::function<void(int64_t)> on_stream_ready) {
     if (!m_conn || m_conn->is_closed()) {
         if (on_stream_ready) {
             on_stream_ready(-1);
         }
-        return -1;
+        return 0;
     }
     if (m_conn->is_handshake_done()) {
-        auto sid = m_conn->open_bidi_stream();
-        if (sid >= 0) {
+        int64_t sid = -1;
+        auto rv = m_conn->open_bidi_stream(sid);
+        if (rv == 0) {
             if (on_stream_ready) {
                 on_stream_ready(sid);
             }
-            return sid;
+            return 0;
         }
-        // Handshake is done but stream IDs are temporarily blocked by peer flow control.
-        // Queue the request; it will be fulfilled when MAX_STREAMS arrives or active streams close.
-        if (on_stream_ready) {
-            m_pending_stream_opens.push_back(std::move(on_stream_ready));
+        if (rv != NGTCP2_ERR_STREAM_ID_BLOCKED) {
+            if (on_stream_ready) {
+                on_stream_ready(-1);
+            }
+            return 0;
         }
-        return -1;
     }
-    // Handshake not yet done – defer.
-    if (on_stream_ready) {
-        m_pending_stream_opens.push_back(std::move(on_stream_ready));
+    if (!on_stream_ready) {
+        return 0;
     }
-    return -1;
+    auto id = m_next_pending_stream_open_id++;
+    m_pending_stream_opens.push_back({id, std::move(on_stream_ready)});
+    return id;
+}
+
+void QuicClientEndpoint::cancel_pending_stream_open(PendingStreamOpenId id) {
+    if (id == 0) {
+        return;
+    }
+    for (auto it = m_pending_stream_opens.begin(); it != m_pending_stream_opens.end(); ++it) {
+        if (it->id == id) {
+            m_pending_stream_opens.erase(it);
+            return;
+        }
+    }
 }
 
 void QuicClientEndpoint::send_stream_data(int64_t stream_id, std::shared_ptr<ReadBufWithGuard> buf, bool fin, IoHandler sent_cb){

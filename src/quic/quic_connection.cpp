@@ -1109,11 +1109,10 @@ int64_t QuicConnection::send_stream_vecs_impl(int64_t stream_id,
 
 // ---- open_bidi_stream -------------------------------------------------------
 
-int64_t QuicConnection::open_bidi_stream() {
+int QuicConnection::open_bidi_stream(int64_t& stream_id) {
     if (!m_conn || m_closed) {
-        return -1;
+        return NGTCP2_ERR_INVALID_STATE;
     }
-    int64_t stream_id = -1;
     int rv = ngtcp2_conn_open_bidi_stream(m_conn, &stream_id, nullptr);
     if (rv != 0) {
         if (rv != NGTCP2_ERR_STREAM_ID_BLOCKED) {
@@ -1121,9 +1120,8 @@ int64_t QuicConnection::open_bidi_stream() {
         } else {
             _log_with_date_time("QuicConnection::open_bidi_stream: stream ID blocked by peer flow control", Log::ALL);
         }
-        return -1;
     }
-    return stream_id;
+    return rv;
 }
 
 void QuicConnection::set_stream_handler(int64_t stream_id, std::shared_ptr<QuicStreamHandler> handler) {
