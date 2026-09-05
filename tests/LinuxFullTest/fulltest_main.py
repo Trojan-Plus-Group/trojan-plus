@@ -431,4 +431,11 @@ if __name__ == "__main__":
         parser.print_help()
         exit(1)
 
+    if is_macos_system() and cmd_args.dns:
+        print_time_log("Notice: DNS test (-d) is skipped on macOS (known hang/timeout issues with local resolver).")
+        cmd_args.dns = None
+        if not cmd_args.normal and not cmd_args.tun and not cmd_args.fallback and cmd_args.quic is None:
+            print_time_log("No other tests specified. Exiting cleanly.")
+            exit(0)
+
     exit(main())

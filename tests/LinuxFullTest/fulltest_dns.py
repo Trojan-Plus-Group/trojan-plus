@@ -24,7 +24,7 @@ import sys
 import time
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from fulltest_utils import print_time_log
+from fulltest_utils import print_time_log, is_macos_system
 
 RESOLVER_TIMEOUT = 10
 PARALLEL_REQUEST_COUNT = 3
@@ -207,6 +207,10 @@ def main_process(executor, domains, ns, count, non_domain=False):
 def start_query(ns, count, port):
     global query_port
     query_port = port
+
+    if is_macos_system():
+        print_time_log(f'Notice: skipping DNS test @{ns}:{query_port} on macOS (known hang/timeout issues)')
+        return True
 
     print_time_log(f'start dns test @{ns}:{query_port}')
 

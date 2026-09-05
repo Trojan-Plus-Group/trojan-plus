@@ -672,6 +672,7 @@ TCP TLS 与 QUIC 分为独立 server run：
   - `fulltest_main.py -q all`：涵盖 T1 至 T19 共 18 个测试用例，**18/18 全部 100% 通过**。
   - `fulltest_main.py -n`：涵盖 Client 与 Forward 在 Pipeline/Non-Pipeline 模式下的 HTTP/UDP 代理和 RSS 检查，**100% 全部通过**。
   - `fulltest_main.py -f`：Fallback 模式测试，**100% 全部通过**。
+  - `fulltest_main.py -d`（DNS 测试）：macOS 本地系统跳过（由于本地环境对多域名批量查询及未提权端口易发生超时卡死，测试脚本与规范已明确在 macOS 平台跳过该项）。
 
 ### 19.5 多模式验收
 
