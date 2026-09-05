@@ -1,135 +1,208 @@
 # Trojan Plus - Development Context
 
-`trojan-plus` is a high-performance C++17 proxy server compatible with the original Trojan protocol. Experimental features:
-- **UDP over NAT** - Transparent UDP proxy
-- **Pipeline Mode** - Request pipelining to reduce latency
-- **Load Balancing** - Multiple upstream servers
-- **ICMP Proxying** - ICMP message proxy
-- **QUIC/HTTP3** - Trojan-over-QUIC and HTTP/3 fallback
+`trojan-plus` is a high-performance C++17 proxy server compatible with the original Trojan protocol. It is optimized for cross-platform deployment (Linux, macOS, Windows, Android, iOS) and incorporates key experimental features:
+- **QUIC / HTTP3** - Trojan-over-QUIC transport via ngtcp2 + nghttp3 + wolfSSL, supporting HTTP/1.1 and HTTP/3 upstream fallback
+- **UDP over NAT** - High-speed transparent UDP proxy
+- **Pipeline Mode** - Request pipelining to minimize latency
+- **Load Balancing** - Multi-upstream server load balancing and failover
+- **TUN Mode** - Integrated lwIP user-space TCP/IP stack with transparent TUN proxying and built-in DNS server
+- **ICMP Proxying** - ICMP echo/reply proxying daemon
+- **Custom Memory Pool** - Fine-grained memory tracking and mimalloc allocator integration
 
-Run modes (`run_type`): `client`, `server`, `forward`, `nat` (Linux only)
+### Run Modes (`run_type`)
+- `client`: SOCKS5 local client mode
+- `server`: Server mode accepting Trojan connections, with HTTP/HTTPS fallback
+- `forward`: Port forwarding proxy mode
+- `nat`: Transparent proxy via Linux netfilter/iptables NAT (Linux only)
+- `client_tun`: TUN interface transparent proxy mode (Linux / mobile platforms)
+
+### Target Artifacts
+- **Executable**: Standalone CLI binary (`trojan` / `trojan.exe`)
+- **Shared Library (`.so`)**: Android JNI library (`libtrojan.so`) with JNI exports in `com.trojan_plus.android.TrojanPlusVPNService`
+- **Static Library / Framework (`.a` / `.xcframework`)**: iOS / macOS library (`libtrojan.a` / `trojan.xcframework`) exposing unified C exports in [src/platform_exports.h](src/platform_exports.h) (`trojan_run_main`, `trojan_stop_main`, `trojan_get_version`)
 
 ---
 
 ## Build
 
-**Prerequisites**:
-- C++17 compiler (GCC 7+, Clang 5+, MSVC 2017+)
-- CMake >= 3.20
-- Boost >= 1.72.0 (recommended 1.80.0+)
-- wolfSSL, ngtcp2, nghttp3 (via submodules)
-- Android NDK >= r23b (Android only)
+### Prerequisites
+- **C++17 Compiler**: GCC >= 7.0, Clang >= 5.0, AppleClang, or MSVC >= 2017 (15.7+)
+- **CMake**: >= 3.20
+- **Boost**: >= 1.72.0 (recommended 1.80.0+, program_options required)
+- **Submodules / Included**: wolfSSL, ngtcp2, nghttp3, mimalloc, GSL, badvpn (lwIP)
+- **Mobile SDKs**: Android NDK >= r23b (Android); Xcode with iOS SDK (iOS)
+- **Test Dependencies**: Python 3 with `PySocks`, `psutil`, `dnspython`, `aioquic`
+
+### Quick Build & Test Scripts
+The repository provides unified platform-aware scripts:
+```bash
+# macOS / Linux / Windows MSYS (auto-detects CPU count and platform flags)
+./build_and_test.sh
+
+# Windows (MSVC batch script)
+build_and_test.bat
+
+# Docker (Linux automated build & test)
+./build_and_test_docker_linux.sh
+```
+
+### Standard CMake Build
 
 ```bash
+# Initialize submodules
 git submodule update --init --recursive
-mkdir build && cd build
-cmake ..
-make -j$(nproc)      # Linux
-make -j$(sysctl -n hw.ncpu)  # macOS
+
+# Linux
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel $(nproc)
+
+# macOS
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel $(sysctl -n hw.ncpu)
+
+# Windows (MSVC)
+cmake -B build
+cmake --build build --config Release --parallel
 ```
 
-**CMake Options**:
-- `-DENABLE_MIMALLOC=ON/OFF` (default ON) - mimalloc allocator
-- `-DENABLE_NAT=ON/OFF` (default ON, Linux) - NAT transparent proxy
-- `-DENABLE_REUSE_PORT=ON/OFF` (default ON, Linux) - `SO_REUSEPORT`
-- `-DENABLE_SSL_KEYLOG=ON/OFF` (default OFF) - SSL key logging (debug)
-- `-DBUILD_LIBRARY=ON/OFF` (default OFF) - Compile as library (auto for iOS/Android)
-
-**Mobile Platforms**:
+### Mobile Platforms
 ```bash
-./build_android_so.sh /path/to/ndk        # Android
-./make_ios.sh                            # iOS
-./make_xcframework_ios.sh               # XCFramework
+# Android (.so for arm64-v8a, x86_64, etc.)
+./build_android_so.sh /path/to/android-ndk
+
+# iOS (.a static library)
+./make_ios.sh
+
+# iOS XCFramework
+./make_xcframework_ios.sh
 ```
+
+### CMake Options
+| Option | Default | Description |
+| :--- | :--- | :--- |
+| `ENABLE_QUIC` | `ON` | Build QUIC/HTTP3 transport via ngtcp2 + nghttp3 + wolfSSL |
+| `ENABLE_MIMALLOC` | `ON` | Build and statically link mimalloc allocator |
+| `ENABLE_NAT` | `ON` | Build with Linux NAT transparent proxy (Linux only) |
+| `ENABLE_REUSE_PORT` | `ON` | Enable `SO_REUSEPORT` socket option (Linux only) |
+| `ENABLE_TLS13_CIPHERSUITES` | `ON` | Enable TLS 1.3 ciphersuites support |
+| `FORCE_TCP_FASTOPEN` | `OFF` | Force build with TCP Fast Open support |
+| `BUILD_LIBRARY` | `OFF` | Build as library without `main()` (auto-enabled on iOS/Android) |
+| `ENABLE_SSL_KEYLOG` | `OFF` | Enable SSLKEYLOGFILE export (**DEBUG ONLY** - exposes TLS master secrets) |
+| `USE_GUARD_BACKSTACK` | `OFF` | Wrap functions in try/catch for backstack error guarding |
+| `ENABLE_ANDROID_LOG` | `ON` | Output logs to Android LogCat (Android only) |
+| `ENABLE_IOS_LOG` | `ON` | Output logs to iOS unified logging (iOS only) |
 
 ---
 
 ## Testing
 
-Integration tests in [tests/LinuxFullTest/](tests/LinuxFullTest/), requires PySocks, psutil, dnspython.
+Integration tests reside in [tests/LinuxFullTest/](tests/LinuxFullTest/).
 
+### Python Dependencies
 ```bash
-# Linux (requires root)
-sudo python3 fulltest_main.py /path/to/build/trojan -g -d 5333
-# TUN mode
-sudo python3 fulltest_main.py /path/to/build/trojan -t -n -d 5333
+pip install PySocks psutil dnspython aioquic
+```
 
-# macOS
+### Running Tests
+```bash
+cd tests/LinuxFullTest/
+
+# Standard proxy & pipeline test
 python3 fulltest_main.py /path/to/build/trojan -g -n
 
-# QUIC tests
+# Linux Full Test with DNS & Root privileges
+sudo python3 fulltest_main.py /path/to/build/trojan -g -d 5333
+
+# TUN Mode (requires root / privileges)
+sudo python3 fulltest_main.py /path/to/build/trojan -t -n -d 5333
+
+# Server Fallback test
+python3 fulltest_main.py /path/to/build/trojan -f
+
+# QUIC Test Suite (runs all QUIC cases T1-T19)
 python3 fulltest_main.py /path/to/build/trojan -q
 
-# QUIC tests for single testcase T4
+# Run single QUIC test case (e.g. T4)
 python3 fulltest_main.py /path/to/build/trojan -q T4
 
-# Fallback test
-python3 fulltest_main.py /path/to/build/trojan -f
+# Direct QUIC test runner
+python3 fulltest_quic.py /path/to/build/trojan [all|T1|T2|...|T19]
 ```
+> [!NOTE]
+> On macOS, DNS forwarding test (`-d`) is automatically skipped in `fulltest_main.py` due to local macOS resolver timeouts.
 
-**Docker Environment**:
-```bash
-./scripts/build_docker.sh
-./scripts/compile_and_test.sh
-```
+### Manual Testing Suite
+- [quic_proxy_test/](quic_proxy_test/) - Local manual verification scripts (`start_server.sh`, `start_client.sh`, `start_http1.sh`)
 
 ---
 
-## Architecture
+## Architecture & Directory Layout
 
-### Directory Layout
-- [src/core/](src/core/) - Service instantiation, config loading, logging, pipeline, ICMP daemon
-- [src/session/](src/session/) - Session implementations (ClientSession, ServerSession, NATSession, etc.)
-- [src/proto/](src/proto/) - SOCKS5/Trojan parsers, DNS, ICMP, IP headers
-- [src/ssl/](src/ssl/) - SSL context and TLS handshake
-- [src/tun/](src/tun/) - TUN interface, lwIP stack, DNS server
-- [src/quic/](src/quic/) - ngtcp2 + nghttp3 + wolfSSL QUIC/HTTP3 wrapper
-- [src/mem/](src/mem/) - Memory allocator hooks
+### Codebase Organization
+- [src/core/](src/core/) - Service instantiation, lifecycle, config parser (`Config`), logging (`Log`), pipeline coordinator, ICMP daemon
+- [src/session/](src/session/) - Session implementations:
+  - `ClientSession`: Inbound SOCKS5 handling and upstream Trojan forwarding
+  - `ServerSession`: Inbound Trojan authentication, proxy tunneling, and fallback dispatch
+  - `ForwardSession` / `NATSession`: Port-forwarding and Linux netfilter NAT redirection
+  - `PipelineSession` / `PipelineComponent`: Request multiplexing over persistent connections
+  - `UDPForwardSession`: UDP packet encapsulation and proxying
+- [src/proto/](src/proto/) - Protocol headers and packet parsers: SOCKS5, Trojan protocol, DNS packets, ICMP, IPv4/IPv6 headers
+- [src/ssl/](src/ssl/) - wolfSSL context abstraction and TLS handshake logic
+- [src/tun/](src/tun/) - TUN interface (`TunDev`), embedded lwIP TCP/IP stack, built-in DNS server, and local UDP forwarder
+- [src/quic/](src/quic/) - ngtcp2 + nghttp3 + wolfSSL QUIC transport:
+  - `QuicEndpoint`, `QuicClientEndpoint`, `QuicServerEndpoint`: UDP socket event loops, connection demuxing, packet dispatch
+  - `QuicConnection`: ngtcp2 connection state machine, packet send/recv loops, crypto callbacks, loss/idle timers
+  - `QuicSession`: High-level session translating between SOCKS5/Trojan and QUIC streams
+  - [src/quic/h1_upstream/](src/quic/h1_upstream/): HTTP/1.1 and HTTP/3 upstream fallback and connection tunneling
+  - `OutboundTransport`: Unified polymorphic transport abstraction
+- [src/mem/](src/mem/) - Custom memory allocator wrappers (`tp::` namespace) backed by mimalloc
 
 ### Concurrency Model
-Multi-process + `SO_REUSEPORT` (kernel-level load balancing) over threads, ensuring process isolation and lock-free execution. Enable via `"reuse_port": true`.
-
-### Session Architecture
-`Service` manages `io_context` and dynamically creates polymorphic `Session` objects. Base `Session` handles garbage collection and pipeline integration.
+- **Multi-Process + `SO_REUSEPORT`**: On Linux, Trojan Plus favors multi-process architecture over multi-threading for the core event loop. Each process runs an isolated, lock-free `boost::asio::io_context` bound to shared sockets via `SO_REUSEPORT` for kernel-level load balancing.
+- **Single-Threaded Session State**: Session objects operate entirely within their parent `io_context` strand/thread, eliminating mutex contention in data paths.
 
 ---
 
 ## Submodules
-```
-badvpn          - lwIP TCP/IP stack (fork)
-GSL             - Microsoft GSL
-wolfssl         - TLS library (fork)
-ngtcp2          - QUIC protocol (fork)
-nghttp3         - HTTP/3 (fork)
-trojan-plus-android-libs  - Android prebuilt libs
-trojan-plus-ios-libs      - iOS prebuilt libs
-```
+
+| Submodule | Description |
+| :--- | :--- |
+| `wolfssl` | Embedded TLS 1.3 / 1.2 library (forked for Trojan Plus) |
+| `ngtcp2` | IETF QUIC protocol implementation (forked) |
+| `nghttp3` | HTTP/3 protocol implementation (forked) |
+| `mimalloc` | High-performance memory allocator (source tree) |
+| `badvpn` | lwIP TCP/IP stack wrapper for TUN interface (forked) |
+| `GSL` | Microsoft Guidelines Support Library (C++ Core Guidelines) |
+| `trojan-plus-android-libs` | Precompiled Boost and dependencies for Android architectures |
+| `trojan-plus-ios-libs` | Precompiled Boost and dependencies for iOS device and simulator |
 
 ---
 
-## Development Conventions
+## Development & Safety Conventions
 
 ### Memory Allocators
-**Do not** use raw `std::` containers. Use `tp::` namespace.
-
+**Strict Rule**: Avoid raw `std::` heap containers in performance-sensitive core and session paths. Use the custom `tp::` namespace:
 ```cpp
 #include "mem/memallocator.h"
 
 // Containers
 tp::string, tp::vector, tp::map, tp::list, tp::set, tp::unordered_map, ...
 
-// Allocation
+// Allocation Macros
 TP_NEW(Type, ...) / TP_DELETE(ptr)
 TP_NEW_ARR(Type, num) / TP_DELETE_ARR(ptr)
 TP_MALLOC(size) / TP_FREE(ptr)
 TP_MAKE_UNIQUE(Type, ...) / TP_MAKE_SHARED(Type, ...)
 
-// Asio handlers
+// Asio Handlers
 tp::bind_mem_alloc(handler)
 ```
-
-See [src/mem/memallocator.h](src/mem/memallocator.h)
+See [src/mem/memallocator.h](src/mem/memallocator.h).
 
 ### Code Style
-- `.clang-format` configured
-- Follow GSL (Guidelines Support Library) conventions
+- Configured via [.clang-format](.clang-format)
+- Adhere to Microsoft GSL practices (`gsl::span`, `gsl::narrow_cast`, etc.)
+
+### Critical Git Safety Rule
+- **No Unauthorized Git Commit / Push**:
+  - **DO NOT** execute `git commit`, `git push`, or alter remote branches without explicit, direct instructions from the user.
