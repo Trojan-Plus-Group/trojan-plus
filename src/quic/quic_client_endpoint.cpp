@@ -194,7 +194,18 @@ void QuicClientEndpoint::mark_unreachable() {
 
 QuicClientEndpoint::PendingStreamOpenId QuicClientEndpoint::open_bidi_stream(
   std::function<void(int64_t)> on_stream_ready) {
-    if (!m_conn || m_conn->is_closed()) {
+    if (!m_conn) {
+        if (m_connecting && on_stream_ready) {
+            auto id = m_next_pending_stream_open_id++;
+            m_pending_stream_opens.push_back({id, std::move(on_stream_ready)});
+            return id;
+        }
+        if (on_stream_ready) {
+            on_stream_ready(-1);
+        }
+        return 0;
+    }
+    if (m_conn->is_closed()) {
         if (on_stream_ready) {
             on_stream_ready(-1);
         }

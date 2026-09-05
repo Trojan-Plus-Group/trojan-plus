@@ -53,8 +53,12 @@ class QuicClientEndpoint : public QuicEndpoint {
 
     // True after QUIC handshake with server completes.
     [[nodiscard]] bool is_connected() const;
-    [[nodiscard]] bool is_connecting() const { return m_conn && !m_conn->is_closed() && !m_conn->is_handshake_done(); }
-    [[nodiscard]] bool is_usable() const { return m_conn && !m_conn->is_closed(); }
+    [[nodiscard]] bool is_connecting() const {
+        return m_connecting || (m_conn && !m_conn->is_closed() && !m_conn->is_handshake_done());
+    }
+    [[nodiscard]] bool is_usable() const {
+        return m_running && !m_known_unreachable && (m_connecting || (m_conn && !m_conn->is_closed()));
+    }
 
     [[nodiscard]] bool is_known_unreachable() const { return m_known_unreachable; }
     void mark_unreachable();
