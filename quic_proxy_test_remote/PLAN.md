@@ -647,13 +647,13 @@ TCP TLS 与 QUIC 分为独立 server run：
 - **关键 Bug 修复 2（`CLIENT_TUN` 模式下未启动 QUIC client）**：
   - 问题：`src/core/service.cpp` 中将 `m_quic_client->start()` 包含在 `if (config.get_run_type() != Config::CLIENT_TUN)` 内部。
   - 修复：将 `m_quic_client->start()` 移出 `!= CLIENT_TUN` 约束，确保 `client_tun` 模式正常建立 QUIC 客户端连接。
-- **关键 Bug 修复 3 & 4（QUIC 首流握手竞争与延迟流错误提前派发）**：
+- **关键 Bug 修复 3 & 4（透明重定向首流握手竞争与延迟流过早抛错）**：
   - 问题：透明重定向在容器启动 1.4ms 即发起连接，此时跨洋 QUIC 握手（~200ms）在途中；`ClientSession`/`TUNProxySession` 因 `!is_connected()` 误判断连，且 `outbound_transport.cpp` 在流未就绪时提前抛错销毁会话。
   - 修复（commit `ceed21f`）：为 `QuicClientEndpoint` 补充 `is_connecting()`/`is_usable()` 状态，将透明代理请求安全排入握手后延迟就绪队列；移除多余的提前 `on_error`，确保握手完成或失败时严格回调。
-- **关键 Bug 修复 5（上游 TCP 连接长效悬挂与流控信用泄漏）**：
+- **关键 Bug 修复 5（上游连接长效悬挂与流关闭未读流控信用泄漏）**：
   - 问题：Cloudflare upstream 响应后保持 HTTP keep-alive 长达 60~120 秒，导致服务端 TCP 连接与流句柄无法及时回收；此外流关闭时未消费的 `m_recv_buf` 信用未返还连接，造成长效连接级窗口枯竭。
   - 修复（commit `6243a7e`）：测试注入 `-H "Connection: close"` 促使上游即时拆链；并在 `QuicStreamTransport::close` 中主动将 `m_recv_buf` 未读字节数返还给连接流控。
-- **关键 Bug 修复 6（UnackedBuf 提前收到 ACK 队列卡死竞争态）**：
+- **关键 Bug 修复 6（UnackedBuf 提前收到 ACK 引起的队列死锁与重入破坏）**：
   - 问题：高并发吞吐下，部分重传/未完成缓冲区的 ACK 提前到达，被 `cb_acked_stream_data_offset` 抹除后，`send_next_unacked_buff` 依赖原指针查找后继导致找不到节点，`m_sending` 标志永久卡在 true，后续数据无法发送。
   - 修复（commit `7a6f611` / `f54bc23`）：`cb_acked_stream_data_offset` 严格要求发送与确认双重达标才抹除；`send_next_unacked_buff` 改为寻找首个未发完缓冲区的健壮扫描。
 - **关键 Bug 修复 7（流控耗尽与高并发流阻塞排队）**：
