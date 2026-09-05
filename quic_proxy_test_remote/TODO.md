@@ -12,8 +12,8 @@
 
 ## 当前状态
 
-- 当前阶段：最终验收完成；研究性扩展按证据与触发条件跳过。
-- TLS/session cache 修复 commit：`379dac2`；远端为同 commit 且工作树 clean。
+- 当前阶段：扩展多运行模式矩阵。
+- 当前代码：`8f08bbb`，新增 `debug_disable_tcp=true` 时 client/server TCP 完全禁用；远端为同 commit 且工作树 clean。
 - 当前结论：R1 正式组达到五个有效样本，R2 Cloudflare、R3 五轮并发、R6 指定 netem 场景、R13 30+10 分钟长稳均通过；R8 发现的 TCP 第 257 次连接失败已消除。
 - 最终长稳：`20260904T042723Z-e3c29a5-r13`，1459/1459 成功，观测失败 0；RSS slopes 为 client TCP `9109 B/min`、client QUIC `11541 B/min`、server RSS `19027 B/min`、server PSS `19040 B/min`。
 - R1 final：`20260904T051142Z-379dac2-r1` 原 summary 为 59 有效、2 失败；额外反向 p1 成功样本已保存，正式组达到五个有效样本，但原 summary 未重算。
@@ -262,3 +262,62 @@
 | H7 MTU/payload 映射问题 | 当前不支持 | 已测条件有效 | 未见 MTU fragmentation | 仅出现 MTU fragmentation 时执行矩阵与抓包 |
 | H8 wolfSSL session reuse 边界 bug | 已修复 | R8 边界失败、R12 实验及 R13 1459/1459；commit `379dac2` | 不扩展到其他 TLS 实现 | 问题回归时复核 |
 | H9 已无内存泄漏 | 不可宣布 | R13 30+10 分钟 1459/1459，RSS/PSS 无失控增长 | 该时段观测不是严格 leak proof | 需要严格结论时执行 ASan/LSan 或更长专项测试 |
+
+---
+
+# R14：服务端和客户端强制 QUIC 对照
+
+- [x] TCP TLS 与 QUIC 使用独立 server run。
+- [x] QUIC client 和 server 均设置 `debug_disable_tcp=true`。
+- [x] runner 验证 QUIC run 有 `3443/UDP` listener 且无 `3443/TCP` listener。
+- [x] QUIC 日志确认 handshake completed 和 ALPN `h3`。
+- [x] 固定源 15 MB 各五轮，全部长度与 SHA-256 正确。
+- [x] 强制 QUIC：`20260905T003822Z-8f08bbb-r14`，中位吞吐 `10.17 Mbps`。
+- [x] TCP TLS：`20260905T004048Z-8f08bbb-r14`，中位吞吐 `10.54 Mbps`。
+- [x] 强制 QUIC 并发矩阵：`20260905T004329Z-8f08bbb-r14`。
+- [x] TCP TLS 并发矩阵：`20260905T004851Z-8f08bbb-r14`。
+
+## R14 结论
+
+- 状态：完成。
+- 结论：完全禁用 client/server TCP 后，强制 QUIC 五轮吞吐与 TCP TLS 接近；结果不依赖 TCP fallback。
+
+---
+
+# R15：多运行模式矩阵
+
+## `client`
+
+- [x] macOS SOCKS5 TCP TLS 与强制 QUIC五轮固定源对照。
+- [x] 1/4/16/64 并发对照。
+
+## `forward`
+
+- [ ] 增加远程 TCP TLS 配置与固定源测试。
+- [ ] 增加强制 QUIC 配置；client/server 均禁用 TCP。
+- [ ] 固定源五轮及 1/4/16/64 并发。
+
+## `nat`
+
+- [!] macOS 构建不支持 NAT；需要北京侧隔离 Linux VM、Linux 主机或可控 Linux network namespace。
+- [ ] 建立独立 nftables table/chain 和 watchdog cleanup。
+- [ ] 先完成 TCP REDIRECT 的 TCP TLS/强制 QUIC 五轮。
+- [ ] UDP TPROXY 作为独立后续矩阵。
+
+## `client_tun`
+
+- [!] macOS 无法自行创建项目所需 TUN；需要北京侧隔离 Linux 环境并提供 `/dev/net/tun`、`CAP_NET_ADMIN`。
+- [ ] 使用单目标 `/32` route，禁止修改默认路由。
+- [ ] 固定源 TCP TLS/强制 QUIC 五轮及并发。
+
+## `server_tun`
+
+- [!] 当前实现把 `server_tun` 当 server TLS role，但 accept path 可能创建 `ClientSession`；无文档、示例和 fulltest。
+- [ ] 先明确产品语义并修复本地功能测试，再决定是否纳入远程测速。
+
+## R15 验收
+
+- [ ] `client`、`forward`、`nat`、`client_tun` 每种模式均完成 TCP TLS 与强制 QUIC 五轮。
+- [ ] 每种模式 1/4/16/64 并发无失败。
+- [ ] 强制 QUIC server 无 TCP listener，日志确认 ALPN `h3`。
+- [ ] Linux NAT/TUN 测试环境销毁后无 nftables、policy route、TUN 或 namespace 遗留。

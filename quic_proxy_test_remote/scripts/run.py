@@ -196,6 +196,38 @@ def load_json(path):
     return json.loads(path.read_text())
 
 
+def selected_protocols(protocol):
+    if protocol not in ("tcp", "quic", "both"):
+        raise ValueError("protocol must be 'tcp', 'quic', or 'both'")
+    return ("tcp", "quic") if protocol == "both" else (protocol,)
+
+
+def validate_protocol_deploy(protocol, deploy):
+    server_disable_tcp = deploy.get("server_disable_tcp", False)
+    expected = protocol == "quic"
+    if server_disable_tcp is not expected:
+        raise ValueError(f"protocol={protocol} requires deploy metadata server_disable_tcp={str(expected).lower()}")
+    return server_disable_tcp
+
+
+def parse_listener_snapshot(output, port=TROJAN_REMOTE_PORT):
+    tcp_text, separator, udp_text = output.partition("=== UDP ===\n")
+    if not separator or not tcp_text.startswith("=== TCP ===\n"):
+        raise ValueError("remote listener output has unexpected format")
+    def contains_port(text):
+        for line in text.splitlines():
+            fields = line.split()
+            if len(fields) >= 4 and fields[3].rsplit(":", 1)[-1] == str(port):
+                return True
+        return False
+    return {"port": port, "tcp": contains_port(tcp_text), "udp": contains_port(udp_text)}
+
+
+def validate_listener_snapshot(snapshot, server_disable_tcp):
+    valid = snapshot["udp"] and not snapshot["tcp"] if server_disable_tcp else snapshot["tcp"]
+    return {**snapshot, "server_disable_tcp": server_disable_tcp, "valid": valid}
+
+
 def local_lsof(port, timeout=5):
     try:
         completed = subprocess.run(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN"], text=True, capture_output=True, timeout=timeout, check=False)
@@ -471,6 +503,7 @@ def trojan_deploy(args):
     remote_dir = ensure_remote_dir("/tmp/trojan-r2", results, commands_file, "trojan-deploy")
     scp_files(sources, remote_dir, results, commands_file, "trojan-deploy")
     server = load_json(runtime / "server.json")
+    server.setdefault("quic", {})["debug_disable_tcp"] = args.server_disable_tcp
     server["ssl"]["cert"] = f"{remote_dir}/server.crt"
     server["ssl"]["key"] = f"{remote_dir}/server.key"
     server_text = json.dumps(server, indent=4) + "\n"
@@ -489,7 +522,7 @@ def trojan_deploy(args):
     manifest = load_json(manifest_path)
     manifest["remote_identity"] = {"captured_utc": utc_now(), "raw": posix(identity_path.relative_to(results)), "sha256": sha256(identity_path)}
     write_json(manifest_path, manifest)
-    record_payload = {"run_id": args.run_id, "remote_dir": remote_dir, "files": [path.name for path in sources], "transferred_utc": utc_now(), "remote_identity": manifest["remote_identity"]}
+    record_payload = {"run_id": args.run_id, "remote_dir": remote_dir, "files": [path.name for path in sources], "server_disable_tcp": args.server_disable_tcp, "transferred_utc": utc_now(), "remote_identity": manifest["remote_identity"]}
     write_json(results / "metadata" / "trojan-deploy.json", record_payload)
     print(posix(results / "metadata" / "trojan-deploy.json"))
     print(remote_dir)
@@ -549,8 +582,23 @@ def trojan_start(args):
     binary = f"{manifest['remote']['repo']}/build/trojan"
     marker = f"{binary} -c server.json"
     payload = start_remote_named("trojan-server", remote_dir, f"{shlex.quote(binary)} -c server.json -l trojan-server.log", results, commands_file, marker)
+    listener_command = f"printf '%s\\n' '=== TCP ==='; ss -H -lntp 'sport = :{TROJAN_REMOTE_PORT}'; printf '%s\\n' '=== UDP ==='; ss -H -lnup 'sport = :{TROJAN_REMOTE_PORT}'"
+    listener_record, listener_output = execute_attempt(ssh(listener_command), results / "metadata" / "trojan" / "trojan-listeners", 30, commands_file, "trojan-listeners", 1)
+    try:
+        if listener_record["exit_code"] != 0:
+            raise RuntimeError("remote listener verification failed")
+        listener = validate_listener_snapshot(parse_listener_snapshot(listener_output), deploy.get("server_disable_tcp", False))
+        listener["captured_utc"] = utc_now()
+        listener["record"] = posix((results / "metadata" / "trojan" / "trojan-listeners.json").relative_to(results))
+        write_json(results / "metadata" / "trojan-listeners.json", listener)
+        if not listener["valid"]:
+            raise RuntimeError("remote trojan listener mismatch")
+    except (RuntimeError, ValueError):
+        stop_remote_named("trojan-server", results, commands_file)
+        raise
     payload["server_config"] = f"{remote_dir}/server.json"
     payload["listen_port"] = TROJAN_REMOTE_PORT
+    payload["listener_validation"] = posix((results / "metadata" / "trojan-listeners.json").relative_to(results))
     write_json(results / "metadata" / "trojan-server.json", payload)
     print(posix(results / "metadata" / "trojan-server.json"))
     return payload
@@ -753,20 +801,26 @@ def concurrency(args):
     if not (results / "metadata" / "trojan-deploy.json").is_file():
         raise FileNotFoundError("trojan-deploy must run before concurrency")
     commands_file = results / "metadata" / "commands.jsonl"
-    summary = {"run_id": args.run_id, "started_utc": utc_now(), "streams": list(streams_values), "total_bytes": args.total_bytes, "warmup": args.warmup, "runs": args.runs, "groups": []}
+    protocols = selected_protocols(args.protocol)
+    deploy = load_json(results / "metadata" / "trojan-deploy.json")
+    validate_protocol_deploy(args.protocol, deploy)
+    summary = {"run_id": args.run_id, "started_utc": utc_now(), "streams": list(streams_values), "total_bytes": args.total_bytes, "warmup": args.warmup, "runs": args.runs, "protocols": list(protocols), "groups": []}
     bytesource_meta = server_meta = tcp_client = quic_client = None
     try:
         bytesource_meta = bytesource_start(argparse.Namespace(run_id=args.run_id))
         server_meta = trojan_start(argparse.Namespace(run_id=args.run_id))
-        tcp_client = start_local_client(runtime, "tcp", TROJAN_LOCAL_PORT_TCP, results, commands_file)
-        quic_client = start_local_client(runtime, "quic", TROJAN_LOCAL_PORT_QUIC, results, commands_file)
-        clients = [tcp_client, quic_client]
+        if "tcp" in protocols:
+            tcp_client = start_local_client(runtime, "tcp", TROJAN_LOCAL_PORT_TCP, results, commands_file)
+        if "quic" in protocols:
+            quic_client = start_local_client(runtime, "quic", TROJAN_LOCAL_PORT_QUIC, results, commands_file)
+        clients = [client for client in (tcp_client, quic_client) if client is not None]
         for warmup, count in ((True, args.warmup), (False, args.runs)):
             phase = "warmup" if warmup else "run"
             for number in range(1, count + 1):
                 for streams in streams_values:
                     sizes = split_total_bytes(args.total_bytes, streams)
-                    for protocol, port in (("tcp", TROJAN_LOCAL_PORT_TCP), ("quic", TROJAN_LOCAL_PORT_QUIC)):
+                    for protocol in protocols:
+                        port = TROJAN_LOCAL_PORT_TCP if protocol == "tcp" else TROJAN_LOCAL_PORT_QUIC
                         label = f"{protocol}-s{streams}-{phase}{number}"
                         before = concurrency_snapshot(results, commands_file, clients, server_meta["pid"], label, "before")
                         start = time.monotonic()
@@ -1037,6 +1091,9 @@ def r2(args):
     if not (results / "metadata" / "trojan-deploy.json").is_file():
         raise FileNotFoundError("trojan-deploy must run before r2")
     commands_file = results / "metadata" / "commands.jsonl"
+    protocols = selected_protocols(args.protocol)
+    deploy = load_json(results / "metadata" / "trojan-deploy.json")
+    validate_protocol_deploy(args.protocol, deploy)
     bytesource_payload_meta = None
     trojan_server_meta = None
     tcp_client = None
@@ -1044,17 +1101,19 @@ def r2(args):
     sizes = tuple(args.sizes or R2_DEFAULT_SIZES)
     if any(size < 1 or size > R2_MAX_SAMPLE_BYTES for size in sizes):
         raise ValueError(f"sizes must be in [1, {R2_MAX_SAMPLE_BYTES}]")
-    summary = {"run_id": args.run_id, "started_utc": utc_now(), "runs": args.runs, "sizes": list(sizes), "samples": []}
+    summary = {"run_id": args.run_id, "started_utc": utc_now(), "runs": args.runs, "sizes": list(sizes), "protocols": list(protocols), "samples": []}
     try:
         bytesource_start_args = argparse.Namespace(run_id=args.run_id)
         bytesource_payload_meta = bytesource_start(bytesource_start_args)
         trojan_start_args = argparse.Namespace(run_id=args.run_id)
         trojan_server_meta = trojan_start(trojan_start_args)
-        tcp_client = start_local_client(runtime, "tcp", TROJAN_LOCAL_PORT_TCP, results, commands_file)
-        quic_client = start_local_client(runtime, "quic", TROJAN_LOCAL_PORT_QUIC, results, commands_file)
+        if "tcp" in protocols:
+            tcp_client = start_local_client(runtime, "tcp", TROJAN_LOCAL_PORT_TCP, results, commands_file)
+        if "quic" in protocols:
+            quic_client = start_local_client(runtime, "quic", TROJAN_LOCAL_PORT_QUIC, results, commands_file)
         for run_number in range(1, args.runs + 1):
             for size in sizes:
-                for protocol in ("tcp", "quic"):
+                for protocol in protocols:
                     test_args = argparse.Namespace(run_id=args.run_id, bytes=size, protocol=protocol, run=run_number)
                     sample = trojan_test(test_args)
                     summary["samples"].append(sample)
@@ -1145,6 +1204,7 @@ def parse_args():
     command.add_argument("--runs", default=1, type=int)
     command = subparsers.add_parser("trojan-deploy")
     command.add_argument("--run-id", required=True)
+    command.add_argument("--server-disable-tcp", action="store_true")
     command = subparsers.add_parser("trojan-start")
     command.add_argument("--run-id", required=True)
     command = subparsers.add_parser("trojan-stop")
@@ -1162,9 +1222,11 @@ def parse_args():
     command.add_argument("--run-id", required=True)
     command.add_argument("--runs", default=1, type=int)
     command.add_argument("--sizes", nargs="+", type=int)
+    command.add_argument("--protocol", default="both", choices=("tcp", "quic", "both"))
     command = subparsers.add_parser("concurrency")
     command.add_argument("--run-id", required=True)
     command.add_argument("--streams", nargs="+", type=int)
+    command.add_argument("--protocol", default="both", choices=("tcp", "quic", "both"))
     command.add_argument("--total-bytes", default=CONCURRENCY_DEFAULT_TOTAL_BYTES, type=int)
     command.add_argument("--warmup", default=0, type=int)
     command.add_argument("--runs", default=1, type=int)

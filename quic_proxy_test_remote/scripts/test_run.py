@@ -261,6 +261,38 @@ class NetemPureFunctionTest(unittest.TestCase):
         self.assertIn("dst_ip 198.51.100.2/32 ip_proto udp src_port 3443", setup)
 
 
+class ProtocolSelectionTest(unittest.TestCase):
+    def test_protocol_selection(self):
+        self.assertEqual(RUNNER.selected_protocols("tcp"), ("tcp",))
+        self.assertEqual(RUNNER.selected_protocols("quic"), ("quic",))
+        self.assertEqual(RUNNER.selected_protocols("both"), ("tcp", "quic"))
+        with self.assertRaises(ValueError):
+            RUNNER.selected_protocols("udp")
+
+    def test_deploy_protocol_contract(self):
+        self.assertFalse(RUNNER.validate_protocol_deploy("tcp", {"server_disable_tcp": False}))
+        self.assertFalse(RUNNER.validate_protocol_deploy("both", {}))
+        self.assertTrue(RUNNER.validate_protocol_deploy("quic", {"server_disable_tcp": True}))
+        for protocol, disabled in (("tcp", True), ("both", True), ("quic", False)):
+            with self.assertRaises(ValueError):
+                RUNNER.validate_protocol_deploy(protocol, {"server_disable_tcp": disabled})
+
+    def test_listener_validation(self):
+        output = "=== TCP ===\nLISTEN 0 4096 0.0.0.0:3443 0.0.0.0:*\n=== UDP ===\nUNCONN 0 0 0.0.0.0:3443 0.0.0.0:*\n"
+        snapshot = RUNNER.parse_listener_snapshot(output)
+        self.assertEqual(snapshot, {"port": 3443, "tcp": True, "udp": True})
+        self.assertTrue(RUNNER.validate_listener_snapshot(snapshot, False)["valid"])
+        self.assertFalse(RUNNER.validate_listener_snapshot(snapshot, True)["valid"])
+
+    def test_quic_only_listener_validation(self):
+        output = "=== TCP ===\n=== UDP ===\nUNCONN 0 0 [::]:3443 [::]:*\n"
+        snapshot = RUNNER.parse_listener_snapshot(output)
+        self.assertFalse(snapshot["tcp"])
+        self.assertTrue(snapshot["udp"])
+        self.assertTrue(RUNNER.validate_listener_snapshot(snapshot, True)["valid"])
+        self.assertFalse(RUNNER.validate_listener_snapshot(snapshot, False)["valid"])
+
+
 class ConstantsTest(unittest.TestCase):
     def test_r2_max_enforced(self):
         self.assertEqual(RUNNER.R2_MAX_SAMPLE_BYTES, 15 * 1024 * 1024)

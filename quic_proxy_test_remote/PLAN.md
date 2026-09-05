@@ -584,7 +584,88 @@ python3 -u tests/LinuxFullTest/fulltest_quic.py build/trojan
 | 修改 buffer 无效果且无 kernel drop | 不继续扩大 buffer，转向 flow/congestion/retry |
 | RSS 停流后不回落并持续增长 | leak 专项分析 |
 
-## 19. 完成标准
+## 19. 多运行模式对比
+
+### 19.1 覆盖范围
+
+客户端模式矩阵统一连接同一远端 `server`，使用同一证书、密码、目标 byte source、样本大小和网络时间窗口：
+
+| 模式 | 本地平台 | 请求入口 | TCP TLS | 强制 QUIC | 状态 |
+|---|---|---|---|---|---|
+| `client` | macOS/Linux | SOCKS5 | 必测 | 必测 | 已具备 |
+| `forward` | macOS/Linux | 本地固定端口 | 必测 | 必测 | 待加入远程 runner |
+| `nat` | Linux only | namespace 内透明 TCP | 必测 | 必测 | 待隔离 Linux 客户端 |
+| `client_tun` | Linux only | 单目标 `/32` TUN 路由 | 必测 | 必测 | 待隔离 Linux 客户端 |
+| `server_tun` | Linux | 当前行为不自洽 | 暂不测速 | 暂不测速 | 先修实现和本地测试 |
+
+`server` 是所有模式共同远端，不作为客户端吞吐模式。`forward` 可在北京 macOS 直接运行；`nat`、`client_tun` 必须在北京侧 Linux VM、Linux 主机或可控 Linux network namespace 中运行，才能保留北京到美国链路。
+
+### 19.2 强制 QUIC 规则
+
+TCP TLS 与 QUIC 分为独立 server run：
+
+- TCP TLS：client 使用 `quic.enabled=false`，server 使用 `debug_disable_tcp=false`；远端 `3443/TCP` listener 必须存在。
+- 强制 QUIC：client 和 server 均设置 `quic.enabled=true`、`debug_disable_tcp=true`；远端 `3443/UDP` listener 必须存在，`3443/TCP` listener 必须不存在。
+- 每个 QUIC run 必须保存 handshake completed、ALPN `h3` 和 listener 验证。
+- 任何 TCP listener 存在、TCP fallback 或未完成 QUIC handshake 的 QUIC 样本作废。
+
+### 19.3 `forward` 模式
+
+建立 `client-forward-tcp.json` 与 `client-forward-quic.json`：
+
+- `run_type: forward`
+- 本地监听 `127.0.0.1:<独立端口>`
+- `target_addr: 127.0.0.1`
+- `target_port: 8001`
+- curl 直接访问本地 forward 端口，不使用 SOCKS5。
+
+测试 1/4/16/64 并发，每组总量不超过 50 MB；正式五轮。TCP TLS 与强制 QUIC 使用独立远端 server run。
+
+### 19.4 `nat` 模式
+
+只在隔离 Linux 环境执行：
+
+1. 创建专用 network namespace 或一次性 Linux VM。
+2. 使用独立 nftables table/chain，不修改宿主默认规则。
+3. 首轮只测 TCP `REDIRECT`，验证 `SO_ORIGINAL_DST`；UDP TPROXY 作为独立后续矩阵。
+4. 排除 Trojan server IP、SSH、loopback 和 Trojan 进程自身流量，防止代理回环。
+5. namespace 内 curl 直接访问固定目标，不配置 proxy。
+6. watchdog 到期删除 nft table、policy rule、route 和 namespace。
+7. 每轮结束确认宿主规则、默认路由和 SSH 未改变。
+
+### 19.5 `client_tun` 模式
+
+只在隔离 Linux 环境执行：
+
+1. 提供 `/dev/net/tun` 和 `CAP_NET_ADMIN`。
+2. 使用 `redirect_local=false`。
+3. 只给固定测试目标添加 `/32` TUN route，不修改默认路由。
+4. Trojan server IP 必须经原始网关绕过 TUN，防止递归。
+5. curl 使用固定 IP/Host，输出长度和 SHA-256 必须与其他模式一致。
+6. watchdog 恢复 route、删除 TUN 和临时 namespace。
+
+### 19.6 `server_tun` 前置修复
+
+当前 `server_tun` 被当作 server TLS role，但普通 accept path 可能落入 `ClientSession`，且无文档、示例或 fulltest。测速前必须：
+
+1. 明确产品语义和预期流量方向。
+2. 修正 accept/session 分支。
+3. 增加 localhost 功能测试和清理测试。
+4. 通过后再决定是否加入远程矩阵。
+
+### 19.7 多模式验收
+
+每种可运行模式至少满足：
+
+- TCP TLS 与强制 QUIC 各五个有效正式样本。
+- 1/4/16/64 并发无失败。
+- 单组总量不超过 50 MB，单项含重试不超过 3 分钟。
+- 内容长度与 SHA-256 正确。
+- QUIC server 无 TCP listener，日志确认 ALPN `h3`。
+- CPU、RSS/PSS、UDP errors 和 cleanup 证据完整。
+- Linux NAT/TUN 环境销毁后无 nftables、policy route、TUN、namespace 遗留。
+
+## 20. 完成标准
 
 修复只有同时满足以下条件才可接受：
 
