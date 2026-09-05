@@ -61,7 +61,7 @@ def resolve_cloudflare_ipv4():
     return parse_cloudflare_ipv4((socket.gethostbyname(CLOUDFLARE_HOST),))
 
 
-def docker_commands(mode, protocol, run_id, runtime, target_ip):
+def docker_commands(mode, protocol, run_id, runtime, target_ip, size=SIZE, watchdog=WATCHDOG, requests=1, concurrency=1):
     validate_run_id(run_id)
     target_ip = parse_cloudflare_ipv4((target_ip,))
     if mode not in ("nat", "client_tun") or protocol not in ("tcp", "quic"):
@@ -72,7 +72,11 @@ def docker_commands(mode, protocol, run_id, runtime, target_ip):
     if mode == "nat":
         capabilities += ["--cap-add", "NET_RAW"]
     base = ["docker", "run", "--rm", "--name", name, "--cap-drop", "ALL", *capabilities, "--device", "/dev/net/tun", "-v", f"{runtime}:/runtime:ro", IMAGE]
-    return {"name": name, "run": base + [mode, protocol, config, target_ip, str(SIZE), str(WATCHDOG)], "remove": ["docker", "rm", "-f", name]}
+    if size == SIZE and watchdog == WATCHDOG and requests == 1 and concurrency == 1:
+        tail = [mode, protocol, config, target_ip, str(SIZE), str(WATCHDOG)]
+    else:
+        tail = [mode, protocol, config, target_ip, str(size), str(watchdog), str(requests), str(concurrency)]
+    return {"name": name, "run": base + tail, "remove": ["docker", "rm", "-f", name]}
 
 
 def render_configs(runtime, protocol, password, cert):
@@ -99,13 +103,27 @@ def build_image():
 
 def smoke(args):
     runner = load_runner()
+    size = getattr(args, "size", SIZE)
+    watchdog = getattr(args, "watchdog", WATCHDOG)
+    requests = getattr(args, "requests", 1)
+    concurrency = getattr(args, "concurrency", 1)
+
     runtime = ROOT / "runtime" / f"docker-{args.run_id}"
     results = ROOT / "results" / f"docker-{args.run_id}-{args.mode}-{args.protocol}.json"
     if runtime.exists() or results.exists():
         raise FileExistsError("Docker smoke run already exists")
     deploy_args = argparse.Namespace(run_id=args.run_id, server_disable_tcp=args.protocol == "quic")
     server = container = remote_dir = None
-    report = {"run_id": args.run_id, "mode": args.mode, "protocol": args.protocol, "watchdog_seconds": WATCHDOG, "expected_size": SIZE, "cleanup": {}}
+    report = {
+        "run_id": args.run_id,
+        "mode": args.mode,
+        "protocol": args.protocol,
+        "watchdog_seconds": watchdog,
+        "expected_size": size,
+        "requests": requests,
+        "concurrency": concurrency,
+        "cleanup": {}
+    }
     try:
         target_ip = resolve_cloudflare_ipv4()
         report["cloudflare_ipv4"] = target_ip
@@ -121,15 +139,19 @@ def smoke(args):
         render_configs(runtime, args.protocol, (ROOT / "runtime" / args.run_id / "password").read_text().strip(), (ROOT / "runtime" / args.run_id / "server.crt").read_bytes())
         build_image()
         server = runner.trojan_start(argparse.Namespace(run_id=args.run_id))
-        commands = docker_commands(args.mode, args.protocol, args.run_id, runtime, target_ip)
+        commands = docker_commands(args.mode, args.protocol, args.run_id, runtime, target_ip, size, watchdog, requests, concurrency)
         container = commands["name"]
-        completed = subprocess.run(commands["run"], text=True, capture_output=True, timeout=WATCHDOG, check=False)
+        completed = subprocess.run(commands["run"], text=True, capture_output=True, timeout=watchdog + 10, check=False)
         if not completed.stdout.strip():
             raise RuntimeError(f"Docker mode failed: {completed.stderr.strip()}")
         payload = json.loads(completed.stdout)
         report.update(payload)
+        report["docker_stderr"] = completed.stderr
         report["exit_code"] = completed.returncode
-        report["valid"] = completed.returncode == 0 and payload.get("http_code") == 200 and payload.get("size_download") == SIZE and payload.get("actual_size") == SIZE
+        if "all_success" in payload:
+            report["valid"] = completed.returncode == 0 and payload["all_success"]
+        else:
+            report["valid"] = completed.returncode == 0 and payload.get("http_code") == 200 and payload.get("size_download") == size and payload.get("actual_size") == size
     finally:
         if container:
             subprocess.run(["docker", "rm", "-f", container], capture_output=True, text=True, check=False)
@@ -142,6 +164,9 @@ def smoke(args):
         results.write_text(json.dumps(report, indent=4) + "\n")
     print(results)
     if not report.get("valid"):
+        if report.get("docker_stderr"):
+            print("=== docker_stderr ===", file=sys.stderr)
+            print(report["docker_stderr"], file=sys.stderr)
         raise RuntimeError("Docker smoke validation failed")
 
 
@@ -150,6 +175,10 @@ def parse_args():
     parser.add_argument("--mode", required=True, choices=("nat", "client_tun"))
     parser.add_argument("--protocol", required=True, choices=("tcp", "quic"))
     parser.add_argument("--run-id", required=True, type=validate_run_id)
+    parser.add_argument("--size", type=int, default=SIZE)
+    parser.add_argument("--watchdog", type=int, default=WATCHDOG)
+    parser.add_argument("--requests", type=int, default=1)
+    parser.add_argument("--concurrency", type=int, default=1)
     return parser.parse_args()
 
 
@@ -159,3 +188,4 @@ if __name__ == "__main__":
     except (FileExistsError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
         print(error, file=sys.stderr)
         sys.exit(1)
+

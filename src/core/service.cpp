@@ -220,20 +220,20 @@ void Service::run() {
         _log_with_date_time(tp::string("trojan plus service (") + rt + ") started at " + local_addr + ':' +
                               tp::to_string(local_port),
           Log::FATAL);
-
-#ifdef ENABLE_QUIC
-        if (m_quic_server) {
-            m_quic_server->start();
-        }
-        if (m_quic_client) {
-            m_quic_client->start();
-        }
-#endif
     } else {
         _log_with_date_time(tp::string("trojan plus service (") + rt + ") started at [" + config.get_tun().tun_name + "] " +
                               config.get_tun().net_ip + "/" + config.get_tun().net_mask,
           Log::FATAL);
     }
+
+#ifdef ENABLE_QUIC
+    if (m_quic_server) {
+        m_quic_server->start();
+    }
+    if (m_quic_client) {
+        m_quic_client->start();
+    }
+#endif
     io_context.run();
     _log_with_date_time("trojan service stopped", Log::WARN);
 
