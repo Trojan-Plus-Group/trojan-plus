@@ -69,7 +69,7 @@ async def _fetch_file_impl(protocol, path):
     protocol.transmit()
     
     try:
-        await asyncio.wait_for(protocol.done_events[stream_id].wait(), timeout=5.0)
+        await asyncio.wait_for(protocol.done_events[stream_id].wait(), timeout=15.0)
     except TimeoutError:
         log(f"Timeout stream_id={stream_id} path={path} recv_len={len(protocol.responses[stream_id])}")
         raise

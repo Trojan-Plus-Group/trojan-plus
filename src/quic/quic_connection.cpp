@@ -222,6 +222,9 @@ int QuicConnection::cb_stream_close(ngtcp2_conn* /*conn*/, uint32_t /*flags*/, i
         } else {
             ngtcp2_conn_extend_max_streams_uni(self->m_conn, 1);
         }
+        if (!self->m_in_read_pkt && !self->m_in_pump_write) {
+            self->on_pump_write("cb_stream_close");
+        }
     }
 
     return 0;
@@ -387,7 +390,7 @@ bool QuicConnection::init_server(const uint8_t* data, std::size_t datalen,
     params.initial_max_stream_data_bidi_remote = 512 * 1024;
     params.initial_max_data                    = 32 * 1024 * 1024; // max cache size in all streams
     uint32_t srv_cfg_streams                   = m_endpoint.config().get_quic().max_concurrent_streams;
-    params.initial_max_streams_bidi            = srv_cfg_streams > 0 ? srv_cfg_streams : 1000;
+    params.initial_max_streams_bidi            = srv_cfg_streams > 0 ? std::max(1000U, srv_cfg_streams) : 1000;
     params.initial_max_stream_data_uni         = 64 * 1024;
     params.initial_max_streams_uni             = 200;
     params.max_idle_timeout = static_cast<ngtcp2_duration>(
@@ -934,6 +937,7 @@ int64_t QuicConnection::send_stream_data_impl(int64_t stream_id, const uint8_t* 
 
     flush_ppe();
     _log_with_date_time("send_stream_data_impl leave: stream_id=" + tp::to_string(stream_id) + " written=" + tp::to_string(written), Log::ALL);
+    reschedule_loss_timer();
     return static_cast<int64_t>(written);
 }
 
@@ -1099,6 +1103,7 @@ int64_t QuicConnection::send_stream_vecs_impl(int64_t stream_id,
     _log_with_date_time("send_stream_vecs_impl leave: stream_id=" + tp::to_string(stream_id) + 
     " written=" + tp::to_string(written) + 
                     " path=" + tp::string(debug_path), Log::ALL);
+    reschedule_loss_timer();
     return static_cast<int64_t>(written);
 }
 

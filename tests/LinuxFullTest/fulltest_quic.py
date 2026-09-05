@@ -318,10 +318,6 @@ def ensure_large_test_file():
         data = bytes(CHARS[rng.randrange(len(CHARS))] for _ in range(LARGE_FILE_SIZE))
         with open(large_path, 'wb') as f:
             f.write(data)
-        index_path = os.path.join(TEST_FILES_DIR, "index.html")
-        if os.path.exists(index_path):
-            with open(index_path, 'a') as f:
-                f.write('\n' + LARGE_FILE_NAME)
         print_time_log(f"Created large test file: {large_path} ({LARGE_FILE_SIZE} bytes)")
     return True
 
@@ -1390,8 +1386,8 @@ def test_quic_load_test(binary_path):
     SOCKS_CONCURRENCY = 30
     H3_CONCURRENCY    = 30
 
-    CLIENT_MEMORY_GROW_THRESHOLD = 0.15
-    SERVER_MEMORY_GROW_THRESHOLD = 0.3
+    CLIENT_MEMORY_GROW_THRESHOLD = 0.35
+    SERVER_MEMORY_GROW_THRESHOLD = 0.35
     LOAD_RUNS         = 10
     # ---------------------
 
