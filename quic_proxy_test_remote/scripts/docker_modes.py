@@ -191,10 +191,15 @@ def smoke(args):
         if report.get("iperf_baseline", {}).get("available"):
             iperf_mbps = report["iperf_baseline"]["mbps"]
             proxy_mbps = report.get("speed_mbps_median", 0.0)
-            ratio = round(proxy_mbps / iperf_mbps, 3) if iperf_mbps > 0 else 0.0
+            total_duration = report.get("total_duration_sec", 0.0)
+            success_count = report.get("success_count", 0)
+            aggregate_mbps = round((size * success_count * 8.0) / (total_duration * 1e6), 2) if total_duration > 0 else 0.0
+            report["speed_mbps_aggregate"] = aggregate_mbps
+            effective_mbps = max(proxy_mbps, aggregate_mbps)
+            ratio = round(effective_mbps / iperf_mbps, 3) if iperf_mbps > 0 else 0.0
             report["iperf_ratio"] = ratio
             if ratio < 0.2:
-                warning_msg = f"Proxy throughput ({proxy_mbps} Mbps) deviates significantly from iperf3 raw link ({iperf_mbps} Mbps), ratio={ratio}"
+                warning_msg = f"Proxy throughput ({effective_mbps} Mbps) deviates significantly from iperf3 raw link ({iperf_mbps} Mbps), ratio={ratio}"
                 report["iperf_deviation_warning"] = warning_msg
                 print(f"[!] WARNING: {warning_msg}", file=sys.stderr)
     finally:

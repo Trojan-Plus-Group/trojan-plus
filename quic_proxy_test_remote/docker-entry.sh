@@ -109,6 +109,7 @@ def run_one(req_id):
     out_path = f"/tmp/payload_{req_id}.bin"
     cmd = [
         "curl", "--fail", "--silent", "--show-error",
+        "-H", "Connection: close",
         "--max-time", str(max_curl_time),
         "--resolve", f"speed.cloudflare.com:443:{target_ip}",
         "--output", out_path,
