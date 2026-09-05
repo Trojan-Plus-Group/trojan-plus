@@ -97,6 +97,33 @@ def render_configs(runtime, protocol, password, cert):
         (runtime / f"{mode}-{protocol}.json").write_text(json.dumps(config, indent=4) + "\n")
 
 
+def measure_iperf3_baseline():
+    """Measures raw download throughput from remote server using iperf3."""
+    remote_log = "/tmp/iperf3_docker_baseline.log"
+    subprocess.run(ssh("pkill -9 -f 'iperf3 -s' || true"), capture_output=True, text=True, timeout=10)
+    start_cmd = f"nohup iperf3 -s -p 5201 > {remote_log} 2>&1 < /dev/null & sleep 1; pgrep -f 'iperf3 -s -p 5201'"
+    res = subprocess.run(ssh(start_cmd), capture_output=True, text=True, timeout=15)
+    server_pid = res.stdout.strip()
+    if not server_pid:
+        return {"available": False, "error": "Failed to start remote iperf3 server"}
+    try:
+        client_res = subprocess.run(
+            ["iperf3", "-c", HOST, "-p", "5201", "-R", "-t", "3", "-J"],
+            capture_output=True, text=True, timeout=15
+        )
+        if client_res.returncode != 0:
+            return {"available": False, "error": client_res.stderr.strip() or "iperf3 client failed"}
+        data = json.loads(client_res.stdout)
+        bps = data["end"]["sum_received"]["bits_per_second"]
+        mbps = round(bps / 1e6, 2)
+        return {"available": True, "mbps": mbps, "raw_bps": bps}
+    except Exception as e:
+        return {"available": False, "error": str(e)}
+    finally:
+        subprocess.run(ssh(f"kill -9 {server_pid} 2>/dev/null || pkill -9 -f 'iperf3 -s' || true; rm -f {remote_log}"),
+                       capture_output=True, text=True, timeout=10)
+
+
 def build_image():
     command_output(["docker", "build", "-t", IMAGE, "-f", str(ROOT / "Dockerfile.template"), str(ROOT)], 300)
 
@@ -107,6 +134,7 @@ def smoke(args):
     watchdog = getattr(args, "watchdog", WATCHDOG)
     requests = getattr(args, "requests", 1)
     concurrency = getattr(args, "concurrency", 1)
+    with_iperf = getattr(args, "with_iperf", False)
 
     runtime = ROOT / "runtime" / f"docker-{args.run_id}"
     results = ROOT / "results" / f"docker-{args.run_id}-{args.mode}-{args.protocol}.json"
@@ -125,6 +153,13 @@ def smoke(args):
         "cleanup": {}
     }
     try:
+        if with_iperf or requests > 1:
+            print(f"[*] Measuring raw iperf3 download baseline against {HOST}:5201...")
+            iperf_res = measure_iperf3_baseline()
+            report["iperf_baseline"] = iperf_res
+            if iperf_res.get("available"):
+                print(f"[+] Raw network iperf3 reverse throughput: {iperf_res['mbps']} Mbps")
+
         target_ip = resolve_cloudflare_ipv4()
         report["cloudflare_ipv4"] = target_ip
         runner.prepare(argparse.Namespace(run_id=args.run_id, local_repo=str(ROOT.parent), remote_repo="/root/trojan-plus", remote_runtime="/root/trojan-plus/quic_proxy_test_remote/runtime"))
@@ -152,12 +187,28 @@ def smoke(args):
             report["valid"] = completed.returncode == 0 and payload["all_success"]
         else:
             report["valid"] = completed.returncode == 0 and payload.get("http_code") == 200 and payload.get("size_download") == size and payload.get("actual_size") == size
+
+        if report.get("iperf_baseline", {}).get("available"):
+            iperf_mbps = report["iperf_baseline"]["mbps"]
+            proxy_mbps = report.get("speed_mbps_median", 0.0)
+            ratio = round(proxy_mbps / iperf_mbps, 3) if iperf_mbps > 0 else 0.0
+            report["iperf_ratio"] = ratio
+            if ratio < 0.2:
+                warning_msg = f"Proxy throughput ({proxy_mbps} Mbps) deviates significantly from iperf3 raw link ({iperf_mbps} Mbps), ratio={ratio}"
+                report["iperf_deviation_warning"] = warning_msg
+                print(f"[!] WARNING: {warning_msg}", file=sys.stderr)
     finally:
         if container:
             subprocess.run(["docker", "rm", "-f", container], capture_output=True, text=True, check=False)
         if server:
             runner.trojan_stop(argparse.Namespace(run_id=args.run_id))
         if remote_dir:
+            try:
+                server_log = results.parent / f"docker-{args.run_id}-{args.mode}-{args.protocol}-server.log"
+                command_output(["scp", "-P", str(SSH_PORT), f"root@{HOST}:{remote_dir}/trojan-server.log", str(server_log)], 15)
+                report["server_log"] = str(server_log)
+            except Exception:
+                pass
             command_output(ssh(f"rm -rf -- {remote_dir}"))
         report["cleanup"]["docker"] = command_output(["docker", "ps", "-a", "--filter", f"name=trojan-{args.mode}-{args.protocol}-{args.run_id}", "--format", "{{.Names}}"])
         results.parent.mkdir(parents=True, exist_ok=True)
@@ -179,6 +230,7 @@ def parse_args():
     parser.add_argument("--watchdog", type=int, default=WATCHDOG)
     parser.add_argument("--requests", type=int, default=1)
     parser.add_argument("--concurrency", type=int, default=1)
+    parser.add_argument("--with-iperf", action="store_true", help="Record raw iperf3 baseline before test")
     return parser.parse_args()
 
 

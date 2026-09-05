@@ -9,16 +9,39 @@
 - 正式统计必须有五个有效样本；少于五轮只标部分完成。
 - 失败、预热失败、命令、退出码、配置和资源原始观测均保留。
 - 密码、私钥、TLS keylog 不提交仓库；测试结束恢复网络规则并关闭临时服务。
+- **远端小主机规格红线（1 CPU, 1G RAM）**：
+  - 远端服务器仅 1 vCPU 与 954 MB 内存（配置 2.5 GB swap），运行高负载编译或超额任务易触发 Linux OOM Killer 杀掉关键进程（历史记录：`Out of memory: Killed process 83234 (systemd) total-vm:20336kB, anon-rss:1664kB ...`，导致系统直接卡死）。
+  - **严禁并行编译**：远端构建必须严格使用单任务 `cmake --build build -j 1`，严禁使用 `--parallel`。
+- **远端代码同步规范（禁止 push，使用 git bundle）**：
+  - **严禁私自向 GitHub / origin 远端执行 `git push`**。
+  - 同步代码至远端测试机（`172.236.226.35`）统一采用 `git bundle`：
+    ```bash
+    git bundle create /tmp/fix-quic.bundle fix_quic
+    scp -P 9922 /tmp/fix-quic.bundle root@172.236.226.35:/tmp/
+    ssh -p 9922 root@172.236.226.35 \
+      'git -C /root/trojan-plus fetch /tmp/fix-quic.bundle fix_quic &&
+       git -C /root/trojan-plus merge --ff-only FETCH_HEAD &&
+       rm -f /tmp/fix-quic.bundle'
+    ```
+- **测试前 iperf3 基线预采与偏差判定**：
+  - 在执行多轮代理性能或压测前，必须先使用 `iperf3` 记录当前网络时间窗口的原生物理基准（单流/多流下载与上传）。
+  - 若代理流量（TCP TLS 或 QUIC）与 iperf3 基准发生显著异常偏差（如非正常断流或 QUIC 吞吐严重劣于 TCP），需深入查证、抓包排查并修复。
+- **压测与通道承压要求**：
+  - 样本大小至少 **5 MB**（5,242,880 bytes）。
+  - 并发/多次请求（目标可至 200 次）以承压测试单条 QUIC 链路通道，暴露流控和通道边界 bug。
+  - 单次测试严格限制在 **5 分钟**以内；若超时则适当降频调减次数，避免打死小主机。
 
 ## 当前状态
 
-- 当前阶段：扩展多运行模式矩阵。
-- 当前代码：`8f08bbb`，新增 `debug_disable_tcp=true` 时 client/server TCP 完全禁用；远端为同 commit 且工作树 clean。
-- 当前结论：R1 正式组达到五个有效样本，R2 Cloudflare、R3 五轮并发、R6 指定 netem 场景、R13 30+10 分钟长稳均通过；R8 发现的 TCP 第 257 次连接失败已消除。
-- 最终长稳：`20260904T042723Z-e3c29a5-r13`，1459/1459 成功，观测失败 0；RSS slopes 为 client TCP `9109 B/min`、client QUIC `11541 B/min`、server RSS `19027 B/min`、server PSS `19040 B/min`。
-- R1 final：`20260904T051142Z-379dac2-r1` 原 summary 为 59 有效、2 失败；额外反向 p1 成功样本已保存，正式组达到五个有效样本，但原 summary 未重算。
-- 本地验证：`final-local-tests` normal/QUIC 日志均退出 0。
-- 阻塞项：无。
+- 当前阶段：扩展多运行模式矩阵（NAT vs CLIENT_TUN 对比与 QUIC 承压测试）。
+- 当前代码：`6e9394d`（修复 CLIENT_TUN 模式 QUIC client 未启动以及 docker-entry tun0 link-up 顺序）；远端已通过 git bundle 同步完成单任务编译。
+- **最新烟测与基线进展**：
+  - `client_tun` 强制 QUIC 烟测：`20260905T110500Z-6e9394d-r17` 验证通过（1 MiB，HTTP 200，退出码 0，有效性确认）。
+  - `nat` TCP 5MB 五轮基准：`20260905T110700Z-6e9394d-r18` 验证通过（5/5 成功，中位吞吐 9.52 Mbps，范围 8.61 ~ 11.35 Mbps）。
+  - `nat` 强制 QUIC 5MB 五轮：`20260905T110840Z-6e9394d-r19` 成功捕获 **Bug 3（首流 120 秒静默卡死）**：
+    - `req_id: 1` 接收 3941 字节后彻底断流，持续 120 秒直到 curl 超时；
+    - `req_id: 2~5` 在首流超时断开后均秒级成功（中位 7.76 Mbps，最高 9.57 Mbps）。
+- **阻塞/待修复项**：Bug 3（QUIC 流控信用/数据读调度首次握手后挂死）。
 
 ## 总门禁
 
@@ -288,13 +311,17 @@
 
 ## 当前交接状态
 
-- 当前 HEAD：`17d3b53`；本地工作树有未提交改动。
-- 未提交产品改动：彻底删除 `server_tun`/`SERVERT_TUN` 枚举、解析和 service 分支。
-- 未提交测试改动：`Dockerfile.template`、`docker-entry.sh`、`scripts/docker_modes.py`、`scripts/test_docker_modes.py`。
-- Docker 能力已确认：Linux amd64、`NET_ADMIN`、`/dev/net/tun`、iptables/nftables、远端连通。
-- 远端不再开放 `8001`，不再安装或修改远端防火墙；测试目标为 Cloudflare 固定 IPv4。
-- 远端早期临时 `nftables` 已卸载，临时 table、listener、process 和部署目录已清理。
-- 下一步：修复 `client_tun` 添加 route 前未将 `tun0` link up 的问题。
+- 当前 HEAD：`6e9394d` ("fix: start quic client in CLIENT_TUN mode and fix docker tun0 link-up")。
+- 代码同步：已通过 `git bundle` 同步至远端 `/root/trojan-plus`（HEAD `6e9394d`）。
+- 远端编译：以严格 `-j 1` 编译以保护 1G 内存小主机，不触发 OOM Killer。
+- Docker Desktop：镜像 `trojan-plus-docker-modes:latest` 本地已更新就绪。
+- **已修复缺陷**：
+  1. `client_tun` link-up 问题：`docker-entry.sh` 已修复，在等待 `tun0` 后先 `ip link set tun0 up` 再添加 `/32` 路由；TCP smoke 已验证通过。
+  2. `CLIENT_TUN` 模式下 QUIC client 启动缺失：`src/core/service.cpp` 中将 `m_quic_client->start()` 移出 `!= CLIENT_TUN` 约束，确保 `client_tun` 正常建立 QUIC 连接。
+- **新测试规格与约束**：
+  - 样本大小：>= 5 MB（5,242,880 bytes）。
+  - 通道承压：目标最高 200 次并发/多流请求，测试单一 QUIC 链路通道承压并排查 QUIC 潜在 bug。
+  - 防护红线：单次测试总耗时不超过 5 分钟（300 秒），防止远端 1G 小主机过载。
 
 ## `client`
 
@@ -309,22 +336,26 @@
 
 - [x] Docker 独立 namespace 提供 `NET_ADMIN` 与 `/dev/net/tun`。
 - [x] 宿主严格解析 `speed.cloudflare.com` 单个公网 IPv4；NAT 仅匹配该 IP `/32`、TCP dport 443。
-- [x] TCP TLS smoke：`20260905T120000Z-17d3b53-r16`，HTTP 200、1 MiB、清理完成。
-- [x] 强制 QUIC smoke：`20260905T021733Z-17d3b53-r16`，HTTP 200、1 MiB、清理完成。
-- [ ] TCP TLS 与强制 QUIC 各五轮及并发矩阵。
+- [x] TCP TLS smoke：HTTP 200、1 MiB 通过。
+- [x] 强制 QUIC smoke：HTTP 200、1 MiB 通过。
+- [x] 5 MB TCP TLS 5 轮基准：`20260905T110700Z-6e9394d-r18`，5/5 成功，中位 9.52 Mbps。
+- [!] 5 MB 强制 QUIC 5 轮基准：`20260905T110840Z-6e9394d-r19`，捕获 Bug 3：第 1 次请求接收 3941 字节后挂死 120 秒超时；第 2~5 次成功（7~9.5 Mbps）。待查证修复。
+- [ ] 单通道高并发/承压测试（目标 200 次请求，5 分钟时限）。
 
 ## `client_tun`
 
 - [x] Docker 独立 namespace 提供 `NET_ADMIN` 与 `/dev/net/tun`。
-- [~] `redirect_local=false`，仅将 Cloudflare 单目标 IP `/32` 路由到 `tun0`，禁止修改默认路由。
-- [!] TCP smoke `20260905T021836Z-17d3b53-r16` 阻塞：添加 `/32` route 时 `Device for nexthop is not up`。
-- [ ] 修复顺序：等待 `tun0`，执行 `ip link set tun0 up`，再添加目标 route 并保存 evidence。
-- [ ] 完成 TCP TLS 与强制 QUIC smoke、五轮和并发矩阵。
+- [x] `redirect_local=false`，仅将 Cloudflare 单目标 IP `/32` 路由到 `tun0`，禁止修改默认路由。
+- [x] TCP smoke 通过（验证 tun0 link-up 修复成功）。
+- [x] 强制 QUIC smoke：`20260905T110500Z-6e9394d-r17`（1 MiB，3.37 Mbps，HTTP 200，验证 `CLIENT_TUN` QUIC 启动修复成功）。
+- [ ] 5 MB 样本五轮对比（TCP TLS vs 强制 QUIC）。
+- [ ] 单通道高并发/承压测试（目标 200 次请求，5 分钟时限）。
 
 ## R15 验收
 
 - [ ] `client`、`nat`、`client_tun` 每种模式均完成 TCP TLS 与强制 QUIC。
 - [-] `forward` 按用户范围明确排除。
-- [ ] Docker curl exit 0、HTTP 200、`size_download=1048576`、文件大小 1048576；不做 SHA。
+- [ ] 样本大小 >= 5 MB，curl exit 0、HTTP 200、下载字节完整。
+- [ ] QUIC 单通道多流高频承压测试通过（排查通道/流控/状态机 bug）。
 - [ ] 强制 QUIC server 仅监听 UDP，日志确认 ALPN `h3`；TCP 使用普通 server。
 - [ ] Docker `finally` 清理容器；远端只清理 Trojan server 和临时证书目录。

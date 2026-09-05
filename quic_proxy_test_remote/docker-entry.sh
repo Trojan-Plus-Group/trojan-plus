@@ -73,7 +73,7 @@ if [ "$ready" != true ]; then
 fi
 
 # target resolve: --resolve "speed.cloudflare.com:443:$target_ip"
-python3 - <<EOF "$target_ip" "$size" "$requests" "$concurrency" "$mode" "$protocol"
+python3 - <<EOF "$target_ip" "$size" "$requests" "$concurrency" "$mode" "$protocol" "$watchdog"
 import concurrent.futures
 import json
 import os
@@ -88,21 +88,28 @@ requests = int(sys.argv[3])
 concurrency = int(sys.argv[4])
 mode = sys.argv[5]
 protocol = sys.argv[6]
+watchdog = int(sys.argv[7]) if len(sys.argv) > 7 else 180
 
+max_curl_time = max(15, min(120, watchdog - 10))
 curl_write_out = '{"http_code":%{http_code},"size_download":%{size_download},"speed_download":%{speed_download},"time_total":%{time_total},"time_connect":%{time_connect}}'
 
 def run_one(req_id):
     out_path = f"/tmp/payload_{req_id}.bin"
     cmd = [
         "curl", "--fail", "--silent", "--show-error",
-        "--max-time", "170",
+        "--max-time", str(max_curl_time),
         "--resolve", f"speed.cloudflare.com:443:{target_ip}",
         "--output", out_path,
         "--write-out", curl_write_out,
         f"https://speed.cloudflare.com/__down?bytes={size}"
     ]
     start_t = time.monotonic()
-    res = subprocess.run(cmd, capture_output=True, text=True)
+    timed_out = False
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=max_curl_time + 5)
+    except subprocess.TimeoutExpired as e:
+        timed_out = True
+        res = subprocess.CompletedProcess(cmd, returncode=124, stdout="", stderr=f"Request timed out after {max_curl_time}s")
     elapsed = time.monotonic() - start_t
     actual_sz = 0
     try:
