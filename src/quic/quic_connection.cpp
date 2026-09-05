@@ -167,7 +167,7 @@ int QuicConnection::cb_acked_stream_data_offset(ngtcp2_conn* /*conn*/, int64_t s
                 buf->m_bytes_acked += (intersect_end - intersect_start);
             }
 
-            if (buf->m_buf && buf->m_bytes_acked >= buf->m_buf->size()) {
+            if (buf->m_buf && buf->m_sending_offset >= buf->m_buf->size() && buf->m_bytes_acked >= buf->m_buf->size()) {
                 _log_with_date_time_ALL("cb_acked_stream_data_offset stream_id=" + tp::to_string(stream_id) + 
                     " buf_size=" + tp::to_string(buf->m_buf->size()));
 
@@ -785,21 +785,17 @@ void QuicConnection::UnackedBuf::send(){
     }
 }
 
-void QuicConnection::send_next_unacked_buff(int64_t stream_id, UnackedBuf* buf_finished){
+void QuicConnection::send_next_unacked_buff(int64_t stream_id, UnackedBuf* /*buf_finished*/){
     auto stream_id_it = m_conn_unacked_bufs.find(stream_id);
     if(stream_id_it != m_conn_unacked_bufs.end()){
         auto& list = stream_id_it->second->buffers;
-        for(auto it = list.begin(); it != list.end(); ++it){
-            if(it->get() == buf_finished){
-                it++;
-                if(it != list.end()){
-                    (*it)->send();
-                }else{
-                    stream_id_it->second->m_sending = false;
-                }
-                break;
+        for(auto& buf : list){
+            if(buf->m_buf && buf->m_sending_offset < buf->m_buf->size()){
+                buf->send();
+                return;
             }
         }
+        stream_id_it->second->m_sending = false;
     }
 }
 void QuicConnection::remove_unacked_buff(int64_t stream_id){
@@ -1403,6 +1399,16 @@ void QuicConnection::on_extend_max_stream_data(int64_t stream_id, uint64_t max_d
                         " max_data=" + tp::to_string(max_data), Log::ALL);
     if (m_h3) {
         m_h3->unblock_stream(stream_id);
+    }
+    auto it_buf = m_conn_unacked_bufs.find(stream_id);
+    if (it_buf != m_conn_unacked_bufs.end()) {
+        for (auto& buf : it_buf->second->buffers) {
+            if (buf->m_buf && buf->m_sending_offset < buf->m_buf->size()) {
+                buf->cancel_timer();
+                buf->send();
+                break;
+            }
+        }
     }
     on_pump_write(FUNC_NAME);
 }
