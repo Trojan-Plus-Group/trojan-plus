@@ -54,8 +54,8 @@ ss -lntup
 
 ## 3. 不可违反的安全规则
 
-1. 未经用户明确授权，不得 `git commit` 或 `git push`。
-2. 禁止向 GitHub/origin push 测试修复。远端同步使用 git bundle 和 fast-forward。
+1. 允许为远程同步、阶段检查和验收创建本地 `git commit`；任何情况下不得 `git push`。
+2. 禁止向 GitHub/origin push。远端同步使用 git bundle 和 fast-forward。
 3. 远端若是 1 CPU/1 GB 小主机，只能：
 
    ```bash
@@ -81,7 +81,7 @@ python3 quic_proxy_test_remote/scripts/sync_remote.py --branch <BRANCH> --jobs 1
 脚本调用前先检查其中 host/user/port/repo 与本轮环境一致。手工等价流程：
 
 ```bash
-git bundle create /tmp/<branch>.bundle <branch>
+git bundle create /tmp/<branch>.bundle refs/heads/<branch>
 scp -P <SSH_PORT> /tmp/<branch>.bundle <SSH_USER>@<REMOTE_HOST>:/tmp/
 ssh -p <SSH_PORT> <SSH_USER>@<REMOTE_HOST> \
   'git -C <REMOTE_REPO> fetch /tmp/<branch>.bundle <branch> && git -C <REMOTE_REPO> merge --ff-only FETCH_HEAD && rm -f /tmp/<branch>.bundle'

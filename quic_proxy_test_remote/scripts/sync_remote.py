@@ -73,7 +73,8 @@ def sync_bundle(branch="fix_quic"):
     if local_bundle.exists():
         local_bundle.unlink()
     try:
-        run_cmd(["git", "bundle", "create", str(local_bundle), branch], cwd=ROOT)
+        branch_ref = f"refs/heads/{branch}"
+        run_cmd(["git", "bundle", "create", str(local_bundle), branch_ref], cwd=ROOT)
 
         print(f"[*] Step 2: Transferring bundle to root@{HOST}:{remote_bundle} via SCP...")
         run_cmd(["scp", "-P", str(SSH_PORT), str(local_bundle), f"root@{HOST}:{remote_bundle}"])
