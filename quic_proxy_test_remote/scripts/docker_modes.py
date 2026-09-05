@@ -169,7 +169,7 @@ def smoke(args):
         manifest = runner.load_json(ROOT / "results" / args.run_id / "metadata" / "manifest.json")
         runtime.mkdir(parents=True, mode=0o700, exist_ok=True)
         remote_binary = f"{manifest['remote']['repo']}/build/trojan"
-        command_output(["scp", "-P", str(SSH_PORT), f"root@{HOST}:{remote_binary}", str(runtime / "trojan")], 60)
+        command_output(["scp", "-P", str(SSH_PORT), f"root@{HOST}:{remote_binary}", str(runtime / "trojan")], 180)
         (runtime / "trojan").chmod(0o700)
         render_configs(runtime, args.protocol, (ROOT / "runtime" / args.run_id / "password").read_text().strip(), (ROOT / "runtime" / args.run_id / "server.crt").read_bytes())
         build_image()

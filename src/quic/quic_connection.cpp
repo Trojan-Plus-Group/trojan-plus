@@ -1422,18 +1422,6 @@ void QuicConnection::on_extend_max_stream_data(int64_t stream_id, uint64_t max_d
     if (m_h3) {
         m_h3->unblock_stream(stream_id);
     }
-    boost::asio::post(m_endpoint.io_context(), [this, self = shared_from_this(), stream_id]() {
-        auto it_buf = m_conn_unacked_bufs.find(stream_id);
-        if (it_buf != m_conn_unacked_bufs.end()) {
-            for (auto& buf : it_buf->second->buffers) {
-                if (buf->m_buf && buf->m_sending_offset < buf->m_buf->size()) {
-                    buf->cancel_timer();
-                    buf->send();
-                    break;
-                }
-            }
-        }
-    });
     on_pump_write(FUNC_NAME);
 }
 
