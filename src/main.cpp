@@ -96,7 +96,7 @@ void signal_async_wait(signal_set& sig, Service& service, bool& restart) {
     }));
 }
 
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__ANDROID__)
 #include <execinfo.h>
 #include <signal.h>
 #include <unistd.h>
@@ -119,7 +119,7 @@ int main_impl(int argc, const char* argv[]) {
 #ifdef ENABLE_QUIC
     wolfSSL_SetAllocators(tj_wolfssl_malloc, tj_wolfssl_free, tj_wolfssl_realloc);
 #endif
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__ANDROID__)
     signal(SIGSEGV, crash_handler);
     signal(SIGABRT, crash_handler);
     signal(SIGILL,  crash_handler);
