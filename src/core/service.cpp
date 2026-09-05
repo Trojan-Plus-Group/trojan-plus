@@ -58,14 +58,13 @@ Service::Service(Config& config, bool test)
 #endif // ENABLE_NAT
 
     if (!test) {
-        if (config.get_run_type() == Config::CLIENT_TUN || config.get_run_type() == Config::SERVERT_TUN) {
+        if (config.get_run_type() == Config::CLIENT_TUN) {
             m_tundev = TP_MAKE_SHARED(TUNDev, this, config.get_tun().tun_name, config.get_tun().net_ip,
               config.get_tun().net_mask, config.get_tun().mtu, config.get_tun().tun_fd);
         }
 
         const bool disable_server_tcp =
-          (config.get_run_type() == Config::SERVER || config.get_run_type() == Config::SERVERT_TUN) &&
-          config.get_quic().debug_disable_tcp;
+          config.get_run_type() == Config::SERVER && config.get_quic().debug_disable_tcp;
         if (config.get_run_type() != Config::CLIENT_TUN && !disable_server_tcp) {
             tcp::resolver resolver(io_context);
             tcp::endpoint listen_endpoint =
@@ -193,8 +192,6 @@ void Service::run() {
         rt = "client";
     } else if (config.get_run_type() == Config::CLIENT_TUN) {
         rt = "client tun";
-    } else if (config.get_run_type() == Config::SERVERT_TUN) {
-        rt = "server tun";
     } else {
         throw std::logic_error(tp::string("unknow run type error").c_str());
     }
@@ -205,8 +202,7 @@ void Service::run() {
 
     if (config.get_run_type() != Config::CLIENT_TUN) {
         const bool disable_server_tcp =
-          (config.get_run_type() == Config::SERVER || config.get_run_type() == Config::SERVERT_TUN) &&
-          config.get_quic().debug_disable_tcp;
+          config.get_run_type() == Config::SERVER && config.get_quic().debug_disable_tcp;
         if (!disable_server_tcp) {
             async_accept();
         }
@@ -299,7 +295,7 @@ void Service::prepare_quic_endpoint() {
     }
 
     const auto run_type = config.get_run_type();
-    if (run_type == Config::SERVER || run_type == Config::SERVERT_TUN) {
+    if (run_type == Config::SERVER) {
         m_quic_tls_ctx = TP_MAKE_SHARED(QuicTlsCtx, config, QuicTlsCtx::Role::Server);
         m_quic_server  = TP_MAKE_SHARED(QuicServerEndpoint, std::ref(io_context), config, m_quic_tls_ctx);
         _log_with_date_time("[quic] server endpoint prepared (Phase 1 skeleton)", Log::WARN);

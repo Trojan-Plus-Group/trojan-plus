@@ -286,6 +286,16 @@
 
 # R15：多运行模式矩阵
 
+## 当前交接状态
+
+- 当前 HEAD：`17d3b53`；本地工作树有未提交改动。
+- 未提交产品改动：彻底删除 `server_tun`/`SERVERT_TUN` 枚举、解析和 service 分支。
+- 未提交测试改动：`Dockerfile.template`、`docker-entry.sh`、`scripts/docker_modes.py`、`scripts/test_docker_modes.py`。
+- Docker 能力已确认：Linux amd64、`NET_ADMIN`、`/dev/net/tun`、iptables/nftables、远端连通。
+- 远端不再开放 `8001`，不再安装或修改远端防火墙；测试目标为 Cloudflare 固定 IPv4。
+- 远端早期临时 `nftables` 已卸载，临时 table、listener、process 和部署目录已清理。
+- 下一步：修复 `client_tun` 添加 route 前未将 `tun0` link up 的问题。
+
 ## `client`
 
 - [x] macOS SOCKS5 TCP TLS 与强制 QUIC五轮固定源对照。
@@ -293,31 +303,28 @@
 
 ## `forward`
 
-- [ ] 增加远程 TCP TLS 配置与固定源测试。
-- [ ] 增加强制 QUIC 配置；client/server 均禁用 TCP。
-- [ ] 固定源五轮及 1/4/16/64 并发。
+- [-] 按用户范围排除；不测试，不保留配置、runner 或并发规划。
 
 ## `nat`
 
-- [!] macOS 构建不支持 NAT；需要北京侧隔离 Linux VM、Linux 主机或可控 Linux network namespace。
-- [ ] 建立独立 nftables table/chain 和 watchdog cleanup。
-- [ ] 先完成 TCP REDIRECT 的 TCP TLS/强制 QUIC 五轮。
-- [ ] UDP TPROXY 作为独立后续矩阵。
+- [x] Docker 独立 namespace 提供 `NET_ADMIN` 与 `/dev/net/tun`。
+- [x] 宿主严格解析 `speed.cloudflare.com` 单个公网 IPv4；NAT 仅匹配该 IP `/32`、TCP dport 443。
+- [x] TCP TLS smoke：`20260905T120000Z-17d3b53-r16`，HTTP 200、1 MiB、清理完成。
+- [x] 强制 QUIC smoke：`20260905T021733Z-17d3b53-r16`，HTTP 200、1 MiB、清理完成。
+- [ ] TCP TLS 与强制 QUIC 各五轮及并发矩阵。
 
 ## `client_tun`
 
-- [!] macOS 无法自行创建项目所需 TUN；需要北京侧隔离 Linux 环境并提供 `/dev/net/tun`、`CAP_NET_ADMIN`。
-- [ ] 使用单目标 `/32` route，禁止修改默认路由。
-- [ ] 固定源 TCP TLS/强制 QUIC 五轮及并发。
-
-## `server_tun`
-
-- [!] 当前实现把 `server_tun` 当 server TLS role，但 accept path 可能创建 `ClientSession`；无文档、示例和 fulltest。
-- [ ] 先明确产品语义并修复本地功能测试，再决定是否纳入远程测速。
+- [x] Docker 独立 namespace 提供 `NET_ADMIN` 与 `/dev/net/tun`。
+- [~] `redirect_local=false`，仅将 Cloudflare 单目标 IP `/32` 路由到 `tun0`，禁止修改默认路由。
+- [!] TCP smoke `20260905T021836Z-17d3b53-r16` 阻塞：添加 `/32` route 时 `Device for nexthop is not up`。
+- [ ] 修复顺序：等待 `tun0`，执行 `ip link set tun0 up`，再添加目标 route 并保存 evidence。
+- [ ] 完成 TCP TLS 与强制 QUIC smoke、五轮和并发矩阵。
 
 ## R15 验收
 
-- [ ] `client`、`forward`、`nat`、`client_tun` 每种模式均完成 TCP TLS 与强制 QUIC 五轮。
-- [ ] 每种模式 1/4/16/64 并发无失败。
-- [ ] 强制 QUIC server 无 TCP listener，日志确认 ALPN `h3`。
-- [ ] Linux NAT/TUN 测试环境销毁后无 nftables、policy route、TUN 或 namespace 遗留。
+- [ ] `client`、`nat`、`client_tun` 每种模式均完成 TCP TLS 与强制 QUIC。
+- [-] `forward` 按用户范围明确排除。
+- [ ] Docker curl exit 0、HTTP 200、`size_download=1048576`、文件大小 1048576；不做 SHA。
+- [ ] 强制 QUIC server 仅监听 UDP，日志确认 ALPN `h3`；TCP 使用普通 server。
+- [ ] Docker `finally` 清理容器；远端只清理 Trojan server 和临时证书目录。

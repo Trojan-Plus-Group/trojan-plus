@@ -42,9 +42,7 @@ class Config {
         CLIENT,
         FORWARD,
         NAT,
-
-        CLIENT_TUN,
-        SERVERT_TUN
+        CLIENT_TUN
     };
 
     enum RouteType {

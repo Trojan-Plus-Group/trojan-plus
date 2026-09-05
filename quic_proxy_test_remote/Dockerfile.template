@@ -1,0 +1,5 @@
+FROM quay.io/centos/centos:stream10
+RUN dnf install -y curl iproute iptables python3 shadow-utils util-linux && dnf clean all && useradd --system --uid 17777 --no-create-home trojan
+COPY docker-entry.sh /usr/local/bin/docker-entry
+RUN chmod 755 /usr/local/bin/docker-entry
+ENTRYPOINT ["/usr/local/bin/docker-entry"]

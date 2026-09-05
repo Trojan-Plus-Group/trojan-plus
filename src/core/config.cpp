@@ -121,12 +121,10 @@ void Config::populate(const ptree& tree) {
         run_type = CLIENT;
     } else if (rt == "client_tun") {
         run_type = CLIENT_TUN;
-    } else if (rt == "server_tun") {
-        run_type = SERVERT_TUN;
     } else {
         throw std::runtime_error(tp::string("wrong run_type in config file").c_str());
     }
-    bool is_server = (run_type == SERVER || run_type == SERVERT_TUN);
+    bool is_server = run_type == SERVER;
 
     local_addr  = tree.get("local_addr", std::string()).c_str();
     local_port  = tree.get("local_port", uint16_t());
@@ -433,7 +431,6 @@ bool Config::sip003() {
         case CLIENT:
         case NAT:
         case CLIENT_TUN:
-        case SERVERT_TUN:
             throw std::runtime_error(tp::string("SIP003 with wrong run_type").c_str());
         case FORWARD:
             remote_addr = getenv("SS_REMOTE_HOST");
