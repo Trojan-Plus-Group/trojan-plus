@@ -279,8 +279,17 @@ int QuicConnection::cb_update_key(ngtcp2_conn* conn, uint8_t* rx_secret, uint8_t
 }
 
 int QuicConnection::cb_extend_max_local_streams_bidi(ngtcp2_conn* /*conn*/,
-                                                     uint64_t /*max_streams*/,
-                                                     void* /*user_data*/) {
+                                                     uint64_t max_streams,
+                                                     void* user_data) {
+    auto* self = static_cast<QuicConnection*>(user_data);
+    _log_with_date_time("cb_extend_max_local_streams_bidi: max_streams=" + tp::to_string(max_streams), Log::ALL);
+    if (self->on_extend_max_streams_cb) {
+        boost::asio::post(self->m_endpoint.io_context(), [self = self->shared_from_this()]() {
+            if (self->on_extend_max_streams_cb && !self->m_closed) {
+                self->on_extend_max_streams_cb();
+            }
+        });
+    }
     return 0;
 }
 
@@ -377,7 +386,8 @@ bool QuicConnection::init_server(const uint8_t* data, std::size_t datalen,
     params.initial_max_stream_data_bidi_local  = 512 * 1024; // max cache size in one stream
     params.initial_max_stream_data_bidi_remote = 512 * 1024;
     params.initial_max_data                    = 32 * 1024 * 1024; // max cache size in all streams
-    params.initial_max_streams_bidi            = 1000;
+    uint32_t srv_cfg_streams                   = m_endpoint.config().get_quic().max_concurrent_streams;
+    params.initial_max_streams_bidi            = srv_cfg_streams > 0 ? srv_cfg_streams : 1000;
     params.initial_max_stream_data_uni         = 64 * 1024;
     params.initial_max_streams_uni             = 200;
     params.max_idle_timeout = static_cast<ngtcp2_duration>(
@@ -486,7 +496,8 @@ bool QuicConnection::init_client(const boost::asio::ip::udp::endpoint& local_ep,
     ngtcp2_transport_params params;
     ngtcp2_transport_params_default(&params);
     params.initial_max_data                    = 32 * 1024 * 1024; // max cache size in all streams
-    params.initial_max_streams_bidi            = 100;
+    uint32_t cli_cfg_streams                   = m_endpoint.config().get_quic().max_concurrent_streams;
+    params.initial_max_streams_bidi            = cli_cfg_streams > 0 ? cli_cfg_streams : 100;
     params.initial_max_stream_data_uni         = 64 * 1024;
     params.initial_max_streams_uni             = 100;
     params.initial_max_stream_data_bidi_local  = 1 * 1024 * 1024;  // max cache size in one stream
@@ -1094,11 +1105,17 @@ int64_t QuicConnection::send_stream_vecs_impl(int64_t stream_id,
 // ---- open_bidi_stream -------------------------------------------------------
 
 int64_t QuicConnection::open_bidi_stream() {
-    if (!m_conn) {
+    if (!m_conn || m_closed) {
         return -1;
     }
     int64_t stream_id = -1;
-    if (ngtcp2_conn_open_bidi_stream(m_conn, &stream_id, nullptr) != 0) {
+    int rv = ngtcp2_conn_open_bidi_stream(m_conn, &stream_id, nullptr);
+    if (rv != 0) {
+        if (rv != NGTCP2_ERR_STREAM_ID_BLOCKED) {
+            _log_with_date_time("QuicConnection::open_bidi_stream: ngtcp2 error " + tp::string(ngtcp2_strerror(rv)), Log::WARN);
+        } else {
+            _log_with_date_time("QuicConnection::open_bidi_stream: stream ID blocked by peer flow control", Log::ALL);
+        }
         return -1;
     }
     return stream_id;

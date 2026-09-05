@@ -78,18 +78,21 @@ void QuicClientEndpoint::connect_to_server() {
 
           // On handshake completion, fulfil deferred stream-open requests.
           m_conn->on_handshake_completed_cb = [this, self]() {
-              auto pending = std::move(m_pending_stream_opens);
-              m_pending_stream_opens.clear();
-              for (auto& cb : pending) {
-                  auto sid = m_conn ? m_conn->open_bidi_stream() : -1;
-                  if (cb) {
-                      cb(sid);
-                  }
-              }
+              drain_pending_stream_opens();
+          };
+
+          m_conn->on_extend_max_streams_cb = [this, self]() {
+              drain_pending_stream_opens();
           };
 
           m_conn->on_stream_close_cb = [this, self](int64_t stream_id) { 
-            m_stream_data_cb.erase(stream_id); 
+              m_stream_data_cb.erase(stream_id);
+              drain_pending_stream_opens();
+          };
+
+          m_conn->on_close_cb = [this, self](QuicConnection*) {
+              fail_all_pending_streams();
+              mark_unreachable();
           };
 
           if (!m_conn->init_client(local_endpoint(), m_server_ep)) {
@@ -120,8 +123,25 @@ void QuicClientEndpoint::stream_extend_window(int64_t stream_id, std::size_t n) 
     }
 }
 
-void QuicClientEndpoint::mark_unreachable() {
-    m_known_unreachable = true;
+void QuicClientEndpoint::drain_pending_stream_opens() {
+    if (!m_conn || m_conn->is_closed() || !m_conn->is_handshake_done()) {
+        return;
+    }
+    while (!m_pending_stream_opens.empty()) {
+        auto sid = m_conn->open_bidi_stream();
+        if (sid < 0) {
+            // Still stream-blocked, wait for next MAX_STREAMS from peer
+            break;
+        }
+        auto cb = std::move(m_pending_stream_opens.front());
+        m_pending_stream_opens.pop_front();
+        if (cb) {
+            cb(sid);
+        }
+    }
+}
+
+void QuicClientEndpoint::fail_all_pending_streams() {
     auto pending = std::move(m_pending_stream_opens);
     m_pending_stream_opens.clear();
     for (auto& cb : pending) {
@@ -129,6 +149,11 @@ void QuicClientEndpoint::mark_unreachable() {
             cb(-1);
         }
     }
+}
+
+void QuicClientEndpoint::mark_unreachable() {
+    m_known_unreachable = true;
+    fail_all_pending_streams();
     uint32_t retry_ms   = m_config.get_quic().retry_connect_timeout_ms;
     if (retry_ms == 0 || !m_running) {
         return;
@@ -154,10 +179,18 @@ int64_t QuicClientEndpoint::open_bidi_stream(std::function<void(int64_t)> on_str
     }
     if (m_conn->is_handshake_done()) {
         auto sid = m_conn->open_bidi_stream();
-        if (on_stream_ready) {
-            on_stream_ready(sid);
+        if (sid >= 0) {
+            if (on_stream_ready) {
+                on_stream_ready(sid);
+            }
+            return sid;
         }
-        return sid;
+        // Handshake is done but stream IDs are temporarily blocked by peer flow control.
+        // Queue the request; it will be fulfilled when MAX_STREAMS arrives or active streams close.
+        if (on_stream_ready) {
+            m_pending_stream_opens.push_back(std::move(on_stream_ready));
+        }
+        return -1;
     }
     // Handshake not yet done – defer.
     if (on_stream_ready) {

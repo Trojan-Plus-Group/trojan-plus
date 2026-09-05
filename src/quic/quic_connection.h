@@ -133,6 +133,8 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     std::function<void(const ngtcp2_cid*)> on_new_connection_id_cb;
     // Callback invoked when connection closes.
     std::function<void(QuicConnection*)> on_close_cb;
+    // Callback invoked when peer extends max streams (client: can open more bidi streams).
+    std::function<void()> on_extend_max_streams_cb;
 
   private:
     // ngtcp2 static callbacks — forward to instance methods.

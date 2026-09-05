@@ -64,6 +64,8 @@ class QuicClientEndpoint : public QuicEndpoint {
 
   private:
     void connect_to_server();
+    void drain_pending_stream_opens();
+    void fail_all_pending_streams();
 
     std::shared_ptr<QuicConnection> m_conn;
     bool m_known_unreachable{false};
@@ -74,8 +76,8 @@ class QuicClientEndpoint : public QuicEndpoint {
     tp::unordered_map<int64_t, std::function<void(const uint8_t*, std::size_t, bool)>>
         m_stream_data_cb;
 
-    // Deferred stream-open requests (waiting for handshake).
-    tp::vector<std::function<void(int64_t)>> m_pending_stream_opens;
+    // Deferred stream-open requests (waiting for handshake or stream flow credit).
+    tp::deque<std::function<void(int64_t)>> m_pending_stream_opens;
 
     boost::asio::ip::udp::endpoint m_server_ep;
 };
