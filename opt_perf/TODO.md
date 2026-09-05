@@ -20,8 +20,8 @@
 7. Linux DNS/TUN 补充测试；macOS 按规则跳过 DNS。
 8. 用户确认远程环境参数。
 9. git bundle + fast-forward 同步。
-10. 远端单线程构建。
-11. 原始网络基线。
+10. 远端单线程 Release 构建；不在远端重复运行 LinuxFullTest。
+11. 本地与远端组合的原始网络基线。
 12. `client`、`nat`、`client_tun` TCP/强制 QUIC 正式与压力测试。
 13. 资源、正确性、性能与 cleanup 复核。
 14. 全部通过后创建本地 commit。
