@@ -155,6 +155,7 @@ void TUNProxySession::start() {
     };
 
     bool try_quic_first = false;
+    const bool disable_tcp = get_config().get_quic().debug_disable_tcp;
 
 #ifdef ENABLE_QUIC
     auto& quic_config = get_config().get_quic();
@@ -169,7 +170,7 @@ void TUNProxySession::start() {
         }
     }
 
-    bool force_no_pipeline = try_quic_first || quic_config.debug_disable_tcp;
+    bool force_no_pipeline = try_quic_first;
 #else
     bool force_no_pipeline = false;
 #endif
@@ -206,19 +207,26 @@ void TUNProxySession::start() {
             get_config().get_remote_addr(),
             static_cast<uint16_t>(get_config().get_remote_port()),
             cb,
-            [this, self, do_pipeline_or_tls]() {
+            [this, self, do_pipeline_or_tls, disable_tcp]() {
                 if (m_out && m_out->is_via_quic()) {
                     _log_with_date_time("TUNProxySession session_id: " +
                         tp::to_string(get_session_id()) +
-                        " QUIC stream open failed, falling back to pipeline/TLS", Log::WARN);
+                        " QUIC stream open failed, falling back to " +
+                        (disable_tcp ? "destroy" : "pipeline/TLS"), Log::WARN);
                     m_out->cancel();
                     m_out->close();
                     m_out.reset();
-                    do_pipeline_or_tls();
+                    if (disable_tcp) {
+                        destroy();
+                    } else {
+                        do_pipeline_or_tls();
+                    }
                 } else {
                     destroy();
                 }
             });
+    } else if (disable_tcp) {
+        destroy();
     } else {
         do_pipeline_or_tls();
     }

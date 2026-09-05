@@ -462,6 +462,7 @@ void ClientSession::request_remote() {
 
     bool pipeline_assigned = get_pipeline_component().is_using_pipeline();
     bool try_quic_first = false;
+    const bool disable_tcp = get_config().get_quic().debug_disable_tcp;
 
 #ifdef ENABLE_QUIC
     auto& quic_config = get_config().get_quic();
@@ -516,6 +517,11 @@ void ClientSession::request_remote() {
                     destroy();
                 }
             });
+        return;
+    }
+
+    if (disable_tcp) {
+        destroy();
         return;
     }
 

@@ -63,7 +63,10 @@ Service::Service(Config& config, bool test)
               config.get_tun().net_mask, config.get_tun().mtu, config.get_tun().tun_fd);
         }
 
-        if (config.get_run_type() != Config::CLIENT_TUN) {
+        const bool disable_server_tcp =
+          (config.get_run_type() == Config::SERVER || config.get_run_type() == Config::SERVERT_TUN) &&
+          config.get_quic().debug_disable_tcp;
+        if (config.get_run_type() != Config::CLIENT_TUN && !disable_server_tcp) {
             tcp::resolver resolver(io_context);
             tcp::endpoint listen_endpoint =
               *resolver.resolve(config.get_local_addr(), tp::to_string(config.get_local_port())).begin();
@@ -201,14 +204,25 @@ void Service::run() {
     }
 
     if (config.get_run_type() != Config::CLIENT_TUN) {
-        async_accept();
+        const bool disable_server_tcp =
+          (config.get_run_type() == Config::SERVER || config.get_run_type() == Config::SERVERT_TUN) &&
+          config.get_quic().debug_disable_tcp;
+        if (!disable_server_tcp) {
+            async_accept();
+        }
         if (config.get_run_type() == Config::FORWARD || config.get_run_type() == Config::NAT) {
             udp_async_read();
         }
-        tcp::endpoint local_endpoint = socket_acceptor.local_endpoint();
+        tp::string local_addr = config.get_local_addr();
+        uint16_t local_port = static_cast<uint16_t>(config.get_local_port());
+        if (!disable_server_tcp) {
+            tcp::endpoint local_endpoint = socket_acceptor.local_endpoint();
+            local_addr = local_endpoint.address().to_string();
+            local_port = local_endpoint.port();
+        }
 
-        _log_with_date_time(tp::string("trojan plus service (") + rt + ") started at " +
-                              local_endpoint.address().to_string() + ':' + tp::to_string(local_endpoint.port()),
+        _log_with_date_time(tp::string("trojan plus service (") + rt + ") started at " + local_addr + ':' +
+                              tp::to_string(local_port),
           Log::FATAL);
 
 #ifdef ENABLE_QUIC
