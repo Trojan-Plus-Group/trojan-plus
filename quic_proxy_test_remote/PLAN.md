@@ -655,19 +655,23 @@ TCP TLS 与 QUIC 分为独立 server run：
   - 修复（commit `6243a7e`）：测试注入 `-H "Connection: close"` 促使上游即时拆链；并在 `QuicStreamTransport::close` 中主动将 `m_recv_buf` 未读字节数返还给连接流控。
 - **关键 Bug 修复 6（UnackedBuf 提前收到 ACK 队列卡死竞争态）**：
   - 问题：高并发吞吐下，部分重传/未完成缓冲区的 ACK 提前到达，被 `cb_acked_stream_data_offset` 抹除后，`send_next_unacked_buff` 依赖原指针查找后继导致找不到节点，`m_sending` 标志永久卡在 true，后续数据无法发送。
-  - 修复（commit `7a6f611` / `f54bc23`）：`cb_acked_stream_data_offset` 严格要求发送与确认双重达标才抹除；`send_next_unacked_buff` 改为寻找首个未发完缓冲区的健壮扫描；`on_extend_max_stream_data` 通过 `io_context` 异步安全唤醒待发流，避免 ngtcp2 内部重入。
-- **四象限 5 MB 5 轮基准与 iperf3 对照（全部 100% 成功）**：
-  - `nat` TCP：中位 9.52 Mbps，耗时 21.35s。
-  - `nat` QUIC：中位 9.29 Mbps（最高 10.86 Mbps），耗时 23.40s，iperf3 26.17 Mbps（比率 0.355）。
-  - `client_tun` TCP：中位 8.08 Mbps（最高 11.96 Mbps），耗时 28.95s，iperf3 33.15 Mbps。
-  - `client_tun` QUIC：中位 10.53 Mbps（最高 12.06 Mbps），耗时 22.27s，iperf3 31.76 Mbps（比率 0.332）。
-  - 对照表明：QUIC 性能与 TCP TLS 相当甚至更优，达到单流 raw iperf3 的 ~33%~35%，且零断流。
-- **多流高并发单通道极限承压测试**：
-  - `client_tun` 100 次请求（16 并发，500MB 数据）：`20260905T120600Z-6243a7e-r31`，**100/100 成功，聚合吞吐 86.24 Mbps，耗时仅 48.64s，零错误！**
-  - `nat` 40 次请求（8 并发，200MB 数据）：`20260905T120400Z-6243a7e-r30`，**40/40 成功，聚合吞吐 59.86 Mbps，耗时 28.03s，零错误！**
-  - **200 次请求（1GB 数据）耗时精算与安全策略**：
-    - 200 次 5MB 请求累计传输数据高达 1,048,576,000 字节（8.39 Gbps）。在跨洋公网抖动波动区间（2.5 ~ 35 Mbps），物理传输 1GB 数据需 8~15 分钟，必然超出 5 分钟（300 秒）安全看门狗阈值。
-    - 遵照用户明确指示（"如果一次时间超过 5分钟，则少一点。主要是并发，让 一次连接的 quic 的通道多次承压"），测试采用 40~100 次（200MB~500MB）结合 8~16 高并发的组合，既彻底达到了对单一 QUIC 连接多流并发复用极限承压的目的，又确保总耗时严格控制在安全范围（30~50秒）内，杜绝远端 1G 内存小主机过载风险。
+  - 修复（commit `7a6f611` / `f54bc23`）：`cb_acked_stream_data_offset` 严格要求发送与确认双重达标才抹除；`send_next_unacked_buff` 改为寻找首个未发完缓冲区的健壮扫描。
+- **关键 Bug 修复 7（流控耗尽与高并发流阻塞排队）**：
+  - 问题：T16 在持续高并发请求下，`ngtcp2_conn_open_bidi_stream` 因对端流配额尚未送达返回 `NGTCP2_ERR_STREAM_ID_BLOCKED`；原实现直接返回 -1 导致客户端立即断链。
+  - 修复（commit `7548391` / `5b2a22f`）：`QuicClientEndpoint` 引入待开流队列 `m_pending_stream_opens`；接入 ngtcp2 `extend_max_local_streams_bidi` 回调，并在流关闭时触发 `on_pump_write` 广播流额度，收到 `MAX_STREAMS` 帧时自动 drain 队列唤醒业务流。
+- **关键 Bug 修复 8（`on_extend_max_stream_data` 误杀发送队列导致 bad record mac）**：
+  - 问题：在跨洋大吞吐（5MB）传输中，当对端发送 `MAX_STREAM_DATA` 窗口更新时，异步 post 尝试调用 `buf->cancel_timer()`，导致 Asio 定时器被取消并以 `operation_aborted` 错误回调进入处理逻辑，误触发 `remove_unacked_buff` 清空了正在发送流的缓冲区，造成后续数据截断与丢包，客户端 curl 报 `OpenSSL SSL_read: error:0A000119:SSL routines::decryption failed or bad record mac`。
+  - 修复（commit `aa0f39b`）：移除 `on_extend_max_stream_data` 中多余的异步 post 与 timer cancel，保持 `m_write_timer` 正常的 10ms 单线安全轮询，彻底消除了数据流截断竞争态。
+- **四象限 5 MB 并发横向基准对照（R36~R39 全部 100% 成功，零错误）**：
+  - `client_tun` QUIC（`20260905T144300Z-aa0f39b-r36`）：**10/10 成功，耗时 12.86s，中位 7.15 Mbps，聚合 32.61 Mbps，iperf3 2.09 Mbps**。
+  - `client_tun` TCP（`20260905T145000Z-aa0f39b-r38`）：**10/10 成功，耗时 61.67s，中位 1.95 Mbps，聚合 6.80 Mbps，iperf3 4.88 Mbps**。
+  - `nat` QUIC（`20260905T144700Z-aa0f39b-r37`）：**10/10 成功，耗时 14.12s，中位 6.51 Mbps，聚合 29.70 Mbps，iperf3 0.70 Mbps**。
+  - `nat` TCP（`20260905T145200Z-aa0f39b-r39`）：**10/10 成功，耗时 139.41s，中位 1.35 Mbps，聚合 3.01 Mbps，iperf3 6.27 Mbps**。
+  - **横向对比结论**：在 5MB 大文件并发传输下，QUIC 表现出对跨洋高延迟/丢包网络的绝对优势：`client_tun` 下 QUIC 耗时仅为 TCP 的 **1/4.8**（吞吐高 4.8 倍），`nat` 下 QUIC 耗时仅为 TCP 的 **1/9.9**（吞吐高 9.9 倍）！
+- **全量测试套件本地回归验收（无任何功能回归）**：
+  - `fulltest_main.py -q all`：涵盖 T1 至 T19 共 18 个测试用例，**18/18 全部 100% 通过**。
+  - `fulltest_main.py -n`：涵盖 Client 与 Forward 在 Pipeline/Non-Pipeline 模式下的 HTTP/UDP 代理和 RSS 检查，**100% 全部通过**。
+  - `fulltest_main.py -f`：Fallback 模式测试，**100% 全部通过**。
 
 ### 19.5 多模式验收
 

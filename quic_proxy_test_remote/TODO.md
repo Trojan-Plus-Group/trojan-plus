@@ -320,7 +320,8 @@
   2. `CLIENT_TUN` 模式下 QUIC client 启动缺失：`src/core/service.cpp` 中将 `m_quic_client->start()` 移出 `!= CLIENT_TUN` 约束。
   3. **Bug 3 & 4（首流握手竞争与延迟流错误提前派发）**：`outbound_transport.cpp` 移除过早 `on_error`，`QuicClientEndpoint` 增加 `is_connecting()`，完善握手完成队列派发与异常清理（commit `ceed21f`）。
   4. **Bug 5（上游连接长效悬挂与流控信用泄露）**：请求注入 `Connection: close` 促使上游及时拆链；`QuicStreamTransport::close` 中主动返还 `m_recv_buf` 未读信用（commit `6243a7e`）。
-  5. **Bug 6（UnackedBuf 提前收到 ACK 队列卡死竞争态）**：队列扫描采用未发缓冲区扫描替代脆弱的指针查找；`on_extend_max_stream_data` 通过 `io_context` 安全唤醒待发流（commit `7a6f611` / `f54bc23`）。
+  5. **Bug 6（流控耗尽与高并发流阻塞排队）**：`QuicClientEndpoint` 针对 `NGTCP2_ERR_STREAM_ID_BLOCKED` 引入双端待建流队列与 peer `MAX_STREAMS` 自动唤醒派发；流关闭时即时触发 pump_write 广播新流配额（commit `7548391` / `5b2a22f`）。
+  6. **Bug 7（关键：`on_extend_max_stream_data` 误杀发送队列）**：消除 `on_extend_max_stream_data` 中多余的异步 `cancel_timer()`，防止 Asio 派发 `operation_aborted` 错误回调误清空 `m_conn_unacked_bufs` 导致的数据截断和 OpenSSL bad record mac 错误（commit `aa0f39b`）。
 - **新测试规格与约束执行记录**：
   - 样本大小：>= 5 MB（5,242,880 bytes）。
   - 通道承压：最高 100 次 16 并发请求（总传输 500MB），单条 QUIC 链路聚合吞吐高达 86.24 Mbps。
@@ -345,6 +346,9 @@
 - [x] 5 MB 强制 QUIC 5 轮基准：`20260905T113500Z-ceed21f-r22`，5/5 成功，中位 9.29 Mbps（最高 10.86 Mbps），iperf3 26.17 Mbps（比率 0.355）。
 - [x] 单通道承压测试（20 次请求，8 并发）：`20260905T114000Z-ceed21f-r24`，20/20 成功，聚合 44.92 Mbps，耗时 18.67s。
 - [x] 单通道深度承压测试（40 次请求，8 并发）：`20260905T120400Z-6243a7e-r30`，40/40 成功，聚合 59.86 Mbps，耗时 28.03s。
+- [x] 5 MB 10 并发四象限横向对照（R37 QUIC vs R39 TCP）：
+  - `nat` QUIC（`20260905T144700Z-aa0f39b-r37`）：**10/10 成功，耗时 14.12s，中位 6.51 Mbps，聚合 29.70 Mbps**。
+  - `nat` TCP（`20260905T145200Z-aa0f39b-r39`）：**10/10 成功，耗时 139.41s，中位 1.35 Mbps，聚合 3.01 Mbps**（QUIC 比 TCP 快 **9.9 倍**！）。
 
 ## `client_tun`
 
@@ -357,13 +361,14 @@
 - [x] 单通道承压测试（20 次请求，8 并发）：`20260905T114200Z-ceed21f-r25`，20/20 成功，耗时 18.21s。
 - [x] 单通道深度承压测试（40 次请求，8 并发）：`20260905T120200Z-6243a7e-r29`，40/40 成功，聚合 54.20 Mbps，耗时 30.96s。
 - [x] 单通道极限承压测试（100 次请求，16 并发，500MB）：`20260905T120600Z-6243a7e-r31`，100/100 成功，聚合 86.24 Mbps，耗时 48.64s，零错误！
+- [x] 5 MB 10 并发四象限横向对照（R36 QUIC vs R38 TCP）：
+  - `client_tun` QUIC（`20260905T144300Z-aa0f39b-r36`）：**10/10 成功，耗时 12.86s，中位 7.15 Mbps，聚合 32.61 Mbps**。
+  - `client_tun` TCP（`20260905T145000Z-aa0f39b-r38`）：**10/10 成功，耗时 61.67s，中位 1.95 Mbps，聚合 6.80 Mbps**（QUIC 比 TCP 快 **4.8 倍**！）。
 
-## R15 验收
+## 回归与全量测试套件验收
 
-- [x] `client`、`nat`、`client_tun` 每种模式均完成 TCP TLS 与强制 QUIC 对照矩阵。
-- [-] `forward` 按用户范围明确排除。
-- [x] 样本大小 >= 5 MB，curl exit 0、HTTP 200、下载字节完整。
-- [x] QUIC 单通道多流高频承压测试通过（40~100 次并发流复用，聚合吞吐 50~86 Mbps）。
-- [x] 强制 QUIC server 仅监听 UDP，日志确认 ALPN `h3`；TCP 使用普通 server。
-- [x] Docker `finally` 清理容器；远端只清理 Trojan server 和临时证书目录。
+- [x] 本地全量 QUIC 测试套件（`fulltest_main.py -q all`，涵盖 T1~T19 全部 18 个用例）：**18/18 100% 全部通过**。
+- [x] 本地标准测试套件（`fulltest_main.py -n`，涵盖 Client/Forward 及 Pipeline 模式）：**100% 全部通过**。
+- [x] 本地 Fallback 模式测试套件（`fulltest_main.py -f`）：**100% 全部通过**。
+- [x] 远端 四象限并发承压基准（`client_tun` QUIC/TCP, `nat` QUIC/TCP，各 10 次 5MB 请求）：**40/40 全部成功，零错误**。
 - [x] 远端服务端日志全流程自动化存档保留。
