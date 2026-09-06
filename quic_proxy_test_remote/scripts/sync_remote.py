@@ -36,18 +36,18 @@ def run_cmd(cmd, cwd=None, check=True, timeout=120):
     )
 
 
-def ssh_cmd(remote_script):
+def ssh_cmd(remote_script, connect_timeout):
     return [
         "ssh",
         "-o", "BatchMode=yes",
-        "-o", "ConnectTimeout=10",
+        "-o", f"ConnectTimeout={connect_timeout}",
         "-p", str(SSH_PORT),
         f"root@{HOST}",
         remote_script,
     ]
 
 
-def status_remote():
+def status_remote(connect_timeout, timeout):
     print(f"[*] Querying remote host status (172.236.226.35:9922)...")
     remote_script = (
         f"echo '--- Git Commit ---' && "
@@ -60,11 +60,11 @@ def status_remote():
         f"echo '--- Active Listeners (3443/5201/8001) ---' && "
         f"ss -tulpn | grep -E '3443|5201|8001' || echo 'None'"
     )
-    res = run_cmd(ssh_cmd(remote_script), timeout=30)
+    res = run_cmd(ssh_cmd(remote_script, connect_timeout), timeout=timeout)
     print(res.stdout.strip())
 
 
-def sync_bundle(branch="fix_quic"):
+def sync_bundle(branch, connect_timeout, bundle_timeout, transfer_timeout, sync_timeout, cleanup_timeout):
     bundle_file = f"/tmp/{branch}.bundle"
     local_bundle = pathlib.Path(bundle_file)
     remote_bundle = f"/tmp/{branch}.bundle"
@@ -74,10 +74,10 @@ def sync_bundle(branch="fix_quic"):
         local_bundle.unlink()
     try:
         branch_ref = f"refs/heads/{branch}"
-        run_cmd(["git", "bundle", "create", str(local_bundle), branch_ref], cwd=ROOT)
+        run_cmd(["git", "bundle", "create", str(local_bundle), branch_ref], cwd=ROOT, timeout=bundle_timeout)
 
         print(f"[*] Step 2: Transferring bundle to root@{HOST}:{remote_bundle} via SCP...")
-        run_cmd(["scp", "-P", str(SSH_PORT), str(local_bundle), f"root@{HOST}:{remote_bundle}"])
+        run_cmd(["scp", "-P", str(SSH_PORT), str(local_bundle), f"root@{HOST}:{remote_bundle}"], timeout=transfer_timeout)
 
         print(f"[*] Step 3: Fast-forwarding {REMOTE_REPO} on remote...")
         remote_script = (
@@ -85,17 +85,16 @@ def sync_bundle(branch="fix_quic"):
             f"git -C {REMOTE_REPO} merge --ff-only FETCH_HEAD && "
             f"rm -f {remote_bundle}"
         )
-        res = run_cmd(ssh_cmd(remote_script), timeout=60)
+        res = run_cmd(ssh_cmd(remote_script, connect_timeout), timeout=sync_timeout)
         if res.stdout.strip():
             print(res.stdout.strip())
         print("[+] Remote repository fast-forwarded successfully.")
     finally:
         local_bundle.unlink(missing_ok=True)
-        # Ensure remote temp bundle is cleaned up even if fetch failed
-        run_cmd(ssh_cmd(f"rm -f {remote_bundle}"), check=False, timeout=15)
+        run_cmd(ssh_cmd(f"rm -f {remote_bundle}", connect_timeout), check=False, timeout=cleanup_timeout)
 
 
-def build_remote(jobs=1):
+def build_remote(jobs, connect_timeout, timeout):
     if jobs != 1:
         print(
             f"[!] WARNING: Remote host is 1 CPU, 1G RAM. Build jobs (-j {jobs}) "
@@ -112,20 +111,35 @@ def build_remote(jobs=1):
         f"build/trojan --version && "
         f"free -h"
     )
-    res = run_cmd(ssh_cmd(build_cmd), timeout=600)
+    res = run_cmd(ssh_cmd(build_cmd, connect_timeout), timeout=timeout)
     if res.stdout.strip():
         print(res.stdout.strip())
     print("[+] Remote trojan build and verification completed successfully.")
+
+
+def current_branch():
+    branch = run_cmd(["git", "branch", "--show-current"], cwd=ROOT).stdout.strip()
+    if not branch:
+        raise RuntimeError("detached HEAD requires explicit --branch")
+    return branch
 
 
 def main():
     parser = argparse.ArgumentParser(
         description="Sync code to remote 1CPU/1G RAM server via git bundle and build safely"
     )
-    parser.add_argument("--branch", default="fix_quic", help="Branch to bundle and sync (default: fix_quic)")
+    parser.add_argument("--branch", help="Branch to bundle and sync (default: current local branch)")
     parser.add_argument("--build-only", action="store_true", help="Only build on remote without bundling")
     parser.add_argument("--sync-only", action="store_true", help="Only sync bundle without building")
     parser.add_argument("--status", action="store_true", help="Check remote host git, binary, and memory status")
+    parser.add_argument("--connect-timeout", type=int, default=10, help="SSH connection timeout in seconds (default: 10)")
+    parser.add_argument("--command-timeout", type=int, default=120, help="Default command timeout in seconds (default: 120)")
+    parser.add_argument("--status-timeout", type=int, default=30, help="Status command timeout in seconds (default: 30)")
+    parser.add_argument("--bundle-timeout", type=int, help="Bundle creation timeout in seconds (default: --command-timeout)")
+    parser.add_argument("--transfer-timeout", type=int, help="Bundle transfer timeout in seconds (default: --command-timeout)")
+    parser.add_argument("--sync-timeout", type=int, default=60, help="Remote sync timeout in seconds (default: 60)")
+    parser.add_argument("--cleanup-timeout", type=int, default=15, help="Remote cleanup timeout in seconds (default: 15)")
+    parser.add_argument("--build-timeout", type=int, default=600, help="Remote build timeout in seconds (default: 600)")
     parser.add_argument(
         "--jobs",
         type=int,
@@ -135,13 +149,20 @@ def main():
     args = parser.parse_args()
 
     if args.status:
-        status_remote()
+        status_remote(args.connect_timeout, args.status_timeout)
         return
 
     if not args.build_only:
-        sync_bundle(args.branch)
+        sync_bundle(
+            args.branch or current_branch(),
+            args.connect_timeout,
+            args.bundle_timeout or args.command_timeout,
+            args.transfer_timeout or args.command_timeout,
+            args.sync_timeout,
+            args.cleanup_timeout,
+        )
     if not args.sync_only:
-        build_remote(args.jobs)
+        build_remote(args.jobs, args.connect_timeout, args.build_timeout)
 
 
 if __name__ == "__main__":

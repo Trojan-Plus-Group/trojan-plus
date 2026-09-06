@@ -1,6 +1,8 @@
+import datetime
 import importlib.util
 import pathlib
 import subprocess
+import time
 import unittest
 from unittest import mock
 
@@ -9,6 +11,22 @@ PATH = pathlib.Path(__file__).with_name("docker_modes.py")
 SPEC = importlib.util.spec_from_file_location("docker_modes", PATH)
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
+STARTED = None
+
+
+def stage_log(message):
+    timestamp = datetime.datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{timestamp}] {message}", flush=True)
+
+
+def setUpModule():
+    global STARTED
+    STARTED = time.monotonic()
+    stage_log("[阶段] docker_modes.py 单元测试开始；通常少于 10 秒")
+
+
+def tearDownModule():
+    stage_log(f"[阶段] docker_modes.py 单元测试完成；耗时 {time.monotonic() - STARTED:.1f} 秒")
 
 
 class DockerModesTest(unittest.TestCase):
@@ -52,6 +70,20 @@ class DockerModesTest(unittest.TestCase):
     def test_image_source_hash_is_stable(self):
         self.assertEqual(MODULE.image_source_hash(), MODULE.image_source_hash())
         self.assertEqual(len(MODULE.image_source_hash()), 64)
+
+    def test_timeout_cli_defaults_and_overrides(self):
+        required = ["docker_modes.py", "--mode", "nat", "--protocol", "tcp", "--run-id", "safe-run"]
+        with mock.patch.object(MODULE.sys, "argv", required):
+            args = MODULE.parse_args()
+        self.assertEqual((args.watchdog, args.watchdog_grace, args.command_timeout, args.ssh_connect_timeout), (180, 10, 30, 10))
+        self.assertEqual((args.iperf_stop_timeout, args.iperf_start_timeout, args.iperf_client_timeout), (10, 15, 15))
+        self.assertEqual((args.image_build_timeout, args.image_inspect_timeout, args.scp_timeout, args.server_log_scp_timeout, args.progress_interval), (300, 30, 180, 15, 5))
+        options = required + ["--watchdog", "181", "--watchdog-grace", "11", "--command-timeout", "31", "--ssh-connect-timeout", "12", "--iperf-stop-timeout", "13", "--iperf-start-timeout", "16", "--iperf-client-timeout", "17", "--image-build-timeout", "301", "--image-inspect-timeout", "32", "--scp-timeout", "182", "--server-log-scp-timeout", "18", "--progress-interval", "6"]
+        with mock.patch.object(MODULE.sys, "argv", options):
+            args = MODULE.parse_args()
+        self.assertEqual((args.watchdog, args.watchdog_grace, args.command_timeout, args.ssh_connect_timeout), (181, 11, 31, 12))
+        self.assertEqual((args.iperf_stop_timeout, args.iperf_start_timeout, args.iperf_client_timeout), (13, 16, 17))
+        self.assertEqual((args.image_build_timeout, args.image_inspect_timeout, args.scp_timeout, args.server_log_scp_timeout, args.progress_interval), (301, 32, 182, 18, 6))
 
     @mock.patch.object(MODULE, "command_output")
     @mock.patch.object(MODULE.subprocess, "run")

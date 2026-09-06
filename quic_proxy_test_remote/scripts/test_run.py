@@ -1,8 +1,10 @@
+import datetime
 import hashlib
 import importlib.util
 import json
 import pathlib
 import tempfile
+import time
 import unittest
 
 
@@ -10,6 +12,22 @@ PATH = pathlib.Path(__file__).with_name("run.py")
 SPEC = importlib.util.spec_from_file_location("baseline_runner", PATH)
 RUNNER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(RUNNER)
+STARTED = None
+
+
+def stage_log(message):
+    timestamp = datetime.datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{timestamp}] {message}", flush=True)
+
+
+def setUpModule():
+    global STARTED
+    STARTED = time.monotonic()
+    stage_log("[阶段] run.py 单元测试开始；通常少于 10 秒")
+
+
+def tearDownModule():
+    stage_log(f"[阶段] run.py 单元测试完成；耗时 {time.monotonic() - STARTED:.1f} 秒")
 
 
 class RunnerTest(unittest.TestCase):
@@ -303,6 +321,30 @@ class ProtocolSelectionTest(unittest.TestCase):
         self.assertTrue(snapshot["udp"])
         self.assertTrue(RUNNER.validate_listener_snapshot(snapshot, True)["valid"])
         self.assertFalse(RUNNER.validate_listener_snapshot(snapshot, False)["valid"])
+
+
+class RuntimeArgumentsTest(unittest.TestCase):
+    def test_defaults(self):
+        args = RUNNER.parse_args(["soak", "--run-id", "x"])
+        self.assertEqual(args.item_timeout, 170)
+        self.assertEqual(args.retry_delays, (3, 10))
+        self.assertEqual(args.default_attempt_timeout, 140)
+        self.assertEqual(args.run_item_attempt_timeout, 50)
+        self.assertEqual(args.ssh_connect_timeout, 10)
+        self.assertEqual(args.local_port_timeout, 30)
+        self.assertEqual(args.poll_interval, 0.5)
+        self.assertEqual(args.cloudflare_outer_timeout, 180)
+        self.assertEqual(args.soak_sample_interval, 60)
+        self.assertEqual(args.netem_watchdog, 300)
+        self.assertEqual(args.minutes, 5)
+        self.assertEqual(args.cooldown, 2)
+
+    def test_runtime_arguments_after_subcommand(self):
+        args = RUNNER.parse_args(["netem", "--run-id", "x", "--protocol", "quic", "--delay-ms", "20", "--loss-percent", "0", "--retry-delays", "1", "2", "--command-timeout", "7", "--netem-watchdog", "9"])
+        RUNNER.apply_runtime_arguments(args)
+        self.assertEqual(RUNNER.RETRY_DELAYS, (1, 2))
+        self.assertEqual(RUNNER.COMMAND_TIMEOUT, 7)
+        self.assertEqual(RUNNER.NETEM_WATCHDOG, 9)
 
 
 class ConstantsTest(unittest.TestCase):

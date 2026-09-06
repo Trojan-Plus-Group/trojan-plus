@@ -45,10 +45,37 @@ NETEM_DEFAULT_BYTES = 1 << 20
 ITEM_TIMEOUT = 170
 RETRY_DELAYS = (3, 10)
 DEFAULT_ATTEMPT_TIMEOUT = 140
+RUN_ITEM_ATTEMPT_TIMEOUT = 50
+SSH_CONNECT_TIMEOUT = 10
+LOCAL_PORT_TIMEOUT = 30
+POLL_INTERVAL = 0.5
+REMOTE_START_WAIT = 1
+REMOTE_STOP_POLLS = 5
+REMOTE_STOP_POLL_INTERVAL = 1
+LOCAL_START_STOP_TIMEOUT = 5
+LOCAL_STOP_TIMEOUT = 10
+LOCAL_KILL_TIMEOUT = 5
+LSOF_TIMEOUT = 5
+SHORT_COMMAND_TIMEOUT = 15
+STOP_COMMAND_TIMEOUT = 20
+COMMAND_TIMEOUT = 30
+LONG_COMMAND_TIMEOUT = 60
+CLOUDFLARE_CONNECT_TIMEOUT = 15
+CLOUDFLARE_MAX_TIME = 170
+CLOUDFLARE_RETRIES = 2
+CLOUDFLARE_RETRY_DELAY = 3
+CLOUDFLARE_OUTER_TIMEOUT = 180
+SOAK_SAMPLE_INTERVAL = 60
+NETEM_WATCHDOG = 300
 
 
 def utc_now():
     return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def stage_log(message):
+    timestamp = datetime.datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{timestamp}] {message}", flush=True)
 
 
 def posix(path):
@@ -150,7 +177,8 @@ def validate_netem_parameters(protocol, delay_ms, loss_percent, size):
         raise ValueError(f"bytes must be in [1, {R2_MAX_SAMPLE_BYTES}]")
 
 
-def netem_commands(interface, client_ip, protocol, delay_ms, loss_percent, ifb, preference, watchdog_seconds=300):
+def netem_commands(interface, client_ip, protocol, delay_ms, loss_percent, ifb, preference, watchdog_seconds=None):
+    watchdog_seconds = NETEM_WATCHDOG if watchdog_seconds is None else watchdog_seconds
     if not re.fullmatch(r"[A-Za-z0-9_.-]{1,15}", interface):
         raise ValueError("invalid remote interface")
     if not re.fullmatch(r"ifb[A-Za-z0-9]{1,11}", ifb):
@@ -228,7 +256,8 @@ def validate_listener_snapshot(snapshot, server_disable_tcp):
     return {**snapshot, "server_disable_tcp": server_disable_tcp, "valid": valid}
 
 
-def local_lsof(port, timeout=5):
+def local_lsof(port, timeout=None):
+    timeout = LSOF_TIMEOUT if timeout is None else timeout
     try:
         completed = subprocess.run(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN"], text=True, capture_output=True, timeout=timeout, check=False)
     except (subprocess.TimeoutExpired, FileNotFoundError):
@@ -239,14 +268,16 @@ def local_lsof(port, timeout=5):
     return needle in completed.stdout
 
 
-def wait_local_port(port, process=None, timeout=30):
+def wait_local_port(port, process=None, timeout=None, poll_interval=None):
+    timeout = LOCAL_PORT_TIMEOUT if timeout is None else timeout
+    poll_interval = POLL_INTERVAL if poll_interval is None else poll_interval
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if process is not None and process.poll() is not None:
             return False
         if local_lsof(port):
             return process is None or process.poll() is None
-        time.sleep(0.5)
+        time.sleep(poll_interval)
     return False
 
 
@@ -318,7 +349,7 @@ def prepare(args):
 
 
 def ssh(remote_command):
-    return ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-p", str(SSH_PORT), f"{SSH_USER}@{HOST}", remote_command]
+    return ["ssh", "-o", "BatchMode=yes", "-o", f"ConnectTimeout={SSH_CONNECT_TIMEOUT:g}", "-p", str(SSH_PORT), f"{SSH_USER}@{HOST}", remote_command]
 
 
 COMMANDS_LOCK = threading.Lock()
@@ -354,7 +385,8 @@ def execute_attempt(command, output_prefix, timeout, commands_file, item, attemp
     return record, stdout
 
 
-def run_item(command, directory, name, commands_file, validator=lambda record, output: record["exit_code"] == 0, attempt_timeout=50):
+def run_item(command, directory, name, commands_file, validator=lambda record, output: record["exit_code"] == 0, attempt_timeout=None):
+    attempt_timeout = RUN_ITEM_ATTEMPT_TIMEOUT if attempt_timeout is None else attempt_timeout
     deadline = time.monotonic() + ITEM_TIMEOUT
     attempts = []
     for index in range(3):
@@ -396,8 +428,8 @@ def valid_iperf(record, output):
 
 def start_server(results, commands_file):
     remote_log = f"/tmp/iperf3-{results.name}.log"
-    remote = f"if ss -lntup | grep -q ':{IPERF_PORT} '; then exit 73; fi; nohup iperf3 -s -p {IPERF_PORT} >{shlex.quote(remote_log)} 2>&1 </dev/null & pid=$!; sleep 1; test -r /proc/$pid/cmdline || exit 74; tr '\\0' ' ' </proc/$pid/cmdline; printf '\\n%s\\n' \"$pid\""
-    item = run_item(ssh(remote), results / "baseline" / "server", "iperf3-server-start", commands_file, attempt_timeout=15)
+    remote = f"if ss -lntup | grep -q ':{IPERF_PORT} '; then exit 73; fi; nohup iperf3 -s -p {IPERF_PORT} >{shlex.quote(remote_log)} 2>&1 </dev/null & pid=$!; sleep {REMOTE_START_WAIT:g}; test -r /proc/$pid/cmdline || exit 74; tr '\\0' ' ' </proc/$pid/cmdline; printf '\\n%s\\n' \"$pid\""
+    item = run_item(ssh(remote), results / "baseline" / "server", "iperf3-server-start", commands_file, attempt_timeout=SHORT_COMMAND_TIMEOUT)
     if not item["valid"]:
         raise RuntimeError("remote iperf3 server failed to start")
     stdout_path = results / item["attempts"][-1]["stdout"]
@@ -412,13 +444,13 @@ def start_server(results, commands_file):
 
 def stop_server(pid, remote_log, results, commands_file):
     expected = f"iperf3 -s -p {IPERF_PORT}"
-    remote = f"pid={pid}; test -r /proc/$pid/cmdline || exit 0; cmd=$(tr '\\0' ' ' </proc/$pid/cmdline); case \"$cmd\" in *{shlex.quote(expected)}*) kill \"$pid\"; for n in 1 2 3 4 5; do test ! -e /proc/$pid && break; sleep 1; done; test ! -e /proc/$pid;; *) printf '%s\\n' \"$cmd\" >&2; exit 75;; esac; rm -f {shlex.quote(remote_log)}"
-    return run_item(ssh(remote), results / "baseline" / "server", "iperf3-server-stop", commands_file, attempt_timeout=15)
+    remote = f"pid={pid}; test -r /proc/$pid/cmdline || exit 0; cmd=$(tr '\\0' ' ' </proc/$pid/cmdline); case \"$cmd\" in *{shlex.quote(expected)}*) kill \"$pid\"; for n in $(seq 1 {REMOTE_STOP_POLLS}); do test ! -e /proc/$pid && break; sleep {REMOTE_STOP_POLL_INTERVAL:g}; done; test ! -e /proc/$pid;; *) printf '%s\\n' \"$cmd\" >&2; exit 75;; esac; rm -f {shlex.quote(remote_log)}"
+    return run_item(ssh(remote), results / "baseline" / "server", "iperf3-server-stop", commands_file, attempt_timeout=SHORT_COMMAND_TIMEOUT)
 
 
 def snapshot(results, commands_file, phase):
     command = "printf '%s\\n' '=== UTC ==='; date -u +%Y-%m-%dT%H:%M:%SZ; printf '%s\\n' '=== SNMP ==='; cat /proc/net/snmp; printf '%s\\n' '=== SOFTNET ==='; cat /proc/net/softnet_stat; printf '%s\\n' '=== LINK ==='; ip -s link"
-    return run_item(ssh(command), results / "baseline" / "system", f"remote-{phase}", commands_file, attempt_timeout=30)
+    return run_item(ssh(command), results / "baseline" / "system", f"remote-{phase}", commands_file, attempt_timeout=COMMAND_TIMEOUT)
 
 
 def percentile(values, fraction):
@@ -497,7 +529,7 @@ def remote_mktemp(prefix, mode="700"):
 
 def ensure_remote_dir(remote_dir, results, commands_file, name):
     output_prefix = results / "metadata" / "trojan" / f"{name}-mktemp"
-    record, output = execute_attempt(ssh(remote_mktemp(name)), output_prefix, 30, commands_file, f"{name}-mktemp", 1)
+    record, output = execute_attempt(ssh(remote_mktemp(name)), output_prefix, COMMAND_TIMEOUT, commands_file, f"{name}-mktemp", 1)
     if record["exit_code"] != 0 or not output.strip():
         raise RuntimeError(f"failed to create remote temp dir: {name}")
     return output.strip().splitlines()[-1]
@@ -509,7 +541,7 @@ def scp_files(local_paths, remote_dir, results, commands_file, name):
         command = scp(local_path, f"{target_dir}/{pathlib.Path(local_path).name}")
         item_name = f"{name}-{pathlib.Path(local_path).name}"
         output_prefix = results / "metadata" / "trojan" / item_name
-        record, _ = execute_attempt(command, output_prefix, 30, commands_file, item_name, 1)
+        record, _ = execute_attempt(command, output_prefix, COMMAND_TIMEOUT, commands_file, item_name, 1)
         if record["exit_code"] != 0:
             raise RuntimeError(f"scp failed for {local_path}")
     return target_dir
@@ -534,11 +566,11 @@ def trojan_deploy(args):
     server_text = json.dumps(server, indent=4) + "\n"
     json.loads(server_text)
     command = ssh(f"cat > {shlex.quote(remote_dir + '/server.json')} && chmod 600 {shlex.quote(remote_dir + '/server.json')}")
-    record, _ = execute_attempt(command, results / "metadata" / "trojan" / "trojan-deploy-server-json", 30, commands_file, "trojan-deploy-server-json", 1, server_text)
+    record, _ = execute_attempt(command, results / "metadata" / "trojan" / "trojan-deploy-server-json", COMMAND_TIMEOUT, commands_file, "trojan-deploy-server-json", 1, server_text)
     if record["exit_code"] != 0:
         raise RuntimeError("failed to write deployed server.json")
     identity_command = "printf 'hostname='; hostname; printf 'machine_id='; cat /etc/machine-id 2>/dev/null || true; printf 'boot_id='; cat /proc/sys/kernel/random/boot_id; printf 'kernel='; uname -srmo"
-    identity_record, identity_output = execute_attempt(ssh(identity_command), results / "metadata" / "trojan" / "remote-identity", 30, commands_file, "remote-identity", 1)
+    identity_record, identity_output = execute_attempt(ssh(identity_command), results / "metadata" / "trojan" / "remote-identity", COMMAND_TIMEOUT, commands_file, "remote-identity", 1)
     if identity_record["exit_code"] != 0:
         raise RuntimeError("failed to collect remote identity")
     identity_path = results / "metadata" / "remote-identity.txt"
@@ -559,10 +591,10 @@ def start_remote_named(name, remote_dir, command_tail, results, commands_file, m
     remote = (
         f"cd {shlex.quote(remote_dir)}; "
         f"nohup {command_tail} >{quoted_log} 2>&1 </dev/null & "
-        f"pid=$!; sleep 1; test -r /proc/$pid/cmdline || exit 74; "
+        f"pid=$!; sleep {REMOTE_START_WAIT:g}; test -r /proc/$pid/cmdline || exit 74; "
         f"tr '\\0' ' ' </proc/$pid/cmdline; printf '\\n%s\\n' \"$pid\""
     )
-    item = run_item(ssh(remote), results / "logs" / name, f"{name}-start", commands_file, attempt_timeout=30)
+    item = run_item(ssh(remote), results / "logs" / name, f"{name}-start", commands_file, attempt_timeout=COMMAND_TIMEOUT)
     if not item["valid"]:
         raise RuntimeError(f"remote {name} failed to start")
     stdout_path = results / item["attempts"][-1]["stdout"]
@@ -588,11 +620,11 @@ def stop_remote_named(name, results, commands_file):
         f"pid={pid}; test -r /proc/$pid/cmdline || exit 0; "
         f"cmd=$(tr '\\0' ' ' </proc/$pid/cmdline); "
         f"case \"$cmd\" in *{quoted_marker}*) kill \"$pid\"; "
-        f"for n in 1 2 3 4 5; do test ! -e /proc/$pid && break; sleep 1; done; "
+        f"for n in $(seq 1 {REMOTE_STOP_POLLS}); do test ! -e /proc/$pid && break; sleep {REMOTE_STOP_POLL_INTERVAL:g}; done; "
         f"test ! -e /proc/$pid;; "
         f"*) printf '%s\\n' \"$cmd\" >&2; exit 75;; esac"
     )
-    item = run_item(ssh(remote), results / "logs" / name, f"{name}-stop", commands_file, attempt_timeout=20)
+    item = run_item(ssh(remote), results / "logs" / name, f"{name}-stop", commands_file, attempt_timeout=STOP_COMMAND_TIMEOUT)
     return {"name": name, "stopped": item["valid"], "attempts": item["attempts"]}
 
 
@@ -608,7 +640,7 @@ def trojan_start(args):
     marker = f"{binary} -c server.json"
     payload = start_remote_named("trojan-server", remote_dir, f"{shlex.quote(binary)} -c server.json -l trojan-server.log", results, commands_file, marker)
     listener_command = f"printf '%s\\n' '=== TCP ==='; ss -H -lntp 'sport = :{TROJAN_REMOTE_PORT}'; printf '%s\\n' '=== UDP ==='; ss -H -lnup 'sport = :{TROJAN_REMOTE_PORT}'"
-    listener_record, listener_output = execute_attempt(ssh(listener_command), results / "metadata" / "trojan" / "trojan-listeners", 30, commands_file, "trojan-listeners", 1)
+    listener_record, listener_output = execute_attempt(ssh(listener_command), results / "metadata" / "trojan" / "trojan-listeners", COMMAND_TIMEOUT, commands_file, "trojan-listeners", 1)
     try:
         if listener_record["exit_code"] != 0:
             raise RuntimeError("remote listener verification failed")
@@ -673,7 +705,7 @@ def bytesource_start(args):
     script_remote = f"{remote_dir}/{script_name}"
     write_remote = f"cat > {shlex.quote(script_remote)} <<'__BYTESOURCE_EOF__'\n{BYTESOURCE_SCRIPT}__BYTESOURCE_EOF__"
     output_prefix = results / "logs" / "bytesource" / "bytesource-upload"
-    record, _ = execute_attempt(ssh(write_remote), output_prefix, 30, commands_file, "bytesource-upload", 1)
+    record, _ = execute_attempt(ssh(write_remote), output_prefix, COMMAND_TIMEOUT, commands_file, "bytesource-upload", 1)
     if record["exit_code"] != 0:
         raise RuntimeError("failed to upload bytesource script")
     marker = f"python3 {script_name} {BYTESOURCE_PORT}"
@@ -706,10 +738,10 @@ def start_local_client(runtime, protocol, port, results, commands_file):
     log_path.parent.mkdir(parents=True, exist_ok=True)
     process = subprocess.Popen([str(TROJAN_BINARY), "-c", str(config_path), "-l", str(log_path)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
     started_utc = utc_now()
-    if not wait_local_port(port, process=process, timeout=30):
+    if not wait_local_port(port, process=process):
         process.terminate()
         try:
-            process.wait(timeout=5)
+            process.wait(timeout=LOCAL_START_STOP_TIMEOUT)
         except subprocess.TimeoutExpired:
             process.kill()
         raise RuntimeError(f"local trojan client {protocol} did not listen on {port}")
@@ -723,10 +755,10 @@ def stop_local_client(client, results, commands_file):
     protocol = client["protocol"]
     process.terminate()
     try:
-        process.wait(timeout=10)
+        process.wait(timeout=LOCAL_STOP_TIMEOUT)
     except subprocess.TimeoutExpired:
         process.kill()
-        process.wait(timeout=5)
+        process.wait(timeout=LOCAL_KILL_TIMEOUT)
     write_json(results / "metadata" / f"client-{protocol}-stop.json", {"protocol": protocol, "pid": client["pid"], "port": client["port"], "stopped_utc": utc_now(), "exit_code": process.returncode})
     return {"protocol": protocol, "stopped": True, "exit_code": process.returncode}
 
@@ -792,7 +824,7 @@ def concurrency_snapshot(results, commands_file, clients, server_pid, group, pha
     directory = results / "concurrency" / "observations" / group
     local_path = local_client_snapshot(clients, directory / f"local-{phase}.json")
     remote_command = f"printf '%s\\n' '=== UTC ==='; date -u +%Y-%m-%dT%H:%M:%SZ; printf '%s\\n' '=== STATUS ==='; cat /proc/{server_pid}/status; printf '%s\\n' '=== SMAPS_ROLLUP ==='; cat /proc/{server_pid}/smaps_rollup; printf '%s\\n' '=== SNMP ==='; cat /proc/net/snmp; printf '%s\\n' '=== SOFTNET ==='; cat /proc/net/softnet_stat; printf '%s\\n' '=== LINK ==='; ip -s link"
-    record, _ = execute_attempt(ssh(remote_command), directory / f"remote-{phase}", 30, commands_file, f"concurrency-{group}-{phase}", 1)
+    record, _ = execute_attempt(ssh(remote_command), directory / f"remote-{phase}", COMMAND_TIMEOUT, commands_file, f"concurrency-{group}-{phase}", 1)
     if record["exit_code"] != 0:
         raise RuntimeError(f"remote observation failed: {group} {phase}")
     return {"local": posix(local_path.relative_to(results)), "remote": record["stdout"], "remote_record": posix((directory / f"remote-{phase}.json").relative_to(results))}
@@ -893,12 +925,12 @@ def run_cloudflare_sample(results, commands_file, mode, size, warmup, number):
     label = f"{phase}{number}"
     output_path = directory / f"{label}.bin"
     prefix = directory / label
-    command = ["curl", "-sS", "--connect-timeout", "15", "--max-time", "170", "--retry", "2", "--retry-delay", "3", "-o", str(output_path), "--write-out", CURL_WRITE_OUT]
+    command = ["curl", "-sS", "--connect-timeout", f"{CLOUDFLARE_CONNECT_TIMEOUT:g}", "--max-time", f"{CLOUDFLARE_MAX_TIME:g}", "--retry", str(CLOUDFLARE_RETRIES), "--retry-delay", f"{CLOUDFLARE_RETRY_DELAY:g}", "-o", str(output_path), "--write-out", CURL_WRITE_OUT]
     if mode != "direct":
         port = TROJAN_LOCAL_PORT_TCP if mode == "tcp" else TROJAN_LOCAL_PORT_QUIC
         command.extend(["--socks5-hostname", f"127.0.0.1:{port}"])
     command.append(f"https://speed.cloudflare.com/__down?bytes={size}")
-    record, output = execute_attempt(command, prefix, 180, commands_file, f"cloudflare-{mode}-{label}", 1)
+    record, output = execute_attempt(command, prefix, CLOUDFLARE_OUTER_TIMEOUT, commands_file, f"cloudflare-{mode}-{label}", 1)
     try:
         metrics = json.loads(output)
     except json.JSONDecodeError:
@@ -953,7 +985,7 @@ def collect_soak_observation(results, commands_file, clients, server_pid, index,
     local_path = local_client_snapshot(clients, directory / f"{index:05d}-local.json")
     local = load_json(local_path)
     remote_command = f"printf '%s\\n' '=== STATUS ==='; cat /proc/{server_pid}/status; printf '%s\\n' '=== SMAPS_ROLLUP ==='; cat /proc/{server_pid}/smaps_rollup; printf '%s\\n' '=== SNMP ==='; cat /proc/net/snmp"
-    record, output = execute_attempt(ssh(remote_command), directory / f"{index:05d}-remote", 30, commands_file, f"soak-observation-{index}", 1)
+    record, output = execute_attempt(ssh(remote_command), directory / f"{index:05d}-remote", COMMAND_TIMEOUT, commands_file, f"soak-observation-{index}", 1)
     memory = parse_proc_memory(output) if record["exit_code"] == 0 else {"rss_bytes": None, "pss_bytes": None}
     return {"index": index, "captured_utc": utc_now(), "elapsed_seconds": elapsed_seconds, "phase": phase, "local": [{"protocol": row["protocol"], "rss_bytes": parse_ps_rss(row["ps"]), "ps": row["ps"]} for row in local["clients"]], "remote": memory, "raw": {"local": posix(local_path.relative_to(results)), "remote": record["stdout"], "remote_record": posix((directory / f"{index:05d}-remote.json").relative_to(results))}}
 
@@ -994,7 +1026,7 @@ def soak(args):
             except Exception as error:
                 summary["observations"].append({"index": index, "captured_utc": utc_now(), "elapsed_seconds": time.monotonic() - started, "phase": phase["value"], "error": str(error)})
             index += 1
-            if stop_sampling.wait(60):
+            if stop_sampling.wait(SOAK_SAMPLE_INTERVAL):
                 break
     try:
         bytesource_meta = bytesource_start(argparse.Namespace(run_id=args.run_id))
@@ -1057,20 +1089,20 @@ def netem(args):
     watchdog_pid = None
     try:
         route_command = "set -- $SSH_CONNECTION; client=$1; case \"$client\" in *:*) exit 76;; esac; printf '%s\\n' \"$client\"; ip -json -4 route get \"$client\""
-        route_record, route_output = execute_attempt(ssh(route_command), results / "netem" / "route", 30, commands_file, "netem-route", 1)
+        route_record, route_output = execute_attempt(ssh(route_command), results / "netem" / "route", COMMAND_TIMEOUT, commands_file, "netem-route", 1)
         if route_record["exit_code"] != 0:
             raise RuntimeError("remote route discovery failed")
         client_ip, interface = parse_netem_route(route_output)
-        rules = netem_commands(interface, client_ip, args.protocol, args.delay_ms, args.loss_percent, ifb, preference)
+        rules = netem_commands(interface, client_ip, args.protocol, args.delay_ms, args.loss_percent, ifb, preference, NETEM_WATCHDOG)
         summary["scope"] = {key: rules[key] for key in ("client_ip", "ip_protocol", "interface", "ifb", "preference")}
-        setup_record, setup_output = execute_attempt(ssh(rules["setup"]), results / "netem" / "setup", 30, commands_file, "netem-setup", 1)
+        setup_record, setup_output = execute_attempt(ssh(rules["setup"]), results / "netem" / "setup", COMMAND_TIMEOUT, commands_file, "netem-setup", 1)
         if setup_record["exit_code"] != 0:
             raise RuntimeError("netem setup failed; ifb, flower, and mirred are required")
         try:
             watchdog_pid = int(setup_output.strip().splitlines()[-1])
         except (IndexError, ValueError):
             raise RuntimeError("netem watchdog PID missing")
-        verify_record, _ = execute_attempt(ssh("true"), results / "netem" / "second-ssh", 30, commands_file, "netem-second-ssh", 1)
+        verify_record, _ = execute_attempt(ssh("true"), results / "netem" / "second-ssh", COMMAND_TIMEOUT, commands_file, "netem-second-ssh", 1)
         if verify_record["exit_code"] != 0:
             raise RuntimeError("second SSH verification failed")
         bytesource_meta = bytesource_start(argparse.Namespace(run_id=args.run_id))
@@ -1100,7 +1132,7 @@ def netem(args):
             cleanup = rules["cleanup"]
             if watchdog_pid is not None:
                 cleanup = f"kill {watchdog_pid} 2>/dev/null || true; {cleanup}"
-            cleanup_record, _ = execute_attempt(ssh(cleanup), results / "netem" / "cleanup", 30, commands_file, "netem-cleanup", 1)
+            cleanup_record, _ = execute_attempt(ssh(cleanup), results / "netem" / "cleanup", COMMAND_TIMEOUT, commands_file, "netem-cleanup", 1)
             summary["cleanup_valid"] = cleanup_record["exit_code"] == 0
         write_json(results / "netem" / "summary.json", summary)
     print(posix(results / "netem" / "summary.json"))
@@ -1177,19 +1209,19 @@ def baseline(args):
     server = None
     remote_log = None
     try:
-        print("[baseline 1/4] 路径与系统快照；约 1 分钟", flush=True)
-        items.append(run_item(["ping", "-c", "10", HOST], results / "baseline" / "path", "ping", commands_file, attempt_timeout=20))
-        items.append(run_item(["traceroute", HOST], results / "baseline" / "path", "traceroute", commands_file, attempt_timeout=30))
-        items.append(run_item(ssh("date -u +%Y-%m-%dT%H:%M:%SZ; timedatectl show -p NTPSynchronized --value 2>/dev/null || true"), results / "baseline" / "system", "remote-time", commands_file, attempt_timeout=15))
+        stage_log("[baseline 1/4] 路径与系统快照；约 1 分钟")
+        items.append(run_item(["ping", "-c", "10", HOST], results / "baseline" / "path", "ping", commands_file, attempt_timeout=STOP_COMMAND_TIMEOUT))
+        items.append(run_item(["traceroute", HOST], results / "baseline" / "path", "traceroute", commands_file, attempt_timeout=COMMAND_TIMEOUT))
+        items.append(run_item(ssh("date -u +%Y-%m-%dT%H:%M:%SZ; timedatectl show -p NTPSynchronized --value 2>/dev/null || true"), results / "baseline" / "system", "remote-time", commands_file, attempt_timeout=SHORT_COMMAND_TIMEOUT))
         items.append(snapshot(results, commands_file, "before"))
         server, remote_log = start_server(results, commands_file)
-        print("[baseline 2/4] 路径预热；通常少于 1 分钟", flush=True)
+        stage_log("[baseline 2/4] 路径预热；通常少于 1 分钟")
         for number in range(1, args.warmup + 1):
             command = ["iperf3", "-c", HOST, "-p", str(IPERF_PORT), "-n", "5000000", "--get-server-output", "--json"]
-            item = run_item(command, results / "baseline" / "tcp" / "tcp-p1-forward", f"tcp-p1-forward-warmup{number}", commands_file, valid_iperf, 60)
+            item = run_item(command, results / "baseline" / "tcp" / "tcp-p1-forward", f"tcp-p1-forward-warmup{number}", commands_file, valid_iperf, LONG_COMMAND_TIMEOUT)
             item.update({"case": "tcp-p1-forward", "protocol": "tcp", "warmup": True})
             items.append(item)
-        print(f"[baseline 3/4] TCP 1/4/8 流双向，各 {args.runs} 轮；约 1–3 分钟", flush=True)
+        stage_log(f"[baseline 3/4] TCP 1/4/8 流双向，各 {args.runs} 轮；约 1–3 分钟")
         for number in range(1, args.runs + 1):
             for streams in (1, 4, 8):
                 for reverse in (False, True):
@@ -1198,10 +1230,10 @@ def baseline(args):
                     command = ["iperf3", "-c", HOST, "-p", str(IPERF_PORT), "-n", "5000000", "-P", str(streams), "--get-server-output", "--json"]
                     if reverse:
                         command.append("-R")
-                    item = run_item(command, results / "baseline" / "tcp" / case, name, commands_file, valid_iperf, 60)
+                    item = run_item(command, results / "baseline" / "tcp" / case, name, commands_file, valid_iperf, LONG_COMMAND_TIMEOUT)
                     item.update({"case": case, "protocol": "tcp", "warmup": False})
                     items.append(item)
-        print(f"[baseline 4/4] UDP 10/25/50 Mbps 双向，各 {args.runs} 轮；约 2 分钟", flush=True)
+        stage_log(f"[baseline 4/4] UDP 10/25/50 Mbps 双向，各 {args.runs} 轮；约 2 分钟")
         for number in range(1, args.runs + 1):
             for bitrate in (10, 25, 50):
                 for reverse in (False, True):
@@ -1210,7 +1242,7 @@ def baseline(args):
                     command = ["iperf3", "-c", HOST, "-p", str(IPERF_PORT), "-u", "-b", f"{bitrate}M", "-t", "3", "--get-server-output", "--json"]
                     if reverse:
                         command.append("-R")
-                    item = run_item(command, results / "baseline" / "udp" / case, name, commands_file, valid_iperf, 20)
+                    item = run_item(command, results / "baseline" / "udp" / case, name, commands_file, valid_iperf, STOP_COMMAND_TIMEOUT)
                     item.update({"case": case, "protocol": "udp", "warmup": False})
                     items.append(item)
     finally:
@@ -1223,7 +1255,35 @@ def baseline(args):
         print(f"invalid samples: {summary['invalid_sample_count']}", file=sys.stderr)
 
 
-def parse_args():
+def add_runtime_arguments(command):
+    command.add_argument("--item-timeout", default=ITEM_TIMEOUT, type=float)
+    command.add_argument("--retry-delays", default=RETRY_DELAYS, nargs=2, type=float, metavar=("FIRST", "SECOND"))
+    command.add_argument("--default-attempt-timeout", default=DEFAULT_ATTEMPT_TIMEOUT, type=float)
+    command.add_argument("--run-item-attempt-timeout", default=RUN_ITEM_ATTEMPT_TIMEOUT, type=float)
+    command.add_argument("--ssh-connect-timeout", default=SSH_CONNECT_TIMEOUT, type=float)
+    command.add_argument("--local-port-timeout", default=LOCAL_PORT_TIMEOUT, type=float)
+    command.add_argument("--poll-interval", default=POLL_INTERVAL, type=float)
+    command.add_argument("--remote-start-wait", default=REMOTE_START_WAIT, type=float)
+    command.add_argument("--remote-stop-polls", default=REMOTE_STOP_POLLS, type=int)
+    command.add_argument("--remote-stop-poll-interval", default=REMOTE_STOP_POLL_INTERVAL, type=float)
+    command.add_argument("--local-start-stop-timeout", default=LOCAL_START_STOP_TIMEOUT, type=float)
+    command.add_argument("--local-stop-timeout", default=LOCAL_STOP_TIMEOUT, type=float)
+    command.add_argument("--local-kill-timeout", default=LOCAL_KILL_TIMEOUT, type=float)
+    command.add_argument("--lsof-timeout", default=LSOF_TIMEOUT, type=float)
+    command.add_argument("--short-command-timeout", default=SHORT_COMMAND_TIMEOUT, type=float)
+    command.add_argument("--stop-command-timeout", default=STOP_COMMAND_TIMEOUT, type=float)
+    command.add_argument("--command-timeout", default=COMMAND_TIMEOUT, type=float)
+    command.add_argument("--long-command-timeout", default=LONG_COMMAND_TIMEOUT, type=float)
+    command.add_argument("--cloudflare-connect-timeout", default=CLOUDFLARE_CONNECT_TIMEOUT, type=float)
+    command.add_argument("--cloudflare-max-time", default=CLOUDFLARE_MAX_TIME, type=float)
+    command.add_argument("--cloudflare-retries", default=CLOUDFLARE_RETRIES, type=int)
+    command.add_argument("--cloudflare-retry-delay", default=CLOUDFLARE_RETRY_DELAY, type=float)
+    command.add_argument("--cloudflare-outer-timeout", default=CLOUDFLARE_OUTER_TIMEOUT, type=float)
+    command.add_argument("--soak-sample-interval", default=SOAK_SAMPLE_INTERVAL, type=float)
+    command.add_argument("--netem-watchdog", default=NETEM_WATCHDOG, type=float)
+
+
+def parse_args(argv=None):
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
     command = subparsers.add_parser("prepare")
@@ -1270,8 +1330,8 @@ def parse_args():
     command.add_argument("--runs", default=5, type=int)
     command = subparsers.add_parser("soak")
     command.add_argument("--run-id", required=True)
-    command.add_argument("--minutes", default=30, type=float)
-    command.add_argument("--cooldown", default=10, type=float)
+    command.add_argument("--minutes", default=5, type=float)
+    command.add_argument("--cooldown", default=2, type=float)
     command.add_argument("--bytes", default=SOAK_DEFAULT_SAMPLE_BYTES, type=int)
     command.add_argument("--protocol", default="both", choices=("tcp", "quic", "both"))
     command = subparsers.add_parser("netem")
@@ -1280,7 +1340,9 @@ def parse_args():
     command.add_argument("--delay-ms", required=True, type=int, choices=NETEM_DELAYS)
     command.add_argument("--loss-percent", required=True, type=float, choices=NETEM_LOSSES)
     command.add_argument("--bytes", default=NETEM_DEFAULT_BYTES, type=int)
-    return parser.parse_args()
+    for command in subparsers.choices.values():
+        add_runtime_arguments(command)
+    return parser.parse_args(argv)
 
 
 def estimated_duration(args):
@@ -1293,10 +1355,40 @@ def estimated_duration(args):
     return "通常少于 1 分钟"
 
 
+def apply_runtime_arguments(args):
+    global ITEM_TIMEOUT, RETRY_DELAYS, DEFAULT_ATTEMPT_TIMEOUT, RUN_ITEM_ATTEMPT_TIMEOUT, SSH_CONNECT_TIMEOUT, LOCAL_PORT_TIMEOUT, POLL_INTERVAL, REMOTE_START_WAIT, REMOTE_STOP_POLLS, REMOTE_STOP_POLL_INTERVAL, LOCAL_START_STOP_TIMEOUT, LOCAL_STOP_TIMEOUT, LOCAL_KILL_TIMEOUT, LSOF_TIMEOUT, SHORT_COMMAND_TIMEOUT, STOP_COMMAND_TIMEOUT, COMMAND_TIMEOUT, LONG_COMMAND_TIMEOUT, CLOUDFLARE_CONNECT_TIMEOUT, CLOUDFLARE_MAX_TIME, CLOUDFLARE_RETRIES, CLOUDFLARE_RETRY_DELAY, CLOUDFLARE_OUTER_TIMEOUT, SOAK_SAMPLE_INTERVAL, NETEM_WATCHDOG
+    ITEM_TIMEOUT = args.item_timeout
+    RETRY_DELAYS = tuple(args.retry_delays)
+    DEFAULT_ATTEMPT_TIMEOUT = args.default_attempt_timeout
+    RUN_ITEM_ATTEMPT_TIMEOUT = args.run_item_attempt_timeout
+    SSH_CONNECT_TIMEOUT = args.ssh_connect_timeout
+    LOCAL_PORT_TIMEOUT = args.local_port_timeout
+    POLL_INTERVAL = args.poll_interval
+    REMOTE_START_WAIT = args.remote_start_wait
+    REMOTE_STOP_POLLS = args.remote_stop_polls
+    REMOTE_STOP_POLL_INTERVAL = args.remote_stop_poll_interval
+    LOCAL_START_STOP_TIMEOUT = args.local_start_stop_timeout
+    LOCAL_STOP_TIMEOUT = args.local_stop_timeout
+    LOCAL_KILL_TIMEOUT = args.local_kill_timeout
+    LSOF_TIMEOUT = args.lsof_timeout
+    SHORT_COMMAND_TIMEOUT = args.short_command_timeout
+    STOP_COMMAND_TIMEOUT = args.stop_command_timeout
+    COMMAND_TIMEOUT = args.command_timeout
+    LONG_COMMAND_TIMEOUT = args.long_command_timeout
+    CLOUDFLARE_CONNECT_TIMEOUT = args.cloudflare_connect_timeout
+    CLOUDFLARE_MAX_TIME = args.cloudflare_max_time
+    CLOUDFLARE_RETRIES = args.cloudflare_retries
+    CLOUDFLARE_RETRY_DELAY = args.cloudflare_retry_delay
+    CLOUDFLARE_OUTER_TIMEOUT = args.cloudflare_outer_timeout
+    SOAK_SAMPLE_INTERVAL = args.soak_sample_interval
+    NETEM_WATCHDOG = args.netem_watchdog
+
+
 def main():
     args = parse_args()
+    apply_runtime_arguments(args)
     started = time.monotonic()
-    print(f"[阶段] {args.command} 开始；预计 {estimated_duration(args)}", flush=True)
+    stage_log(f"[阶段] {args.command} 开始；预计 {estimated_duration(args)}")
     if args.command == "prepare":
         prepare(args)
     elif args.command == "baseline":
@@ -1324,7 +1416,7 @@ def main():
     elif args.command == "netem":
         netem(args)
     elapsed = time.monotonic() - started
-    print(f"[阶段] {args.command} 完成；耗时 {elapsed:.1f} 秒", flush=True)
+    stage_log(f"[阶段] {args.command} 完成；耗时 {elapsed:.1f} 秒")
 
 
 if __name__ == "__main__":

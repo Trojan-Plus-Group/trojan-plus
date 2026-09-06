@@ -18,6 +18,17 @@ HOST = "172.236.226.35"
 SSH_PORT = 9922
 SIZE = 1 << 20
 WATCHDOG = 180
+WATCHDOG_GRACE = 10
+COMMAND_TIMEOUT = 30
+SSH_CONNECT_TIMEOUT = 10
+IPERF_STOP_TIMEOUT = 10
+IPERF_START_TIMEOUT = 15
+IPERF_CLIENT_TIMEOUT = 15
+IMAGE_BUILD_TIMEOUT = 300
+IMAGE_INSPECT_TIMEOUT = 30
+SCP_TIMEOUT = 180
+SERVER_LOG_SCP_TIMEOUT = 15
+PROGRESS_INTERVAL = 5
 IMAGE = "trojan-plus-docker-modes"
 CLOUDFLARE_HOST = "speed.cloudflare.com"
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
@@ -30,18 +41,25 @@ def load_runner():
     return module
 
 
-def command_output(command, timeout=30):
+def command_output(command, timeout=COMMAND_TIMEOUT):
     return subprocess.run(command, text=True, capture_output=True, check=True, timeout=timeout).stdout.strip()
 
 
-def ssh(command):
-    return ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-p", str(SSH_PORT), f"root@{HOST}", command]
+def ssh(command, connect_timeout=SSH_CONNECT_TIMEOUT):
+    return ["ssh", "-o", "BatchMode=yes", "-o", f"ConnectTimeout={connect_timeout}", "-p", str(SSH_PORT), f"root@{HOST}", command]
 
 
 def validate_run_id(value):
     if not NAME_RE.fullmatch(value):
         raise ValueError("run-id must contain only letters, digits, dot, underscore, or hyphen")
     return value
+
+
+def positive_int(value):
+    number = int(value)
+    if number <= 0:
+        raise argparse.ArgumentTypeError("must be greater than zero")
+    return number
 
 
 def parse_cloudflare_ipv4(values):
@@ -99,19 +117,18 @@ def render_configs(runtime, protocol, password, cert):
         (runtime / f"{mode}-{protocol}.json").write_text(json.dumps(config, indent=4) + "\n")
 
 
-def measure_iperf3_baseline():
-    """Measures raw download throughput from remote server using iperf3."""
+def measure_iperf3_baseline(ssh_connect_timeout=SSH_CONNECT_TIMEOUT, stop_timeout=IPERF_STOP_TIMEOUT, start_timeout=IPERF_START_TIMEOUT, client_timeout=IPERF_CLIENT_TIMEOUT):
     remote_log = "/tmp/iperf3_docker_baseline.log"
-    subprocess.run(ssh("pkill -9 -f 'iperf3 -s' || true"), capture_output=True, text=True, timeout=10)
+    subprocess.run(ssh("pkill -9 -f 'iperf3 -s' || true", ssh_connect_timeout), capture_output=True, text=True, timeout=stop_timeout)
     start_cmd = f"nohup iperf3 -s -p 5201 > {remote_log} 2>&1 < /dev/null & sleep 1; pgrep -f 'iperf3 -s -p 5201'"
-    res = subprocess.run(ssh(start_cmd), capture_output=True, text=True, timeout=15)
+    res = subprocess.run(ssh(start_cmd, ssh_connect_timeout), capture_output=True, text=True, timeout=start_timeout)
     server_pid = res.stdout.strip()
     if not server_pid:
         return {"available": False, "error": "Failed to start remote iperf3 server"}
     try:
         client_res = subprocess.run(
             ["iperf3", "-c", HOST, "-p", "5201", "-R", "-t", "3", "-J"],
-            capture_output=True, text=True, timeout=15
+            capture_output=True, text=True, timeout=client_timeout
         )
         if client_res.returncode != 0:
             return {"available": False, "error": client_res.stderr.strip() or "iperf3 client failed"}
@@ -122,8 +139,8 @@ def measure_iperf3_baseline():
     except Exception as e:
         return {"available": False, "error": str(e)}
     finally:
-        subprocess.run(ssh(f"kill -9 {server_pid} 2>/dev/null || pkill -9 -f 'iperf3 -s' || true; rm -f {remote_log}"),
-                       capture_output=True, text=True, timeout=10)
+        subprocess.run(ssh(f"kill -9 {server_pid} 2>/dev/null || pkill -9 -f 'iperf3 -s' || true; rm -f {remote_log}", ssh_connect_timeout),
+                       capture_output=True, text=True, timeout=stop_timeout)
 
 
 def image_source_hash():
@@ -134,7 +151,7 @@ def image_source_hash():
     return digest.hexdigest()
 
 
-def run_docker_with_progress(command, container, timeout):
+def run_docker_with_progress(command, container, timeout, progress_interval=PROGRESS_INTERVAL):
     started = time.monotonic()
     process = subprocess.Popen(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     while process.poll() is None:
@@ -144,19 +161,19 @@ def run_docker_with_progress(command, container, timeout):
             stdout, stderr = process.communicate()
             raise subprocess.TimeoutExpired(command, timeout, stdout, stderr)
         print(f"[*] Docker test running: container={container} elapsed={elapsed}s", flush=True)
-        time.sleep(min(5, timeout - elapsed))
+        time.sleep(min(progress_interval, timeout - elapsed))
     stdout, stderr = process.communicate()
     return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
 
-def build_image():
+def build_image(inspect_timeout=IMAGE_INSPECT_TIMEOUT, build_timeout=IMAGE_BUILD_TIMEOUT):
     source_hash = image_source_hash()
     inspect = subprocess.run(
         ["docker", "image", "inspect", IMAGE],
         text=True,
         capture_output=True,
         check=False,
-        timeout=30,
+        timeout=inspect_timeout,
     )
     current_hash = ""
     if inspect.returncode == 0:
@@ -172,7 +189,7 @@ def build_image():
         "docker", "build", "-t", IMAGE,
         "--label", f"trojan-plus.source-hash={source_hash}",
         "-f", str(ROOT / "Dockerfile.template"), str(ROOT)
-    ], 300)
+    ], build_timeout)
     return True
 
 
@@ -183,6 +200,17 @@ def smoke(args):
     requests = getattr(args, "requests", 1)
     concurrency = getattr(args, "concurrency", 1)
     with_iperf = getattr(args, "with_iperf", False)
+    watchdog_grace = getattr(args, "watchdog_grace", WATCHDOG_GRACE)
+    command_timeout = getattr(args, "command_timeout", COMMAND_TIMEOUT)
+    ssh_connect_timeout = getattr(args, "ssh_connect_timeout", SSH_CONNECT_TIMEOUT)
+    iperf_stop_timeout = getattr(args, "iperf_stop_timeout", IPERF_STOP_TIMEOUT)
+    iperf_start_timeout = getattr(args, "iperf_start_timeout", IPERF_START_TIMEOUT)
+    iperf_client_timeout = getattr(args, "iperf_client_timeout", IPERF_CLIENT_TIMEOUT)
+    image_build_timeout = getattr(args, "image_build_timeout", IMAGE_BUILD_TIMEOUT)
+    image_inspect_timeout = getattr(args, "image_inspect_timeout", IMAGE_INSPECT_TIMEOUT)
+    scp_timeout = getattr(args, "scp_timeout", SCP_TIMEOUT)
+    server_log_scp_timeout = getattr(args, "server_log_scp_timeout", SERVER_LOG_SCP_TIMEOUT)
+    progress_interval = getattr(args, "progress_interval", PROGRESS_INTERVAL)
 
     runtime = ROOT / "runtime" / f"docker-{args.run_id}"
     results = ROOT / "results" / f"docker-{args.run_id}-{args.mode}-{args.protocol}.json"
@@ -203,7 +231,7 @@ def smoke(args):
     try:
         if with_iperf:
             print(f"[*] Measuring raw iperf3 download baseline against {HOST}:5201...")
-            iperf_res = measure_iperf3_baseline()
+            iperf_res = measure_iperf3_baseline(ssh_connect_timeout, iperf_stop_timeout, iperf_start_timeout, iperf_client_timeout)
             report["iperf_baseline"] = iperf_res
             if iperf_res.get("available"):
                 print(f"[+] Raw network iperf3 reverse throughput: {iperf_res['mbps']} Mbps")
@@ -217,14 +245,14 @@ def smoke(args):
         manifest = runner.load_json(ROOT / "results" / args.run_id / "metadata" / "manifest.json")
         runtime.mkdir(parents=True, mode=0o700, exist_ok=True)
         remote_binary = f"{manifest['remote']['repo']}/build/trojan"
-        command_output(["scp", "-P", str(SSH_PORT), f"root@{HOST}:{remote_binary}", str(runtime / "trojan")], 180)
+        command_output(["scp", "-P", str(SSH_PORT), f"root@{HOST}:{remote_binary}", str(runtime / "trojan")], scp_timeout)
         (runtime / "trojan").chmod(0o700)
         render_configs(runtime, args.protocol, (ROOT / "runtime" / args.run_id / "password").read_text().strip(), (ROOT / "runtime" / args.run_id / "server.crt").read_bytes())
-        build_image()
+        build_image(image_inspect_timeout, image_build_timeout)
         server = runner.trojan_start(argparse.Namespace(run_id=args.run_id))
         commands = docker_commands(args.mode, args.protocol, args.run_id, runtime, target_ip, size, watchdog, requests, concurrency)
         container = commands["name"]
-        completed = run_docker_with_progress(commands["run"], container, watchdog + 10)
+        completed = run_docker_with_progress(commands["run"], container, watchdog + watchdog_grace, progress_interval)
         if not completed.stdout.strip():
             raise RuntimeError(f"Docker mode failed: {completed.stderr.strip()}")
         payload = json.loads(completed.stdout)
@@ -252,18 +280,18 @@ def smoke(args):
                 print(f"[!] WARNING: {warning_msg}", file=sys.stderr)
     finally:
         if container:
-            subprocess.run(["docker", "rm", "-f", container], capture_output=True, text=True, check=False)
+            subprocess.run(["docker", "rm", "-f", container], capture_output=True, text=True, check=False, timeout=command_timeout)
         if server:
             runner.trojan_stop(argparse.Namespace(run_id=args.run_id))
         if remote_dir:
             try:
                 server_log = results.parent / f"docker-{args.run_id}-{args.mode}-{args.protocol}-server.log"
-                command_output(["scp", "-P", str(SSH_PORT), f"root@{HOST}:{remote_dir}/trojan-server.log", str(server_log)], 15)
+                command_output(["scp", "-P", str(SSH_PORT), f"root@{HOST}:{remote_dir}/trojan-server.log", str(server_log)], server_log_scp_timeout)
                 report["server_log"] = str(server_log)
             except Exception:
                 pass
-            command_output(ssh(f"rm -rf -- {remote_dir}"))
-        report["cleanup"]["docker"] = command_output(["docker", "ps", "-a", "--filter", f"name=trojan-{args.mode}-{args.protocol}-{args.run_id}", "--format", "{{.Names}}"])
+            command_output(ssh(f"rm -rf -- {remote_dir}", ssh_connect_timeout), command_timeout)
+        report["cleanup"]["docker"] = command_output(["docker", "ps", "-a", "--filter", f"name=trojan-{args.mode}-{args.protocol}-{args.run_id}", "--format", "{{.Names}}"], command_timeout)
         results.parent.mkdir(parents=True, exist_ok=True)
         results.write_text(json.dumps(report, indent=4) + "\n")
     print(results)
@@ -280,7 +308,18 @@ def parse_args():
     parser.add_argument("--protocol", required=True, choices=("tcp", "quic"))
     parser.add_argument("--run-id", required=True, type=validate_run_id)
     parser.add_argument("--size", type=int, default=SIZE)
-    parser.add_argument("--watchdog", type=int, default=WATCHDOG)
+    parser.add_argument("--watchdog", type=positive_int, default=WATCHDOG)
+    parser.add_argument("--watchdog-grace", type=positive_int, default=WATCHDOG_GRACE)
+    parser.add_argument("--command-timeout", type=positive_int, default=COMMAND_TIMEOUT)
+    parser.add_argument("--ssh-connect-timeout", type=positive_int, default=SSH_CONNECT_TIMEOUT)
+    parser.add_argument("--iperf-stop-timeout", type=positive_int, default=IPERF_STOP_TIMEOUT)
+    parser.add_argument("--iperf-start-timeout", type=positive_int, default=IPERF_START_TIMEOUT)
+    parser.add_argument("--iperf-client-timeout", type=positive_int, default=IPERF_CLIENT_TIMEOUT)
+    parser.add_argument("--image-build-timeout", type=positive_int, default=IMAGE_BUILD_TIMEOUT)
+    parser.add_argument("--image-inspect-timeout", type=positive_int, default=IMAGE_INSPECT_TIMEOUT)
+    parser.add_argument("--scp-timeout", type=positive_int, default=SCP_TIMEOUT)
+    parser.add_argument("--server-log-scp-timeout", type=positive_int, default=SERVER_LOG_SCP_TIMEOUT)
+    parser.add_argument("--progress-interval", type=positive_int, default=PROGRESS_INTERVAL)
     parser.add_argument("--requests", type=int, default=1)
     parser.add_argument("--concurrency", type=int, default=1)
     parser.add_argument("--with-iperf", action="store_true", help="Record raw iperf3 baseline before test")
