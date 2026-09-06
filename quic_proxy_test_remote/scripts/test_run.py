@@ -53,6 +53,16 @@ class RunnerTest(unittest.TestCase):
         })
         self.assertEqual(RUNNER.iperf_metrics(output, "tcp")["bits_per_second"], 433112530.47)
 
+    def test_throughput_summary_excludes_invalid_samples(self):
+        samples = [
+            {"valid": True, "bytes": 100, "duration_seconds": 1},
+            {"valid": True, "bytes": 300, "duration_seconds": 1},
+            {"valid": False, "bytes": 1000, "duration_seconds": 1},
+        ]
+        summary = RUNNER.throughput_summary(samples)
+        self.assertEqual(summary["valid_samples"], 2)
+        self.assertEqual(summary["median_bits_per_second"], 1600)
+
     def test_summarize_marks_invalid_samples(self):
         with tempfile.TemporaryDirectory() as temporary:
             results = pathlib.Path(temporary)

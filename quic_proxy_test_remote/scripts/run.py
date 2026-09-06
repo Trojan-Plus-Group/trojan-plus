@@ -230,6 +230,17 @@ def selected_protocols(protocol):
     return ("tcp", "quic") if protocol == "both" else (protocol,)
 
 
+def throughput_summary(samples):
+    rates = [sample["bytes"] * 8 / sample["duration_seconds"] for sample in samples
+             if sample["valid"] and sample["duration_seconds"] > 0]
+    return {
+        "valid_samples": len(rates),
+        "p10_bits_per_second": percentile(rates, 0.1),
+        "median_bits_per_second": percentile(rates, 0.5),
+        "p90_bits_per_second": percentile(rates, 0.9),
+    }
+
+
 def validate_protocol_deploy(protocol, deploy):
     server_disable_tcp = deploy.get("server_disable_tcp", False)
     expected = protocol == "quic"
@@ -1139,8 +1150,8 @@ def netem(args):
 
 
 def r2(args):
-    if args.runs < 1:
-        raise ValueError("runs must be >= 1")
+    if args.warmup < 0 or args.runs < 1:
+        raise ValueError("warmup must be >= 0 and runs must be >= 1")
     results = ROOT / "results" / args.run_id
     runtime = ROOT / "runtime" / args.run_id
     if not (results / "metadata" / "manifest.json").is_file():
@@ -1158,7 +1169,7 @@ def r2(args):
     sizes = tuple(args.sizes or R2_DEFAULT_SIZES)
     if any(size < 1 or size > R2_MAX_SAMPLE_BYTES for size in sizes):
         raise ValueError(f"sizes must be in [1, {R2_MAX_SAMPLE_BYTES}]")
-    summary = {"run_id": args.run_id, "started_utc": utc_now(), "runs": args.runs, "sizes": list(sizes), "protocols": list(protocols), "samples": []}
+    summary = {"run_id": args.run_id, "started_utc": utc_now(), "warmup": args.warmup, "runs": args.runs, "sizes": list(sizes), "protocols": list(protocols), "warmup_samples": [], "samples": []}
     try:
         bytesource_start_args = argparse.Namespace(run_id=args.run_id)
         bytesource_payload_meta = bytesource_start(bytesource_start_args)
@@ -1168,6 +1179,11 @@ def r2(args):
             tcp_client = start_local_client(runtime, "tcp", TROJAN_LOCAL_PORT_TCP, results, commands_file)
         if "quic" in protocols:
             quic_client = start_local_client(runtime, "quic", TROJAN_LOCAL_PORT_QUIC, results, commands_file)
+        for run_number in range(1, args.warmup + 1):
+            for size in sizes:
+                for protocol in protocols:
+                    test_args = argparse.Namespace(run_id=args.run_id, bytes=size, protocol=protocol, run=f"warmup{run_number}")
+                    summary["warmup_samples"].append(trojan_test(test_args))
         for run_number in range(1, args.runs + 1):
             for size in sizes:
                 for protocol in protocols:
@@ -1194,6 +1210,8 @@ def r2(args):
                 print(f"bytesource stop failed: {error}", file=sys.stderr)
     summary["valid_sample_count"] = sum(1 for sample in summary["samples"] if sample["valid"])
     summary["invalid_sample_count"] = sum(1 for sample in summary["samples"] if not sample["valid"])
+    summary["throughput"] = {protocol: throughput_summary(
+        [sample for sample in summary["samples"] if sample["protocol"] == protocol]) for protocol in protocols}
     write_json(results / "r2-summary.json", summary)
     print(posix(results / "r2-summary.json"))
 
@@ -1313,6 +1331,7 @@ def parse_args(argv=None):
     command.add_argument("--run", default=1, type=int)
     command = subparsers.add_parser("r2")
     command.add_argument("--run-id", required=True)
+    command.add_argument("--warmup", default=0, type=int)
     command.add_argument("--runs", default=1, type=int)
     command.add_argument("--sizes", nargs="+", type=int)
     command.add_argument("--protocol", default="both", choices=("tcp", "quic", "both"))
