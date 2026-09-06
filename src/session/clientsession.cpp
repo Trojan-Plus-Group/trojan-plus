@@ -108,7 +108,7 @@ void ClientSession::in_async_read() {
     read_buf->begin_read(__FILE__, __LINE__);
     auto self = shared_from_this();
     in_socket.async_read_some(
-      read_buf->prepare(TCP_RELAY_BUF_LENGTH), tp::bind_mem_alloc([this, self, read_buf](const boost::system::error_code error, size_t length) {
+      read_buf->prepare(MAX_BUF_LENGTH), tp::bind_mem_alloc([this, self, read_buf](const boost::system::error_code error, size_t length) {
           read_buf->end_read();
           if (error == boost::asio::error::operation_aborted) {
               return;
@@ -184,7 +184,7 @@ void ClientSession::out_async_read() {
         out_read_buf.consume_all();
         auto self = shared_from_this();
         m_out->async_read_some(
-          out_read_buf.prepare(TCP_RELAY_BUF_LENGTH), tp::bind_mem_alloc([this, self](const boost::system::error_code error, size_t length) {
+          out_read_buf.prepare(MAX_BUF_LENGTH), tp::bind_mem_alloc([this, self](const boost::system::error_code error, size_t length) {
               out_read_buf.end_read();
               if (error) {
                   output_debug_info_ec(error);
