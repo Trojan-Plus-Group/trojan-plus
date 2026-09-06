@@ -2,10 +2,10 @@
 
 ## 当前状态
 
-- 当前 Iteration：Iteration 1
-- 当前阶段：UDP socket buffer A/B 结果复核
-- 总体状态：停止该方向；复测收益未达到 5% 门槛
-- 下一门禁：恢复默认 76,800 B，重新规划 Iteration 2 可观测性
+- 当前 Iteration：Iteration 2
+- 当前阶段：QUIC retry 与 flow control 可观测性设计
+- 总体状态：Iteration 1 已停止并完成回退
+- 下一门禁：增加低开销累计计数并完成本地门禁
 
 ## 强制流程
 
@@ -66,11 +66,11 @@
 - [x] 后置基线 `r24`：TCP 单流正向中位数 12.605 Mbps；前后仅 +0.6%。
 - [x] QUIC 复测 `r25`：中位数 9.738 Mbps；相对 76,800 B 基线 `r9` 的 9.513 Mbps 仅 +2.4%。
 - [x] cleanup 无本轮容器、listener 或远端进程残留。
-- [ ] 恢复默认 76,800 B 并完成本地、远端门禁。
+- [x] 默认值已恢复为 76,800 B；双端 `opt_perf@832f396` 一致，六组 smoke `r26` 至 `r31` 通过。
 
 ## Iteration 2：QUIC retry 与 flow control
 
-状态：未开始。Iteration 1 未完成或重新规划前禁止开始。
+状态：准备增加单连接累计计数，观测 partial-write 10 ms retry、`WRITE_MORE` 与 `STREAM_DATA_BLOCKED` 触发频率。
 
 ## Iteration 3：TCP relay chunk
 
@@ -84,18 +84,6 @@
 
 状态：未开始。
 
-## 远程环境待确认
-
-```text
-REMOTE_HOST=
-SSH_USER=
-SSH_PORT=
-REMOTE_REPO=
-REMOTE_CPU_COUNT=
-REMOTE_MEMORY=
-REMOTE_BRANCH=
-TEST_PORTS=
-```
 
 ## 结果索引
 
