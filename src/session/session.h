@@ -39,7 +39,8 @@ class Session : public std::enable_shared_from_this<Session> {
 
   public:
     enum {
-        MAX_BUF_LENGTH = 8192,
+        MAX_BUF_LENGTH       = 8192,
+        TCP_RELAY_BUF_LENGTH = 16384,
     };
 
   private:
