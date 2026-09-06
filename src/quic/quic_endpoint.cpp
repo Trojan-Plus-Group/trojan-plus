@@ -67,6 +67,7 @@ void QuicEndpoint::open_socket(const boost::asio::ip::udp::endpoint& bind_ep,
         return;
     }
 
+    // Keep option, query, and non-blocking errors separate so each result remains observable.
     const auto& q = m_config.get_quic();
     if (q.recv_buffer_size > 0) {
         boost::system::error_code recv_ec;

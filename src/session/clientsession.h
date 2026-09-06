@@ -56,6 +56,7 @@ class ClientSession : public SocketSession {
     ReadBufWithGuard out_read_buf;
     ReadBufWithGuard udp_read_buf;
 
+    // Two bounded download slots allow one read alongside one ordered local write.
     enum class DownloadSlotState { EMPTY, READING, READY, WRITING };
     struct DownloadSlot {
         std::shared_ptr<ReadBufWithGuard> buf;

@@ -250,6 +250,7 @@ void ClientSession::download_read_done(int slot, const boost::system::error_code
         download_slot.buf->consume_all();
         return;
     }
+    // Drain already-read data before propagating outbound EOF or failure.
     if (error || length == 0) {
         download_slot.state = DownloadSlotState::EMPTY;
         download_slot.buf->consume_all();

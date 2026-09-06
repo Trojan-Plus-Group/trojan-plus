@@ -206,6 +206,7 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     bool m_is_server{false};
     ConnType m_conn_type{ConnType::unknown};
     uint64_t m_last_timer_expiry{0};
+    // Per-connection backpressure counters are emitted once during destruction.
     uint64_t m_partial_write_retries{0};
     uint64_t m_write_more_count{0};
     uint64_t m_stream_data_blocked_count{0};
