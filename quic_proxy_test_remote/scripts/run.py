@@ -1177,34 +1177,42 @@ def baseline(args):
     server = None
     remote_log = None
     try:
-        items.append(run_item(["ping", "-c", "30", HOST], results / "baseline" / "path", "ping", commands_file, attempt_timeout=50))
-        items.append(run_item(["traceroute", HOST], results / "baseline" / "path", "traceroute", commands_file, attempt_timeout=50))
+        print("[baseline 1/4] 路径与系统快照；约 1 分钟", flush=True)
+        items.append(run_item(["ping", "-c", "10", HOST], results / "baseline" / "path", "ping", commands_file, attempt_timeout=20))
+        items.append(run_item(["traceroute", HOST], results / "baseline" / "path", "traceroute", commands_file, attempt_timeout=30))
         items.append(run_item(ssh("date -u +%Y-%m-%dT%H:%M:%SZ; timedatectl show -p NTPSynchronized --value 2>/dev/null || true"), results / "baseline" / "system", "remote-time", commands_file, attempt_timeout=15))
         items.append(snapshot(results, commands_file, "before"))
         server, remote_log = start_server(results, commands_file)
-        for warmup, count in ((True, args.warmup), (False, args.runs)):
-            label = "warmup" if warmup else "run"
-            for number in range(1, count + 1):
-                for streams in (1, 4, 8):
-                    for reverse in (False, True):
-                        case = f"tcp-p{streams}-{'reverse' if reverse else 'forward'}"
-                        name = f"{case}-{label}{number}"
-                        command = ["iperf3", "-c", HOST, "-p", str(IPERF_PORT), "-n", "15000000", "-O", "2", "-P", str(streams), "--get-server-output", "--json"]
-                        if reverse:
-                            command.append("-R")
-                        item = run_item(command, results / "baseline" / "tcp" / case, name, commands_file, valid_iperf, 140)
-                        item.update({"case": case, "protocol": "tcp", "warmup": warmup})
-                        items.append(item)
-                for bitrate, duration in ((10, 20), (25, 12), (50, 8)):
-                    for reverse in (False, True):
-                        case = f"udp-{bitrate}m-{'reverse' if reverse else 'forward'}"
-                        name = f"{case}-{label}{number}"
-                        command = ["iperf3", "-c", HOST, "-p", str(IPERF_PORT), "-u", "-b", f"{bitrate}M", "-t", str(duration), "-O", "2", "--get-server-output", "--json"]
-                        if reverse:
-                            command.append("-R")
-                        item = run_item(command, results / "baseline" / "udp" / case, name, commands_file, valid_iperf, 35)
-                        item.update({"case": case, "protocol": "udp", "warmup": warmup})
-                        items.append(item)
+        print("[baseline 2/4] 路径预热；通常少于 1 分钟", flush=True)
+        for number in range(1, args.warmup + 1):
+            command = ["iperf3", "-c", HOST, "-p", str(IPERF_PORT), "-n", "5000000", "--get-server-output", "--json"]
+            item = run_item(command, results / "baseline" / "tcp" / "tcp-p1-forward", f"tcp-p1-forward-warmup{number}", commands_file, valid_iperf, 60)
+            item.update({"case": "tcp-p1-forward", "protocol": "tcp", "warmup": True})
+            items.append(item)
+        print(f"[baseline 3/4] TCP 1/4/8 流双向，各 {args.runs} 轮；约 1–3 分钟", flush=True)
+        for number in range(1, args.runs + 1):
+            for streams in (1, 4, 8):
+                for reverse in (False, True):
+                    case = f"tcp-p{streams}-{'reverse' if reverse else 'forward'}"
+                    name = f"{case}-run{number}"
+                    command = ["iperf3", "-c", HOST, "-p", str(IPERF_PORT), "-n", "5000000", "-P", str(streams), "--get-server-output", "--json"]
+                    if reverse:
+                        command.append("-R")
+                    item = run_item(command, results / "baseline" / "tcp" / case, name, commands_file, valid_iperf, 60)
+                    item.update({"case": case, "protocol": "tcp", "warmup": False})
+                    items.append(item)
+        print(f"[baseline 4/4] UDP 10/25/50 Mbps 双向，各 {args.runs} 轮；约 2 分钟", flush=True)
+        for number in range(1, args.runs + 1):
+            for bitrate in (10, 25, 50):
+                for reverse in (False, True):
+                    case = f"udp-{bitrate}m-{'reverse' if reverse else 'forward'}"
+                    name = f"{case}-run{number}"
+                    command = ["iperf3", "-c", HOST, "-p", str(IPERF_PORT), "-u", "-b", f"{bitrate}M", "-t", "3", "--get-server-output", "--json"]
+                    if reverse:
+                        command.append("-R")
+                    item = run_item(command, results / "baseline" / "udp" / case, name, commands_file, valid_iperf, 20)
+                    item.update({"case": case, "protocol": "udp", "warmup": False})
+                    items.append(item)
     finally:
         items.append(snapshot(results, commands_file, "after"))
         if server is not None:
@@ -1277,7 +1285,7 @@ def parse_args():
 
 def estimated_duration(args):
     if args.command == "baseline":
-        return f"约 {max(1, args.warmup + args.runs) * 3}–{max(2, args.warmup + args.runs) * 5} 分钟"
+        return "约 3–5 分钟，网络异常时不超过 10 分钟"
     if args.command == "soak":
         return f"约 {args.minutes + args.cooldown:g} 分钟"
     if args.command in ("r2", "cloudflare", "concurrency"):
