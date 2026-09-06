@@ -3,9 +3,9 @@
 ## 当前状态
 
 - 当前 Iteration：Iteration 0
-- 当前阶段：实施可观测性改造
-- 总体状态：进行中
-- 下一门禁：本地全面测试
+- 当前阶段：修复远端同步分支一致性
+- 总体状态：进行中；已获授权将远端切换到本地同名 `opt_perf` 分支
+- 下一门禁：同步脚本测试、本地完整门禁、远端分支与 commit 双校验
 
 ## 强制流程
 
@@ -43,11 +43,11 @@
 - [x] 标准 `-n` 通过。
 - [x] fallback `-f` 通过。
 - [x] Linux DNS/TUN 补充测试；当前为 macOS，按规则 skip。
-- [ ] 远程环境参数已重新确认。
+- [ ] 远程环境参数已重新确认：默认 host/user/port/repo/CPU/内存/端口已确认；远端分支为 `fix_quic`，与本地 `opt_perf` 不一致，待处理。
 - [ ] 远端原始网络基线完成。
-- [ ] `client` TCP/强制 QUIC 矩阵通过。
-- [ ] `nat` TCP/强制 QUIC 矩阵通过。
-- [ ] `client_tun` TCP/强制 QUIC 矩阵通过。
+- [x] `client` TCP/强制 QUIC smoke 通过：`20260906T020331Z-d2d3c9e-r1`、`20260906T020438Z-d2d3c9e-r2`。
+- [x] `nat` TCP/强制 QUIC smoke 通过：`20260906T020543Z-d2d3c9e-r3`、`20260906T020702Z-d2d3c9e-r4`。
+- [x] `client_tun` TCP/强制 QUIC smoke 通过：`20260906T020814Z-d2d3c9e-r5`、`20260906T020927Z-d2d3c9e-r6`。
 - [ ] 30 分钟 active + 10 分钟 cooldown 长稳通过。
 - [ ] cleanup 无残留。
 - [ ] 假设与结果复核完成。
@@ -89,6 +89,21 @@ TEST_PORTS=
 ```
 
 ## 结果索引
+
+### 2026-09-06 Iteration 0 smoke
+
+```text
+日期：2026-09-06
+Iteration：0
+Commit/dirty diff：d2d3c9ef262b1a62600a2c1cd892eea4d3ce7764；opt_perf/PLAN.md、opt_perf/TODO.md 有本地文档改动
+本地结果：此前 Release、42/42 unittest、QUIC all、标准 -n、fallback -f 通过
+远程 Run ID：r1 至 r6，见上述六组记录
+基线：未执行；远端分支门禁失败后停止
+代理结果：六组 1 MiB smoke 均 exit 0、HTTP 200、长度/hash 正确；QUIC handshake completed，ALPN h3
+资源结果：远端 1 vCPU、954 MiB RAM、2.5 GiB swap；-j 1 编译通过
+Cleanup：本地无 trojan 容器及 9080/9081 listener；远端无 3443/5201/8001 listener 或本轮进程
+结论：停止并重新规划；本地 opt_perf 与远端 fix_quic 分支名不一致，commit 均为 d2d3c9e
+```
 
 每次测试完成后记录：
 

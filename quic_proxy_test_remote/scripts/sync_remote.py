@@ -16,6 +16,7 @@ Remote Server Specs & Stability Constraints:
 
 import argparse
 import pathlib
+import shlex
 import subprocess
 import sys
 
@@ -64,6 +65,23 @@ def status_remote(connect_timeout, timeout):
     print(res.stdout.strip())
 
 
+def remote_sync_command(branch, remote_bundle):
+    quoted_branch = shlex.quote(branch)
+    quoted_bundle = shlex.quote(remote_bundle)
+    quoted_ref = shlex.quote(f"refs/heads/{branch}")
+    quoted_repo = shlex.quote(REMOTE_REPO)
+    return (
+        f"git -C {quoted_repo} fetch {quoted_bundle} {quoted_branch} && "
+        f"if git -C {quoted_repo} show-ref --verify --quiet {quoted_ref}; then "
+        f"git -C {quoted_repo} switch {quoted_branch}; "
+        f"else git -C {quoted_repo} switch -c {quoted_branch} FETCH_HEAD; fi && "
+        f"git -C {quoted_repo} merge --ff-only FETCH_HEAD && "
+        f"test \"$(git -C {quoted_repo} branch --show-current)\" = {quoted_branch} && "
+        f"test \"$(git -C {quoted_repo} rev-parse HEAD)\" = \"$(git -C {quoted_repo} rev-parse FETCH_HEAD)\" && "
+        f"rm -f {quoted_bundle}"
+    )
+
+
 def sync_bundle(branch, connect_timeout, bundle_timeout, transfer_timeout, sync_timeout, cleanup_timeout):
     bundle_file = f"/tmp/{branch}.bundle"
     local_bundle = pathlib.Path(bundle_file)
@@ -74,24 +92,20 @@ def sync_bundle(branch, connect_timeout, bundle_timeout, transfer_timeout, sync_
         local_bundle.unlink()
     try:
         branch_ref = f"refs/heads/{branch}"
+        run_cmd(["git", "check-ref-format", "--branch", branch], cwd=ROOT, timeout=bundle_timeout)
         run_cmd(["git", "bundle", "create", str(local_bundle), branch_ref], cwd=ROOT, timeout=bundle_timeout)
 
         print(f"[*] Step 2: Transferring bundle to root@{HOST}:{remote_bundle} via SCP...")
         run_cmd(["scp", "-P", str(SSH_PORT), str(local_bundle), f"root@{HOST}:{remote_bundle}"], timeout=transfer_timeout)
 
-        print(f"[*] Step 3: Fast-forwarding {REMOTE_REPO} on remote...")
-        remote_script = (
-            f"git -C {REMOTE_REPO} fetch {remote_bundle} {branch} && "
-            f"git -C {REMOTE_REPO} merge --ff-only FETCH_HEAD && "
-            f"rm -f {remote_bundle}"
-        )
-        res = run_cmd(ssh_cmd(remote_script, connect_timeout), timeout=sync_timeout)
+        print(f"[*] Step 3: Switching and fast-forwarding {REMOTE_REPO} branch '{branch}' on remote...")
+        res = run_cmd(ssh_cmd(remote_sync_command(branch, remote_bundle), connect_timeout), timeout=sync_timeout)
         if res.stdout.strip():
             print(res.stdout.strip())
-        print("[+] Remote repository fast-forwarded successfully.")
+        print("[+] Remote branch and commit match local bundle successfully.")
     finally:
         local_bundle.unlink(missing_ok=True)
-        run_cmd(ssh_cmd(f"rm -f {remote_bundle}", connect_timeout), check=False, timeout=cleanup_timeout)
+        run_cmd(ssh_cmd(f"rm -f {shlex.quote(remote_bundle)}", connect_timeout), check=False, timeout=cleanup_timeout)
 
 
 def build_remote(jobs, connect_timeout, timeout):
