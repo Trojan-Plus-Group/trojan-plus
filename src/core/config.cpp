@@ -230,8 +230,8 @@ void Config::populate(const ptree& tree) {
     quic.max_idle_timeout_ms    = tree.get("quic.max_idle_timeout_ms", 60000U);
     quic.max_concurrent_streams = tree.get("quic.max_concurrent_streams", is_server ? 1000U : 100U);
     quic.max_datagram_size      = tree.get("quic.max_datagram_size", 1200U);
-    quic.recv_buffer_size       = tree.get("quic.recv_buffer_size", 256U * 1024U);
-    quic.send_buffer_size       = tree.get("quic.send_buffer_size", 256U * 1024U);
+    quic.recv_buffer_size       = tree.get("quic.recv_buffer_size", quic.max_datagram_size * 64U);
+    quic.send_buffer_size       = tree.get("quic.send_buffer_size", quic.max_datagram_size * 64U);
     quic.h1_upstream            = tree.get("quic.h1_upstream", std::string()).c_str();
     quic.debug_disable_tcp      = tree.get("quic.debug_disable_tcp", false);
     quic.ping_interval_ms       = tree.get("quic.ping_interval_ms", 20000U);
