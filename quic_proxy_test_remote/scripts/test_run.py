@@ -19,16 +19,28 @@ class RunnerTest(unittest.TestCase):
         self.assertIsNone(RUNNER.percentile([], 0.5))
 
     def test_valid_iperf(self):
-        self.assertTrue(RUNNER.valid_iperf({"exit_code": 0}, '{"end": {}}'))
-        self.assertFalse(RUNNER.valid_iperf({"exit_code": 1}, '{"end": {}}'))
+        valid = '{"end":{"sum_sent":{"seconds":1,"bytes":100,"bits_per_second":800}}}'
+        incomplete = '{"end":{"sum_received":{"seconds":0.000008,"bytes":131072,"bits_per_second":131072000000}}}'
+        self.assertTrue(RUNNER.valid_iperf({"exit_code": 0}, valid))
+        self.assertTrue(RUNNER.valid_iperf({"exit_code": 0}, incomplete))
+        self.assertFalse(RUNNER.valid_iperf({"exit_code": 1}, valid))
         self.assertFalse(RUNNER.valid_iperf({"exit_code": 0}, '{"error": "failed"}'))
+
+    def test_iperf_metrics_ignores_incomplete_receiver_summary(self):
+        output = json.dumps({
+            "end": {
+                "sum_received": {"seconds": 0.000008, "bytes": 131072, "bits_per_second": 131072000000},
+                "sum_sent": {"seconds": 0.297786, "bytes": 16121856, "bits_per_second": 433112530.47},
+            }
+        })
+        self.assertEqual(RUNNER.iperf_metrics(output, "tcp")["bits_per_second"], 433112530.47)
 
     def test_summarize_marks_invalid_samples(self):
         with tempfile.TemporaryDirectory() as temporary:
             results = pathlib.Path(temporary)
             (results / "baseline").mkdir()
             output = results / "sample.stdout"
-            output.write_text('{"end":{"sum_received":{"bits_per_second":100},"sum_sent":{"retransmits":2}}}')
+            output.write_text('{"end":{"sum_received":{"seconds":1,"bytes":100,"bits_per_second":100},"sum_sent":{"seconds":1,"bytes":100,"bits_per_second":100,"retransmits":2}}}')
             items = [
                 {"name": "valid", "valid": True, "protocol": "tcp", "case": "tcp-p1-forward", "warmup": False, "attempts": [{"stdout": "sample.stdout"}]},
                 {"name": "invalid", "valid": False, "protocol": "tcp", "case": "tcp-p1-forward", "warmup": False, "attempts": []},

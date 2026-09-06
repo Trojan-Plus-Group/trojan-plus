@@ -379,8 +379,18 @@ def valid_iperf(record, output):
         return False
     try:
         data = json.loads(output)
-        return not data.get("error") and "end" in data
-    except json.JSONDecodeError:
+        if data.get("error") or "end" not in data:
+            return False
+        end = data["end"]
+        sections = (end.get("sum"), end.get("sum_received"), end.get("sum_sent"))
+        return any(
+            section
+            and section.get("bytes", 0) > 0
+            and section.get("seconds", 0) > 0
+            and section.get("bits_per_second", 0) > 0
+            for section in sections
+        )
+    except (json.JSONDecodeError, TypeError):
         return False
 
 
@@ -421,14 +431,29 @@ def percentile(values, fraction):
     return ordered[lower] + (ordered[upper] - ordered[lower]) * (position - lower)
 
 
+def valid_iperf_section(section):
+    return (
+        section
+        and section.get("bytes", 0) > 0
+        and section.get("seconds", 0) >= 0.01
+        and section.get("bits_per_second", 0) > 0
+    )
+
+
 def iperf_metrics(output, protocol):
     data = json.loads(output)
     end = data["end"]
     if protocol == "tcp":
-        section = end.get("sum_received") or end.get("sum_sent")
+        sections = [section for section in (end.get("sum_received"), end.get("sum_sent")) if valid_iperf_section(section)]
+        if not sections:
+            raise ValueError("iperf3 TCP output has no complete summary")
+        section = max(sections, key=lambda value: (value.get("bytes", 0), value.get("seconds", 0)))
         sent = end.get("sum_sent", {})
         return {"bits_per_second": section.get("bits_per_second"), "retransmits": sent.get("retransmits"), "max_snd_cwnd": sent.get("max_snd_cwnd"), "cpu_utilization_percent": end.get("cpu_utilization_percent")}
-    section = end.get("sum") or end.get("sum_received") or end.get("sum_sent")
+    sections = [section for section in (end.get("sum"), end.get("sum_received"), end.get("sum_sent")) if valid_iperf_section(section)]
+    if not sections:
+        raise ValueError("iperf3 UDP output has no complete summary")
+    section = max(sections, key=lambda value: (value.get("bytes", 0), value.get("seconds", 0)))
     return {"bits_per_second": section.get("bits_per_second"), "lost_percent": section.get("lost_percent"), "jitter_ms": section.get("jitter_ms"), "out_of_order": section.get("out_of_order"), "cpu_utilization_percent": end.get("cpu_utilization_percent")}
 
 
@@ -1250,8 +1275,20 @@ def parse_args():
     return parser.parse_args()
 
 
+def estimated_duration(args):
+    if args.command == "baseline":
+        return f"约 {max(1, args.warmup + args.runs) * 3}–{max(2, args.warmup + args.runs) * 5} 分钟"
+    if args.command == "soak":
+        return f"约 {args.minutes + args.cooldown:g} 分钟"
+    if args.command in ("r2", "cloudflare", "concurrency"):
+        return "约 1–5 分钟"
+    return "通常少于 1 分钟"
+
+
 def main():
     args = parse_args()
+    started = time.monotonic()
+    print(f"[阶段] {args.command} 开始；预计 {estimated_duration(args)}", flush=True)
     if args.command == "prepare":
         prepare(args)
     elif args.command == "baseline":
@@ -1278,6 +1315,8 @@ def main():
         soak(args)
     elif args.command == "netem":
         netem(args)
+    elapsed = time.monotonic() - started
+    print(f"[阶段] {args.command} 完成；耗时 {elapsed:.1f} 秒", flush=True)
 
 
 if __name__ == "__main__":
