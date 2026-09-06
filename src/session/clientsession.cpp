@@ -179,8 +179,8 @@ void ClientSession::out_async_read() {
     if (pipeline_session && get_pipeline_component().is_using_pipeline()) {
         get_pipeline_component().get_pipeline_data_cache().async_read(
           [this](const std::string_view& data, size_t ack_count) { out_recv(data, ack_count); });
-    } else if (use_download_slots()) {
-        download_read();
+    } else if (use_tcp_tls_download_slots()) {
+        tcp_tls_download_read();
     } else {
         out_read_buf.begin_read(__FILE__, __LINE__);
         out_read_buf.consume_all();
@@ -199,12 +199,12 @@ void ClientSession::out_async_read() {
     }
 }
 
-bool ClientSession::use_download_slots() {
-    return status == FORWARD && !get_pipeline_component().is_using_pipeline() && m_out;
+bool ClientSession::use_tcp_tls_download_slots() {
+    return status == FORWARD && !get_pipeline_component().is_using_pipeline() && m_out && !m_out->is_via_quic();
 }
 
-void ClientSession::download_read() {
-    if (!use_download_slots() || download_terminal_pending || download_read_slot != -1 ||
+void ClientSession::tcp_tls_download_read() {
+    if (!use_tcp_tls_download_slots() || download_terminal_pending || download_read_slot != -1 ||
         download_ready_slot != -1) {
         return;
     }
@@ -233,11 +233,11 @@ void ClientSession::download_read() {
     auto buf  = download_slot.buf;
     m_out->async_read_some(buf->prepare(MAX_BUF_LENGTH),
       tp::bind_mem_alloc([this, self, buf, slot](const boost::system::error_code error, size_t length) {
-          download_read_done(slot, error, length);
+          tcp_tls_download_read_done(slot, error, length);
       }));
 }
 
-void ClientSession::download_read_done(int slot, const boost::system::error_code& error, size_t length) {
+void ClientSession::tcp_tls_download_read_done(int slot, const boost::system::error_code& error, size_t length) {
     auto& download_slot = download_slots[slot];
     download_slot.buf->end_read();
     if (download_slot.state != DownloadSlotState::READING || download_read_slot != slot) {
@@ -255,7 +255,7 @@ void ClientSession::download_read_done(int slot, const boost::system::error_code
         download_slot.buf->consume_all();
         download_terminal_error   = error ? error : boost::asio::error::eof;
         download_terminal_pending = true;
-        download_finish();
+        tcp_tls_download_finish();
         return;
     }
 
@@ -263,14 +263,14 @@ void ClientSession::download_read_done(int slot, const boost::system::error_code
     download_slot.state = DownloadSlotState::READY;
     get_stat().inc_recv_len(length);
     if (download_write_slot == -1) {
-        download_write(slot);
+        tcp_tls_download_write(slot);
     } else {
         download_ready_slot = slot;
     }
-    download_read();
+    tcp_tls_download_read();
 }
 
-void ClientSession::download_write(int slot) {
+void ClientSession::tcp_tls_download_write(int slot) {
     auto& download_slot = download_slots[slot];
     if (status == DESTROY || download_write_slot != -1 || download_slot.state != DownloadSlotState::READY) {
         return;
@@ -286,11 +286,11 @@ void ClientSession::download_write(int slot) {
     const size_t expected = buf->size();
     boost::asio::async_write(in_socket, buf->data(),
       tp::bind_mem_alloc([this, self, buf, slot, expected](const boost::system::error_code error, size_t length) {
-          download_write_done(slot, error, length, expected);
+          tcp_tls_download_write_done(slot, error, length, expected);
       }));
 }
 
-void ClientSession::download_write_done(
+void ClientSession::tcp_tls_download_write_done(
   int slot, const boost::system::error_code& error, size_t length, size_t expected) {
     auto& download_slot = download_slots[slot];
     if (download_slot.state != DownloadSlotState::WRITING || download_write_slot != slot) {
@@ -313,16 +313,16 @@ void ClientSession::download_write_done(
     if (download_ready_slot != -1) {
         const int ready_slot = download_ready_slot;
         download_ready_slot  = -1;
-        download_write(ready_slot);
+        tcp_tls_download_write(ready_slot);
     }
     if (download_terminal_pending) {
-        download_finish();
+        tcp_tls_download_finish();
     } else {
-        download_read();
+        tcp_tls_download_read();
     }
 }
 
-void ClientSession::download_finish() {
+void ClientSession::tcp_tls_download_finish() {
     if (!download_terminal_pending || download_read_slot != -1 || download_write_slot != -1 ||
         download_ready_slot != -1) {
         return;

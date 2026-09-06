@@ -76,12 +76,12 @@ class ClientSession : public SocketSession {
     void in_async_read();
     void in_async_write(const std::string_view& data, size_t ack_count = 0);
     void out_async_read();
-    bool use_download_slots();
-    void download_read();
-    void download_read_done(int slot, const boost::system::error_code& error, size_t length);
-    void download_write(int slot);
-    void download_write_done(int slot, const boost::system::error_code& error, size_t length, size_t expected);
-    void download_finish();
+    bool use_tcp_tls_download_slots();
+    void tcp_tls_download_read();
+    void tcp_tls_download_read_done(int slot, const boost::system::error_code& error, size_t length);
+    void tcp_tls_download_write(int slot);
+    void tcp_tls_download_write_done(int slot, const boost::system::error_code& error, size_t length, size_t expected);
+    void tcp_tls_download_finish();
     void out_async_write(std::shared_ptr<ReadBufWithGuard> data);
     void out_sent();
     void udp_async_read();
