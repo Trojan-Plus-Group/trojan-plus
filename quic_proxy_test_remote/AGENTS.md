@@ -10,7 +10,7 @@
 2. 本地 Release 构建并运行相关 fulltest。
 3. 本地测试全部通过后提交本轮代码。该提交仅限用户明确要求启动此验证流程时创建；禁止 `git push`。
 4. 运行 `python3 quic_proxy_test_remote/scripts/sync_remote.py --jobs 1`，通过 git bundle 将本地当前分支 fast-forward 同步到远端。
-5. 同步脚本在远端以 `-j 1` 编译，并验证本地与远端 commit 一致。若本地机器比较强大，可以使用多线程编译。
+5. 同步脚本在远端以 `-j 1` 编译，并验证本地与远端 commit 一致。`-j 1` 仅适用于远端构建；本地构建必须使用并发编译，不得套用远端单线程限制。
 6. 依次执行 `client`、`nat`、`client_tun` 的 TCP TLS 与强制 QUIC smoke，共六组。每组使用独立 Run ID，默认 1 MiB、1 请求，不运行 iperf3 和长稳。
 7. 六组均满足 exit 0、HTTP 200、字节/hash 完整、QUIC 无 TCP fallback，且 cleanup 无残留后，宣布本轮通过。
 
@@ -57,7 +57,7 @@ ssh -p <SSH_PORT> <SSH_USER>@<REMOTE_HOST> \
 
 1. 禁止 `git push`。仅使用 git bundle 将代码 fast-forward 同步到远端。
 2. 未经用户明确要求，不得创建 commit。
-3. 远端若为 1 CPU/1 GB 小主机，只能使用 `cmake --build build -j 1`；禁止并行编译和并行重负载任务。本地机器如果强大，可以使用并行编译。
+3. 远端若为 1 CPU/1 GB 小主机，只能使用 `cmake --build build -j 1`；禁止并行编译和并行重负载任务。此单线程规则只适用于远端，禁止用于本地构建；本地必须按可用 CPU 并发编译。
 4. 单样本不超过 50 MB，单组不超过 5 分钟；首次失败、超时和重试结果都要保留。
 5. 临时密码、私钥、TLS keylog 不得提交；测试结束删除远端临时凭据。
 6. 禁止批量 `pkill`、批量删除 `/tmp/trojan-*` 或非本轮容器。仅按 run metadata 中 PID、容器名和远端目录清理。
@@ -79,7 +79,7 @@ python3 quic_proxy_test_remote/scripts/sync_remote.py --jobs 1
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DENABLE_QUIC=ON
-cmake --build build -j 1
+cmake --build build --parallel "$(sysctl -n hw.ncpu 2>/dev/null || nproc)"
 python3 -m unittest \
   quic_proxy_test_remote/scripts/test_run.py \
   quic_proxy_test_remote/scripts/test_docker_modes.py

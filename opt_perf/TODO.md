@@ -3,9 +3,9 @@
 ## 当前状态
 
 - 当前 Iteration：Iteration 2
-- 当前阶段：QUIC retry 与 flow control 可观测性设计
-- 总体状态：Iteration 1 已停止并完成回退
-- 下一门禁：增加低开销累计计数并完成本地门禁
+- 当前阶段：QUIC retry 观测完成，等待下一单变量假设
+- 总体状态：Iteration 1 已停止并完成回退；Iteration 2 的 1 ms retry 候选无有效 A/B 收益证据，已回退
+- 下一门禁：按固定流程先采集修改前 iperf3 TCP/UDP 基线、代理性能和利用率，再开始下一项代码修改
 
 ## 强制流程
 
@@ -70,7 +70,19 @@
 
 ## Iteration 2：QUIC retry 与 flow control
 
-状态：准备增加单连接累计计数，观测 partial-write 10 ms retry、`WRITE_MORE` 与 `STREAM_DATA_BLOCKED` 触发频率。
+状态：单连接累计计数已完成；10 ms retry 在本地 T12 的 300 KiB 下载中每连接触发 4 次，`STREAM_DATA_BLOCKED` 未触发。1 ms retry 虽通过本地门禁，但没有按固定流程取得修改前后同环境利用率 A/B，判定无有效收益证据并回退至 10 ms；不修改 flow control。
+
+- [x] 增加连接级 `partial_write_retries`、`write_more`、`stream_data_blocked` 累计计数，析构时单行 INFO 输出。
+- [x] 10 ms 基线 T12 通过；服务端观察 4 次 partial-write retry，累计固定等待约 40 ms。
+- [x] 将 partial-write retry 单变量改为 1 ms；T12 通过，仍触发 4 次，日志间隔约 2 ms。
+- [x] 1 ms 候选因缺少修改前后同环境代理路径利用率 A/B，按无有效收益处理并回退至 10 ms。
+- [x] 本地 Release 并发构建通过。
+- [x] runner unittest 通过：46/46。
+- [x] QUIC `-q all`、标准 `-n`、fallback `-f` 通过。
+- [x] macOS DNS 按规则跳过。
+- [x] 历史远端数据复核：`r9` QUIC 中位数 9.513 Mbps；`r23` 14.343 Mbps；`r25` 9.738 Mbps。同 commit 的 `r23/r25` 波动约 32%，不能用于证明 1 ms 候选收益。
+- [x] 1 ms 候选停止，不再补测；后续任何性能候选必须先取得修改前基线与代理利用率，再修改并重测。
+- [ ] 依据新固定流程选择下一单变量；完成修改前数据采集前不进入 flow-control 参数 A/B。
 
 ## Iteration 3：TCP relay chunk
 

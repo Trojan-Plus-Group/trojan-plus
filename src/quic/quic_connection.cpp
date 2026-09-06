@@ -307,6 +307,12 @@ QuicConnection::QuicConnection(QuicEndpoint& endpoint, std::shared_ptr<QuicTlsCt
 }
 
 QuicConnection::~QuicConnection() {
+    _log_with_date_time("QuicConnection counters peer=" +
+                        tp::string(m_peer.address().to_string().c_str()) + ":" +
+                        tp::to_string(m_peer.port()) + " partial_write_retries=" +
+                        tp::to_string(m_partial_write_retries) + " write_more=" +
+                        tp::to_string(m_write_more_count) + " stream_data_blocked=" +
+                        tp::to_string(m_stream_data_blocked_count), Log::INFO);
     _log_with_date_time("QuicConnection: ~QuicConnection destructed for peer " + 
                         tp::string(m_peer.address().to_string().c_str()) + ":" + 
                         tp::to_string(m_peer.port()), Log::INFO);
@@ -758,6 +764,7 @@ void QuicConnection::UnackedBuf::send(){
     }else{
         // wait for a while and send again
         m_sending_offset += sent;
+        ++conn->m_partial_write_retries;
 
         m_retry_delay_ms = 10;
 
@@ -887,6 +894,7 @@ int64_t QuicConnection::send_stream_data_impl(int64_t stream_id, const uint8_t* 
                                                 &pdatalen, flags, stream_id, &vec, 1, ts);
 
         if (nwrite == NGTCP2_ERR_WRITE_MORE) {
+            ++m_write_more_count;
             _log_with_date_time("send_stream_data_impl: WRITE_MORE stream=" + 
                 tp::to_string(stream_id) + " pdatalen=" + tp::to_string(pdatalen), Log::ALL);
             ppe_pending = true;
@@ -899,6 +907,7 @@ int64_t QuicConnection::send_stream_data_impl(int64_t stream_id, const uint8_t* 
 
         if (nwrite < 0) {
             if (nwrite == NGTCP2_ERR_STREAM_DATA_BLOCKED) {
+                ++m_stream_data_blocked_count;
                 _log_with_date_time("send_stream_data_impl: STREAM_DATA_BLOCKED stream=" + tp::to_string(stream_id) + 
                     " written=" + tp::to_string(written), Log::ALL);
                 // PPE_PENDING may be set from a previous WRITE_MORE; must flush before returning.
@@ -1049,6 +1058,7 @@ int64_t QuicConnection::send_stream_vecs_impl(int64_t stream_id,
                                                 &pdatalen, flags, stream_id, active_vecs.data(), active_vecs.size(), ts);
 
         if (nwrite == NGTCP2_ERR_WRITE_MORE) {
+            ++m_write_more_count;
             _log_with_date_time("send_stream_vecs_impl: WRITE_MORE stream=" + 
                 tp::to_string(stream_id) + " pdatalen=" + tp::to_string(pdatalen) + 
                 " path=" + tp::string(debug_path), Log::ALL);
@@ -1062,6 +1072,7 @@ int64_t QuicConnection::send_stream_vecs_impl(int64_t stream_id,
 
         if (nwrite < 0) {
             if (nwrite == NGTCP2_ERR_STREAM_DATA_BLOCKED) {
+                ++m_stream_data_blocked_count;
                 _log_with_date_time("send_stream_vecs_impl: STREAM_DATA_BLOCKED stream=" + tp::to_string(stream_id) + 
                     " written=" + tp::to_string(written) + 
                     " path=" + tp::string(debug_path), Log::ALL);
