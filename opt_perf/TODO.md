@@ -136,21 +136,25 @@
 
 ## Iteration 5：参数固化与长稳
 
-状态：已开始；本地门禁通过。已授权同步脚本将远端同名测试分支 reset 到本地已提交分支，待提交同步规则修改后继续最终验收矩阵。
+状态：最终功能、压力、资源、长稳与 cleanup 验收通过；单流性能最终门禁因公网波动及历史最终基线仅 1 个样本而证据不足，停止继续修改，保留已完成的 Iteration 4 有效 A/B 结论。
 
-- [x] 最终候选冻结为 `f48bfce`，不扩展双槽适用路径。
+- [x] 最终候选冻结为 `3969600`（双槽候选、观测/采样修正及远端同步规则），不扩展双槽适用路径。
 - [ ] 代码格式检查；需可用 `clang-format`。
 - [x] 本地 Release 并发构建通过。
 - [x] runner unittest 通过：47/47。
 - [x] QUIC `-q all`、标准 `-n`、fallback `-f` 通过；macOS DNS 按规则跳过。
 - [x] 远程参数沿用既有配置并通过 `sync_remote.py --status` 复核；远端当前 `opt_perf@9606a6e`。
-- [ ] 首次 git bundle fast-forward 同步失败：远端 `opt_perf@9606a6e` 与本地 `opt_perf@2a60413` 分叉；当次未进入远端构建。现已授权远端同名测试分支 `reset --hard` 对齐，待同步规则修改提交后重试远端 `-j 1` Release 构建并确认双端 branch/commit 一致。
-- [ ] 采集同轮、同方向 iperf3 TCP/UDP 原始基线。
-- [ ] `client`、`nat`、`client_tun` TCP TLS/强制 QUIC 各 5 × 5 MiB。
-- [ ] `client`、`nat`、`client_tun` TCP TLS/强制 QUIC 各 200 请求压力。
-- [ ] 关键 QUIC 路径 30 分钟 active + 10 分钟 cooldown。
-- [ ] 复核 median、P10/P90、aggregate、P50/P95、失败数、长度/hash、fallback、drops、RSS/PSS 和 cleanup。
-- [ ] 对照最终指标给出通过或停止结论。
+- [x] 首次 git bundle fast-forward 同步因远端 `opt_perf@9606a6e` 分叉失败；授权后使用 `reset --hard FETCH_HEAD` 将远端同名测试分支对齐至本地 `opt_perf@3969600`，远端 `-j 1` Release 构建通过，未 reset 其他分支或执行 `git clean`。
+- [x] 原始基线 `r80`：60/60 有效；TCP 正向单流中位数 12.694 Mbps，P10/P90 12.422/12.874 Mbps；UDP 10/25/50 Mbps 双向均近目标值、loss 0。
+- [x] `client` 正式：TCP `r80` 5/5，中位数 6.560 Mbps，P10/P90 4.144/9.560 Mbps；QUIC `r81` 5/5，中位数 7.395 Mbps，P10/P90 5.543/9.693 Mbps。相对 r80 TCP 正向单流基线利用率约 51.7%/58.3%，低于历史候选，待后置基线与代理复测归因。
+- [x] `client` 压力：TCP `r82` 200/200，aggregate 21.632 Mbps，P50/P95 2.551/3.117 秒；QUIC `r83` 200/200，aggregate 18.615 Mbps，P50/P95 6.452/18.008 秒；失败 0。
+- [x] `nat` 正式 `r84/r85` 各 5/5、压力 `r86/r87` 各 200/200，内容和 cleanup 正确；相邻单次 iperf 2.45/5.24 Mbps 波动过大，不用于性能比例结论。
+- [x] `client_tun` 正式 `r88/r89` 各 5/5、压力 `r90/r91` 各 200/200，内容和 cleanup 正确；相邻单次 iperf 24.33/3.33 Mbps 波动过大，不用于性能比例结论。
+- [x] 关键 QUIC `r92` 30 分钟 active + 10 分钟 cooldown：1173/1173 有效，失败 0，观测失败 0；本地 QUIC RSS 9.21–16.00 MiB 后平台化，远端 RSS 10.55–13.77 MiB、PSS 8.84–12.06 MiB，cooldown 稳定但未回落。
+- [x] 后置夹测 `r93/r94/r95`：基线 TCP 正向单流中位数 12.914 Mbps，但单样本冲到 20.936 Mbps；TCP 5/5 中位数 7.167 Mbps、利用率约 55.5%；QUIC 5/5 中位数 7.897 Mbps、利用率约 61.1%。
+- [x] 复核历史最终 `f48bfce r80/r81/r82`：基线仅 1 个样本 12.804 Mbps；按原始样本重算 TCP/QUIC 中位数约 7.829/8.004 Mbps。当前 QUIC 基本一致；TCP 约 -8.5%，但历史 TCP 含 0.543 Mbps 异常样本，且公网窗口波动大，不具备有效最终回归判定条件。
+- [x] 复核 median、P10/P90、aggregate、P50/P95、失败数、长度/hash、fallback、drops、RSS/PSS 和 cleanup；全部功能样本有效，压力失败 0，长稳失败 0，无资源残留。
+- [x] 最终结论：功能、协议、压力、资源、长稳与 cleanup 通过；无法基于本轮证明 PLAN 中 QUIC 相对优化前 +20% 或达到稳定 70% 基线利用率，性能最终门禁判为证据不足，不宣布新的性能收益，不继续扩展或修改候选。
 
 
 ## 结果索引
