@@ -7,7 +7,7 @@
 执行原则：
 
 1. 每次只验证一个假设，禁止同时修改 UDP buffer、QUIC flow control、Session chunk 和双缓冲。
-2. 每个 Iteration 均执行“本地修改 → 本地 fulltest → commit → 同步及远端编译 → 三模式 TCP/QUIC smoke”的验证闭环；同步后本地与远端分支名、commit 必须同时一致。
+2. 每个 Iteration 均执行“本地修改 → 本地 fulltest → commit → 同步及远端编译 → 三模式 TCP/QUIC smoke”的验证闭环；同步允许远端同名测试分支 `reset --hard` 到本地已提交分支，不得 reset 其他分支或执行 `git clean`；同步后本地与远端分支名、commit 必须同时一致。
 3. **开始任何 Iteration 前必须先重点阅读 [quic_proxy_test_remote/AGENTS.md](../quic_proxy_test_remote/AGENTS.md)**。所有测试命令、远端同步、基线采集、安全规则、Run ID、证据保留、失败迭代和 cleanup 要求均以该文件为准；本计划不重复定义。
 4. 性能优化首要判定依据是本地与远程测试服务器之间的原始 TCP/UDP 基线带宽，以及代理路径相对该基线的利用率；禁止脱离同时间窗口基线比较绝对 Mbps。
 5. 本地测试或远端 smoke 失败时停止，保留证据并返回本地修改；修复后使用新 commit 和新 Run ID 重跑。

@@ -15,7 +15,8 @@ class SyncRemoteTest(unittest.TestCase):
         self.assertIn("show-ref --verify --quiet refs/heads/opt_perf", command)
         self.assertIn("switch opt_perf", command)
         self.assertIn("switch -c opt_perf FETCH_HEAD", command)
-        self.assertIn("merge --ff-only FETCH_HEAD", command)
+        self.assertIn("reset --hard FETCH_HEAD", command)
+        self.assertNotIn("merge --ff-only FETCH_HEAD", command)
 
     def test_remote_sync_verifies_branch_and_commit(self):
         command = MODULE.remote_sync_command("opt_perf", "/tmp/opt_perf.bundle")
@@ -24,9 +25,9 @@ class SyncRemoteTest(unittest.TestCase):
         self.assertIn("rev-parse FETCH_HEAD", command)
 
     def test_remote_sync_quotes_values(self):
-        command = MODULE.remote_sync_command("feature/test", "/tmp/test bundle")
-        self.assertIn("'feature/test'", command)
-        self.assertIn("'refs/heads/feature/test'", command)
+        command = MODULE.remote_sync_command("feature;test", "/tmp/test bundle")
+        self.assertIn("'feature;test'", command)
+        self.assertIn("'refs/heads/feature;test'", command)
         self.assertIn("'/tmp/test bundle'", command)
 
 

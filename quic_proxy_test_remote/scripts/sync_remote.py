@@ -11,7 +11,7 @@ Remote Server Specs & Stability Constraints:
     [143642.616566] Out of memory: Killed process 83234 (systemd) total-vm:20336kB...
 - Rules:
   1. Never run parallel builds (--parallel or -j > 1) on the remote host. Always use -j 1.
-  2. Never push directly to remote origin. Always use git bundle via SCP/SSH fast-forward.
+  2. Never push directly to remote origin. Use git bundle via SCP/SSH and reset only the matching remote test branch.
 """
 
 import argparse
@@ -75,7 +75,7 @@ def remote_sync_command(branch, remote_bundle):
         f"if git -C {quoted_repo} show-ref --verify --quiet {quoted_ref}; then "
         f"git -C {quoted_repo} switch {quoted_branch}; "
         f"else git -C {quoted_repo} switch -c {quoted_branch} FETCH_HEAD; fi && "
-        f"git -C {quoted_repo} merge --ff-only FETCH_HEAD && "
+        f"git -C {quoted_repo} reset --hard FETCH_HEAD && "
         f"test \"$(git -C {quoted_repo} branch --show-current)\" = {quoted_branch} && "
         f"test \"$(git -C {quoted_repo} rev-parse HEAD)\" = \"$(git -C {quoted_repo} rev-parse FETCH_HEAD)\" && "
         f"rm -f {quoted_bundle}"
@@ -98,7 +98,7 @@ def sync_bundle(branch, connect_timeout, bundle_timeout, transfer_timeout, sync_
         print(f"[*] Step 2: Transferring bundle to root@{HOST}:{remote_bundle} via SCP...")
         run_cmd(["scp", "-P", str(SSH_PORT), str(local_bundle), f"root@{HOST}:{remote_bundle}"], timeout=transfer_timeout)
 
-        print(f"[*] Step 3: Switching and fast-forwarding {REMOTE_REPO} branch '{branch}' on remote...")
+        print(f"[*] Step 3: Switching and resetting {REMOTE_REPO} test branch '{branch}' to local bundle...")
         res = run_cmd(ssh_cmd(remote_sync_command(branch, remote_bundle), connect_timeout), timeout=sync_timeout)
         if res.stdout.strip():
             print(res.stdout.strip())

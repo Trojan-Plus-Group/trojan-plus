@@ -103,7 +103,7 @@ cmake --build build --config Release --parallel
 1. 本地修改代码。
 2. 本地构建并运行相关 fulltest。
 3. 本地测试全部通过后提交本轮代码；提交仅用于用户明确要求的验证流程，禁止 `git push`。
-4. 使用 `quic_proxy_test_remote/scripts/sync_remote.py --jobs 1` 将本地当前分支通过 git bundle fast-forward 同步到远端。
+4. 使用 `quic_proxy_test_remote/scripts/sync_remote.py --jobs 1` 通过 git bundle 将远端同名测试分支 `reset --hard` 到本地当前已提交分支；不得 reset 其他分支或执行 `git clean`。
 5. 在远端以相同 commit 单线程编译。
 6. 执行 `client`、`nat`、`client_tun` 三模式 TCP TLS/强制 QUIC smoke。
 7. 六组 smoke、内容校验、协议校验和 cleanup 全部通过，才宣布本轮验证通过。

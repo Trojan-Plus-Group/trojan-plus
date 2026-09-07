@@ -2,10 +2,10 @@
 
 ## 当前状态
 
-- 当前 Iteration：Iteration 4
-- 当前阶段：ClientSession TCP TLS 下载双槽有效 A/B、压力和长稳完成，候选保留
-- 总体状态：非 pipeline TCP TLS 下载利用率提升约 6.8%，正确性、资源和 cleanup 无回归
-- 下一门禁：为 ClientSession QUIC 下载方向采集独立修改前基线，禁止直接复用 TCP 双槽状态机
+- 当前 Iteration：Iteration 5
+- 当前阶段：参数冻结，执行最终验收
+- 总体状态：冻结 `2a60413`；非 pipeline TCP TLS 下载利用率提升约 6.8%，QUIC 下载利用率提升约 16.2%，正确性、资源和 cleanup 无回归
+- 下一门禁：确认远程环境参数后，按最终验收矩阵采集同轮基线、三模式 TCP/QUIC 正式与压力数据，并完成关键 QUIC 30+10 分钟长稳
 
 ## 强制流程
 
@@ -19,7 +19,7 @@
 6. fallback 测试。
 7. Linux DNS/TUN 补充测试；macOS 按规则跳过 DNS。
 8. 用户确认远程环境参数。
-9. git bundle + fast-forward 同步。
+9. git bundle 同步，允许远端同名测试分支 `reset --hard` 到本地已提交分支；禁止 reset 其他分支和 `git clean`。
 10. 远端单线程 Release 构建；不在远端重复运行 LinuxFullTest。
 11. 本地与远端组合的原始网络基线。
 12. `client`、`nat`、`client_tun` TCP/强制 QUIC 正式与压力测试。
@@ -132,11 +132,25 @@
 - [x] 同规格并发归因夹测：回退前 `r77` 200/200、22.424 Mbps；候选 `r78` 200/200、29.035 Mbps；回退后 `r79` 200/200、28.760 Mbps。`r74` 的大面积超时无法稳定复现，归因瞬时公网或连接状态异常，不归因双槽。
 - [x] 夹测显示候选相对相邻后基线并发 aggregate 仅约 +1.0%，不作为并发收益证据；单流利用率有效 A/B 提升约 16.2%，且并发正确性无可复现回归，保留候选。
 - [x] 最终候选 commit `f48bfce` 已同步远端并完成 `-j 1` 构建；双端 `opt_perf@f48bfce` 一致，未 push。
-- [ ] 下一子步骤：Client 上传方向；修改前先采集独立基线。
+- [x] 停止扩展 Client 上传、ServerSession 和 Pipeline 双槽；现有瓶颈证据不足，冻结 `2a60413` 进入最终验收。
 
 ## Iteration 5：参数固化与长稳
 
-状态：未开始。
+状态：已开始；本地门禁通过。已授权同步脚本将远端同名测试分支 reset 到本地已提交分支，待提交同步规则修改后继续最终验收矩阵。
+
+- [x] 最终候选冻结为 `f48bfce`，不扩展双槽适用路径。
+- [ ] 代码格式检查；需可用 `clang-format`。
+- [x] 本地 Release 并发构建通过。
+- [x] runner unittest 通过：47/47。
+- [x] QUIC `-q all`、标准 `-n`、fallback `-f` 通过；macOS DNS 按规则跳过。
+- [x] 远程参数沿用既有配置并通过 `sync_remote.py --status` 复核；远端当前 `opt_perf@9606a6e`。
+- [ ] 首次 git bundle fast-forward 同步失败：远端 `opt_perf@9606a6e` 与本地 `opt_perf@2a60413` 分叉；当次未进入远端构建。现已授权远端同名测试分支 `reset --hard` 对齐，待同步规则修改提交后重试远端 `-j 1` Release 构建并确认双端 branch/commit 一致。
+- [ ] 采集同轮、同方向 iperf3 TCP/UDP 原始基线。
+- [ ] `client`、`nat`、`client_tun` TCP TLS/强制 QUIC 各 5 × 5 MiB。
+- [ ] `client`、`nat`、`client_tun` TCP TLS/强制 QUIC 各 200 请求压力。
+- [ ] 关键 QUIC 路径 30 分钟 active + 10 分钟 cooldown。
+- [ ] 复核 median、P10/P90、aggregate、P50/P95、失败数、长度/hash、fallback、drops、RSS/PSS 和 cleanup。
+- [ ] 对照最终指标给出通过或停止结论。
 
 
 ## 结果索引

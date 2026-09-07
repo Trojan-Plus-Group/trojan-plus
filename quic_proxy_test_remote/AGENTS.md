@@ -9,7 +9,7 @@
 1. 本地修改代码。
 2. 本地 Release 构建并运行相关 fulltest。
 3. 本地测试全部通过后提交本轮代码。该提交仅限用户明确要求启动此验证流程时创建；禁止 `git push`。
-4. 运行 `python3 quic_proxy_test_remote/scripts/sync_remote.py --jobs 1`，通过 git bundle 将本地当前分支 fast-forward 同步到远端。
+4. 运行 `python3 quic_proxy_test_remote/scripts/sync_remote.py --jobs 1`，通过 git bundle 将远端同名测试分支 reset 到本地当前分支。
 5. 同步脚本在远端以 `-j 1` 编译，并验证本地与远端 commit 一致。`-j 1` 仅适用于远端构建；本地构建必须使用并发编译，不得套用远端单线程限制。
 6. 依次执行 `client`、`nat`、`client_tun` 的 TCP TLS 与强制 QUIC smoke，共六组。每组使用独立 Run ID，默认 1 MiB、1 请求，不运行 iperf3 和长稳。
 7. 六组均满足 exit 0、HTTP 200、字节/hash 完整、QUIC 无 TCP fallback，且 cleanup 无残留后，宣布本轮通过。
@@ -55,7 +55,7 @@ ssh -p <SSH_PORT> <SSH_USER>@<REMOTE_HOST> \
 
 ## 3. 安全规则
 
-1. 禁止 `git push`。仅使用 git bundle 将代码 fast-forward 同步到远端。
+1. 禁止 `git push`。仅使用 git bundle 同步；允许同步脚本对远端同名测试分支执行 `reset --hard FETCH_HEAD`，使其与本地已提交代码一致。不得 reset 其他分支，不删除未跟踪文件。
 2. 未经用户明确要求，不得创建 commit。
 3. 远端若为 1 CPU/1 GB 小主机，只能使用 `cmake --build build -j 1`；禁止并行编译和并行重负载任务。此单线程规则只适用于远端，禁止用于本地构建；本地必须按可用 CPU 并发编译。
 4. 单样本不超过 50 MB，单组不超过 5 分钟；首次失败、超时和重试结果都要保留。
@@ -73,7 +73,7 @@ python3 quic_proxy_test_remote/scripts/sync_remote.py --status
 python3 quic_proxy_test_remote/scripts/sync_remote.py --jobs 1
 ```
 
-同步脚本默认通过 `git branch --show-current` 获取本地当前分支并同步同名 branch，不得写死项目分支。detached HEAD 时必须显式传入 `--branch <BRANCH>`。同步时必须切换或创建远端同名分支，并在完成后同时校验本地与远端分支名、commit 一致；只允许 fast-forward。远端分支无法安全切换、存在未提交改动或 commit 无法 fast-forward 时停止，不得 reset、force 覆盖或推进其他分支。git bundle 只能包含已提交内容；工作树有产品代码修改时，未经用户明确授权不得自行 commit，也不得声称远端已同步该修改。
+同步脚本默认通过 `git branch --show-current` 获取本地当前分支并同步同名 branch，不得写死项目分支。detached HEAD 时必须显式传入 `--branch <BRANCH>`。同步时必须切换或创建远端同名测试分支，再执行 `reset --hard FETCH_HEAD`，允许丢弃该测试分支的已跟踪改动和分叉提交，使其与本地已提交代码一致；不得 reset 或推进其他分支，不得执行 `git clean` 删除未跟踪文件。完成后必须同时校验本地与远端分支名、commit 一致。git bundle 只能包含已提交内容；工作树有产品代码或测试执行器修改时，未经用户明确授权不得自行 commit，也不得声称远端已同步该修改。
 
 修改产品代码或测试执行器后，先运行：
 
