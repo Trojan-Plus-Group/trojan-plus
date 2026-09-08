@@ -1716,35 +1716,15 @@ def test_quic_load_test(binary_path):
 
 
 def test_stateless_reset(binary_path):
-    """T17: Stateless Reset scenario after server restart.
-
-    Flow:
-      1. Client + server establish QUIC connection; proxy a file via SOCKS5 → verify success.
-      2. Kill server; restart server (new process → new random secret → new Stateless Reset tokens).
-      3. Client retries proxy request → verify failure (connection is dead).
-      4. Verify server log shows 'sending Stateless Reset for unknown CID' for the stale CIDs.
-      5. Verify client log shows connection closed / error (idle close or on_packet error).
-
-    Background: After server restart, the new server has a freshly-generated
-    per-process secret.  When the still-live client sends 1-RTT packets using
-    the old server SCID, the new server finds no matching connection and emits a
-    Stateless Reset (RFC 9000 §10.3).  Because the token is derived from the
-    new secret (HKDF(new_secret, old_CID)), the client cannot match it to any
-    previously-advertised token and the connection eventually idles out.
-    """
+    """T17: Client reconnects promptly after server restart."""
     print_time_log("[T17] stateless_reset: starting...")
-
-    # Use a short idle timeout so the client detects the dead connection quickly.
-    IDLE_MS = 5000
 
     srv_cfg = patch_quic_config_with_suffix("quic_server_config.json", "T17.tmp.json", {
         "remote_port": HTTP_TARGET_PORT,
-        "quic": {"enabled": True, "max_idle_timeout_ms": IDLE_MS},
+        "quic": {"enabled": True},
     })
     cli_cfg = patch_quic_config_with_suffix("quic_client_config.json", "T17.tmp.json", {
-        "quic": {"enabled": True,
-                 "max_idle_timeout_ms": IDLE_MS,
-                 "retry_connect_timeout_ms": 0},   # no auto-retry
+        "quic": {"enabled": True},
     })
 
     server, srv_log = start_trojan(binary_path, srv_cfg)
@@ -1795,7 +1775,7 @@ def test_stateless_reset(binary_path):
         # Write a fresh config so the new output log is separate.
         srv_cfg2 = patch_quic_config_with_suffix("quic_server_config.json", "T17.svr2.tmp.json", {
             "remote_port": HTTP_TARGET_PORT,
-            "quic": {"enabled": True, "max_idle_timeout_ms": IDLE_MS},
+            "quic": {"enabled": True},
         })
         server, srv_log2 = start_trojan(binary_path, srv_cfg2)
         if not server:
@@ -1809,64 +1789,43 @@ def test_stateless_reset(binary_path):
             return False
         print_time_log("[T17] Step 2 OK – server restarted")
 
-        # ── Step 3: client retries proxy request → must fail ──
-        # The client still has the old QUIC connection; the new server knows nothing
-        # about its CIDs and will send Stateless Reset packets.
-        request_ok = False
+        # ── Step 3: the stale request must fail promptly instead of hanging ──
+        started = time.monotonic()
         try:
-            got2 = http_get_via_socks5(url, QUIC_CLIENT_PROXY_PORT, timeout=8)
-            if got2 == want:
-                request_ok = True   # unexpected: should have failed
+            http_get_via_socks5(url, QUIC_CLIENT_PROXY_PORT, timeout=3)
+            print_time_log("[T17] FAIL: stale request unexpectedly succeeded")
+            dump = True
+            return False
         except Exception as e:
-            print_time_log(f"[T17] Step 3 – second proxy request failed as expected: {type(e).__name__}")
-
-        if request_ok:
-            print_time_log("[T17] FAIL: second proxy request succeeded – server restart did not break connection")
-            dump = True
-            return False
-        print_time_log("[T17] Step 3 OK – second proxy request failed as expected")
-
-        # ── Step 4: verify new server sent Stateless Reset ──
-        sr_pattern = r"QuicServerEndpoint: sending Stateless Reset for unknown CID"
-        if not wait_for_log(srv_log2, sr_pattern, timeout=IDLE_MS // 1000 + 3):
-            print_time_log("[T17] FAIL: Stateless Reset not logged by restarted server")
-            dump = True
-            return False
-        print_time_log("[T17] Step 4 OK – server logged Stateless Reset for stale CID")
-
-        # ── Step 5: verify client detected a connection problem ──
-        # The client will log either an on_packet error or an idle close.
-        cli_error_pattern = (r"QuicConnection::on_packet: ngtcp2_conn_read_pkt"
-                             r"|IDLE_CLOSE|idle.*close|QuicClientEndpoint.*retry"
-                             r"|QuicClientEndpoint.*unreachable|QuicConnection.*clos")
-        if not wait_for_log(cli_log, cli_error_pattern, timeout=IDLE_MS // 1000 + 3):
-            print_time_log("[T17] FAIL: client did not log any connection error after server restart")
-            dump = True
-            return False
-        print_time_log("[T17] Step 5 OK – client logged connection error / close")
-
-        # ── Step 6: wait 1s and retry proxy request → must succeed (reconnect) ──
-        time.sleep(1.5)  # Wait for reconnection to settle
-        print_time_log("[T17] Step 6 – trying third proxy request (expecting reconnect)...")
-        try:
-            got3 = http_get_via_socks5(url, QUIC_CLIENT_PROXY_PORT, timeout=10)
-            if got3 != want:
-                print_time_log(f"[T17] FAIL: third proxy request returned wrong data: {got3}")
+            elapsed = time.monotonic() - started
+            if elapsed >= 3:
+                print_time_log(f"[T17] FAIL: stale request hung for {elapsed:.2f}s")
                 dump = True
                 return False
-        except Exception as e:
-            print_time_log(f"[T17] FAIL: third proxy request failed after 1s: {e}")
+            print_time_log(f"[T17] Step 3 OK – stale request failed in {elapsed:.2f}s: {type(e).__name__}")
+
+        # ── Step 4: automatic reconnect must make the next request succeed ──
+        if not wait_for_log(cli_log, r"QuicClientEndpoint: retrying QUIC connection", timeout=3):
+            print_time_log("[T17] FAIL: client did not retry QUIC after server restart")
             dump = True
             return False
-        
-        # Verify reconnection log
-        recon_pattern = r"reconnect quic client!"
-        if not wait_for_log(cli_log, recon_pattern, timeout=2):
-            print_time_log("[T17] FAIL: client did not log 'reconnect quic client!'")
+        if not wait_for_log(srv_log2, r"QuicConnection: handshake completed", timeout=3):
+            print_time_log("[T17] FAIL: second QUIC handshake not seen")
             dump = True
             return False
 
-        print_time_log("[T17] Step 6 OK – third proxy request succeeded via reconnected QUIC client")
+        try:
+            got2 = http_get_via_socks5(url, QUIC_CLIENT_PROXY_PORT, timeout=3)
+        except Exception as e:
+            print_time_log(f"[T17] FAIL: request after reconnect failed: {e}")
+            dump = True
+            return False
+        if got2 != want:
+            print_time_log(f"[T17] FAIL: request after reconnect returned wrong data: {got2}")
+            dump = True
+            return False
+
+        print_time_log("[T17] Step 4 OK – request after reconnect succeeded")
 
         print_time_log("[T17] stateless_reset PASSED")
         return True

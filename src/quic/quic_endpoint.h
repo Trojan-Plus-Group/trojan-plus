@@ -56,6 +56,7 @@ class QuicEndpoint : public std::enable_shared_from_this<QuicEndpoint> {
     boost::asio::ip::udp::endpoint local_endpoint() const;
 
   protected:
+    void derive_stateless_reset_secret();
     void open_socket(const boost::asio::ip::udp::endpoint& bind_ep, bool reuse_port);
     void async_recv();
     virtual void on_packet(const uint8_t* data, std::size_t len,

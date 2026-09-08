@@ -235,6 +235,7 @@ void Config::populate(const ptree& tree) {
     quic.h1_upstream            = tree.get("quic.h1_upstream", std::string()).c_str();
     quic.debug_disable_tcp      = tree.get("quic.debug_disable_tcp", false);
     quic.ping_interval_ms       = tree.get("quic.ping_interval_ms", 20000U);
+    quic.stateless_reset_secret = tree.get("quic.stateless_reset_secret", std::string()).c_str();
 
     constexpr uint32_t kMinIdleTimeoutMs = 10000U;
     if (quic.max_idle_timeout_ms < kMinIdleTimeoutMs) {

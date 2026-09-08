@@ -13,6 +13,10 @@
 #include <boost/asio/socket_base.hpp>
 #include <wolfssl/options.h>
 #include <wolfssl/ssl.h>
+#include <wolfssl/wolfcrypt/sha256.h>
+
+#include <array>
+#include <fstream>
 
 #include "core/config.h"
 #include "core/log.h"
@@ -31,12 +35,45 @@ QuicEndpoint::QuicEndpoint(boost::asio::io_context& io_ctx, const Config& config
       m_socket(io_ctx),
       m_recv_buf(kRecvBufBytes, 0),
       m_running(false) {
-    // Generate a per-process random secret for deterministic Stateless Reset
-    // token derivation.  The same secret is used in cb_get_new_connection_id
-    // (advertised to peer via NEW_CONNECTION_ID) and send_stateless_reset
-    // (reconstructed from DCID + secret), so the token will match.
-    wolfSSL_RAND_bytes(m_stateless_reset_secret,
-                       static_cast<int>(kStatelessResetSecretLen));
+    derive_stateless_reset_secret();
+}
+
+void QuicEndpoint::derive_stateless_reset_secret() {
+    if (m_config.get_run_type() != Config::SERVER) {
+        wolfSSL_RAND_bytes(m_stateless_reset_secret, static_cast<int>(kStatelessResetSecretLen));
+        return;
+    }
+
+    constexpr char context[] = "trojan-plus/stateless-reset/v1";
+    wc_Sha256 sha;
+    bool ok = wc_InitSha256(&sha) == 0 &&
+              wc_Sha256Update(&sha, reinterpret_cast<const byte*>(context), sizeof(context) - 1) == 0;
+    const auto& configured_secret = m_config.get_quic().stateless_reset_secret;
+    if (!configured_secret.empty()) {
+        ok = ok && wc_Sha256Update(&sha, reinterpret_cast<const byte*>(configured_secret.data()),
+                     static_cast<word32>(configured_secret.size())) == 0;
+    } else {
+        std::ifstream key(m_config.get_ssl().key.c_str(), std::ios::binary);
+        std::array<char, 4096> buf;
+        std::size_t bytes_read = 0;
+        ok = ok && key.good();
+        while (ok && key) {
+            key.read(buf.data(), buf.size());
+            auto len = key.gcount();
+            if (len > 0) {
+                bytes_read += static_cast<std::size_t>(len);
+                ok = wc_Sha256Update(&sha, reinterpret_cast<const byte*>(buf.data()),
+                       static_cast<word32>(len)) == 0;
+            }
+        }
+        ok = ok && bytes_read > 0;
+    }
+    if (ok && wc_Sha256Final(&sha, m_stateless_reset_secret) == 0) {
+        return;
+    }
+
+    wolfSSL_RAND_bytes(m_stateless_reset_secret, static_cast<int>(kStatelessResetSecretLen));
+    _log_with_date_time("QuicEndpoint: failed to derive persistent Stateless Reset secret", Log::WARN);
 }
 
 QuicEndpoint::~QuicEndpoint() {

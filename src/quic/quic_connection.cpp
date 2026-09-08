@@ -397,8 +397,6 @@ bool QuicConnection::init_server(const uint8_t* data, std::size_t datalen,
         m_endpoint.config().get_quic().max_idle_timeout_ms) * 1'000'000ULL;
     params.original_dcid         = *dcid;
     params.original_dcid_present = 1;
-    // No retry token for Phase 1.
-    params.stateless_reset_token_present = 0;
 
     auto path = make_path(local_ep, remote_ep);
 
@@ -406,6 +404,9 @@ bool QuicConnection::init_server(const uint8_t* data, std::size_t datalen,
     ngtcp2_cid sv_scid;
     sv_scid.datalen = kServerScidLen;
     wolfSSL_RAND_bytes(sv_scid.data, static_cast<int>(kServerScidLen));
+    params.stateless_reset_token_present =
+        ngtcp2_crypto_generate_stateless_reset_token(params.stateless_reset_token,
+            m_endpoint.stateless_reset_secret(), kStatelessResetSecretLen, &sv_scid) == 0;
 
     // ngtcp2_conn_server_new(conn, dcid, scid, path, version, ...):
     //   dcid = the client's SCID (server uses it as its destination CID)
@@ -1256,17 +1257,16 @@ void QuicConnection::close(uint64_t app_error_code) {
 
     fail_all_unacked_buffers(boost::asio::error::broken_pipe);
 
-    if(on_close_cb){
-        // Delay connection cleanup by 5 seconds to allow pending asynchronous operations 
-        // (such as H1 fallback resolver and connects) to finish gracefully.
+    if (on_close_cb && !m_is_server) {
+        on_close_cb(this);
+        on_close_cb = nullptr;
+    } else if (on_close_cb) {
         m_loss_timer.expires_after(std::chrono::seconds(5));
         auto self = shared_from_this();
         m_loss_timer.async_wait([this, self](const boost::system::error_code& ec) {
-            if (!ec) {
-                if (on_close_cb) {
-                    on_close_cb(this);
-                    on_close_cb = nullptr;
-                }
+            if (!ec && on_close_cb) {
+                on_close_cb(this);
+                on_close_cb = nullptr;
             }
         });
     }

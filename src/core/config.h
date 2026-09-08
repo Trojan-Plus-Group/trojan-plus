@@ -107,6 +107,7 @@ class Config {
         tp::string h1_upstream;               // server: real HTTP/1 backend for non-trojan traffic
         bool       debug_disable_tcp;         // debug: disable tcp, only allow quic
         uint32_t   ping_interval_ms;          // QUIC PING keep-alive interval, 0 = disabled
+        tp::string stateless_reset_secret;
     };
 
     using TUN = struct {

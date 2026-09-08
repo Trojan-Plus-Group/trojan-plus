@@ -176,6 +176,13 @@ void QuicClientEndpoint::fail_all_pending_streams() {
 void QuicClientEndpoint::mark_unreachable() {
     m_known_unreachable = true;
     fail_all_pending_streams();
+    auto stream_data_cb = std::move(m_stream_data_cb);
+    m_stream_data_cb.clear();
+    for (auto& [stream_id, callback] : stream_data_cb) {
+        if (callback) {
+            callback(nullptr, 0, true);
+        }
+    }
     uint32_t retry_ms   = m_config.get_quic().retry_connect_timeout_ms;
     if (retry_ms == 0 || !m_running) {
         return;
