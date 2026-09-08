@@ -577,8 +577,11 @@ void ClientSession::in_sent() {
 
 void ClientSession::request_remote() {
     auto self = shared_from_this();
-    auto pipeline_init_cb   = [this, self]() {
-        pipeline_session = true;
+    auto remote_init_cb = [this, self](bool via_pipeline) {
+        if (status == DESTROY) {
+            return;
+        }
+        pipeline_session = via_pipeline;
 
         boost::system::error_code ec;
         if (is_udp_forward_session()) {
@@ -637,19 +640,31 @@ void ClientSession::request_remote() {
         m_out->async_connect(
             get_config().get_remote_addr(),
             static_cast<uint16_t>(get_config().get_remote_port()),
-            pipeline_init_cb,
-            [this, self, pipeline_init_cb, pipeline_assigned]() {
+            [remote_init_cb]() { remote_init_cb(false); },
+            [this, self, remote_init_cb]() {
+                if (status == DESTROY) {
+                    return;
+                }
                 if (m_out && m_out->is_via_quic()) {
+                    const bool can_fallback = get_config().get_experimental().pipeline_num > 0 &&
+                                              !get_config().get_quic().debug_disable_tcp;
                     _log_with_endpoint(get_in_endpoint(),
                         "session_id: " + tp::to_string(get_session_id()) +
                         " QUIC stream open failed, falling back to " +
-                        (pipeline_assigned ? "pipeline" : "destroy"),
+                        (can_fallback ? "pipeline" : "destroy"),
                         Log::WARN);
                     m_out->cancel();
                     m_out->close();
                     m_out.reset();
-                    if (pipeline_assigned) {
-                        pipeline_init_cb();
+                    if (can_fallback) {
+                        get_service()->bind_session_to_pipeline(self,
+                            [this, self, remote_init_cb](const boost::system::error_code& error) {
+                                if (error || status == DESTROY) {
+                                    destroy();
+                                    return;
+                                }
+                                remote_init_cb(true);
+                            });
                     } else {
                         destroy();
                     }
@@ -666,7 +681,16 @@ void ClientSession::request_remote() {
     }
 
     if (pipeline_assigned) {
-        pipeline_init_cb();
+        remote_init_cb(true);
+    } else if (get_config().get_quic().enabled && get_config().get_experimental().pipeline_num > 0) {
+        get_service()->bind_session_to_pipeline(self,
+            [this, self, remote_init_cb](const boost::system::error_code& error) {
+                if (error || status == DESTROY) {
+                    destroy();
+                    return;
+                }
+                remote_init_cb(true);
+            });
     } else {
         // Lazily create the outbound transport on first use so that in_ep is available.
         if (!m_out) {
@@ -680,7 +704,7 @@ void ClientSession::request_remote() {
         m_out->async_connect(
             get_config().get_remote_addr(),
             static_cast<uint16_t>(get_config().get_remote_port()),
-            pipeline_init_cb,
+            [remote_init_cb]() { remote_init_cb(false); },
             [this, self]() { destroy(); });
     }
 }

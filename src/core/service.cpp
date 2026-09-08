@@ -312,7 +312,8 @@ void Service::prepare_quic_endpoint() {
 void Service::prepare_pipelines() {
     _guard;
 
-    if (config.get_run_type() != Config::SERVER && config.get_experimental().pipeline_num > 0) {
+    if (config.get_run_type() != Config::SERVER && config.get_experimental().pipeline_num > 0 &&
+        !config.get_quic().debug_disable_tcp) {
 
         bool changed = clear_weak_ptr_list(pipelines);
 
@@ -416,52 +417,75 @@ void Service::prepare_pipelines() {
 void Service::start_session(const std::shared_ptr<Session>& session, SentHandler&& started_handler) {
     _guard;
 
-    if (config.get_experimental().pipeline_num > 0 && config.get_run_type() != Config::SERVER) {
-
+    if (config.get_experimental().pipeline_num > 0 && config.get_run_type() != Config::SERVER &&
+        !config.get_quic().debug_disable_tcp) {
         prepare_pipelines();
-
-        if (pipelines.empty()) {
-            throw std::logic_error(tp::string("pipeline is empty after preparing!").c_str());
+        if (!config.get_quic().enabled) {
+            bind_session_to_pipeline(session, std::move(started_handler));
+            _unguard;
+            return;
         }
-
-        auto it       = pipelines.begin();
-        auto pipeline = std::shared_ptr<Pipeline>(nullptr);
-
-        if (pipeline_select_idx >= pipelines.size()) {
-            pipeline_select_idx = 0;
-            pipeline            = it->lock();
-        }
-
-        if (!pipeline || !pipeline->is_connected()) {
-            pipeline   = it->lock();
-            size_t idx = 0;
-            while (it != pipelines.end()) {
-                auto sel_pp = it->lock();
-                if (idx >= pipeline_select_idx) {
-                    if (sel_pp->is_connected()) {
-                        pipeline = sel_pp;
-                        break;
-                    }
-                    pipeline_select_idx++;
-                }
-                ++it;
-                ++idx;
-            }
-            pipeline_select_idx++;
-        }
-
-        if (!pipeline) {
-            throw std::logic_error(tp::string("pipeline fatal logic!").c_str());
-        }
-
-        _log_with_date_time("pipeline " + tp::to_string(pipeline->get_pipeline_id()) +
-                              " start session_id: " + tp::to_string(session->get_session_id()),
-          Log::INFO);
-        session->get_pipeline_component().set_use_pipeline();
-        pipeline->session_start(*(session.get()), std::move(started_handler));
-    } else {
-        started_handler(boost::system::error_code());
     }
+
+    started_handler(boost::system::error_code());
+
+    _unguard;
+}
+
+void Service::bind_session_to_pipeline(const std::shared_ptr<Session>& session, SentHandler&& started_handler) {
+    _guard;
+
+    if (config.get_quic().debug_disable_tcp) {
+        started_handler(boost::asio::error::operation_not_supported);
+        _unguard;
+        return;
+    }
+
+    prepare_pipelines();
+
+    if (pipelines.empty()) {
+        started_handler(boost::asio::error::broken_pipe);
+        _unguard;
+        return;
+    }
+
+    auto it       = pipelines.begin();
+    auto pipeline = std::shared_ptr<Pipeline>(nullptr);
+
+    if (pipeline_select_idx >= pipelines.size()) {
+        pipeline_select_idx = 0;
+        pipeline            = it->lock();
+    }
+
+    if (!pipeline || !pipeline->is_connected()) {
+        pipeline   = it->lock();
+        size_t idx = 0;
+        while (it != pipelines.end()) {
+            auto sel_pp = it->lock();
+            if (idx >= pipeline_select_idx) {
+                if (sel_pp->is_connected()) {
+                    pipeline = sel_pp;
+                    break;
+                }
+                pipeline_select_idx++;
+            }
+            ++it;
+            ++idx;
+        }
+        pipeline_select_idx++;
+    }
+
+    if (!pipeline) {
+        started_handler(boost::asio::error::broken_pipe);
+        _unguard;
+        return;
+    }
+
+    _log_with_date_time("pipeline " + tp::to_string(pipeline->get_pipeline_id()) +
+                          " start session_id: " + tp::to_string(session->get_session_id()),
+      Log::INFO);
+    session->get_pipeline_component().set_use_pipeline();
+    pipeline->session_start(*(session.get()), std::move(started_handler));
 
     _unguard;
 }

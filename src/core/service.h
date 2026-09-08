@@ -99,6 +99,7 @@ class Service {
     void reload_cert();
 
     void start_session(const std::shared_ptr<Session>& session, SentHandler&& started_handler);
+    void bind_session_to_pipeline(const std::shared_ptr<Session>& session, SentHandler&& started_handler);
 
     void session_async_send_to_pipeline(Session& session, PipelineRequest::Command cmd, const std::string_view& data,
       SentHandler&& sent_handler, size_t ack_count = 0);

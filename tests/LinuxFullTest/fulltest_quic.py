@@ -17,6 +17,8 @@ Test cases:
   T14: multiple_quic_connections    - two independent QUIC clients connect to same server concurrently
   T18: bidirectional_stream_close   - TCP and UDP proxy streams close cleanly via FIN (log-confirmed)
   T19: quic_ping_keepalive          - PING keep-alive prevents idle close (Part A: no ping→idle close; Part B: ping→no idle close, second request succeeds)
+  T20: quic_only_ignores_pipeline    - client bypasses TCP pipeline in QUIC-only mode
+  T21: quic_preferred_over_pipeline  - QUIC wins while TCP pipeline remains fallback
 """
 
 import json
@@ -2179,6 +2181,115 @@ def test_quic_ping_keepalive(binary_path):
         close_process(server_b, dump_b)
 
 
+def test_quic_only_ignores_pipeline(binary_path):
+    """T20: Client bypasses TCP pipeline when debug_disable_tcp is enabled."""
+    print_time_log("[T20] quic_only_ignores_pipeline: starting...")
+    if socks is None:
+        print_time_log("[T20] SKIP: PySocks not available")
+        return True
+
+    srv_cfg = patch_quic_config("quic_server_config.json", {
+        "remote_port": HTTP_TARGET_PORT,
+        "quic": {"enabled": True, "debug_disable_tcp": True},
+    })
+    cli_cfg = patch_quic_config("quic_client_config.json", {
+        "experimental": {"pipeline_num": 10},
+        "quic": {"enabled": True, "debug_disable_tcp": True},
+    })
+
+    server, srv_log = start_trojan(binary_path, srv_cfg)
+    client, cli_log = start_trojan(binary_path, cli_cfg)
+    dump = False
+    try:
+        if not server or not client:
+            dump = True
+            return False
+        if not wait_for_log(cli_log, r"QuicConnection: handshake completed", timeout=15):
+            print_time_log("[T20] FAIL: client QUIC handshake not seen")
+            dump = True
+            return False
+        if not wait_for_port(QUIC_CLIENT_PROXY_PORT, timeout=5):
+            print_time_log("[T20] FAIL: client SOCKS5 port not open")
+            dump = True
+            return False
+
+        response = http_get_via_socks5(
+            f"http://127.0.0.1:{HTTP_TARGET_PORT}/", QUIC_CLIENT_PROXY_PORT, timeout=10)
+        if not response:
+            print_time_log("[T20] FAIL: request returned empty response")
+            dump = True
+            return False
+
+        print_time_log("[T20] quic_only_ignores_pipeline PASSED")
+        return True
+    except Exception:
+        traceback.print_exc()
+        dump = True
+        return False
+    finally:
+        close_process(client, dump)
+        close_process(server, dump)
+
+
+def test_quic_preferred_over_pipeline(binary_path):
+    """T21: QUIC handles the session while TCP pipeline remains available as fallback."""
+    print_time_log("[T21] quic_preferred_over_pipeline: starting...")
+    if socks is None:
+        print_time_log("[T21] SKIP: PySocks not available")
+        return True
+
+    srv_cfg = patch_quic_config("quic_server_config.json", {
+        "remote_port": HTTP_TARGET_PORT,
+        "experimental": {"pipeline_num": 2},
+        "quic": {"enabled": True, "debug_disable_tcp": False},
+    })
+    cli_cfg = patch_quic_config("quic_client_config.json", {
+        "experimental": {"pipeline_num": 2},
+        "quic": {"enabled": True, "debug_disable_tcp": False},
+    })
+
+    server, srv_log = start_trojan(binary_path, srv_cfg)
+    client, cli_log = start_trojan(binary_path, cli_cfg)
+    dump = False
+    try:
+        if not server or not client:
+            dump = True
+            return False
+        if not wait_for_log(cli_log, r"QuicConnection: handshake completed", timeout=15):
+            print_time_log("[T21] FAIL: client QUIC handshake not seen")
+            dump = True
+            return False
+        if not wait_for_port(QUIC_CLIENT_PROXY_PORT, timeout=5):
+            print_time_log("[T21] FAIL: client SOCKS5 port not open")
+            dump = True
+            return False
+
+        response = http_get_via_socks5(
+            f"http://127.0.0.1:{HTTP_TARGET_PORT}/", QUIC_CLIENT_PROXY_PORT, timeout=10)
+        if not response:
+            print_time_log("[T21] FAIL: request returned empty response")
+            dump = True
+            return False
+        if not wait_for_log(srv_log, r"QuicProxySession: stream .* authenticated", timeout=5):
+            print_time_log("[T21] FAIL: request did not use QUIC")
+            dump = True
+            return False
+        if wait_for_log(cli_log, r"pipeline \d+ start session_id: \d+", timeout=1):
+            print_time_log("[T21] FAIL: session bound to TCP pipeline while QUIC was available")
+            dump = True
+            return False
+
+        print_time_log("[T21] quic_preferred_over_pipeline PASSED")
+        return True
+    except Exception:
+        traceback.print_exc()
+        dump = True
+        return False
+    finally:
+        close_process(client, dump)
+        close_process(server, dump)
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -2202,6 +2313,8 @@ ALL_TESTS = [
     ("T17", test_stateless_reset),
     ("T18", test_bidirectional_stream_close),
     ("T19", test_quic_ping_keepalive),
+    ("T20", test_quic_only_ignores_pipeline),
+    ("T21", test_quic_preferred_over_pipeline),
 ]
 
 def main(binary_path, test_tag='all'):
