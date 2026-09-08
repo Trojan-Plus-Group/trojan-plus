@@ -32,7 +32,7 @@
     },
 
     "experimental": {
-        "pipeline_num": 0,
+        "pipeline_num": 10,
         "pipeline_timeout": 600,
         "pipeline_ack_window": 200,
         "pipeline_loadbalance_configs": [],
@@ -40,7 +40,6 @@
     },
     "quic": {
         "enabled": true,
-        "alpn_token": "h3",
         "debug_disable_tcp": true
     }
 }
