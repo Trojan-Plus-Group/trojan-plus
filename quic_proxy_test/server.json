@@ -45,6 +45,7 @@
         "pipeline_proxy_icmp": false
     },
     "quic": {
-        "enabled": true
+        "enabled": true,
+        "debug_disable_tcp": true
     }
 }
