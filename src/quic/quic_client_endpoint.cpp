@@ -10,6 +10,7 @@
 
 #include "quic_client_endpoint.h"
 
+#include <algorithm>
 #include <chrono>
 
 #include <boost/asio/ip/address.hpp>
@@ -21,7 +22,7 @@
 
 QuicClientEndpoint::QuicClientEndpoint(
   boost::asio::io_context& io_ctx, const Config& config, std::shared_ptr<QuicTlsCtx> tls_ctx)
-    : QuicEndpoint(io_ctx, config, std::move(tls_ctx)), m_retry_timer(io_ctx) {}
+    : QuicEndpoint(io_ctx, config, std::move(tls_ctx)), m_retry_timer(io_ctx), m_handshake_timer(io_ctx) {}
 
 void QuicClientEndpoint::start() {
     if (m_running) {
@@ -46,6 +47,7 @@ void QuicClientEndpoint::start() {
 
 void QuicClientEndpoint::stop() {
     m_retry_timer.cancel();
+    m_handshake_timer.cancel();
     fail_all_pending_streams();
     auto conn = std::move(m_conn);
     QuicEndpoint::stop();
@@ -90,9 +92,11 @@ void QuicClientEndpoint::connect_to_server() {
           };
 
           // On handshake completion, fulfil deferred stream-open requests.
-          m_conn->on_handshake_completed_cb = [this, self]() {
-              drain_pending_stream_opens();
-          };
+           m_conn->on_handshake_completed_cb = [this, self]() {
+               m_handshake_timer.cancel();
+               m_known_unreachable = false;
+               drain_pending_stream_opens();
+           };
 
           m_conn->on_extend_max_streams_cb = [this, self]() {
               drain_pending_stream_opens();
@@ -111,11 +115,23 @@ void QuicClientEndpoint::connect_to_server() {
               mark_unreachable();
           };
 
-          if (!m_conn->init_client(local_endpoint(), m_server_ep)) {
-              _log_with_date_time("QuicClientEndpoint: init_client failed", Log::ERROR);
-              m_conn = nullptr;
-              mark_unreachable();
-          }
+           if (!m_conn->init_client(local_endpoint(), m_server_ep)) {
+               _log_with_date_time("QuicClientEndpoint: init_client failed", Log::ERROR);
+               m_conn = nullptr;
+               mark_unreachable();
+               return;
+           }
+
+           auto timeout_seconds = std::max(1, m_config.get_tcp().connect_time_out);
+           m_handshake_timer.expires_after(std::chrono::seconds(timeout_seconds));
+           m_handshake_timer.async_wait([this, self](const boost::system::error_code& timer_ec) {
+               if (timer_ec || !m_conn || m_conn->is_handshake_done()) {
+                   return;
+               }
+               _log_with_date_time("QuicClientEndpoint: handshake timeout", Log::WARN);
+               m_conn->close();
+           });
+
       });
 }
 

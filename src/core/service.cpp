@@ -593,8 +593,8 @@ void Service::reconnect_quic_client(){
         return;
     }
     
-    if(m_quic_client && m_quic_client->is_connected()){
-        _log_with_date_time("quic client is already connected!");
+    if (m_quic_client && (m_quic_client->is_connected() || m_quic_client->is_connecting() ||
+                           m_quic_client->is_usable())) {
         return;
     }
     

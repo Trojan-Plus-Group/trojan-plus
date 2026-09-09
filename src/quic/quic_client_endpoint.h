@@ -77,6 +77,7 @@ class QuicClientEndpoint : public QuicEndpoint {
     bool m_known_unreachable{false};
     bool m_connecting{false};
     boost::asio::steady_timer m_retry_timer;
+    boost::asio::steady_timer m_handshake_timer;
 
     // Per-stream data handlers: stream_id → handler.
     tp::unordered_map<int64_t, std::function<void(const uint8_t*, std::size_t, bool)>>

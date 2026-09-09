@@ -2290,6 +2290,72 @@ def test_quic_preferred_over_pipeline(binary_path):
         close_process(server, dump)
 
 
+def test_handshake_blackhole_recovery(binary_path):
+    """T22: A black-holed handshake times out, retries, and recovers."""
+    print_time_log("[T22] handshake_blackhole_recovery: starting...")
+    if socks is None:
+        print_time_log("[T22] SKIP: PySocks not available")
+        return True
+
+    srv_cfg = patch_quic_config_with_suffix("quic_server_config.json", ".T22.srv.json", {
+        "remote_port": HTTP_TARGET_PORT,
+        "quic": {"enabled": True, "h1_upstream": ""},
+    })
+    cli_cfg = patch_quic_config_with_suffix("quic_client_config.json", ".T22.cli.json", {
+        "tcp": {"connect_time_out": 3},
+        "quic": {"enabled": True, "retry_connect_timeout_ms": 500},
+    })
+
+    blackhole = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    blackhole.bind(("127.0.0.1", QUIC_SERVER_PORT))
+    client, cli_log = start_trojan(binary_path, cli_cfg)
+    server = None
+    dump = False
+    try:
+        if not client:
+            dump = True
+            return False
+        time.sleep(1)
+        blackhole.close()
+        blackhole = None
+        server, srv_log = start_trojan(binary_path, srv_cfg)
+        if not server:
+            dump = True
+            return False
+
+        if not wait_for_log(cli_log, r"QuicClientEndpoint: handshake timeout", timeout=6):
+            print_time_log("[T22] FAIL: black-holed handshake did not time out")
+            dump = True
+            return False
+        if not wait_for_log(cli_log, r"QuicConnection: handshake completed", timeout=10):
+            print_time_log("[T22] FAIL: QUIC did not recover after handshake timeout")
+            dump = True
+            return False
+        if not wait_for_port(QUIC_CLIENT_PROXY_PORT, timeout=5):
+            print_time_log("[T22] FAIL: client SOCKS5 port not open")
+            dump = True
+            return False
+
+        response = http_get_via_socks5(
+            f"http://127.0.0.1:{HTTP_TARGET_PORT}/", QUIC_CLIENT_PROXY_PORT, timeout=15)
+        if not response or not wait_for_log(srv_log, r"QuicProxySession: stream .* authenticated", timeout=5):
+            print_time_log("[T22] FAIL: request after recovery did not use QUIC")
+            dump = True
+            return False
+
+        print_time_log("[T22] handshake_blackhole_recovery PASSED")
+        return True
+    except Exception:
+        traceback.print_exc()
+        dump = True
+        return False
+    finally:
+        if blackhole is not None:
+            blackhole.close()
+        close_process(client, dump)
+        close_process(server, dump)
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -2315,6 +2381,7 @@ ALL_TESTS = [
     ("T19", test_quic_ping_keepalive),
     ("T20", test_quic_only_ignores_pipeline),
     ("T21", test_quic_preferred_over_pipeline),
+    ("T22", test_handshake_blackhole_recovery),
 ]
 
 def main(binary_path, test_tag='all'):

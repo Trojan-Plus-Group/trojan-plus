@@ -162,10 +162,12 @@ void TUNProxySession::start() {
     if (quic_config.enabled) {
         auto quic_client = get_service()->get_quic_client();
         if (quic_client) {
-            if (quic_client->is_connected() || (!quic_client->is_known_unreachable() && (quic_config.debug_disable_tcp || quic_client->is_connecting()))) {
+            if (quic_client->is_connected() || quic_client->is_connecting()) {
                 try_quic_first = true;
-            } else if (!quic_client->is_known_unreachable()) {
+            } else {
                 get_service()->reconnect_quic_client();
+                quic_client = get_service()->get_quic_client();
+                try_quic_first = quic_client && quic_client->is_usable();
             }
         }
     }
@@ -207,7 +209,7 @@ void TUNProxySession::start() {
             get_config().get_remote_addr(),
             static_cast<uint16_t>(get_config().get_remote_port()),
             cb,
-            [this, self, do_pipeline_or_tls, disable_tcp]() {
+            [this, self, cb, do_pipeline_or_tls, disable_tcp]() {
                 if (m_out && m_out->is_via_quic()) {
                     _log_with_date_time("TUNProxySession session_id: " +
                         tp::to_string(get_session_id()) +
@@ -218,6 +220,15 @@ void TUNProxySession::start() {
                     m_out.reset();
                     if (disable_tcp) {
                         destroy();
+                    } else if (get_config().get_experimental().pipeline_num > 0) {
+                        get_service()->bind_session_to_pipeline(self,
+                          [this, self, cb](const boost::system::error_code& error) {
+                              if (error || m_destroyed) {
+                                  destroy();
+                                  return;
+                              }
+                              cb();
+                          });
                     } else {
                         do_pipeline_or_tls();
                     }
