@@ -88,7 +88,7 @@ void TUNProxySession::start() {
             } else {
                 _log_with_endpoint(m_local_addr, note_str, Log::INFO);
             }
-        } else if (get_service()->is_use_pipeline()) {
+        } else if (get_pipeline_component().is_using_pipeline()) {
             auto note_str = "TUNProxySession session_id: " + tp::to_string(get_session_id()) + " started in pipeline";
             if (is_udp_forward_session()) {
                 _log_with_endpoint(m_local_addr_udp, note_str, Log::INFO);
@@ -176,7 +176,7 @@ void TUNProxySession::start() {
 #endif
 
     auto do_pipeline_or_tls = [this, self, cb, force_no_pipeline]() {
-        if (!force_no_pipeline && get_service()->is_use_pipeline()) {
+        if (!force_no_pipeline && get_pipeline_component().is_using_pipeline()) {
             cb();
         } else {
             get_service()->get_config().prepare_ssl_reuse(m_out_socket);
@@ -264,7 +264,7 @@ void TUNProxySession::destroy(bool pipeline_call) {
     }
     udp_timer_cancel();
 
-    if (!pipeline_call && get_service()->is_use_pipeline()) {
+    if (!pipeline_call && get_pipeline_component().is_using_pipeline()) {
         get_service()->session_destroy_in_pipeline(*this);
     }
 
@@ -293,7 +293,7 @@ void TUNProxySession::recv_ack_cmd(size_t ack_count) {
 void TUNProxySession::out_async_send_impl(const std::string_view& data_to_send, SentHandler&& _handler) {
     _guard;
 
-    if (get_service()->is_use_pipeline()) {
+    if (get_pipeline_component().is_using_pipeline()) {
         auto data_sending_len = data_to_send.length();
         auto self             = shared_from_this();
         get_service()->session_async_send_to_pipeline(*this, PipelineRequest::DATA, data_to_send,
@@ -386,7 +386,7 @@ void TUNProxySession::try_out_async_read() {
         return;
     }
 
-    if (get_service()->is_use_pipeline() && !is_udp_forward_session()) {
+    if (get_pipeline_component().is_using_pipeline() && !is_udp_forward_session()) {
         auto self = shared_from_this();
         get_service()->session_async_send_to_pipeline(
           *this, PipelineRequest::ACK, "",
@@ -415,7 +415,7 @@ bool TUNProxySession::recv_buf_ack_sent(uint16_t _length) {
     _assert(!is_udp_forward_session());
     m_recv_buf_ack_length -= _length;
 
-    if (get_service()->is_use_pipeline() && m_recv_buf_ack_length <= 0) {
+    if (get_pipeline_component().is_using_pipeline() && m_recv_buf_ack_length <= 0) {
         if (get_pipeline_component().is_write_close_future()) {
             output_debug_info();
             destroy();
@@ -485,7 +485,7 @@ size_t TUNProxySession::parse_udp_packet_data(const std::string_view& data) {
 void TUNProxySession::out_async_read() {
     _guard;
 
-    if (get_service()->is_use_pipeline()) {
+    if (get_pipeline_component().is_using_pipeline()) {
         get_pipeline_component().get_pipeline_data_cache().async_read(
           [this](const std::string_view& data, size_t ack_count) {
               _guard;

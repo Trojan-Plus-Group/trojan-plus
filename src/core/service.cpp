@@ -422,7 +422,6 @@ void Service::start_session(const std::shared_ptr<Session>& session, SentHandler
         prepare_pipelines();
         if (!config.get_quic().enabled) {
             bind_session_to_pipeline(session, std::move(started_handler));
-            _unguard;
             return;
         }
     }
@@ -437,7 +436,6 @@ void Service::bind_session_to_pipeline(const std::shared_ptr<Session>& session, 
 
     if (config.get_quic().debug_disable_tcp) {
         started_handler(boost::asio::error::operation_not_supported);
-        _unguard;
         return;
     }
 
@@ -445,7 +443,6 @@ void Service::bind_session_to_pipeline(const std::shared_ptr<Session>& session, 
 
     if (pipelines.empty()) {
         started_handler(boost::asio::error::broken_pipe);
-        _unguard;
         return;
     }
 
@@ -477,7 +474,6 @@ void Service::bind_session_to_pipeline(const std::shared_ptr<Session>& session, 
 
     if (!pipeline) {
         started_handler(boost::asio::error::broken_pipe);
-        _unguard;
         return;
     }
 

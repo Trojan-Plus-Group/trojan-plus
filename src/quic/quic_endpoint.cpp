@@ -21,6 +21,7 @@
 #include "core/config.h"
 #include "core/log.h"
 #include "mem/memallocator.h"
+#include "platform_exports.h"
 #include "quic_tls_ctx.h"
 
 namespace {
@@ -93,6 +94,8 @@ void QuicEndpoint::open_socket(const boost::asio::ip::udp::endpoint& bind_ep,
     }
     m_socket.set_option(boost::asio::socket_base::reuse_address(true), ec);
     (void)reuse_port; // SO_REUSEPORT handled by platform-specific code in Service.
+
+    android_protect_socket(static_cast<int>(m_socket.native_handle()));
 
     m_socket.bind(bind_ep, ec);
     if (ec) {
