@@ -3,7 +3,7 @@
     "local_addr": "127.0.0.1",
     "local_port": 9080,
     "remote_addr": "127.0.0.1",
-    "remote_port": 3443,
+    "remote_port": 9443,
     "password": [
         "password1"
     ],
