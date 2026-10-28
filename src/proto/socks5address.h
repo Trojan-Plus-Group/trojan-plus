@@ -43,8 +43,10 @@ public:
     [[nodiscard]]
     bool parse(const std::string_view &data, size_t &address_len);
     static void generate(tp::streambuf& buf, const boost::asio::ip::udp::endpoint &endpoint);
-    // ATYP + address + port. IPv4 literals are ATYP 1, IPv6 literals are ATYP 4,
-    // and everything else is a domain (ATYP 3).
+    // ATYP + address + port. IPv4 literals and IPv4-mapped IPv6 literals are
+    // ATYP 1. Unscoped IPv6 literals are ATYP 4. A scoped IPv6 literal (a '%'
+    // zone, or a non-zero scope id) stays ATYP 3 with the original text so the
+    // zone is not discarded. Other names are ATYP 3 domains.
     [[nodiscard]] static tp::string encode(const tp::string& host, uint16_t port);
 };
 
