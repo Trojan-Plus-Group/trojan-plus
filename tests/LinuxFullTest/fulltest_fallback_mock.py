@@ -30,7 +30,9 @@ try:
             with socket.socket(family, socket.SOCK_STREAM) as s:
                 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 if family == socket.AF_INET6:
-                    s.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+                    # Fallback mock is bound to an IPv6 address. Do not accept
+                    # an IPv4-mapped peer on this socket.
+                    s.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
                 print_time_log(f"Attempting to bind to {bind_host}:{port}")
                 s.bind((bind_host, port))
                 s.listen(5)
