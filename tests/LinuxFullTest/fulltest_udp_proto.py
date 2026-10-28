@@ -92,11 +92,18 @@ def compose_udp_file_data(data_arr):
     return data
 
 
+def datagram_family(addr):
+    host = addr[0] if isinstance(addr, tuple) else addr
+    if isinstance(host, str) and ":" in host:
+        return socket.AF_INET6
+    return socket.AF_INET
+
+
 def send_get_func(serv_dir, addr, udp_data, port):
     try:
         with open(os.path.realpath(serv_dir + udp_data.file()), 'rb') as f:
             content = f.read()
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as us:
+            with socket.socket(datagram_family(addr), socket.SOCK_DGRAM) as us:
                 port = bind_port(us, port)
                 us.setsockopt(socket.SOL_SOCKET,
                               socket.SO_SNDBUF, UDP_BUFF_SIZE)
@@ -173,7 +180,7 @@ class UDPProcessor:
     def post_data(self, addr, udp_data, port):
         with open(os.path.realpath(self.serv_dir + udp_data.file()), 'rb') as f:
             cmp_content = f.read()
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as us:
+            with socket.socket(datagram_family(addr), socket.SOCK_DGRAM) as us:
                 bind_port(us, port)
                 us.sendto(b'OK' if cmp_content ==
                           udp_data.compose_data() else b'FAILED', addr)

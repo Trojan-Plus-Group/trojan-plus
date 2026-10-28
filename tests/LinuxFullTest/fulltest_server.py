@@ -33,13 +33,21 @@ from fulltest_utils import print_time_log, is_macos_system
 serv_dir = ""
 
 
-def run_udp(port):
-    udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+def is_ipv6_host(host):
+    return ":" in host
+
+
+def run_udp(port, bind_host="127.0.0.1"):
+    family = socket.AF_INET6 if is_ipv6_host(bind_host) else socket.AF_INET
+    udp_socket = socket.socket(family, socket.SOCK_DGRAM)
     udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF,
                           fulltest_udp_proto.UDP_BUFF_SIZE *
                           (5 if is_macos_system() else 50))  # max 5MB for mac os
+    if family == socket.AF_INET6:
+        # Accept IPv4-mapped clients when bound to '::' (dual-stack case).
+        udp_socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
 
-    udp_socket.bind(('127.0.0.1', port))
+    udp_socket.bind((bind_host, port))
 
     udp_processor = fulltest_udp_proto.UDPProcessor(serv_dir, udp_socket)
     while True:
@@ -95,7 +103,28 @@ class ServerHandler(BaseHTTPRequestHandler):
             traceback.print_exc(file=sys.stdout)
 
 
-def run(dir, port):
+def make_http_server(bind_host, port):
+    try:
+        from http.server import ThreadingHTTPServer
+        server_cls = ThreadingHTTPServer
+    except ImportError:
+        server_cls = HTTPServer
+
+    if not is_ipv6_host(bind_host):
+        return server_cls((bind_host, port), ServerHandler)
+
+    class V6HTTPServer(server_cls):
+        address_family = socket.AF_INET6
+
+        def server_bind(self):
+            # Dual-stack: an IPv4 client can reach a server bound to '::'.
+            self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+            super().server_bind()
+
+    return V6HTTPServer((bind_host, port), ServerHandler)
+
+
+def run(dir, port, bind_host="127.0.0.1"):
     if not os.path.exists(dir):
         print_time_log("can't find the directory [" + dir + "]")
         exit(1)
@@ -103,22 +132,19 @@ def run(dir, port):
         global serv_dir
         serv_dir = dir + "/"
 
-    t = threading.Thread(target=run_udp, args=(port,))
+    t = threading.Thread(target=run_udp, args=(port, bind_host))
     t.daemon = True
     t.start()
 
-    try:
-        from http.server import ThreadingHTTPServer
-        httpd = ThreadingHTTPServer(('127.0.0.1', port), ServerHandler)
-    except ImportError:
-        httpd = HTTPServer(('127.0.0.1', port), ServerHandler)
-    print_time_log("start fulltest server port: " + str(port))
+    httpd = make_http_server(bind_host, port)
+    print_time_log("start fulltest server " + bind_host + " port: " + str(port))
     httpd.serve_forever()
 
 
 if __name__ == '__main__':
     print_time_log(__file__ + " args " + str(sys.argv))
     if len(sys.argv) >= 3:
-        run(sys.argv[1], int(sys.argv[2]))
+        bind_host = sys.argv[3] if len(sys.argv) >= 4 else "127.0.0.1"
+        run(sys.argv[1], int(sys.argv[2]), bind_host)
     else:
         run('html', 18080)

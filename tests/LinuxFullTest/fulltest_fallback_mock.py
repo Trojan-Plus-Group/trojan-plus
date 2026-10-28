@@ -21,16 +21,20 @@ try:
             sys.exit(1)
         
         port = int(sys.argv[1])
-        print_time_log(f"Mock HTTP server starting raw socket on port {port}")
+        bind_host = sys.argv[2] if len(sys.argv) >= 3 else "0.0.0.0"
+        family = socket.AF_INET6 if ":" in bind_host else socket.AF_INET
+        print_time_log(f"Mock HTTP server starting raw socket on {bind_host}:{port}")
         
         try:
             # Create a raw TCP socket to act as a minimal HTTP server
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            with socket.socket(family, socket.SOCK_STREAM) as s:
                 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                print_time_log(f"Attempting to bind to 0.0.0.0:{port}")
-                s.bind(('0.0.0.0', port))
+                if family == socket.AF_INET6:
+                    s.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+                print_time_log(f"Attempting to bind to {bind_host}:{port}")
+                s.bind((bind_host, port))
                 s.listen(5)
-                print_time_log(f"Mock HTTP server listening on 0.0.0.0:{port}")
+                print_time_log(f"Mock HTTP server listening on {bind_host}:{port}")
                 
                 while True:
                     conn, addr = s.accept()

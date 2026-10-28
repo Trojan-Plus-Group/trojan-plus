@@ -24,17 +24,23 @@ class MockHTTPHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"Fallback Success")
 
-def wait_for_port(port, timeout=10):
+def wait_for_port(port, host="127.0.0.1", timeout=10):
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    addr = (host, port, 0, 0) if family == socket.AF_INET6 else (host, port)
     start_time = time.time()
     while time.time() - start_time < timeout:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            if s.connect_ex(('127.0.0.1', port)) == 0:
-                return True
+        with socket.socket(family, socket.SOCK_STREAM) as s:
+            s.settimeout(0.5)
+            try:
+                if s.connect_ex(addr) == 0:
+                    return True
+            except OSError:
+                pass
         time.sleep(0.5)
     return False
 
-def start_trojan_server(bin_path):
-    config_path = os.path.join("config", "fallback_server_config.json")
+def start_trojan_server(bin_path, server_config="fallback_server_config.json"):
+    config_path = os.path.join("config", server_config)
     print_time_log(f"Starting Trojan server with {config_path}")
     output_log_file = open(os.path.join("config", "fallback_server.output"), "w+")
     
@@ -49,18 +55,18 @@ def start_trojan_server(bin_path):
                     **kwargs)
     return process, output_log_file
 
-def start_mock_http_server():
-    print_time_log(f"Starting Mock HTTP server on 127.0.0.1:{TEST_HTTP_SERVER_PORT}")
+def start_mock_http_server(mock_bind="0.0.0.0"):
+    print_time_log(f"Starting Mock HTTP server on {mock_bind}:{TEST_HTTP_SERVER_PORT}")
     output_log_file = open(os.path.join("config", "fallback_mock_server.output"), "w+")
     
     # Use -u for unbuffered output to ensure logs are written to file immediately
-    process = Popen([sys.executable, "-u", "fulltest_fallback_mock.py", str(TEST_HTTP_SERVER_PORT)], 
+    process = Popen([sys.executable, "-u", "fulltest_fallback_mock.py", str(TEST_HTTP_SERVER_PORT), mock_bind], 
                     stdout=output_log_file, 
                     stderr=output_log_file,
                     universal_newlines=True)
     return process, output_log_file
 
-def main(bin_path=None):
+def main(bin_path=None, mock_bind="0.0.0.0", request_host="127.0.0.1", server_config="fallback_server_config.json"):
     if bin_path:
         global BINARY_PATH
         BINARY_PATH = bin_path
@@ -69,17 +75,24 @@ def main(bin_path=None):
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
     
     # 1. Start Mock HTTP Server
-    # Check if port is already in use
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        if s.connect_ex(('127.0.0.1', TEST_HTTP_SERVER_PORT)) == 0:
+    # Check if port is already in use. Default remains an IPv4 check against 127.0.0.1.
+    mock_check_host = "127.0.0.1" if mock_bind in ("0.0.0.0", "") else mock_bind
+    mock_family = socket.AF_INET6 if ":" in mock_check_host else socket.AF_INET
+    mock_addr = (mock_check_host, TEST_HTTP_SERVER_PORT, 0, 0) if mock_family == socket.AF_INET6 else (mock_check_host, TEST_HTTP_SERVER_PORT)
+    with socket.socket(mock_family, socket.SOCK_STREAM) as s:
+        try:
+            port_busy = s.connect_ex(mock_addr) == 0
+        except OSError:
+            port_busy = False
+        if port_busy:
             print_time_log(f"!!!!! FALLBACK TEST FAILED: Port {TEST_HTTP_SERVER_PORT} is already in use !!!!!")
             if not is_windows_system():
                 os.system(f"lsof -i:{TEST_HTTP_SERVER_PORT}")
             return 1
 
-    mock_process, mock_log = start_mock_http_server()
+    mock_process, mock_log = start_mock_http_server(mock_bind)
     
-    if not wait_for_port(TEST_HTTP_SERVER_PORT):
+    if not wait_for_port(TEST_HTTP_SERVER_PORT, mock_check_host):
         print_time_log(f"!!!!! FALLBACK TEST FAILED: Mock HTTP server failed to start on {TEST_HTTP_SERVER_PORT} !!!!!")
         mock_process.terminate()
         mock_log.close()
@@ -101,8 +114,8 @@ def main(bin_path=None):
         return 1
     
     # 2. Start Trojan Server
-    trojan_process, trojan_log = start_trojan_server(BINARY_PATH)
-    if not wait_for_port(TROJAN_SERVER_PORT):
+    trojan_process, trojan_log = start_trojan_server(BINARY_PATH, server_config)
+    if not wait_for_port(TROJAN_SERVER_PORT, request_host):
         print_time_log(f"!!!!! FALLBACK TEST FAILED: Trojan server failed to start on {TROJAN_SERVER_PORT} !!!!!")
         trojan_process.terminate()
         trojan_log.close()
@@ -118,13 +131,14 @@ def main(bin_path=None):
     
     try:
         # 3. Send direct HTTPS request to Trojan Server
-        print_time_log(f"Sending HTTPS request to Trojan Server at 127.0.0.1:{TROJAN_SERVER_PORT}")
+        print_time_log(f"Sending HTTPS request to Trojan Server at {request_host}:{TROJAN_SERVER_PORT}")
         
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
         
-        url = f"https://127.0.0.1:{TROJAN_SERVER_PORT}/test_fallback"
+        host_for_url = f"[{request_host}]" if ":" in request_host else request_host
+        url = f"https://{host_for_url}:{TROJAN_SERVER_PORT}/test_fallback"
         try:
             with urllib.request.urlopen(url, context=ctx, timeout=10) as response:
                 body = response.read().decode('utf-8')
