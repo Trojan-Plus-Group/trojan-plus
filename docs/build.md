@@ -20,7 +20,7 @@ For macOS users, we recommend **macOS 10.13 (High Sierra)** or newer for full C+
 ```bash
 brew install boost
 ```
-If you encounter compatibility issues with older Boost versions (e.g., `< 1.72.0`), ensure you are using the latest version provided by Homebrew.
+If you encounter compatibility issues with older Boost versions (e.g., `< 1.77.0`), ensure you are using the latest version provided by Homebrew.
 
 ## Clone
 
