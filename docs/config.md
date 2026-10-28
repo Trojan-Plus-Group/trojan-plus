@@ -33,6 +33,8 @@ In this page, we will look at the config file of trojan. Trojan uses [`JSON`](ht
         "curves": "X25519"
     },
     "tcp": {
+        "prefer_ipv4": false,
+        "ipv6_only": false,
         "no_delay": true,
         "keep_alive": true,
         "reuse_port": false,
@@ -61,6 +63,8 @@ In this page, we will look at the config file of trojan. Trojan uses [`JSON`](ht
     - `session_ticket`: whether to use session tickets for session resumption
     - `curves`: `ECC` curves to send and use
 - `tcp`: `TCP` specific configurations
+    - `prefer_ipv4`: whether to connect to the IPv4 address when a domain has both IPv6 and IPv4 addresses. The default is `false`, which keeps the resolver's first result.
+    - `ipv6_only`: when `local_addr` is IPv6, set `IPV6_V6ONLY` on the listening socket. `false` (default) is dual-stack, so an IPv4 client can connect to a listener bound to `::`. `true` accepts IPv6 only. The option is set explicitly and does not follow the kernel `net.ipv6.bindv6only` sysctl. The same key applies to forward and server listeners.
     - `no_delay`: whether to disable Nagle's algorithm
     - `keep_alive`: whether to enable TCP Keep Alive
     - `reuse_port`: whether to enable TCP port reuse (kernel support required). **Best Practice**: Enabling `reuse_port` (SO_REUSEPORT) allows multiple Trojan processes to listen on the same port. The Linux kernel (since 3.9) automatically distributes incoming connections across these processes using a 4-tuple hash, ensuring high performance and scalability on multi-core systems without lock contention. It is recommended to use a modern Linux kernel (4.5+ for enhanced balancing) for optimal results.
@@ -103,6 +107,8 @@ PROTIP: If you simply want to redirect a raw TCP connection, you can use `iptabl
         "curves": "X25519"
     },
     "tcp": {
+        "prefer_ipv4": false,
+        "ipv6_only": false,
         "no_delay": true,
         "keep_alive": true,
         "reuse_port": false,
@@ -188,6 +194,7 @@ The NAT config is for transparent proxy. You'll need to [setup iptables rules](h
     },
     "tcp": {
         "prefer_ipv4": false,
+        "ipv6_only": false,
         "no_delay": true,
         "keep_alive": true,
         "reuse_port": false,
@@ -220,7 +227,8 @@ The NAT config is for transparent proxy. You'll need to [setup iptables rules](h
     - `curves`: `ECC` curves to use
     - `dhparam`: if left blank, default (RFC 3526) dhparam will be used, otherwise the specified dhparam file will be used
 - `tcp`: `TCP` specific configurations
-    - `prefer_ipv4`: whether to connect to the IPv4 address when there are both IPv6 and IPv4 addresses for a domain
+    - `prefer_ipv4`: whether to connect to the IPv4 address when a domain has both IPv6 and IPv4 addresses. The default is `false`, which keeps the resolver's first result, including for TCP outbound connections and UDP associate destinations. Set it to `true` to pick an IPv4 address when one exists.
+    - `ipv6_only`: when `local_addr` is IPv6, set `IPV6_V6ONLY` on the TCP listening socket and, in forward mode, on the UDP listening socket. `false` (default) is dual-stack. `true` accepts IPv6 only. The option is set explicitly and does not follow the kernel `net.ipv6.bindv6only` sysctl.
     - `no_delay`: whether to disable Nagle's algorithm
     - `keep_alive`: whether to enable TCP Keep Alive
     - `reuse_port`: whether to enable TCP port reuse (kernel support required). **Best Practice**: Enabling `reuse_port` (SO_REUSEPORT) allows multiple Trojan processes to listen on the same port. The Linux kernel (since 3.9) automatically distributes incoming connections across these processes using a 4-tuple hash, ensuring high performance and scalability on multi-core systems without lock contention. It is recommended to use a modern Linux kernel (4.5+ for enhanced balancing) for optimal results.

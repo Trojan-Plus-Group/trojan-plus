@@ -49,8 +49,8 @@ void NATSession::start() {
             return;
         }
         _log_with_endpoint(get_in_endpoint(),
-          "forwarding to " + target_addr + ':' + tp::to_string(target_port) + " via " + get_config().get_remote_addr() +
-            ':' + tp::to_string(get_config().get_remote_port()),
+          "forwarding to " + format_host_port(target_addr, target_port) + " via " +
+            format_host_port(get_config().get_remote_addr(), get_config().get_remote_port()),
           Log::INFO);
 
         get_out_write_buf().consume(get_out_write_buf().size());

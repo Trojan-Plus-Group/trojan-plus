@@ -64,11 +64,7 @@ tp::string TrojanRequest::generate(const tp::string& password, const tp::string&
     } else {
         ret += '\x03';
     }
-    ret += '\x03';
-    ret += char(uint8_t(domainname.length()));
-    ret += domainname;
-    ret += char(uint8_t(port >> one_byte_shift_8_bits));
-    ret += char(uint8_t(port & one_byte_mask_0xFF));
+    ret += SOCKS5Address::encode(domainname, port);
     ret += "\r\n";
     return ret;
 

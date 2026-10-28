@@ -31,6 +31,7 @@
     },
     "tcp": {
         "prefer_ipv4": false,
+        "ipv6_only": false,
         "no_delay": true,
         "keep_alive": true,
         "reuse_port": false,

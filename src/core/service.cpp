@@ -22,6 +22,7 @@
 
 #include "service.h"
 
+#include <boost/asio/ip/v6_only.hpp>
 #include <cerrno>
 #include <chrono>
 #include <cstring>
@@ -89,6 +90,14 @@ Service::Service(Config& config, bool test)
 #endif // ENABLE_REUSE_PORT
             }
 
+            if (listen_endpoint.address().is_v6()) {
+                // Set IPV6_V6ONLY explicitly. The default is dual-stack and does not
+                // follow the kernel net.ipv6.bindv6only sysctl.
+                socket_acceptor.set_option(boost::asio::ip::v6_only(config.get_tcp().ipv6_only));
+                _log_with_date_time(
+                  tp::string("listening socket IPV6_V6ONLY=") + (config.get_tcp().ipv6_only ? "1" : "0"), Log::INFO);
+            }
+
             socket_acceptor.bind(listen_endpoint);
             socket_acceptor.listen();
             prepare_icmpd(config, listen_endpoint.address().is_v4());
@@ -97,6 +106,9 @@ Service::Service(Config& config, bool test)
                 auto udp_bind_endpoint = udp::endpoint(listen_endpoint.address(), listen_endpoint.port());
                 auto udp_protocol      = udp_bind_endpoint.protocol();
                 udp_socket.open(udp_protocol);
+                if (udp_bind_endpoint.address().is_v6()) {
+                    udp_socket.set_option(boost::asio::ip::v6_only(config.get_tcp().ipv6_only));
+                }
 
                 if (config.get_run_type() == Config::NAT) {
                     bool is_ipv4 = udp_protocol.family() == boost::asio::ip::tcp::v4().family();
@@ -217,8 +229,8 @@ void Service::run() {
             local_port = local_endpoint.port();
         }
 
-        _log_with_date_time(tp::string("trojan plus service (") + rt + ") started at " + local_addr + ':' +
-                              tp::to_string(local_port),
+        _log_with_date_time(tp::string("trojan plus service (") + rt + ") started at " +
+                              format_host_port(local_addr, local_port),
           Log::FATAL);
     } else {
         _log_with_date_time(tp::string("trojan plus service (") + rt + ") started at [" + config.get_tun().tun_name + "] " +

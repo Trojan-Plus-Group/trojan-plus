@@ -21,7 +21,8 @@
  */
 
 #include "socks5address.h"
-#include <cstdio>
+
+#include <boost/asio/ip/address_v6.hpp>
 
 #include "core/utils.h"
 #include "mem/memallocator.h"
@@ -62,12 +63,12 @@ bool SOCKS5Address::parse(const std::string_view& data, size_t& address_len) {
         }
         case IPv6: {
             if (data.length() > 16 + 2) {
-                char t[40];
-                snprintf(t, sizeof(t), "%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x", uint8_t(data[1]),
-                  uint8_t(data[2]), uint8_t(data[3]), uint8_t(data[4]), uint8_t(data[5]), uint8_t(data[6]),
-                  uint8_t(data[7]), uint8_t(data[8]), uint8_t(data[9]), uint8_t(data[10]), uint8_t(data[11]),
-                  uint8_t(data[12]), uint8_t(data[13]), uint8_t(data[14]), uint8_t(data[15]), uint8_t(data[16]));
-                address     = t;
+                address_v6::bytes_type bytes{};
+                for (int i = 0; i < 16; ++i) {
+                    bytes[static_cast<size_t>(i)] = static_cast<unsigned char>(data[1 + i]);
+                }
+                // address_v6::to_string() is the standard compressed form (::1, not 0000:…:0001).
+                address     = address_v6(bytes).to_string().c_str();
                 port        = (uint8_t(data[17]) << one_byte_shift_8_bits) | uint8_t(data[18]);
                 address_len = 1 + 16 + 2;
                 return true;
@@ -88,16 +89,42 @@ void SOCKS5Address::generate(tp::streambuf& buf, const udp::endpoint& endpoint) 
         return;
     }
 
-    if (endpoint.address().is_v4()) {
-        streambuf_append(buf, '\x01');
-        auto ip = endpoint.address().to_v4().to_bytes();
-        streambuf_append(buf, ip.data(), ip.size());
+    boost::asio::ip::address addr = endpoint.address();
+    if (addr.is_v6() && addr.to_v6().is_v4_mapped()) {
+        addr = make_address_v4(v4_mapped, addr.to_v6());
     }
-    if (endpoint.address().is_v6()) {
+
+    if (addr.is_v4()) {
+        streambuf_append(buf, '\x01');
+        auto ip = addr.to_v4().to_bytes();
+        streambuf_append(buf, ip.data(), ip.size());
+    } else if (addr.is_v6()) {
         streambuf_append(buf, '\x04');
-        auto ip = endpoint.address().to_v6().to_bytes();
+        auto ip = addr.to_v6().to_bytes();
         streambuf_append(buf, ip.data(), ip.size());
     }
     streambuf_append(buf, char(uint8_t(endpoint.port() >> one_byte_shift_8_bits)));
     streambuf_append(buf, char(uint8_t(endpoint.port() & one_byte_mask_0xFF)));
+}
+
+tp::string SOCKS5Address::encode(const tp::string& host, uint16_t port) {
+    tp::string ret;
+    boost::system::error_code ec;
+    const auto addr = make_address(host.c_str(), ec);
+    if (!ec && addr.is_v4()) {
+        ret += '\x01';
+        const auto bytes = addr.to_v4().to_bytes();
+        ret.append(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    } else if (!ec && addr.is_v6()) {
+        ret += '\x04';
+        const auto bytes = addr.to_v6().to_bytes();
+        ret.append(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    } else {
+        ret += '\x03';
+        ret += char(uint8_t(host.length()));
+        ret += host;
+    }
+    ret += char(uint8_t(port >> one_byte_shift_8_bits));
+    ret += char(uint8_t(port & one_byte_mask_0xFF));
+    return ret;
 }
