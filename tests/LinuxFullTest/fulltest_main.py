@@ -35,6 +35,7 @@ import fulltest_client
 import fulltest_dns
 import fulltest_fallback
 import fulltest_quic
+import fulltest_ipv6
 from fulltest_utils import print_time_log, is_macos_system, is_windows_system, is_linux_system
 
 
@@ -329,6 +330,13 @@ def main():
     binary_path = os.path.realpath(cmd_args.binary)
     print_time_log("binary_path == " + binary_path)
 
+    # IPv6-only invocation must not start the IPv4 content server (it owns :18080).
+    if cmd_args.ipv6 and not (cmd_args.normal or cmd_args.dns or cmd_args.tun or cmd_args.fallback or cmd_args.quic is not None):
+        return fulltest_ipv6.main(
+            binary_path,
+            include_expected_fail=cmd_args.ipv6_include_expected_fail,
+            include_ipv4_reference=cmd_args.ipv6_include_ipv4_reference)
+
     print_time_log("start testing server...")
     test_server_process = run_test_server()
     if not test_server_process:
@@ -402,6 +410,14 @@ def main():
     finally:
         close_process(test_server_process, output_log)
 
+    if cmd_args.ipv6:
+        print_time_log("start IPv6 suite...")
+        if fulltest_ipv6.main(
+                binary_path,
+                include_expected_fail=cmd_args.ipv6_include_expected_fail,
+                include_ipv4_reference=cmd_args.ipv6_include_ipv4_reference) != 0:
+            return 1
+
     print_time_log("!!!!! ALL SUCC, GREAT JOB !!!!")
     return 0
 
@@ -424,17 +440,28 @@ if __name__ == "__main__":
                         action='store_true', default=False)
     parser.add_argument("-q", "--quic", help="whether test QUIC transport mode, optional test case (e.g. T1, T2)",
                         nargs='?', const='all', default=None)
+    parser.add_argument("-6", "--ipv6", help="run the IPv6 suite (client/forward/pipeline/fallback/dual-stack). "
+                        "Does not change the default IPv4 run. NAT and TUN IPv6 cases are skipped unless "
+                        "--ipv6-include-expected-fail is set.",
+                        action='store_true', default=False)
+    parser.add_argument("--ipv6-include-expected-fail",
+                        help="with -6, also execute NAT and TUN IPv6 cases. They are expected to fail until later PRs "
+                        "and do not change the IPv6 suite exit status.",
+                        action='store_true', default=False)
+    parser.add_argument("--ipv6-include-ipv4-reference",
+                        help="with -6, also run the IPv4 hostname SOCKS reference case used by the baseline matrix.",
+                        action='store_true', default=False)
 
     cmd_args = parser.parse_args()
-    if not cmd_args.normal and not cmd_args.dns and not cmd_args.tun and not cmd_args.fallback and cmd_args.quic is None:
-        print("Error: must use -n or -d or -t or -f or -q args\n\n")
+    if not cmd_args.normal and not cmd_args.dns and not cmd_args.tun and not cmd_args.fallback and cmd_args.quic is None and not cmd_args.ipv6:
+        print("Error: must use -n or -d or -t or -f or -q or -6 args\n\n")
         parser.print_help()
         exit(1)
 
     if is_macos_system() and cmd_args.dns:
         print_time_log("Notice: DNS test (-d) is skipped on macOS (known hang/timeout issues with local resolver).")
         cmd_args.dns = None
-        if not cmd_args.normal and not cmd_args.tun and not cmd_args.fallback and cmd_args.quic is None:
+        if not cmd_args.normal and not cmd_args.tun and not cmd_args.fallback and cmd_args.quic is None and not cmd_args.ipv6:
             print_time_log("No other tests specified. Exiting cleanly.")
             exit(0)
 

@@ -44,6 +44,20 @@ enable_log = True
 serv_port = 0
 request_host_ip = "127.0.0.1"
 
+
+def format_http_host(host):
+    # IPv6 literals in URLs must be bracketed. IPv4 hosts are unchanged.
+    if ":" in host and not (host.startswith("[") and host.endswith("]")):
+        return "[" + host + "]"
+    return host
+
+
+def host_address_family(host):
+    bare = host.strip("[]")
+    if ":" in bare:
+        return socket.AF_INET6
+    return socket.AF_INET
+
 client_udp_bind_port_start = fulltest_udp_proto.client_udp_bind_port_start
 
 
@@ -60,15 +74,15 @@ def post_url(url, data):
 
 
 def get_file_udp(file, length, port):
+    global request_host_ip
     for _ in range(0, UDP_RETRY_MAX_COUNT):
         try:
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp_socket:
+            with socket.socket(host_address_family(request_host_ip), socket.SOCK_DGRAM) as udp_socket:
                 udp_socket.settimeout(RECV_DATA_TIMEOUT)
                 udp_socket.setsockopt(
                     socket.SOL_SOCKET, socket.SO_RCVBUF, UDP_BUFF_SIZE)
                 fulltest_udp_proto.bind_port(udp_socket, port)
 
-                global request_host_ip
                 addr = (request_host_ip, serv_port)
 
                 param = urllib.parse.urlencode(
@@ -100,9 +114,10 @@ def get_file_udp(file, length, port):
 
 
 def post_file_udp(file, data, port):
+    global request_host_ip
     for i in range(0, UDP_RETRY_MAX_COUNT):
         try:
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp_socket:
+            with socket.socket(host_address_family(request_host_ip), socket.SOCK_DGRAM) as udp_socket:
                 udp_socket.settimeout(RECV_DATA_TIMEOUT)
                 udp_socket.setsockopt(
                     socket.SOL_SOCKET, socket.SO_SNDBUF, UDP_BUFF_SIZE)
@@ -111,7 +126,6 @@ def post_file_udp(file, data, port):
                 bind_port = port + (i * 100)
                 fulltest_udp_proto.bind_port(udp_socket, bind_port)
 
-                global request_host_ip
                 addr = (request_host_ip, serv_port)
 
                 param = urllib.parse.urlencode(
@@ -216,7 +230,7 @@ def compare_process(files, executor, get_or_post, tcp_or_udp):
     return True
 
 
-def start_query(host_ip, socks_port, port, folder, log=True):
+def start_query(host_ip, socks_port, port, folder, log=True, tcp=True, udp=True, file_list=None):
     # setup socket as socks5 proxy
     origin_socket = socket.socket
     if socks_port != 0:
@@ -232,53 +246,63 @@ def start_query(host_ip, socks_port, port, folder, log=True):
         global serv_port
 
         request_host_ip = host_ip
-        request_url_prefix = 'http://' + host_ip + ':' + str(port) + '/'
+        request_url_prefix = 'http://' + format_http_host(host_ip) + ':' + str(port) + '/'
         compare_folder = folder + '/'
         enable_log = log
         serv_port = port
 
-        print_time_log("start query index file....")
+        if file_list is not None:
+            files = list(file_list)
+            print_time_log("using provided file list " + str(len(files)))
+        else:
+            print_time_log("start query index file....")
 
-        # get the main index file
-        index = get_url(request_url_prefix).decode("utf-8")
-        files = []
-        for f in index.splitlines():
-            files.append(f)
+            # get the main index file
+            index = get_url(request_url_prefix).decode("utf-8")
+            files = []
+            for f in index.splitlines():
+                files.append(f)
+
+            if len(files) == 0:
+                print_time_log("read index file get error!!")
+                return False
+
+            print_time_log("read index files " + str(len(files)) + " done!")
 
         if len(files) == 0:
             print_time_log("read index file get error!!")
             return False
 
-        print_time_log("read index files " + str(len(files)) + " done!")
-
         print_time_log("start query....")
         with ThreadPoolExecutor(max_workers=PARALLEL_REQUEST_COUNT) as executor:
 
-            print_time_log("start query get http...")
-            if not compare_process(files, executor, True, True):
-                return False
-            print_time_log("finished!")
+            if tcp:
+                print_time_log("start query get http...")
+                if not compare_process(files, executor, True, True):
+                    return False
+                print_time_log("finished!")
 
-            time.sleep(1)
+                time.sleep(1)
 
-            print_time_log("start query post http...")
-            if not compare_process(files, executor, False, True):
-                return False
-            print_time_log("finish!")
+                print_time_log("start query post http...")
+                if not compare_process(files, executor, False, True):
+                    return False
+                print_time_log("finish!")
 
-            time.sleep(1)
+            if udp:
+                time.sleep(1)
 
-            print_time_log("start query get udp...")
-            if not compare_process(files, executor, True, False):
-                return False
-            print_time_log("finish!")
+                print_time_log("start query get udp...")
+                if not compare_process(files, executor, True, False):
+                    return False
+                print_time_log("finish!")
 
-            time.sleep(1)
+                time.sleep(1)
 
-            print_time_log("start query post udp...")
-            if not compare_process(files, executor, False, False):
-                return False
-            print_time_log("finish!!")
+                print_time_log("start query post udp...")
+                if not compare_process(files, executor, False, False):
+                    return False
+                print_time_log("finish!!")
 
         print_time_log("SUCC")
         return True
