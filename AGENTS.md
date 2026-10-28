@@ -28,7 +28,7 @@
 ### Prerequisites
 - **C++17 Compiler**: GCC >= 7.0, Clang >= 5.0, AppleClang, or MSVC >= 2017 (15.7+)
 - **CMake**: >= 3.20
-- **Boost**: >= 1.72.0 (recommended 1.80.0+, program_options required)
+- **Boost**: >= 1.77.0 (1.85.0+ recommended, program_options required)
 - **Submodules / Included**: wolfSSL, ngtcp2, nghttp3, mimalloc, GSL, badvpn (lwIP)
 - **Mobile SDKs**: Android NDK >= r23b (Android); Xcode with iOS SDK (iOS)
 - **Test Dependencies**: Python 3 with `PySocks`, `psutil`, `dnspython`, `aioquic`
