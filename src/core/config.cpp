@@ -25,7 +25,6 @@
 #include <cstdlib>
 #include <gsl/gsl>
 #include <openssl/evp.h>
-#include <openssl/opensslv.h>
 #include <sstream>
 #include <stdexcept>
 

@@ -26,7 +26,7 @@ docker run --rm --privileged -t --platform linux/amd64 \
 
         echo '--- Building Trojan Plus ---'
         mkdir -p $BUILD_DIR && cd $BUILD_DIR
-        cmake -DDEFAULT_CONFIG=config.json -DFORCE_TCP_FASTOPEN=ON -DBoost_USE_STATIC_LIBS=ON -DOPENSSL_USE_STATIC_LIBS=ON -DENABLE_MIMALLOC=ON ..
+        cmake -DDEFAULT_CONFIG=config.json -DFORCE_TCP_FASTOPEN=ON -DBoost_USE_STATIC_LIBS=ON -DENABLE_MIMALLOC=ON ..
         make -j\$(nproc)
         cd ..
 

@@ -25,7 +25,7 @@ tp::list<SSL_SESSION*>SSLSession::sessions;
 int SSLSession::new_session_cb(SSL*, SSL_SESSION *session) {
     sessions.push_front(session);
     // Return 1 to take ownership of the session object.
-    // wolfSSL (and OpenSSL >= 1.1.0): returning 1 means the application
+    // wolfSSL: returning 1 means the application
     // is responsible for freeing the session via SSL_SESSION_free().
     // Returning 0 would let SSL_CTX manage the lifetime, meaning the
     // pointer can become dangling at any time.

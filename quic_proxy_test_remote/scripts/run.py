@@ -310,6 +310,39 @@ def render(template_name, output, values):
     output.chmod(0o600)
 
 
+def write_self_signed_cert(key_path, cert_path, host):
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, host)])
+    now = datetime.datetime.now(datetime.timezone.utc)
+    builder = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .add_extension(
+            x509.SubjectAlternativeName([x509.IPAddress(ipaddress.ip_address(host))]),
+            critical=False,
+        )
+    )
+    if hasattr(builder, "not_valid_before_utc"):
+        builder = builder.not_valid_before_utc(now).not_valid_after_utc(now + datetime.timedelta(days=7))
+    else:
+        builder = builder.not_valid_before(now).not_valid_after(now + datetime.timedelta(days=7))
+    cert = builder.sign(key, hashes.SHA256())
+    key_path.write_bytes(key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ))
+    cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+
+
 def prepare(args):
     if not RUN_ID_RE.fullmatch(args.run_id):
         raise ValueError("run-id must match YYYYMMDDTHHMMSSZ-<commit>-r<number>")
@@ -328,7 +361,7 @@ def prepare(args):
     password_path.chmod(0o600)
     key_path = runtime / "server.key"
     cert_path = runtime / "server.crt"
-    run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(key_path), "-out", str(cert_path), "-days", "7", "-subj", f"/CN={HOST}", "-addext", f"subjectAltName=IP:{HOST}"])
+    write_self_signed_cert(key_path, cert_path, HOST)
     key_path.chmod(0o600)
     cert_path.chmod(0o644)
     server = runtime / "server.json"

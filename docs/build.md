@@ -6,17 +6,19 @@ We'll only cover the build process on Linux since we will be providing Windows a
 
 Install these dependencies before you build:
 
-- [CMake](https://cmake.org/) >= 3.10.2 
+- [CMake](https://cmake.org/) >= 3.20
 - [Visual Studio](https://visualstudio.microsoft.com/) >= 2019 (only for Windows)
 - [XCode](https://developer.apple.com/xcode/) 14+ (only for XCode)
 - [Boost](http://www.boost.org/) >= 1.77.0 (1.85.0+ recommended for stable async_wait support)
-- [OpenSSL](https://www.openssl.org/) >= 1.1.1g (3.0.15 recommended)
+- [wolfSSL](https://www.wolfssl.com/) 5.9.1, built from the `wolfssl` submodule and linked statically
 
-For Debian users, run `sudo apt -y install build-essential cmake libboost-system-dev libboost-program-options-dev libssl-dev` to install all the necessary dependencies.
+TLS is always that bundled wolfSSL. There is no system SSL package and no CMake option that selects one. `libssl-dev` is not required. QUIC (on by default) builds ngtcp2 with its wolfSSL backend; ngtcp2's own `ENABLE_OPENSSL` defaults to `ON`, and this project forces it `OFF`, so a configure log that reports OpenSSL as false is expected.
+
+For Debian users, run `sudo apt -y install build-essential cmake libboost-system-dev libboost-program-options-dev` to install all the necessary dependencies.
 
 For macOS users, we recommend **macOS 10.13 (High Sierra)** or newer for full C++17 compatibility and modern security framework support. Using Homebrew, you can install Boost with:
 ```bash
-brew install boost openssl
+brew install boost
 ```
 If you encounter compatibility issues with older Boost versions (e.g., `< 1.72.0`), ensure you are using the latest version provided by Homebrew.
 
@@ -50,7 +52,7 @@ sudo make install
 
 to build, test, and install trojan. If everything goes well you'll be able to use trojan.
 
-The `cmake ..` command can be extended with the following options:
+The `cmake ..` command can be extended with the following options. None of them selects an SSL library; wolfSSL from the submodule is always linked statically.
 
 - `-DDEFAULT_CONFIG=/path/to/default/config.json`: the default path trojan will look for config (defaults to `${CMAKE_INSTALL_FULL_SYSCONFDIR}/trojan/config.json`).
 - `ENABLE_MIMALLOC`
@@ -63,13 +65,13 @@ The `cmake ..` command can be extended with the following options:
     - `-DENABLE_REUSE_PORT=ON`: build with `SO_REUSEPORT` support (default).
     - `-DENABLE_REUSE_PORT=OFF`: build without `SO_REUSEPORT` support.
 - `ENABLE_QUIC` (Experimental)
-    - `-DENABLE_QUIC=ON`: build with QUIC support (requires wolfSSL and ngtcp2) (default).
+    - `-DENABLE_QUIC=ON`: build QUIC/HTTP3 from the `wolfssl`, `ngtcp2`, and `nghttp3` submodules (default).
     - `-DENABLE_QUIC=OFF`: build without QUIC support.
-- `ENABLE_SSL_KEYLOG` (OpenSSL >= 1.1.1)
-    - `-DENABLE_SSL_KEYLOG=ON`: build with SSL KeyLog support (default).
-    - `-DENABLE_SSL_KEYLOG=OFF`: build without SSL KeyLog support.
-- `ENABLE_TLS13_CIPHERSUITES` (OpenSSL >= 1.1.1)
-    - `-DENABLE_TLS13_CIPHERSUITES=ON`: build with TLS1.3 ciphersuites support (default).
+- `ENABLE_SSL_KEYLOG` (DEBUG ONLY; exposes TLS master secrets)
+    - `-DENABLE_SSL_KEYLOG=ON`: build with SSL KeyLog support. wolfSSL is still built with `WOLFSSL_KEYLOG_EXPORT=no` (forced). While `ENABLE_QUIC` is on, the KeyLog callback is not installed.
+    - `-DENABLE_SSL_KEYLOG=OFF`: build without SSL KeyLog support (default). `./trojan --version` then reports `[Disabled] SSL KeyLog Support`.
+- `ENABLE_TLS13_CIPHERSUITES`
+    - `-DENABLE_TLS13_CIPHERSUITES=ON`: build with TLS1.3 ciphersuites support (default). wolfSSL TLS 1.3 itself is always compiled in (`WOLFSSL_TLS13=yes`).
     - `-DENABLE_TLS13_CIPHERSUITES=OFF`: build without TLS1.3 ciphersuites support.
 - `FORCE_TCP_FASTOPEN`
     - `-DFORCE_TCP_FASTOPEN=ON`: force build with `TCP_FASTOPEN` support.
@@ -90,7 +92,7 @@ To build the Android shared library (.so), you need the Android NDK.
 
 ### Build
 
-1. Ensure you have the precompiled Android libraries in the `trojan-plus-android-libs` directory. This includes OpenSSL and Boost for Android.
+1. Ensure you have the precompiled Android libraries in the `trojan-plus-android-libs` directory. CMake links Boost from there (`libboost_system` and `libboost_program_options`). TLS is the `wolfssl` submodule, built and linked statically.
 
 2. Run the build script:
 
@@ -110,8 +112,8 @@ To build the iOS static library (.a) and XCFramework for use in iOS applications
 ### Dependencies
 
 - Xcode (tested with Xcode 17.0+)
-- CMake >= 3.10.2
-- Pre-built iOS libraries in `trojan-plus-ios-libs` submodule (OpenSSL 3.0.15 + Boost 1.85.0)
+- CMake >= 3.20
+- Pre-built Boost 1.85.0 in the `trojan-plus-ios-libs` submodule (`libboost_system` and `libboost_program_options`). TLS is the `wolfssl` submodule, built by CMake.
 
 ### Build
 
@@ -120,7 +122,6 @@ To build the iOS static library (.a) and XCFramework for use in iOS applications
 ```bash
 git submodule update --init --recursive
 cd trojan-plus-ios-libs
-./make_openssl.sh
 ./make_boost.sh
 cd ..
 ```
@@ -143,11 +144,11 @@ To build the macOS static library (.a) and XCFramework for use in macOS applicat
 ### Dependencies
 
 - Xcode (tested with Xcode 17.0+)
-- CMake >= 3.10.2
-- Boost and OpenSSL via Homebrew:
+- CMake >= 3.20
+- Boost via Homebrew. TLS is the `wolfssl` submodule, built by CMake:
 
 ```bash
-brew install boost openssl
+brew install boost
 ```
 
 ### Build

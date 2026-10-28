@@ -333,6 +333,24 @@ class ProtocolSelectionTest(unittest.TestCase):
         self.assertFalse(RUNNER.validate_listener_snapshot(snapshot, False)["valid"])
 
 
+class CertificateTest(unittest.TestCase):
+    def test_write_self_signed_cert(self):
+        try:
+            from cryptography import x509
+            from cryptography.hazmat.primitives.serialization import load_pem_private_key
+        except ImportError:
+            self.skipTest("cryptography is not installed")
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = pathlib.Path(tmp)
+            key_path = directory / "server.key"
+            cert_path = directory / "server.crt"
+            RUNNER.write_self_signed_cert(key_path, cert_path, RUNNER.HOST)
+            load_pem_private_key(key_path.read_bytes(), password=None)
+            cert = x509.load_pem_x509_certificate(cert_path.read_bytes())
+            sans = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+            self.assertEqual([str(ip) for ip in sans.get_values_for_type(x509.IPAddress)], [RUNNER.HOST])
+
+
 class RuntimeArgumentsTest(unittest.TestCase):
     def test_defaults(self):
         args = RUNNER.parse_args(["soak", "--run-id", "x"])

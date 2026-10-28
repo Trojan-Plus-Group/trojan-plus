@@ -5,11 +5,13 @@ usage: ./trojan [-htv] [-l LOG] [-k KEYLOG] [[-c] CONFIG]
 options:
   -c [ --config ] CONFIG specify config file
   -h [ --help ]          print help message
-  -k [ --keylog ] KEYLOG specify keylog file location (OpenSSL >= 1.1.1)
+  -k [ --keylog ] KEYLOG specify keylog file location
   -l [ --log ] LOG       specify log file location
   -t [ --test ]          test config file
   -v [ --version ]       print version and build info
 ```
+
+SSL KeyLog is compiled only with `-DENABLE_SSL_KEYLOG=ON`. The default build leaves it off, and `./trojan --version` reports `[Disabled] SSL KeyLog Support`.
 
 The default value for CONFIG is where the default config is installed on Linux and other UNIX-like systems and `config.json` on Windows.
 
