@@ -63,6 +63,8 @@ build-quic/
 
 #for fulltest
 /tests/LinuxFullTest/html
+/tests/LinuxFullTest/html_ipv6/
+/tests/LinuxFullTest/config/ipv6_*.json
 *.output
 tombstone*
 

@@ -26,25 +26,32 @@
  combined with those flags; the IPv6 suite runs after they finish.
 
  NAT and client_tun IPv6 cases are registered here but skipped unless
- --ipv6-include-expected-fail is set. They are expected to fail until a
- later PR (NAT/TPROXY and the lwIP TUN stack are IPv4-only) and they do
- not affect this suite's exit status or the default IPv4 run.
+ --ipv6-include-expected-fail is set. When executed they must match a
+ documented failure signature (NAT: getsockopt error -1 and a 0-byte
+ probe; TUN: "fatal: Invalid argument"). A different outcome, including
+ an unexpected pass, fails the suite. The default -6 run still skips
+ them, so it does not affect the default IPv4 run.
 
  PySocks refuses IPv6 destinations (socks.py connect raises
  "PySocks doesn't support IPv6"), so client-mode cases speak SOCKS5
  directly. That is what lets the suite send ATYP 4 and ATYP 3 exactly.
 
- The suite exit status is non-zero when an in-scope IPv6 case fails.
- See IPV6_BASELINE.md.
+ The suite exit status is non-zero when an in-scope IPv6 case fails,
+ or when an executed NAT/TUN case does not match its expected-fail
+ signature. See IPV6_BASELINE.md.
 '''
 
+import atexit
+import ipaddress
 import json
 import os
+import re
 import signal
 import socket
 import struct
 import subprocess
 import sys
+import tempfile
 import time
 import traceback
 
@@ -59,6 +66,10 @@ CONFIG_DIR = os.path.join(TEST_ROOT, "config")
 
 CONTENT_DIR = "html_ipv6"
 CONTENT_PORT = 18080
+# Dual-stack and the IPv4 hostname reference talk to this port. It is the
+# only content listener with IPV6_V6ONLY=0. Pure IPv6 cases use CONTENT_PORT
+# with IPV6_V6ONLY=1, so a silent fall back to 127.0.0.1 cannot succeed.
+DUAL_CONTENT_PORT = 18081
 SOCKS_PORT = 10620
 SERVER_PORT = 4650
 BALANCE_PORT = 4651
@@ -73,8 +84,12 @@ HOSTNAME_V4 = "trojanplus-ipv4.test"
 HOSTS_PATH = "/etc/hosts"
 HOSTS_MARKER = "trojan-plus-ipv6-fulltest"
 
-# In-scope cases affect the exit status. NAT/TUN are expected-fail.
+# FAIL fails the suite. SKIP and EXPECTED-FAIL do not.
 RESULTS = []
+_original_hosts_bytes = None
+_hosts_guards_installed = False
+_content_procs = []
+RESOLVED_TO_RE = re.compile(r"resolved to (\S+)")
 
 
 def is_ipv6_host(host):
@@ -245,7 +260,7 @@ def write_configs():
     server_v4["tcp"]["prefer_ipv4"] = True
     save_json("ipv6_server_v4ref.json", server_v4)
 
-    def client(pipeline, local_addr, remote_addr, remote_port, target_addr, run_type):
+    def client(pipeline, local_addr, remote_addr, remote_port, target_addr, run_type, target_port=CONTENT_PORT):
         cfg = tune_timeouts(load_json("client_config_pipeline.json" if pipeline else "client_config.json"))
         cfg["run_type"] = run_type
         cfg["local_addr"] = local_addr
@@ -253,7 +268,7 @@ def write_configs():
         cfg["remote_addr"] = remote_addr
         cfg["remote_port"] = remote_port
         cfg["target_addr"] = target_addr
-        cfg["target_port"] = CONTENT_PORT
+        cfg["target_port"] = target_port
         if pipeline:
             cfg["experimental"]["pipeline_num"] = 10
             cfg["experimental"]["pipeline_ack_window"] = 10
@@ -264,9 +279,11 @@ def write_configs():
     save_json("ipv6_forward.json", client(
         False, IPV6_LOOPBACK, IPV6_LOOPBACK, SERVER_PORT, IPV6_LOOPBACK, "forward"))
     save_json("ipv6_client_v4_to_dual.json", client(
-        False, IPV4_LOOPBACK, IPV4_LOOPBACK, SERVER_PORT, IPV4_LOOPBACK, "client"))
+        False, IPV4_LOOPBACK, IPV4_LOOPBACK, SERVER_PORT, IPV4_LOOPBACK, "client",
+        target_port=DUAL_CONTENT_PORT))
     save_json("ipv6_client_v4ref.json", client(
-        False, IPV4_LOOPBACK, IPV4_LOOPBACK, SERVER_PORT, IPV4_LOOPBACK, "client"))
+        False, IPV4_LOOPBACK, IPV4_LOOPBACK, SERVER_PORT, IPV4_LOOPBACK, "client",
+        target_port=DUAL_CONTENT_PORT))
 
     balance = client(True, IPV6_LOOPBACK, IPV6_LOOPBACK, BALANCE_PORT, IPV6_LOOPBACK, "client")
     balance["experimental"].pop("pipeline_loadbalance_configs", None)
@@ -411,24 +428,40 @@ def read_content(name):
         return handle.read()
 
 
-def start_content_server():
-    fulltest_gen_content.gen_files(os.path.join(TEST_ROOT, CONTENT_DIR), 2, 1500)
-    log_path = os.path.join(CONFIG_DIR, "ipv6_content_server.output")
+def start_content_server(port, ipv6_v6only):
+    log_path = os.path.join(CONFIG_DIR, "ipv6_content_%d.output" % port)
     log_file = open(log_path, "w+", encoding="utf-8", errors="replace")
     proc = subprocess.Popen(
-        [sys.executable, "-u", "fulltest_server.py", CONTENT_DIR, str(CONTENT_PORT), IPV6_ANY],
+        [sys.executable, "-u", "fulltest_server.py", CONTENT_DIR, str(port), IPV6_ANY,
+         "1" if ipv6_v6only else "0"],
         stdout=log_file, stderr=log_file, cwd=TEST_ROOT, universal_newlines=True)
     proc.log_file = log_file
-    ok_v6 = wait_until(lambda: port_open(IPV6_LOOPBACK, CONTENT_PORT), proc)
-    ok_v4 = wait_until(lambda: port_open(IPV4_LOOPBACK, CONTENT_PORT), proc, timeout=3)
-    if not ok_v6 or not ok_v4:
+    _content_procs.append(proc)
+    ok_v6 = wait_until(lambda: port_open(IPV6_LOOPBACK, port), proc)
+    if ipv6_v6only:
+        ok_v4 = port_open(IPV4_LOOPBACK, port)
+    else:
+        ok_v4 = wait_until(lambda: port_open(IPV4_LOOPBACK, port), proc, timeout=3)
+    if not ok_v6 or (ipv6_v6only and ok_v4) or (not ipv6_v6only and not ok_v4):
         log_file.flush()
         log_file.seek(0)
         detail = log_file.read()
+        stop_content_server(proc)
         raise RuntimeError(
-            "content server failed to accept both ::1 and 127.0.0.1 on %d (%s)"
-            % (CONTENT_PORT, excerpt(detail) or "no log"))
+            "content server on %d v6only=%s accepted ::1=%s 127.0.0.1=%s (%s)"
+            % (port, ipv6_v6only, ok_v6, ok_v4, excerpt(detail) or "no log"))
     return proc
+
+
+def start_content_servers():
+    fulltest_gen_content.gen_files(os.path.join(TEST_ROOT, CONTENT_DIR), 2, 1500)
+    pure = start_content_server(CONTENT_PORT, True)
+    try:
+        dual = start_content_server(DUAL_CONTENT_PORT, False)
+    except Exception:
+        stop_content_server(pure)
+        raise
+    return [pure, dual]
 
 
 def stop_content_server(proc):
@@ -460,13 +493,20 @@ def require_pair(group, server_cfg, client_cfg, server_host, client_host, balanc
     return client
 
 
-def tcp_get_post(proxy_host, dest_host, dest_port):
+def require_socks_atyp(request_addr, expect_atyp):
+    actual = request_addr[0]
+    if expect_atyp is not None and actual != expect_atyp:
+        raise RuntimeError("SOCKS request ATYP was %d, expected %d" % (actual, expect_atyp))
+    return actual
+
+
+def tcp_get_post(proxy_host, dest_host, dest_port, expect_atyp=None):
     name = content_files()[0]
     expected = read_content(name)
     sock, atyp, bnd_addr, bnd_port, request_addr = socks5_connect(
         proxy_host, SOCKS_PORT, dest_host, dest_port, b"\x01")
     try:
-        atyp_n = request_addr[0]
+        atyp_n = require_socks_atyp(request_addr, expect_atyp)
         body = http_exchange(sock, (
             "GET /%s HTTP/1.1\r\nHost: ipv6-fulltest\r\nConnection: close\r\n\r\n" % name
         ).encode("ascii"))
@@ -476,8 +516,9 @@ def tcp_get_post(proxy_host, dest_host, dest_port):
         sock.close()
 
     payload = b"d=" + expected
-    sock, _, _, _, _ = socks5_connect(proxy_host, SOCKS_PORT, dest_host, dest_port, b"\x01")
+    sock, _, _, _, post_addr = socks5_connect(proxy_host, SOCKS_PORT, dest_host, dest_port, b"\x01")
     try:
+        require_socks_atyp(post_addr, expect_atyp)
         header = (
             "POST /%s HTTP/1.1\r\nHost: ipv6-fulltest\r\nContent-Length: %d\r\n"
             "Connection: close\r\n\r\n" % (name, len(payload))
@@ -508,7 +549,10 @@ def udp_associate_transfer(proxy_host, dest_host, dest_port):
         udp = socket.socket(family, socket.SOCK_DGRAM)
         udp.settimeout(TIMEOUT)
         query = ("file=%s&len=%d&m=GET\r\n" % (name, len(expected))).encode("ascii")
-        header = b"\x00\x00\x00" + pack_socks_addr(dest_host, dest_port)
+        packed_dest = pack_socks_addr(dest_host, dest_port)
+        if packed_dest[0] != 4:
+            raise RuntimeError("UDP destination ATYP was %d, expected 4" % packed_dest[0])
+        header = b"\x00\x00\x00" + packed_dest
         udp.sendto(header + query, connect_addr(relay_host, bnd_port))
         chunks = []
         got = 0
@@ -561,62 +605,175 @@ def run_forward(binary, server_cfg, client_cfg, balance_cfg, tcp, udp):
         fulltest_client.UDP_RETRY_MAX_COUNT = old_retry
         fulltest_client.RECV_DATA_TIMEOUT = old_timeout
         text = group.stop()
+    if status == "PASS":
+        try:
+            assert_resolved_ipv6_loopback(text)
+        except Exception as exc:
+            status, reason = "FAIL", str(exc)
     if status != "PASS":
         reason = "%s | %s" % (reason, excerpt(text))
     return status, reason
 
 
-def install_hosts():
+def read_hosts_bytes():
     try:
-        with open(HOSTS_PATH, "r", encoding="utf-8") as handle:
-            text = handle.read()
-        writable = True
+        with open(HOSTS_PATH, "rb") as handle:
+            return handle.read()
     except PermissionError:
-        text = subprocess.check_output(["sudo", "-n", "cat", HOSTS_PATH], text=True)
-        writable = False
-    kept = [ln for ln in text.splitlines(True) if HOSTS_MARKER not in ln]
-    if kept and not kept[-1].endswith("\n"):
-        kept[-1] += "\n"
-    kept.append("::1 %s # %s\n" % (HOSTNAME_V6, HOSTS_MARKER))
-    kept.append("127.0.0.1 %s # %s\n" % (HOSTNAME_V4, HOSTS_MARKER))
-    data = "".join(kept)
-    if writable:
-        try:
-            with open(HOSTS_PATH, "w", encoding="utf-8") as handle:
-                handle.write(data)
-            return
-        except PermissionError:
-            pass
-    proc = subprocess.run(["sudo", "-n", "tee", HOSTS_PATH], input=data, text=True, capture_output=True)
+        proc = subprocess.run(["sudo", "-n", "cat", HOSTS_PATH], capture_output=True)
+        if proc.returncode != 0:
+            detail = proc.stderr.decode("utf-8", errors="replace").strip()
+            raise RuntimeError("cannot read /etc/hosts (%d): %s" % (proc.returncode, detail))
+        return proc.stdout
+
+
+def _run_checked(cmd, action):
+    proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
-        raise RuntimeError("cannot update /etc/hosts: %s" % (proc.stderr or proc.stdout))
+        detail = (proc.stderr or proc.stdout or "").strip()
+        raise RuntimeError("%s failed (%d): %s" % (action, proc.returncode, detail))
+    return proc
+
+
+def atomic_replace_hosts(data):
+    """Replace /etc/hosts by writing a temp file and renaming it into place.
+
+    A crash during the write leaves the previous file intact. sudo is used
+    only when the current user cannot create a file in /etc. Every privileged
+    command's exit code is checked.
+    """
+    if isinstance(data, str):
+        data = data.encode("utf-8")
+    local_fd, local_path = tempfile.mkstemp(prefix="trojan-hosts-", dir="/tmp")
+    etc_tmp = None
+    remote_tmp = "/etc/.hosts-trojan-plus-%d.tmp" % os.getpid()
+    try:
+        with os.fdopen(local_fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            fd, etc_tmp = tempfile.mkstemp(prefix=".hosts-trojan-plus-", dir="/etc")
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(data)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.chmod(etc_tmp, 0o644)
+            os.replace(etc_tmp, HOSTS_PATH)
+            etc_tmp = None
+        except PermissionError:
+            if etc_tmp and os.path.exists(etc_tmp):
+                try:
+                    os.unlink(etc_tmp)
+                except OSError:
+                    pass
+            etc_tmp = None
+            _run_checked(["sudo", "-n", "cp", local_path, remote_tmp], "copy hosts temp")
+            try:
+                _run_checked(["sudo", "-n", "chmod", "644", remote_tmp], "chmod hosts temp")
+                _run_checked(["sudo", "-n", "mv", "-f", remote_tmp, HOSTS_PATH], "rename hosts temp")
+            except Exception:
+                subprocess.run(["sudo", "-n", "rm", "-f", remote_tmp], check=False)
+                raise
+        readback = read_hosts_bytes()
+        if readback != data:
+            raise RuntimeError("/etc/hosts contents do not match the bytes just written")
+    finally:
+        if os.path.exists(local_path):
+            os.unlink(local_path)
+
+
+def install_hosts():
+    global _original_hosts_bytes
+    original = read_hosts_bytes()
+    _original_hosts_bytes = original
+    text = original.decode("utf-8")
+    lines = [ln for ln in text.splitlines(keepends=True) if HOSTS_MARKER not in ln]
+    if lines and not lines[-1].endswith("\n"):
+        lines[-1] = lines[-1] + "\n"
+    lines.append("::1 %s # %s\n" % (HOSTNAME_V6, HOSTS_MARKER))
+    lines.append("127.0.0.1 %s # %s\n" % (HOSTNAME_V4, HOSTS_MARKER))
+    atomic_replace_hosts("".join(lines).encode("utf-8"))
+    readback = read_hosts_bytes().decode("utf-8")
+    if HOSTNAME_V6 not in readback or HOSTNAME_V4 not in readback or HOSTS_MARKER not in readback:
+        raise RuntimeError("hosts update did not persist")
 
 
 def remove_hosts():
+    """Put back the exact bytes captured before install_hosts."""
+    if _original_hosts_bytes is None:
+        return
+    current = read_hosts_bytes()
+    if current == _original_hosts_bytes:
+        return
+    atomic_replace_hosts(_original_hosts_bytes)
+    if read_hosts_bytes() != _original_hosts_bytes:
+        raise RuntimeError("/etc/hosts was not restored to the original bytes")
+
+
+def _restore_hosts_on_signal(signum, _frame):
+    sys.stderr.write("restoring /etc/hosts after signal %s\n" % signum)
+    sys.stderr.flush()
     try:
-        with open(HOSTS_PATH, "r", encoding="utf-8") as handle:
-            text = handle.read()
-        writable = True
-    except PermissionError:
-        try:
-            text = subprocess.check_output(["sudo", "-n", "cat", HOSTS_PATH], text=True)
-        except Exception:
-            return
-        writable = False
-    except FileNotFoundError:
+        remove_hosts()
+    except Exception as exc:
+        sys.stderr.write("failed to restore /etc/hosts after signal %s: %s\n" % (signum, exc))
+        sys.stderr.flush()
+    raise SystemExit(128 + signum)
+
+
+def _restore_hosts_atexit():
+    try:
+        remove_hosts()
+    except Exception as exc:
+        sys.stderr.write("atexit failed to restore /etc/hosts: %s\n" % exc)
+        sys.stderr.flush()
+
+
+def install_hosts_guards():
+    global _hosts_guards_installed
+    if _hosts_guards_installed:
         return
-    if HOSTS_MARKER not in text:
+    _hosts_guards_installed = True
+    atexit.register(_restore_hosts_atexit)
+    signal.signal(signal.SIGINT, _restore_hosts_on_signal)
+    signal.signal(signal.SIGTERM, _restore_hosts_on_signal)
+
+
+def is_ipv6_loopback(addr):
+    try:
+        parsed = ipaddress.ip_address(addr.strip("[]"))
+    except ValueError:
+        return False
+    if not isinstance(parsed, ipaddress.IPv6Address):
+        return False
+    if parsed.ipv4_mapped is not None:
+        return False
+    return parsed == ipaddress.ip_address("::1")
+
+
+def assert_resolved_ipv6_loopback(log_text):
+    """Fail when a pure-IPv6 flow does not stay on ::1.
+
+    Numeric IPv6 destinations are not passed through the resolver, so a UDP
+    associate log may say "to 0000:0000:0000:0000:0000:0000:0000:0001" instead
+    of "resolved to ::1". Either form proves the peer. An IPv4 address, including
+    an IPv4-mapped one, fails the case.
+    """
+    text = log_text or ""
+    if "127.0.0.1" in text or "::ffff:" in text:
+        raise RuntimeError("pure IPv6 log contains an IPv4 peer")
+    resolved = RESOLVED_TO_RE.findall(text)
+    bad = [addr for addr in resolved if not is_ipv6_loopback(addr)]
+    if bad:
+        raise RuntimeError("traffic resolved to non-::1 address(es): %s" % ", ".join(bad))
+    if any(is_ipv6_loopback(addr) for addr in resolved):
         return
-    kept = [ln for ln in text.splitlines(True) if HOSTS_MARKER not in ln]
-    data = "".join(kept)
-    if writable:
-        try:
-            with open(HOSTS_PATH, "w", encoding="utf-8") as handle:
-                handle.write(data)
-            return
-        except PermissionError:
-            pass
-    subprocess.run(["sudo", "-n", "tee", HOSTS_PATH], input=data, text=True, capture_output=True)
+    if "0000:0000:0000:0000:0000:0000:0000:0001" in text:
+        return
+    if re.search(r"(?:to|from) ::1(?::|\s)", text):
+        return
+    raise RuntimeError("log has no ::1 peer (no 'resolved to ::1' and no IPv6 loopback destination)")
 
 
 def record(case_id, status, reason, expected=False):
@@ -640,12 +797,22 @@ def run_recorded(case_id, func, expected=False):
     record(case_id, status, reason, expected=expected)
 
 
-def finish_group(group, status, reason):
+def finish_group(group, status, reason, require_ipv6_loopback=False):
     text = group.stop()
-    if status != "PASS":
+    if status == "PASS" and require_ipv6_loopback:
+        try:
+            assert_resolved_ipv6_loopback(text)
+        except Exception as exc:
+            status, reason = "FAIL", str(exc)
+    if status not in ("PASS", "EXPECTED-FAIL", "SKIP"):
         extra = excerpt(text)
         if extra:
             reason = "%s | %s" % (reason, extra)
+    return status, reason, text
+
+
+def _status_reason(finished):
+    status, reason, _text = finished
     return status, reason
 
 
@@ -654,10 +821,11 @@ def case_tcp_literal(binary):
     status, reason = "FAIL", "unknown"
     try:
         require_pair(group, "ipv6_server.json", "ipv6_client.json", IPV6_LOOPBACK, IPV6_LOOPBACK)
-        status, reason = "PASS", tcp_get_post(IPV6_LOOPBACK, IPV6_LOOPBACK, CONTENT_PORT)
+        status, reason = "PASS", tcp_get_post(
+            IPV6_LOOPBACK, IPV6_LOOPBACK, CONTENT_PORT, expect_atyp=4)
     except Exception as exc:
         status, reason = "FAIL", str(exc)
-    return finish_group(group, status, reason)
+    return _status_reason(finish_group(group, status, reason, require_ipv6_loopback=True))
 
 
 def case_tcp_hostname(binary):
@@ -665,11 +833,11 @@ def case_tcp_hostname(binary):
     status, reason = "FAIL", "unknown"
     try:
         require_pair(group, "ipv6_server.json", "ipv6_client.json", IPV6_LOOPBACK, IPV6_LOOPBACK)
-        detail = tcp_get_post(IPV6_LOOPBACK, HOSTNAME_V6, CONTENT_PORT)
+        detail = tcp_get_post(IPV6_LOOPBACK, HOSTNAME_V6, CONTENT_PORT, expect_atyp=3)
         status, reason = "PASS", "ATYP 3 hostname %s; %s" % (HOSTNAME_V6, detail)
     except Exception as exc:
         status, reason = "FAIL", str(exc)
-    return finish_group(group, status, reason)
+    return _status_reason(finish_group(group, status, reason, require_ipv6_loopback=True))
 
 
 def case_udp(binary, server_cfg, client_cfg, balance_cfg, label):
@@ -680,7 +848,7 @@ def case_udp(binary, server_cfg, client_cfg, balance_cfg, label):
         status, reason = "PASS", label + "; " + udp_associate_transfer(IPV6_LOOPBACK, IPV6_LOOPBACK, CONTENT_PORT)
     except Exception as exc:
         status, reason = "FAIL", str(exc)
-    return finish_group(group, status, reason)
+    return _status_reason(finish_group(group, status, reason, require_ipv6_loopback=True))
 
 
 def case_pipeline_tcp(binary):
@@ -690,10 +858,11 @@ def case_pipeline_tcp(binary):
         require_pair(
             group, "ipv6_server_pipeline.json", "ipv6_client_pipeline.json",
             IPV6_LOOPBACK, IPV6_LOOPBACK, "ipv6_server_pipeline_balance.json")
-        status, reason = "PASS", "pipeline " + tcp_get_post(IPV6_LOOPBACK, IPV6_LOOPBACK, CONTENT_PORT)
+        status, reason = "PASS", "pipeline " + tcp_get_post(
+            IPV6_LOOPBACK, IPV6_LOOPBACK, CONTENT_PORT, expect_atyp=4)
     except Exception as exc:
         status, reason = "FAIL", str(exc)
-    return finish_group(group, status, reason)
+    return _status_reason(finish_group(group, status, reason, require_ipv6_loopback=True))
 
 
 def case_dual_stack(binary):
@@ -710,10 +879,11 @@ def case_dual_stack(binary):
         client = group.start("ipv6_client_v4_to_dual.json")
         if not wait_until(lambda: port_open(IPV4_LOOPBACK, SOCKS_PORT), client):
             raise RuntimeError("IPv4 client did not listen")
-        status, reason = "PASS", "v4 client -> :: server; " + tcp_get_post(IPV4_LOOPBACK, IPV4_LOOPBACK, CONTENT_PORT)
+        status, reason = "PASS", "v4 client -> :: server; " + tcp_get_post(
+            IPV4_LOOPBACK, IPV4_LOOPBACK, DUAL_CONTENT_PORT, expect_atyp=1)
     except Exception as exc:
         status, reason = "FAIL", str(exc)
-    return finish_group(group, status, reason)
+    return _status_reason(finish_group(group, status, reason, require_ipv6_loopback=False))
 
 
 def case_fallback(binary):
@@ -729,6 +899,7 @@ def case_fallback(binary):
                     logs += handle.read() + "\n"
         if rc != 0:
             return "FAIL", "fallback returned %d | %s" % (rc, excerpt(logs))
+        assert_resolved_ipv6_loopback(logs)
         return "PASS", "HTTPS fallback via [::1]"
     except Exception as exc:
         return "FAIL", str(exc)
@@ -741,11 +912,11 @@ def case_ipv4_hostname(binary):
         require_pair(
             group, "ipv6_server_v4ref.json", "ipv6_client_v4ref.json",
             IPV4_LOOPBACK, IPV4_LOOPBACK)
-        detail = tcp_get_post(IPV4_LOOPBACK, HOSTNAME_V4, CONTENT_PORT)
+        detail = tcp_get_post(IPV4_LOOPBACK, HOSTNAME_V4, DUAL_CONTENT_PORT, expect_atyp=3)
         status, reason = "PASS", "IPv4 ATYP 3 %s; %s" % (HOSTNAME_V4, detail)
     except Exception as exc:
         status, reason = "FAIL", str(exc)
-    return finish_group(group, status, reason)
+    return _status_reason(finish_group(group, status, reason, require_ipv6_loopback=False))
 
 
 def case_nat(binary, enabled):
@@ -755,16 +926,17 @@ def case_nat(binary, enabled):
             "NAT/TPROXY IPv6 is deferred; it must not fail the default IPv4 run or the default -6 run."
         )
     group = ProcGroup(binary)
-    status, reason = "FAIL", "unknown"
+    data = b""
+    setup_error = None
     try:
         server = group.start("ipv6_server.json", use_sudo=True)
         wait_until(lambda: port_open(IPV6_LOOPBACK, SERVER_PORT), server, timeout=4)
         nat = group.start("ipv6_nat.json", use_sudo=True)
         listened = wait_until(lambda: port_open(IPV6_LOOPBACK, NAT_PORT), nat, timeout=4)
         if nat.poll() is not None:
-            status, reason = "FAIL", "nat process exited %s" % nat.returncode
+            setup_error = "nat process exited %s before the probe" % nat.returncode
         elif not listened:
-            status, reason = "FAIL", "nat did not listen on ::1:%d" % NAT_PORT
+            setup_error = "nat did not listen on ::1:%d" % NAT_PORT
         else:
             try:
                 sock = open_tcp(IPV6_LOOPBACK, NAT_PORT, timeout=3)
@@ -774,17 +946,23 @@ def case_nat(binary, enabled):
                 except socket.timeout:
                     data = b""
                 sock.close()
-            except OSError as exc:
-                data = str(exc).encode()
+            except OSError:
+                data = b""
             time.sleep(0.4)
-            status, reason = "FAIL", (
-                "plain connect to [::1]:%d was not proxied (reply %r). "
-                "use_tproxy is false, so the session depends on IP6T_SO_ORIGINAL_DST"
-                % (NAT_PORT, data[:80])
-            )
     except Exception as exc:
-        status, reason = "FAIL", str(exc)
-    return finish_group(group, status, reason)
+        setup_error = str(exc)
+    text = group.stop()
+    signature = ("getsockopt error -1" in text) and data == b""
+    if setup_error is None and signature:
+        return "EXPECTED-FAIL", "matched utils.cpp getsockopt error -1 and a 0-byte probe"
+    if data:
+        reason = "NAT IPv6 unexpectedly returned %d bytes" % len(data)
+    else:
+        reason = setup_error or "NAT IPv6 did not match getsockopt error -1 / 0 bytes"
+    extra = excerpt(text)
+    if extra:
+        reason = "%s | %s" % (reason, extra)
+    return "FAIL", reason
 
 
 def case_tun(binary, enabled):
@@ -794,28 +972,34 @@ def case_tun(binary, enabled):
             "client_tun IPv6 (lwIP + built-in DNS + routing) is deferred and must not fail the default run."
         )
     group = ProcGroup(binary)
-    status, reason = "FAIL", "unknown"
+    setup_error = None
     try:
         proc = group.start("ipv6_tun.json", use_sudo=True)
         time.sleep(1.5)
-        code = proc.poll()
-        if code is None:
-            status, reason = "FAIL", "tun process stayed up with IPv6 net_ip fd00::2; expected make_address_v4 to reject it"
-        else:
-            status, reason = "FAIL", "tun exited %s with IPv6 net_ip fd00::2" % code
+        if proc.poll() is None:
+            setup_error = "tun process stayed up with IPv6 net_ip fd00::2"
     except Exception as exc:
-        status, reason = "FAIL", str(exc)
-    return finish_group(group, status, reason)
+        setup_error = str(exc)
+    text = group.stop()
+    if setup_error is None and "fatal: Invalid argument" in text:
+        return "EXPECTED-FAIL", "matched fatal: Invalid argument from make_address_v4"
+    reason = setup_error or "TUN IPv6 did not log fatal: Invalid argument"
+    extra = excerpt(text)
+    if extra:
+        reason = "%s | %s" % (reason, extra)
+    return "FAIL", reason
 
 
 def main(binary, include_expected_fail=False, include_ipv4_reference=False):
     os.chdir(TEST_ROOT)
     RESULTS.clear()
+    install_hosts_guards()
     print_time_log("IPv6 suite binary " + binary)
     print_time_log(
         "NAT/TUN IPv6 cases are %s"
-        % ("EXECUTED (expected-fail, exit status ignored)" if include_expected_fail else "SKIPPED (expected-fail)"))
-    content = None
+        % ("EXECUTED (must match the expected-fail signature)" if include_expected_fail
+           else "SKIPPED (expected-fail)"))
+    restore_error = None
     try:
         try:
             install_hosts()
@@ -823,49 +1007,55 @@ def main(binary, include_expected_fail=False, include_ipv4_reference=False):
             record("hosts", "FAIL", "cannot install IPv6 hostname in /etc/hosts: %s" % exc)
             return 1
         write_configs()
-        content = start_content_server()
+        start_content_servers()
 
         cases = [
-            ("client_tcp_socks_ipv6_literal", lambda: case_tcp_literal(binary), False),
-            ("client_tcp_socks_hostname_aaaa", lambda: case_tcp_hostname(binary), False),
+            ("client_tcp_socks_ipv6_literal", lambda: case_tcp_literal(binary)),
+            ("client_tcp_socks_hostname_aaaa", lambda: case_tcp_hostname(binary)),
             ("client_udp_associate_ipv6", lambda: case_udp(
-                binary, "ipv6_server.json", "ipv6_client.json", None, "client"), False),
-            ("client_pipeline_tcp_ipv6", lambda: case_pipeline_tcp(binary), False),
+                binary, "ipv6_server.json", "ipv6_client.json", None, "client")),
+            ("client_pipeline_tcp_ipv6", lambda: case_pipeline_tcp(binary)),
             ("client_pipeline_udp_ipv6", lambda: case_udp(
                 binary, "ipv6_server_pipeline.json", "ipv6_client_pipeline.json",
-                "ipv6_server_pipeline_balance.json", "pipeline"), False),
-            ("forward_tcp_ipv6", lambda: _forward_tcp(binary), False),
-            ("forward_udp_ipv6", lambda: _forward_udp(binary), False),
-            ("forward_pipeline_tcp_ipv6", lambda: _forward_pipe_tcp(binary), False),
-            ("forward_pipeline_udp_ipv6", lambda: _forward_pipe_udp(binary), False),
-            ("fallback_ipv6", lambda: case_fallback(binary), False),
-            ("dualstack_v4_client_to_v6_server", lambda: case_dual_stack(binary), False),
-            ("nat_ipv6", lambda: case_nat(binary, include_expected_fail), True),
-            ("tun_ipv6", lambda: case_tun(binary, include_expected_fail), True),
+                "ipv6_server_pipeline_balance.json", "pipeline")),
+            ("forward_tcp_ipv6", lambda: _forward_tcp(binary)),
+            ("forward_udp_ipv6", lambda: _forward_udp(binary)),
+            ("forward_pipeline_tcp_ipv6", lambda: _forward_pipe_tcp(binary)),
+            ("forward_pipeline_udp_ipv6", lambda: _forward_pipe_udp(binary)),
+            ("fallback_ipv6", lambda: case_fallback(binary)),
+            ("dualstack_v4_client_to_v6_server", lambda: case_dual_stack(binary)),
+            ("nat_ipv6", lambda: case_nat(binary, include_expected_fail)),
+            ("tun_ipv6", lambda: case_tun(binary, include_expected_fail)),
         ]
         if include_ipv4_reference:
-            cases.insert(2, ("ipv4_client_tcp_socks_hostname", lambda: case_ipv4_hostname(binary), False))
+            cases.insert(2, ("ipv4_client_tcp_socks_hostname", lambda: case_ipv4_hostname(binary)))
 
-        for case_id, func, expected in cases:
+        for case_id, func in cases:
             print_time_log("---- " + case_id + " ----")
-            run_recorded(case_id, func, expected=expected)
+            run_recorded(case_id, func)
     except Exception as exc:
         record("harness", "FAIL", "suite setup failed: %s" % exc)
         traceback.print_exc()
     finally:
-        stop_content_server(content)
-        remove_hosts()
+        for proc in list(_content_procs):
+            stop_content_server(proc)
+        del _content_procs[:]
+        try:
+            remove_hosts()
+        except Exception as exc:
+            restore_error = str(exc)
+            record("hosts_restore", "FAIL", restore_error)
 
     print_time_log("==== IPv6 suite summary ====")
     failed = 0
     for row in RESULTS:
         print_time_log("%s\t%s\t%s" % (row["status"], row["case"], row["reason"].replace("\n", " ")[:500]))
-        if row["status"] == "FAIL" and not row["expected"]:
+        if row["status"] == "FAIL":
             failed += 1
     if failed:
-        print_time_log("IPv6 suite failed %d in-scope case(s)" % failed)
+        print_time_log("IPv6 suite failed %d case(s)" % failed)
         return 1
-    print_time_log("IPv6 in-scope cases passed (NAT/TUN expected-fail ignored)")
+    print_time_log("IPv6 suite passed (NAT/TUN skipped or matched the expected-fail signature)")
     return 0
 
 

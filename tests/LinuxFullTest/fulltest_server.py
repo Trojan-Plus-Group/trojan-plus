@@ -37,15 +37,16 @@ def is_ipv6_host(host):
     return ":" in host
 
 
-def run_udp(port, bind_host="127.0.0.1"):
+def run_udp(port, bind_host="127.0.0.1", ipv6_v6only=False):
     family = socket.AF_INET6 if is_ipv6_host(bind_host) else socket.AF_INET
     udp_socket = socket.socket(family, socket.SOCK_DGRAM)
     udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF,
                           fulltest_udp_proto.UDP_BUFF_SIZE *
                           (5 if is_macos_system() else 50))  # max 5MB for mac os
     if family == socket.AF_INET6:
-        # Accept IPv4-mapped clients when bound to '::' (dual-stack case).
-        udp_socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+        # Pure IPv6 cases set V6ONLY so an IPv4 client cannot reach this socket.
+        # The dual-stack case passes ipv6_v6only=False and accepts v4-mapped peers.
+        udp_socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1 if ipv6_v6only else 0)
 
     udp_socket.bind((bind_host, port))
 
@@ -103,7 +104,7 @@ class ServerHandler(BaseHTTPRequestHandler):
             traceback.print_exc(file=sys.stdout)
 
 
-def make_http_server(bind_host, port):
+def make_http_server(bind_host, port, ipv6_v6only=False):
     try:
         from http.server import ThreadingHTTPServer
         server_cls = ThreadingHTTPServer
@@ -113,18 +114,19 @@ def make_http_server(bind_host, port):
     if not is_ipv6_host(bind_host):
         return server_cls((bind_host, port), ServerHandler)
 
+    v6only_value = 1 if ipv6_v6only else 0
+
     class V6HTTPServer(server_cls):
         address_family = socket.AF_INET6
 
         def server_bind(self):
-            # Dual-stack: an IPv4 client can reach a server bound to '::'.
-            self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+            self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, v6only_value)
             super().server_bind()
 
     return V6HTTPServer((bind_host, port), ServerHandler)
 
 
-def run(dir, port, bind_host="127.0.0.1"):
+def run(dir, port, bind_host="127.0.0.1", ipv6_v6only=False):
     if not os.path.exists(dir):
         print_time_log("can't find the directory [" + dir + "]")
         exit(1)
@@ -132,12 +134,13 @@ def run(dir, port, bind_host="127.0.0.1"):
         global serv_dir
         serv_dir = dir + "/"
 
-    t = threading.Thread(target=run_udp, args=(port, bind_host))
+    t = threading.Thread(target=run_udp, args=(port, bind_host, ipv6_v6only))
     t.daemon = True
     t.start()
 
-    httpd = make_http_server(bind_host, port)
-    print_time_log("start fulltest server " + bind_host + " port: " + str(port))
+    httpd = make_http_server(bind_host, port, ipv6_v6only)
+    print_time_log("start fulltest server " + bind_host + " port: " + str(port) +
+                   (" ipv6_v6only" if ipv6_v6only else ""))
     httpd.serve_forever()
 
 
@@ -145,6 +148,9 @@ if __name__ == '__main__':
     print_time_log(__file__ + " args " + str(sys.argv))
     if len(sys.argv) >= 3:
         bind_host = sys.argv[3] if len(sys.argv) >= 4 else "127.0.0.1"
-        run(sys.argv[1], int(sys.argv[2]), bind_host)
+        # Optional 5th arg "1" sets IPV6_V6ONLY. Omitted keeps the IPv4 path
+        # and a dual-stack IPv6 bind (V6ONLY=0).
+        ipv6_v6only = len(sys.argv) >= 5 and sys.argv[4] == "1"
+        run(sys.argv[1], int(sys.argv[2]), bind_host, ipv6_v6only)
     else:
         run('html', 18080)
