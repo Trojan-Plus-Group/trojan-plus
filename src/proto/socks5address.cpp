@@ -48,6 +48,9 @@ bool SOCKS5Address::parse(const std::string_view& data, size_t& address_len) {
             break;
         }
         case DOMAINNAME: {
+            if (data.length() < 2) {
+                break;
+            }
             uint8_t domain_len = data[1];
             if (domain_len == 0) {
                 // invalid domain len
@@ -81,50 +84,64 @@ bool SOCKS5Address::parse(const std::string_view& data, size_t& address_len) {
     _unguard;
 }
 
-static const tp::string unspecified_address("\x01\x00\x00\x00\x00\x00\x00", 7);
+static void append_port(tp::string& out, uint16_t port) {
+    out += char(uint8_t(port >> one_byte_shift_8_bits));
+    out += char(uint8_t(port & one_byte_mask_0xFF));
+}
+
+static tp::string encode_domain(const tp::string& host, uint16_t port) {
+    tp::string ret;
+    ret += '\x03';
+    ret += char(uint8_t(host.length()));
+    ret += host;
+    append_port(ret, port);
+    return ret;
+}
+
+static tp::string encode_v4_bytes(const address_v4::bytes_type& bytes, uint16_t port) {
+    tp::string ret;
+    ret += '\x01';
+    ret.append(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    append_port(ret, port);
+    return ret;
+}
 
 void SOCKS5Address::generate(tp::streambuf& buf, const udp::endpoint& endpoint) {
-    if (endpoint.address().is_unspecified()) {
-        streambuf_append(buf, unspecified_address);
-        return;
-    }
-
-    boost::asio::ip::address addr = endpoint.address();
-    if (addr.is_v6() && addr.to_v6().is_v4_mapped()) {
-        addr = make_address_v4(v4_mapped, addr.to_v6());
-    }
-
-    if (addr.is_v4()) {
-        streambuf_append(buf, '\x01');
-        auto ip = addr.to_v4().to_bytes();
-        streambuf_append(buf, ip.data(), ip.size());
-    } else if (addr.is_v6()) {
-        streambuf_append(buf, '\x04');
-        auto ip = addr.to_v6().to_bytes();
-        streambuf_append(buf, ip.data(), ip.size());
-    }
-    streambuf_append(buf, char(uint8_t(endpoint.port() >> one_byte_shift_8_bits)));
-    streambuf_append(buf, char(uint8_t(endpoint.port() & one_byte_mask_0xFF)));
+    // to_string() keeps a zone id (fe80::1%eth0). encode() then chooses ATYP.
+    // Unspecified addresses keep their family and port: :: is ATYP 4, 0.0.0.0 is ATYP 1.
+    const tp::string host(endpoint.address().to_string().c_str());
+    streambuf_append(buf, encode(host, endpoint.port()));
 }
 
 tp::string SOCKS5Address::encode(const tp::string& host, uint16_t port) {
-    tp::string ret;
+    // ATYP 4 has no zone. make_address() also accepts an unknown interface
+    // name and stores scope_id 0, so a '%' in the original text is enough to
+    // keep the literal as a domain. The peer resolver still sees the zone.
+    if (host.find('%') != tp::string::npos) {
+        return encode_domain(host, port);
+    }
+
     boost::system::error_code ec;
     const auto addr = make_address(host.c_str(), ec);
-    if (!ec && addr.is_v4()) {
-        ret += '\x01';
-        const auto bytes = addr.to_v4().to_bytes();
-        ret.append(reinterpret_cast<const char*>(bytes.data()), bytes.size());
-    } else if (!ec && addr.is_v6()) {
+    if (ec) {
+        return encode_domain(host, port);
+    }
+    if (addr.is_v6() && addr.to_v6().scope_id() != 0) {
+        return encode_domain(host, port);
+    }
+    if (addr.is_v4()) {
+        return encode_v4_bytes(addr.to_v4().to_bytes(), port);
+    }
+    if (addr.is_v6() && addr.to_v6().is_v4_mapped()) {
+        return encode_v4_bytes(make_address_v4(v4_mapped, addr.to_v6()).to_bytes(), port);
+    }
+    if (addr.is_v6()) {
+        tp::string ret;
         ret += '\x04';
         const auto bytes = addr.to_v6().to_bytes();
         ret.append(reinterpret_cast<const char*>(bytes.data()), bytes.size());
-    } else {
-        ret += '\x03';
-        ret += char(uint8_t(host.length()));
-        ret += host;
+        append_port(ret, port);
+        return ret;
     }
-    ret += char(uint8_t(port >> one_byte_shift_8_bits));
-    ret += char(uint8_t(port & one_byte_mask_0xFF));
-    return ret;
+    return encode_domain(host, port);
 }

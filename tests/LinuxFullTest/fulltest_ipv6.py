@@ -1027,6 +1027,119 @@ def case_ipv6_only(binary):
         group, status, reason, require_ipv6_loopback=True, require_atyp=4, require_v6only="1"))
 
 
+def write_forward(name, target, target_port):
+    cfg = tune_timeouts(load_json("client_config.json"))
+    cfg["run_type"] = "forward"
+    cfg["local_addr"] = IPV6_LOOPBACK
+    cfg["local_port"] = SOCKS_PORT
+    cfg["remote_addr"] = IPV6_LOOPBACK
+    cfg["remote_port"] = SERVER_PORT
+    cfg["target_addr"] = target
+    cfg["target_port"] = target_port
+    save_json(name, cfg)
+    return name
+
+
+def log_contains(group, token):
+    for proc in group.procs:
+        try:
+            proc.log_file.flush()
+            with open(proc.log_path, "r", encoding="utf-8", errors="replace") as handle:
+                if token in handle.read():
+                    return True
+        except Exception:
+            continue
+    return False
+
+
+def case_forward_zoned(binary, target):
+    """Forward a scoped literal and require ATYP 3 plus the original zone text."""
+    group = ProcGroup(binary)
+    cfg_name = write_forward("ipv6_forward_zoned.json", target, CONTENT_PORT)
+    status, reason = "FAIL", "zoned forward probe failed"
+    try:
+        require_pair(group, "ipv6_server.json", cfg_name, IPV6_LOOPBACK, IPV6_LOOPBACK)
+        sock = open_tcp(IPV6_LOOPBACK, SOCKS_PORT)
+        try:
+            sock.sendall(b"GET / HTTP/1.1\r\nHost: zoned\r\nConnection: close\r\n\r\n")
+            if not wait_until(lambda: log_contains(group, "atyp 3"), None, timeout=4):
+                raise RuntimeError("server did not log atyp 3 for %s" % target)
+        finally:
+            sock.close()
+        status, reason = "PASS", "probe sent"
+    except Exception as exc:
+        status, reason = "FAIL", str(exc)
+    status, reason, text = finish_group(group, status, reason, require_atyp=3)
+    if status == "PASS":
+        if target not in (text or ""):
+            status, reason = "FAIL", "zone text %s was not kept | %s" % (target, excerpt(text))
+        elif "atyp 4" in (text or "") or "atyp 1" in (text or ""):
+            status, reason = "FAIL", "scoped literal was not left as ATYP 3 | %s" % excerpt(text)
+        else:
+            reason = "ATYP 3 %s" % target
+    return status, reason
+
+
+def case_forward_v4_mapped(binary):
+    group = ProcGroup(binary)
+    cfg_name = write_forward("ipv6_forward_v4mapped.json", "::ffff:127.0.0.1", DUAL_CONTENT_PORT)
+    old_retry = fulltest_client.UDP_RETRY_MAX_COUNT
+    old_timeout = fulltest_client.RECV_DATA_TIMEOUT
+    fulltest_client.UDP_RETRY_MAX_COUNT = 2
+    fulltest_client.RECV_DATA_TIMEOUT = TIMEOUT
+    status, reason = "FAIL", "v4-mapped forward failed"
+    text = ""
+    try:
+        require_pair(group, "ipv6_server.json", cfg_name, IPV6_LOOPBACK, IPV6_LOOPBACK)
+        ok = fulltest_client.start_query(
+            IPV6_LOOPBACK, 0, SOCKS_PORT, CONTENT_DIR,
+            tcp=True, udp=False, file_list=content_files())
+        if not ok:
+            raise RuntimeError("transfer failed")
+        status, reason = "PASS", "transfer"
+    except Exception as exc:
+        status, reason = "FAIL", str(exc)
+    finally:
+        fulltest_client.UDP_RETRY_MAX_COUNT = old_retry
+        fulltest_client.RECV_DATA_TIMEOUT = old_timeout
+        text = group.stop()
+    if status == "PASS":
+        if "atyp 1" not in text or "requested connection to 127.0.0.1:" not in text:
+            status, reason = "FAIL", "server did not log unwrapped ATYP 1 127.0.0.1"
+        elif "atyp 4" in text:
+            status, reason = "FAIL", "v4-mapped literal stayed ATYP 4"
+        else:
+            reason = "ATYP 1 127.0.0.1 from ::ffff:127.0.0.1"
+    if status != "PASS":
+        reason = "%s | %s" % (reason, excerpt(text))
+    return status, reason
+
+
+def case_v4_mapped_socks_bind(binary):
+    """IPv4 client to a dual-stack SOCKS listener. The bind reply must be ATYP 1."""
+    group = ProcGroup(binary)
+    cfg = tune_timeouts(load_json("client_config.json"))
+    cfg["run_type"] = "client"
+    cfg["local_addr"] = IPV6_ANY
+    cfg["local_port"] = SOCKS_PORT
+    cfg["remote_addr"] = IPV6_LOOPBACK
+    cfg["remote_port"] = SERVER_PORT
+    save_json("ipv6_client_dualstack_socks.json", cfg)
+    status, reason = "FAIL", "v4-mapped SOCKS bind failed"
+    try:
+        require_pair(
+            group, "ipv6_server.json", "ipv6_client_dualstack_socks.json",
+            IPV6_LOOPBACK, IPV6_LOOPBACK)
+        if not port_open(IPV4_LOOPBACK, SOCKS_PORT):
+            raise RuntimeError("dual-stack SOCKS listener rejected 127.0.0.1")
+        detail = tcp_get_post(IPV4_LOOPBACK, IPV4_LOOPBACK, DUAL_CONTENT_PORT, expect_atyp=1)
+        status, reason = "PASS", "bind unwrapped; " + detail
+    except Exception as exc:
+        status, reason = "FAIL", str(exc)
+    return _status_reason(finish_group(
+        group, status, reason, require_ipv6_loopback=False, require_atyp=1, require_v6only="0"))
+
+
 def case_nat(binary, enabled):
     if not enabled:
         return "SKIP", (
@@ -1139,6 +1252,11 @@ def main(binary, include_expected_fail=False, include_ipv4_reference=False):
                 binary, "ipv6_server_resolver_default.json",
                 resolver_addresses(HOSTNAME_DUAL, DUAL_CONTENT_PORT)[0],
                 "tcp.prefer_ipv4 default")),
+            ("forward_zoned_link_local", lambda: case_forward_zoned(binary, "fe80::1%lo")),
+            ("forward_zoned_unknown_iface", lambda: case_forward_zoned(
+                binary, "fe80::1%nosuchiface0")),
+            ("forward_v4_mapped", lambda: case_forward_v4_mapped(binary)),
+            ("socks_v4_mapped_bind", lambda: case_v4_mapped_socks_bind(binary)),
             ("nat_ipv6", lambda: case_nat(binary, include_expected_fail)),
             ("tun_ipv6", lambda: case_tun(binary, include_expected_fail)),
         ]
