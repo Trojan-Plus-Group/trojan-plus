@@ -72,8 +72,13 @@ void UDPForwardSession::start_udp(const std::string_view& data) {
     auto cb   = [this, self]() {
         if (is_nat) {
             udp_target_socket.open(out_udp_endpoint.protocol());
-            bool is_ipv4 = out_udp_endpoint.protocol().family() == boost::asio::ip::tcp::v6().family();
-            if (prepare_nat_udp_target_bind((int)udp_target_socket.native_handle(), is_ipv4, out_udp_endpoint,
+            // NAT only. prepare_nat_udp_target_bind (utils.cpp) selects SOL_IPV6 when
+            // its flag is true, so the historical caller compared against v6(). The
+            // two inversions cancel and the socket level stays correct. The
+            // transparent-socket option values are left for the NAT step.
+            const bool nat_bind_flag =
+              out_udp_endpoint.protocol().family() == boost::asio::ip::tcp::v6().family();
+            if (prepare_nat_udp_target_bind((int)udp_target_socket.native_handle(), nat_bind_flag, out_udp_endpoint,
                   get_config().get_udp_socket_buf())) {
                 udp_target_socket.bind(out_udp_endpoint);
             } else {
@@ -96,8 +101,8 @@ void UDPForwardSession::start_udp(const std::string_view& data) {
 
     _log_with_endpoint(udp_recv_endpoint,
       "session_id: " + tp::to_string(get_session_id()) + " forwarding UDP packets to " +
-        out_udp_endpoint.address().to_string() + ':' + tp::to_string(out_udp_endpoint.port()) + " via " +
-        get_config().get_remote_addr() + ':' + tp::to_string(get_config().get_remote_port()),
+        format_ip_endpoint(out_udp_endpoint) + " via " +
+        format_host_port(get_config().get_remote_addr(), get_config().get_remote_port()),
       Log::INFO);
 
     if (get_pipeline_component().is_using_pipeline()) {
@@ -175,10 +180,10 @@ void UDPForwardSession::in_recv(const std::string_view& data) {
 
     _log_with_endpoint(
       udp_recv_endpoint, "session_id: " + tp::to_string(get_session_id()) + " sent a UDP packet of length " +
-                           tp::to_string(length) + " bytes to " + out_udp_endpoint.address().to_string() + ':' +
-                           tp::to_string(out_udp_endpoint.port()) + " sent_len: " + tp::to_string(get_stat().get_sent_len()));
+                           tp::to_string(length) + " bytes to " + format_ip_endpoint(out_udp_endpoint) +
+                           " sent_len: " + tp::to_string(get_stat().get_sent_len()));
 
-    UDPPacket::generate(out_write_buf, out_udp_endpoint.address().to_string().c_str(), out_udp_endpoint.port(), data);
+    UDPPacket::generate(out_write_buf, out_udp_endpoint, data);
     if (status == FORWARD) {
         status = FORWARDING;
         out_async_write(streambuf_to_string_view(out_write_buf));
@@ -205,8 +210,8 @@ void UDPForwardSession::out_recv(const std::string_view& data) {
             }
             _log_with_endpoint(udp_recv_endpoint, "session_id: " + tp::to_string(get_session_id()) +
                                                     " received a UDP packet of length " + tp::to_string(packet.length) +
-                                                    " bytes from " + packet.address.address + ':' +
-                                                    tp::to_string(packet.address.port));
+                                                    " bytes from " +
+                                                    format_host_port(packet.address.address, packet.address.port));
 
             if (is_nat) {
                 boost::system::error_code ec;

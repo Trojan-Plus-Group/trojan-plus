@@ -122,13 +122,11 @@ void Log::log_with_date_time(const tp::string& message, Level level) {
 }
 
 void Log::log_with_endpoint(const tcp::endpoint& endpoint, const tp::string& message, Level level) {
-    log_with_date_time(
-      tp::string("[tcp] ") + endpoint.address().to_string().c_str() + ':' + tp::to_string(endpoint.port()) + ' ' + message, level);
+    log_with_date_time(tp::string("[tcp] ") + format_ip_endpoint(endpoint) + ' ' + message, level);
 }
 
 void Log::log_with_endpoint(const udp::endpoint& endpoint, const tp::string& message, Level level) {
-    log_with_date_time(
-      tp::string("[udp] ") + endpoint.address().to_string().c_str() + ':' + tp::to_string(endpoint.port()) + ' ' + message, level);
+    log_with_date_time(tp::string("[udp] ") + format_ip_endpoint(endpoint) + ' ' + message, level);
 }
 
 void Log::redirect(const tp::string& filename) {

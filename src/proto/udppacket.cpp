@@ -67,11 +67,7 @@ tp::streambuf& UDPPacket::generate(
   tp::streambuf& buf, const tp::string& domainname, uint16_t port, const std::string_view& payload) {
     _guard;
 
-    streambuf_append(buf, '\x03');
-    streambuf_append(buf, char(uint8_t(domainname.length())));
-    streambuf_append(buf, domainname);
-    streambuf_append(buf, char(uint8_t(port >> one_byte_shift_8_bits)));
-    streambuf_append(buf, char(uint8_t(port & one_byte_mask_0xFF)));
+    streambuf_append(buf, SOCKS5Address::encode(domainname, port));
     streambuf_append(buf, char(uint8_t(payload.length() >> one_byte_shift_8_bits)));
     streambuf_append(buf, char(uint8_t(payload.length() & one_byte_mask_0xFF)));
     streambuf_append(buf, "\r\n");

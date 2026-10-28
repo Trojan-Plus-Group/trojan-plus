@@ -43,6 +43,9 @@ public:
     [[nodiscard]]
     bool parse(const std::string_view &data, size_t &address_len);
     static void generate(tp::streambuf& buf, const boost::asio::ip::udp::endpoint &endpoint);
+    // ATYP + address + port. IPv4 literals are ATYP 1, IPv6 literals are ATYP 4,
+    // and everything else is a domain (ATYP 3).
+    [[nodiscard]] static tp::string encode(const tp::string& host, uint16_t port);
 };
 
 #endif // _SOCKS5ADDRESS_H_

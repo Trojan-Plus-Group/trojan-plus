@@ -1,7 +1,7 @@
 # IPv6 LinuxFullTest baseline
 
-This file records the first IPv6 pass/fail matrix for `tests/LinuxFullTest`.
-Product code under `src/` is unchanged. QUIC tests were not run and were not modified.
+This file records the IPv6 pass/fail matrix for `tests/LinuxFullTest`.
+Core TCP and UDP-over-TCP paths (server, client, forward) now set `IPV6_V6ONLY`, encode address literals with ATYP 1/4, return the real SOCKS bind address, and log IPv6 endpoints as `[addr]:port`. QUIC, NAT/TPROXY, and TUN behaviour are unchanged. QUIC tests were not run.
 
 The default IPv4 invocation is unchanged. CI (`azure-pipelines.yml`, `build_and_test.sh`) does not pass `-6`.
 
@@ -47,23 +47,26 @@ Host: IPv6 loopback up, `net.ipv6.bindv6only=0`. Binary built from this tree wit
 
 | Case | IPv4 | IPv6 |
 | :--- | :--- | :--- |
-| Client TCP SOCKS, IP literal | PASS. `-n` client stage. PySocks sends ATYP 1 for `127.0.0.1`. | PASS. SOCKS listener `::1`, request ATYP must be 4, target `::1:18080` on a V6ONLY content server, and the server log must say `resolved to ::1`. |
-| Client TCP SOCKS, hostname | PASS. Reference case `--ipv6-include-ipv4-reference`, ATYP 3 `trojanplus-ipv4.test` -> `127.0.0.1`. Not part of default `-n`. | PASS. ATYP 3 `trojanplus-ipv6.test` -> `::1` only. `tcp.prefer_ipv4` stayed true. |
-| Client UDP associate | PASS. Same `-n` client stage (UDP GET and POST). | PASS. UDP ASSOCIATE with ATYP 4, 1500-byte GET matched, relay was `::1:<ephemeral>`. |
+| Client TCP SOCKS, IP literal | PASS. `-n` client stage. PySocks sends ATYP 1 for `127.0.0.1`. | PASS. SOCKS listener `::1`, request ATYP 4, SOCKS bind ATYP 4 `[::1]:10620`, server log `atyp 4` and `resolved to ::1`, endpoints logged as `[::1]:port`. |
+| Client TCP SOCKS, hostname | PASS. Reference case `--ipv6-include-ipv4-reference`, ATYP 3 `trojanplus-ipv4.test` -> `127.0.0.1`. Not part of default `-n`. | PASS. ATYP 3 `trojanplus-ipv6.test` -> `::1` only. Server log `atyp 3`. SOCKS bind ATYP 4 `[::1]:10620`. `tcp.prefer_ipv4` stayed true. |
+| Client UDP associate | PASS. Same `-n` client stage (UDP GET and POST). | PASS. UDP ASSOCIATE request and reply ATYP 4, relay `[::1]:<ephemeral>`, 1500-byte GET matched. Server log `atyp 4`. |
 | Client pipeline TCP | PASS. `-n` pipeline client stage. | PASS. ATYP 4 through pipeline plus the balance server on `::`. |
 | Client pipeline UDP | PASS. Same `-n` pipeline client stage. | PASS. ATYP 4 UDP ASSOCIATE through pipeline. |
-| Forward TCP | PASS. `-n` forward stage. | PASS. Direct TCP to `[::1]:10620`, target `::1:18080`. |
-| Forward UDP | PASS. Same `-n` forward stage. | PASS. Direct UDP to `[::1]:10620`. |
+| Forward TCP | PASS. `-n` forward stage. | PASS. Direct TCP to `[::1]:10620`, target `::1:18080`. Server log `atyp 4` and not `atyp 1` or `atyp 3`. |
+| Forward UDP | PASS. Same `-n` forward stage. | PASS. Direct UDP to `[::1]:10620`. Server log `atyp 4` for the literal target. |
 | Forward pipeline TCP | PASS. `-n` forward pipeline stage. | PASS. |
 | Forward pipeline UDP | PASS. Same stage. | PASS. |
 | Fallback (TLS, non-Trojan HTTP) | PASS. `-f`, `Fallback Success` from `127.0.0.1`. | PASS. Server `::`, mock HTTP on `::1`, request `https://[::1]:14650/`. |
-| IPv4 client to dual-stack server | The default server listens on `0.0.0.0` and that path PASSed inside `-n`. There is no separate dual-stack IPv4 case. | PASS. Server bound to `::`, client `remote_addr` `127.0.0.1`, SOCKS ATYP 1 to `127.0.0.1:18081` (the V6ONLY=0 content port). |
+| IPv4 client to dual-stack server | The default server listens on `0.0.0.0` and that path PASSed inside `-n`. There is no separate dual-stack IPv4 case. | PASS. Server bound to `::` with `tcp.ipv6_only` omitted (default false). The log contains `IPV6_V6ONLY=0`. Client `remote_addr` `127.0.0.1`, SOCKS request ATYP 1 to `127.0.0.1:18081`, server log `atyp 1`, SOCKS bind reply ATYP 1 `127.0.0.1:10620`. |
+| `tcp.ipv6_only` true | No separate IPv4 case. Listeners on IPv4 addresses do not set the option. | PASS. Server on `::` with `tcp.ipv6_only` true logs `IPV6_V6ONLY=1`, rejects `127.0.0.1`, and still proxies `::1` (request ATYP 4, SOCKS bind `[::1]:10620`). |
+| `tcp.prefer_ipv4` true, dual-stack name | Existing `-n` configs set `prefer_ipv4` true. Targets in that run are IPv4 literals, so the flag is not what selects the family. | PASS. `trojanplus-dual.test` has both `127.0.0.1` and `::1`. Server log contains `resolved to 127.0.0.1` and `atyp 3`. |
+| `tcp.prefer_ipv4` omitted | Code default is false: the resolver's first result. | PASS. Same dual-stack name. On this host the first `getaddrinfo` result was `::1`, and the server log said `resolved to ::1`. |
 | NAT | No case in `LinuxFullTest`. | SKIP on default `-6`. Opt-in returns EXPECTED-FAIL only when the log contains `getsockopt error -1` and the probe reads 0 bytes. Any other outcome fails the suite. |
 | TUN (`client_tun`) | Not run here. Existing `-t` installs a `tun0` default route; CI runs that on a privileged agent. | SKIP on default `-6`. Opt-in returns EXPECTED-FAIL only when the log contains `fatal: Invalid argument`. Any other outcome (including a missing `/dev/net/tun`) fails the suite. |
 
 IPv4 command: `python3 -u fulltest_main.py ../../build/trojan -g -n -f` exited 0 (`ALL SUCC`). Stages: client, client pipeline, forward, forward pipeline, fallback.
 
-IPv6 command: `python3 -u fulltest_main.py ../../build/trojan -6` exited 0. Every in-scope case passed. `nat_ipv6` and `tun_ipv6` were `SKIP`.
+IPv6 command: `python3 -u fulltest_main.py ../../build/trojan -6` exited 0. Every in-scope case passed, including `ipv6_only_listener`, `prefer_ipv4_dual_hostname` (`resolved to 127.0.0.1`), and `prefer_ipv4_default_dual_hostname` (`resolved to ::1`). `nat_ipv6` and `tun_ipv6` were `SKIP`.
 
 Opt-in command: `python3 -u fulltest_main.py ../../build/trojan -6 --ipv6-include-expected-fail` exited 0. NAT and TUN returned EXPECTED-FAIL after matching `getsockopt error -1` plus a 0-byte probe, and `fatal: Invalid argument`. A different outcome fails the suite. The same in-scope cases passed.
 
@@ -80,19 +83,19 @@ Observed with `run_type=nat`, `local_addr=::1`, `tcp.use_tproxy=false`, and a pl
 [clientsession.cpp:834] session_id: 0 disconnected, 0 bytes received, 0 bytes sent
 ```
 
-`recv_target_endpoint` (`src/core/utils.cpp:831`) calls `getsockopt(SOL_IPV6, IP6T_SO_ORIGINAL_DST)` and, on failure, `getsockopt(SOL_IP, SO_ORIGINAL_DST)`. Both fail on a normal accept, so it returns port 0 (`utils.cpp:839`). `NATSession::start` then destroys the session (`src/session/natsession.cpp:47`). The probe read 0 bytes. The listener itself did come up: `trojan plus service (nat) started at ::1:20621` (`service.cpp:220`).
+`recv_target_endpoint` (`src/core/utils.cpp:831`) calls `getsockopt(SOL_IPV6, IP6T_SO_ORIGINAL_DST)` and, on failure, `getsockopt(SOL_IP, SO_ORIGINAL_DST)`. Both fail on a normal accept, so it returns port 0 (`utils.cpp:839`). `NATSession::start` then destroys the session (`src/session/natsession.cpp:47`). The probe read 0 bytes. The listener itself did come up: `trojan plus service (nat) started at [::1]:20621` (`service.cpp`). IPv6 endpoints in the core logs use `[addr]:port`.
 
 An earlier probe with `tcp.use_tproxy=true` and no TPROXY rule is not the committed case (it self-connects). It logged:
 
 ```
 [service.cpp:80] [nat] [tcp] to process TPROXY tcp message
 [utils.cpp:829] recv_target_endpoint + getsockname error 0
-[natsession.cpp:51] forwarding to ::1:20621 via ::1:4650
+[natsession.cpp:51] forwarding to [::1]:20621 via [::1]:4650
 ```
 
 `getsockname` on the accepted socket is the listen address, so the session forwards to itself and accepts again. The committed test leaves `use_tproxy` false to avoid that loop.
 
-Not hit by this TCP probe. In the NAT UDP path, `UDPForwardSession::start_udp` sets a bool named `is_ipv4` by comparing the family to `v6()` (`src/session/udpforwardsession.cpp:75`), and `prepare_nat_udp_target_bind` selects `SOL_IPV6` when that flag is true (`src/core/utils.cpp:965`). The two inversions cancel: the variable name is wrong, and the socket level passed to `setsockopt` is the correct one for the address family.
+Not hit by this TCP probe. In the NAT UDP path, `UDPForwardSession::start_udp` still passes a flag that is true for IPv6 into `prepare_nat_udp_target_bind`, and that function selects `SOL_IPV6` when the flag is true (`src/core/utils.cpp`). The two inversions cancel, so the socket level is unchanged. `utils.cpp` transparent-socket options (`IP_TRANSPARENT` at the IPv4/IPv6 `setsockopt` sites) are left for the NAT step. The call site names the flag for what it does today and does not change the value.
 
 ### TUN (`tun_ipv6`)
 
@@ -109,10 +112,10 @@ The process never reached packet handling. The same class is explicitly IPv4-onl
 
 ## Notes on cases that passed
 
-TCP CONNECT replies were `ATYP 1, 0.0.0.0:0` on every IPv6 and IPv4 SOCKS TCP case. That bytestring is fixed in `src/session/clientsession.cpp:420` (`socks5_request_reply_succ_tcp`). The transfer still completed because the test client does not use BND.ADDR. UDP ASSOCIATE did return the real IPv6 relay (`SOCKS5Address::generate` at `clientsession.cpp:516`).
+TCP CONNECT replies carry the accepted socket's local endpoint. An IPv6 SOCKS listener replies ATYP 4 `[::1]:10620`. An IPv4 SOCKS listener replies ATYP 1 `127.0.0.1:10620`. UDP ASSOCIATE replies ATYP 4 with the real `[::1]:<ephemeral>` relay. `0.0.0.0:0` fails these cases.
 
-`tcp.prefer_ipv4` remains true on the generated server configs. The hostname case still reached `::1` because `trojanplus-ipv6.test` has no A record, so the scan in `connect_out_socket` (`src/core/utils.h:450`) keeps the first result.
+`tcp.prefer_ipv4` defaults to false and is unchanged for callers that omit it: outbound TCP (`connect_out_socket`) and UDP associate resolution keep the resolver's first address, and an IPv6-only name such as `trojanplus-ipv6.test` still resolves to `::1` when the flag is true because there is no A record. The dual-stack name `trojanplus-dual.test` is the coverage for the flag. `true` must log `resolved to 127.0.0.1`. The omitted key must log the first `getaddrinfo` result.
 
-The dual-stack pass used the kernel default `net.ipv6.bindv6only=0` (confirmed 0 on this host). `Service` binds the resolved `::` endpoint (`src/core/service.cpp:92`) and does not set `IPV6_V6ONLY`. A host with `bindv6only=1` would reject the IPv4 client. The pure-IPv6 content server is separate and sets `IPV6_V6ONLY=1`, so those cases cannot succeed by connecting to `127.0.0.1`. Literal SOCKS requests are rejected unless the ATYP byte on the wire is 4.
+Listening sockets on IPv6 set `IPV6_V6ONLY` from `tcp.ipv6_only` (default false) and log `listening socket IPV6_V6ONLY=0` or `=1`. The dual-stack case requires `=0` and a successful `127.0.0.1` connection. The `ipv6_only` case requires `=1` and a refused `127.0.0.1` connection. The pure-IPv6 content server is separate and sets `IPV6_V6ONLY=1`, so those cases cannot succeed by connecting to `127.0.0.1`. Literal SOCKS requests are rejected unless the ATYP byte on the wire is 4.
 
-`TrojanRequest::generate` always writes ATYP 3 (`src/proto/trojanrequest.cpp:67`). Forward mode therefore sends the target `::1` as a hostname. The server still connects, because `make_address("::1")` succeeds before any DNS lookup.
+`TrojanRequest::generate` and the UDP packet address encoder write ATYP 1 for IPv4 literals, ATYP 4 for IPv6 literals, and ATYP 3 for domains. The server already parses all three. Forward cases require the server log to contain `atyp 4` and not `atyp 1` or `atyp 3`. Client literal cases require `atyp 4`. Hostname cases require `atyp 3`. Parsed IPv6 text is the compressed form from `address_v6::to_string()` (`::1`). The uncompressed form fails the pure-IPv6 log check. Endpoint logs use `[addr]:port`.

@@ -27,6 +27,8 @@
         "curves": "X25519:P-256:P-384"
     },
     "tcp": {
+        "prefer_ipv4": false,
+        "ipv6_only": false,
         "no_delay": true,
         "keep_alive": true,
         "reuse_port": false,

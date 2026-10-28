@@ -318,15 +318,17 @@ void ServerSession::in_recv(const std::string_view& data, size_t ack_count) {
                 if (ec) {
                     _log_with_endpoint(udp_associate_endpoint,
                       "session_id: " + tp::to_string(get_session_id()) + " cannot make address for UDP associate to " +
-                        req.address.address + ':' + tp::to_string(req.address.port),
+                        format_host_port(req.address.address, req.address.port),
                       Log::ERROR);
                     destroy();
                     return;
                 }
 
                 _log_with_endpoint(udp_associate_endpoint,
-                  "session_id: " + tp::to_string(get_session_id()) + " requested UDP associate to " + req.address.address +
-                    ':' + tp::to_string(req.address.port) + " payload length: " + tp::to_string(req.payload.length()),
+                  "session_id: " + tp::to_string(get_session_id()) + " requested UDP associate to " +
+                    format_host_port(req.address.address, req.address.port) + " atyp " +
+                    tp::to_string(static_cast<int>(req.address.address_type)) + " payload length: " +
+                    tp::to_string(req.payload.length()),
                   Log::INFO);
 
                 status = UDP_FORWARD;
@@ -337,8 +339,9 @@ void ServerSession::in_recv(const std::string_view& data, size_t ack_count) {
             }
 
             _log_with_endpoint(get_in_endpoint(),
-              "session_id: " + tp::to_string(get_session_id()) + " requested connection to " + req.address.address + ':' +
-                tp::to_string(req.address.port),
+              "session_id: " + tp::to_string(get_session_id()) + " requested connection to " +
+                format_host_port(req.address.address, req.address.port) + " atyp " +
+                tp::to_string(static_cast<int>(req.address.address_type)),
               Log::INFO);
 
             streambuf_append(out_write_buf, req.payload);
@@ -400,7 +403,7 @@ void ServerSession::out_udp_recv(const std::string_view& data, const udp::endpoi
         size_t length = data.length();
         _log_with_endpoint(udp_associate_endpoint,
           "session_id: " + tp::to_string(get_session_id()) + " received a UDP packet of length " + tp::to_string(length) +
-            " bytes from " + endpoint.address().to_string() + ':' + tp::to_string(endpoint.port()));
+            " bytes from " + format_ip_endpoint(endpoint));
         get_stat().inc_recv_len(length);
         out_write_buf.consume(out_write_buf.size());
         in_async_write(streambuf_to_string_view(UDPPacket::generate(out_write_buf, endpoint, data)));
@@ -449,18 +452,18 @@ void ServerSession::out_udp_sent() {
 
                 _log_with_endpoint(udp_associate_endpoint,
                   "session_id: " + tp::to_string(get_session_id()) + " open UDP socket " +
-                    udp_socket.local_endpoint().address().to_string() + ':' +
-                    tp::to_string(udp_socket.local_endpoint().port()) + " for relay",
+                    format_ip_endpoint(udp_socket.local_endpoint()) + " for relay",
                   Log::INFO);
 
                 out_udp_async_read();
             }
 
             get_stat().inc_sent_len(packet.length);
-            _log_with_endpoint(udp_associate_endpoint, "session_id: " + tp::to_string(get_session_id()) +
-                                                         " sent a UDP packet of length " + tp::to_string(packet.length) +
-                                                         " bytes to " + packet.address.address + ':' +
-                                                         tp::to_string(packet.address.port));
+            _log_with_endpoint(udp_associate_endpoint,
+              "session_id: " + tp::to_string(get_session_id()) + " sent a UDP packet of length " +
+                tp::to_string(packet.length) + " bytes to " +
+                format_host_port(packet.address.address, packet.address.port) + " atyp " +
+                tp::to_string(static_cast<int>(packet.address.address_type)));
 
             out_udp_async_write(packet.payload, dst_endpoint);
 
@@ -486,23 +489,15 @@ void ServerSession::out_udp_sent() {
                 const boost::system::error_code error, const udp::resolver::results_type& results) {
                   if (error || results.empty()) {
                       _log_with_endpoint(udp_associate_endpoint,
-                        tp::string("session_id: ") + tp::to_string(get_session_id()) + " cannot resolve remote server hostname " +
-                          packet.address.address + ": " + error.message().c_str(),
+                        tp::string("session_id: ") + tp::to_string(get_session_id()) +
+                          " cannot resolve remote server hostname " +
+                          format_host_port(packet.address.address, packet.address.port) + " " + error.message().c_str(),
                         Log::ERROR);
                       destroy();
                       return;
                   }
 
-                  auto iterator = results.begin();
-                  if (get_config().get_tcp().prefer_ipv4) {
-                      for (auto it = results.begin(); it != results.end(); ++it) {
-                          const auto& addr = it->endpoint().address();
-                          if (addr.is_v4()) {
-                              iterator = it;
-                              break;
-                          }
-                      }
-                  }
+                  auto iterator = choose_resolved_endpoint(results, get_config().get_tcp().prefer_ipv4);
 
                   auto dst_endpoint =
                     udp::endpoint(make_address(iterator->endpoint().address().to_string()), packet.address.port);
@@ -521,7 +516,7 @@ void ServerSession::out_udp_sent() {
             if (ec) {
                 _log_with_endpoint(udp_associate_endpoint,
                   "session_id: " + tp::to_string(get_session_id()) + " cannot make address for UDP destination to " +
-                    packet.address.address + ':' + tp::to_string(packet.address.port),
+                    format_host_port(packet.address.address, packet.address.port),
                   Log::ERROR);
                 destroy();
                 return;

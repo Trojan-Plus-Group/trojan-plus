@@ -76,6 +76,7 @@ class Config {
     };
     using TCPConfig = struct {
         bool prefer_ipv4;
+        bool ipv6_only;
         bool no_delay;
         bool keep_alive;
         bool reuse_port;

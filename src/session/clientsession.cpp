@@ -417,8 +417,7 @@ static inline bool socks5_is_invalid_quest_data(const std::string_view& data) {
 static const tp::string socks5_handshake_reply_failed("\x05\xff", 2);
 static const tp::string socks5_handshake_reply_succ("\x05\x00", 2);
 static const tp::string socks5_request_reply_failed("\x05\x07\x00\x01\x00\x00\x00\x00\x00\x00", 10);
-static const tp::string socks5_request_reply_succ_tcp("\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00", 10);
-static const tp::string socks5_request_reply_succ_udp_header("\x05\x00\x00", 3);
+static const tp::string socks5_request_reply_succ_header("\x05\x00\x00", 3);
 
 void ClientSession::in_recv(std::shared_ptr<ReadBufWithGuard> buf) {
     _write_data_to_file_DEBUG("ClientSession::in_recv status: " + tp::to_string((int)status) +
@@ -481,8 +480,8 @@ void ClientSession::in_recv(std::shared_ptr<ReadBufWithGuard> buf) {
                 auto endpoint = make_udp_endpoint_safe(req.address.address, req.address.port, ec);
                 if (ec) {
                     _log_with_endpoint(endpoint,
-                      "session_id: " + tp::to_string(get_session_id()) + " cannot make address " + req.address.address +
-                        ':' + tp::to_string(req.address.port) + ec.message(),
+                      "session_id: " + tp::to_string(get_session_id()) + " cannot make address " +
+                        format_host_port(req.address.address, req.address.port) + ec.message(),
                       Log::ERROR);
                     in_async_write(socks5_request_reply_failed);
                     status = INVALID;
@@ -505,23 +504,26 @@ void ClientSession::in_recv(std::shared_ptr<ReadBufWithGuard> buf) {
                 udp_socket.bind(endpoint);
 
                 _log_with_endpoint(get_in_endpoint(),
-                  "session_id: " + tp::to_string(get_session_id()) + " requested UDP associate to " + req.address.address +
-                    ':' + tp::to_string(req.address.port) + ", open UDP socket " +
-                    udp_socket.local_endpoint().address().to_string() + ':' +
-                    tp::to_string(udp_socket.local_endpoint().port()) + " for relay",
+                  "session_id: " + tp::to_string(get_session_id()) + " requested UDP associate to " +
+                    format_host_port(req.address.address, req.address.port) + ", open UDP socket " +
+                    format_ip_endpoint(udp_socket.local_endpoint()) + " for relay",
                   Log::INFO);
 
                 udp_send_buf.consume(udp_send_buf.size());
-                streambuf_append(udp_send_buf, socks5_request_reply_succ_udp_header);
+                streambuf_append(udp_send_buf, socks5_request_reply_succ_header);
                 SOCKS5Address::generate(udp_send_buf, udp_socket.local_endpoint());
 
                 in_async_write(streambuf_to_string_view(udp_send_buf));
             } else {
                 _log_with_endpoint(get_in_endpoint(),
-                  "session_id: " + tp::to_string(get_session_id()) + " requested connection to " + req.address.address +
-                    ':' + tp::to_string(req.address.port),
+                  "session_id: " + tp::to_string(get_session_id()) + " requested connection to " +
+                    format_host_port(req.address.address, req.address.port),
                   Log::INFO);
-                in_async_write(socks5_request_reply_succ_tcp);
+                const tcp::endpoint local_ep = in_socket.local_endpoint();
+                tp::streambuf reply_buf;
+                streambuf_append(reply_buf, socks5_request_reply_succ_header);
+                SOCKS5Address::generate(reply_buf, udp::endpoint(local_ep.address(), local_ep.port()));
+                in_async_write(streambuf_to_string_view(reply_buf));
             }
 
             break;
@@ -754,7 +756,7 @@ void ClientSession::udp_recv(const std::string_view& data, const udp::endpoint&)
 
     _log_with_endpoint(udp_recv_endpoint, "session_id: " + tp::to_string(get_session_id()) +
                                             " sent a UDP packet of length " + tp::to_string(length) + " bytes to " +
-                                            address.address + ':' + tp::to_string(address.port));
+                                            format_host_port(address.address, address.port));
 
     if (status == CONNECT) {
         first_packet_recv = true;
@@ -801,7 +803,8 @@ void ClientSession::udp_sent() {
 
         _log_with_endpoint(udp_recv_endpoint,
           "session_id: " + tp::to_string(get_session_id()) + " received a UDP packet of length " +
-            tp::to_string(packet.length) + " bytes from " + packet.address.address + ':' + tp::to_string(packet.address.port));
+            tp::to_string(packet.length) + " bytes from " +
+            format_host_port(packet.address.address, packet.address.port));
 
         SOCKS5Address address;
         size_t address_len = 0;

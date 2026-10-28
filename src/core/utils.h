@@ -431,6 +431,22 @@ class IPv4Matcher {
     static void test_cases();
 };
 
+// prefer_ipv4 keeps the first result when false (the historical default). When
+// true and an IPv4 result exists, that result is used. Otherwise the first
+// result is kept, so an IPv6-only name still connects.
+template <typename Results>
+typename Results::const_iterator choose_resolved_endpoint(const Results& results, bool prefer_ipv4) {
+    auto selected = results.begin();
+    if (prefer_ipv4) {
+        for (auto it = results.begin(); it != results.end(); ++it) {
+            if (it->endpoint().address().is_v4()) {
+                return it;
+            }
+        }
+    }
+    return selected;
+}
+
 template <typename ThisT, typename EndPoint>
 void connect_out_socket(ThisT this_ptr, tp::string addr, tp::string port, boost::asio::ip::tcp::resolver& resolver,
   boost::asio::ip::tcp::socket& out_socket, EndPoint in_endpoint, std::function<void()>&& connected_handler) {
@@ -441,21 +457,13 @@ void connect_out_socket(ThisT this_ptr, tp::string addr, tp::string port, boost:
           _guard;
           if (error || results.empty()) {
               _log_with_endpoint(in_endpoint,
-                tp::string("cannot resolve remote server hostname ") + addr + ":" + port + " reason: " + error.message().c_str(),
+                tp::string("cannot resolve remote server hostname ") + format_host_port(addr, port) + " reason: " +
+                  error.message().c_str(),
                 Log::ERROR);
               this_ptr->destroy();
               return;
           }
-          auto iterator = results.begin();
-          if (this_ptr->get_config().get_tcp().prefer_ipv4) {
-              for (auto it = results.begin(); it != results.end(); ++it) {
-                  const auto& address = it->endpoint().address();
-                  if (address.is_v4()) {
-                      iterator = it;
-                      break;
-                  }
-              }
-          }
+          auto iterator = choose_resolved_endpoint(results, this_ptr->get_config().get_tcp().prefer_ipv4);
           _log_with_endpoint(
             in_endpoint, addr + " is resolved to " + iterator->endpoint().address().to_string(), Log::ALL);
           boost::system::error_code ec;
@@ -488,7 +496,7 @@ void connect_out_socket(ThisT this_ptr, tp::string addr, tp::string port, boost:
               timeout_timer->async_wait(tp::bind_mem_alloc([=](const boost::system::error_code error) {
                   if (!error) {
                       _log_with_endpoint(in_endpoint,
-                        "cannot establish connection to remote server " + addr + ':' + port + " reason: timeout",
+                        "cannot establish connection to remote server " + format_host_port(addr, port) + " reason: timeout",
                         Log::ERROR);
                       this_ptr->destroy();
                   }
@@ -503,7 +511,8 @@ void connect_out_socket(ThisT this_ptr, tp::string addr, tp::string port, boost:
 
               if (error) {
                   _log_with_endpoint(in_endpoint,
-                    tp::string("cannot establish connection to remote server ") + addr + ':' + port + " reason: " + error.message().c_str(),
+                    tp::string("cannot establish connection to remote server ") + format_host_port(addr, port) +
+                      " reason: " + error.message().c_str(),
                     Log::ERROR);
                   this_ptr->destroy();
                   return;
@@ -542,7 +551,7 @@ void connect_remote_server_ssl(ThisT this_ptr, tp::string addr, tp::string port,
                   wolfSSL_ERR_error_string_n(wolf_err, wolf_err_buf, sizeof(wolf_err_buf));
                   // Log all errors in the queue
                   _log_with_endpoint(in_endpoint,
-                    tp::string("SSL handshake failed with ") + addr + ':' + port + " reason: " + error.message().c_str() +
+                    tp::string("SSL handshake failed with ") + format_host_port(addr, port) + " reason: " + error.message().c_str() +
                     " ssl_err=" + tp::to_string(ssl_err) + " err=" + tp::to_string((int)err) + " err_str=" + err_buf +
                     " wolf_err=" + tp::to_string(wolf_err) + " wolf_err_str=" + wolf_err_buf +
                     " last_rx_alert=" + tp::to_string(alert_hist.last_rx.code) + ":" + tp::to_string(alert_hist.last_rx.level) +

@@ -81,6 +81,7 @@ IPV4_LOOPBACK = "127.0.0.1"
 IPV6_ANY = "::"
 HOSTNAME_V6 = "trojanplus-ipv6.test"
 HOSTNAME_V4 = "trojanplus-ipv4.test"
+HOSTNAME_DUAL = "trojanplus-dual.test"
 HOSTS_PATH = "/etc/hosts"
 HOSTS_MARKER = "trojan-plus-ipv6-fulltest"
 
@@ -260,6 +261,20 @@ def write_configs():
     server_v4["tcp"]["prefer_ipv4"] = True
     save_json("ipv6_server_v4ref.json", server_v4)
 
+    server_v6only = tune_timeouts(load_json("server_config.json"))
+    server_v6only["local_addr"] = IPV6_ANY
+    server_v6only["local_port"] = SERVER_PORT
+    server_v6only["tcp"]["prefer_ipv4"] = True
+    server_v6only["tcp"]["ipv6_only"] = True
+    save_json("ipv6_server_v6only.json", server_v6only)
+
+    # Omit tcp.prefer_ipv4 so the case exercises the code default (false).
+    server_default = tune_timeouts(load_json("server_config.json"))
+    server_default["local_addr"] = IPV6_ANY
+    server_default["local_port"] = SERVER_PORT
+    server_default["tcp"].pop("prefer_ipv4", None)
+    save_json("ipv6_server_resolver_default.json", server_default)
+
     def client(pipeline, local_addr, remote_addr, remote_port, target_addr, run_type, target_port=CONTENT_PORT):
         cfg = tune_timeouts(load_json("client_config_pipeline.json" if pipeline else "client_config.json"))
         cfg["run_type"] = run_type
@@ -315,7 +330,7 @@ def write_configs():
     nat["remote_port"] = SERVER_PORT
     # use_tproxy stays false. Turning it on without an ip6tables TPROXY rule makes
     # getsockname() return the listen address, and NATSession then forwards to
-    # itself (observed: "forwarding to ::1:20621 via ::1:4650").
+    # itself (observed: "forwarding to [::1]:20621 via [::1]:4650").
     nat["tcp"]["use_tproxy"] = False
     nat["password"] = ["88888888"]
     save_json("ipv6_nat.json", nat)
@@ -493,6 +508,23 @@ def require_pair(group, server_cfg, client_cfg, server_host, client_host, balanc
     return client
 
 
+def assert_socks_tcp_bind(proxy_host, atyp, bnd_addr, bnd_port):
+    """The TCP CONNECT reply must carry the accepted socket's local endpoint."""
+    if bnd_port != SOCKS_PORT:
+        raise RuntimeError(
+            "SOCKS TCP bind port is %s, expected listener %s (addr %s atyp %r)"
+            % (bnd_port, SOCKS_PORT, bnd_addr, atyp))
+    if is_ipv6_host(proxy_host):
+        if atyp != b"\x04" or not is_ipv6_loopback(bnd_addr):
+            raise RuntimeError(
+                "SOCKS TCP bind reply ATYP %r %s:%s, expected ATYP 4 [::1]:%s"
+                % (atyp, bnd_addr, bnd_port, SOCKS_PORT))
+    elif atyp != b"\x01" or bnd_addr != IPV4_LOOPBACK:
+        raise RuntimeError(
+            "SOCKS TCP bind reply ATYP %r %s:%s, expected ATYP 1 %s:%s"
+            % (atyp, bnd_addr, bnd_port, IPV4_LOOPBACK, SOCKS_PORT))
+
+
 def require_socks_atyp(request_addr, expect_atyp):
     actual = request_addr[0]
     if expect_atyp is not None and actual != expect_atyp:
@@ -507,6 +539,7 @@ def tcp_get_post(proxy_host, dest_host, dest_port, expect_atyp=None):
         proxy_host, SOCKS_PORT, dest_host, dest_port, b"\x01")
     try:
         atyp_n = require_socks_atyp(request_addr, expect_atyp)
+        assert_socks_tcp_bind(proxy_host, atyp, bnd_addr, bnd_port)
         body = http_exchange(sock, (
             "GET /%s HTTP/1.1\r\nHost: ipv6-fulltest\r\nConnection: close\r\n\r\n" % name
         ).encode("ascii"))
@@ -516,9 +549,11 @@ def tcp_get_post(proxy_host, dest_host, dest_port, expect_atyp=None):
         sock.close()
 
     payload = b"d=" + expected
-    sock, _, _, _, post_addr = socks5_connect(proxy_host, SOCKS_PORT, dest_host, dest_port, b"\x01")
+    sock, post_atyp, post_bnd_addr, post_bnd_port, post_addr = socks5_connect(
+        proxy_host, SOCKS_PORT, dest_host, dest_port, b"\x01")
     try:
         require_socks_atyp(post_addr, expect_atyp)
+        assert_socks_tcp_bind(proxy_host, post_atyp, post_bnd_addr, post_bnd_port)
         header = (
             "POST /%s HTTP/1.1\r\nHost: ipv6-fulltest\r\nContent-Length: %d\r\n"
             "Connection: close\r\n\r\n" % (name, len(payload))
@@ -528,23 +563,22 @@ def tcp_get_post(proxy_host, dest_host, dest_port, expect_atyp=None):
             raise RuntimeError("POST body %r" % body[:80])
     finally:
         sock.close()
-    return "ATYP %d, SOCKS bind %s:%s" % (atyp_n, bnd_addr, bnd_port)
+    return "request ATYP %d, SOCKS bind ATYP %s %s:%s" % (atyp_n, atyp.hex(), bnd_addr, bnd_port)
 
 
 def udp_associate_transfer(proxy_host, dest_host, dest_port):
     name = content_files()[0]
     expected = read_content(name)
-    ctrl, _, bnd_addr, bnd_port, request_addr = socks5_connect(
+    ctrl, atyp, bnd_addr, bnd_port, request_addr = socks5_connect(
         proxy_host, SOCKS_PORT, "::", 0, b"\x03")
     try:
         if request_addr[0] != 4:
             raise RuntimeError("UDP ASSOCIATE request was not ATYP 4")
-        if bnd_port == 0:
+        if atyp != b"\x04" or not is_ipv6_loopback(bnd_addr) or bnd_port == 0:
             raise RuntimeError(
-                "UDP ASSOCIATE bound port is 0 (reply ATYP %r addr %s)" % (ctrl, bnd_addr))
+                "UDP ASSOCIATE bind reply ATYP %r %s:%s, expected ATYP 4 [::1]:<ephemeral>"
+                % (atyp, bnd_addr, bnd_port))
         relay_host = bnd_addr
-        if relay_host in ("0.0.0.0", "::"):
-            relay_host = proxy_host
         family = socket.AF_INET6 if is_ipv6_host(relay_host) else socket.AF_INET
         udp = socket.socket(family, socket.SOCK_DGRAM)
         udp.settimeout(TIMEOUT)
@@ -608,6 +642,12 @@ def run_forward(binary, server_cfg, client_cfg, balance_cfg, tcp, udp):
     if status == "PASS":
         try:
             assert_resolved_ipv6_loopback(text)
+            if "atyp 4" not in text:
+                raise RuntimeError("forward server log has no atyp 4")
+            if "atyp 1" in text or "atyp 3" in text:
+                raise RuntimeError("forward literal was not encoded as ATYP 4")
+            if "IPV6_V6ONLY=0" not in text:
+                raise RuntimeError("forward listener did not log IPV6_V6ONLY=0")
         except Exception as exc:
             status, reason = "FAIL", str(exc)
     if status != "PASS":
@@ -693,9 +733,12 @@ def install_hosts():
         lines[-1] = lines[-1] + "\n"
     lines.append("::1 %s # %s\n" % (HOSTNAME_V6, HOSTS_MARKER))
     lines.append("127.0.0.1 %s # %s\n" % (HOSTNAME_V4, HOSTS_MARKER))
+    lines.append("127.0.0.1 %s # %s\n" % (HOSTNAME_DUAL, HOSTS_MARKER))
+    lines.append("::1 %s # %s\n" % (HOSTNAME_DUAL, HOSTS_MARKER))
     atomic_replace_hosts("".join(lines).encode("utf-8"))
     readback = read_hosts_bytes().decode("utf-8")
-    if HOSTNAME_V6 not in readback or HOSTNAME_V4 not in readback or HOSTS_MARKER not in readback:
+    if (HOSTNAME_V6 not in readback or HOSTNAME_V4 not in readback or HOSTNAME_DUAL not in readback
+            or HOSTS_MARKER not in readback):
         raise RuntimeError("hosts update did not persist")
 
 
@@ -755,25 +798,26 @@ def is_ipv6_loopback(addr):
 def assert_resolved_ipv6_loopback(log_text):
     """Fail when a pure-IPv6 flow does not stay on ::1.
 
-    Numeric IPv6 destinations are not passed through the resolver, so a UDP
-    associate log may say "to 0000:0000:0000:0000:0000:0000:0000:0001" instead
-    of "resolved to ::1". Either form proves the peer. An IPv4 address, including
-    an IPv4-mapped one, fails the case.
+    IPv6 endpoints in these paths are logged as [::1]:port. The uncompressed
+    form produced by the old SOCKS parser is a failure. An IPv4 address,
+    including an IPv4-mapped one, fails the case.
     """
     text = log_text or ""
     if "127.0.0.1" in text or "::ffff:" in text:
         raise RuntimeError("pure IPv6 log contains an IPv4 peer")
+    if "0000:0000:0000:0000:0000:0000:0000:0001" in text:
+        raise RuntimeError("IPv6 address was logged uncompressed")
+    if "[::1]:" not in text:
+        raise RuntimeError("IPv6 endpoint was not logged as [::1]:port")
     resolved = RESOLVED_TO_RE.findall(text)
     bad = [addr for addr in resolved if not is_ipv6_loopback(addr)]
     if bad:
         raise RuntimeError("traffic resolved to non-::1 address(es): %s" % ", ".join(bad))
     if any(is_ipv6_loopback(addr) for addr in resolved):
         return
-    if "0000:0000:0000:0000:0000:0000:0000:0001" in text:
+    if re.search(r"(?:to|from|via) \[::1\]:", text):
         return
-    if re.search(r"(?:to|from) ::1(?::|\s)", text):
-        return
-    raise RuntimeError("log has no ::1 peer (no 'resolved to ::1' and no IPv6 loopback destination)")
+    raise RuntimeError("log has no ::1 peer (no 'resolved to ::1' and no [IPv6] destination)")
 
 
 def record(case_id, status, reason, expected=False):
@@ -797,13 +841,17 @@ def run_recorded(case_id, func, expected=False):
     record(case_id, status, reason, expected=expected)
 
 
-def finish_group(group, status, reason, require_ipv6_loopback=False):
+def finish_group(group, status, reason, require_ipv6_loopback=False, require_atyp=None, require_v6only=None):
     text = group.stop()
     if status == "PASS" and require_ipv6_loopback:
         try:
             assert_resolved_ipv6_loopback(text)
         except Exception as exc:
             status, reason = "FAIL", str(exc)
+    if status == "PASS" and require_atyp is not None and ("atyp %d" % require_atyp) not in (text or ""):
+        status, reason = "FAIL", "server log has no atyp %d" % require_atyp
+    if status == "PASS" and require_v6only is not None and ("IPV6_V6ONLY=%s" % require_v6only) not in (text or ""):
+        status, reason = "FAIL", "log has no IPV6_V6ONLY=%s" % require_v6only
     if status not in ("PASS", "EXPECTED-FAIL", "SKIP"):
         extra = excerpt(text)
         if extra:
@@ -825,7 +873,8 @@ def case_tcp_literal(binary):
             IPV6_LOOPBACK, IPV6_LOOPBACK, CONTENT_PORT, expect_atyp=4)
     except Exception as exc:
         status, reason = "FAIL", str(exc)
-    return _status_reason(finish_group(group, status, reason, require_ipv6_loopback=True))
+    return _status_reason(finish_group(
+        group, status, reason, require_ipv6_loopback=True, require_atyp=4, require_v6only="0"))
 
 
 def case_tcp_hostname(binary):
@@ -837,7 +886,8 @@ def case_tcp_hostname(binary):
         status, reason = "PASS", "ATYP 3 hostname %s; %s" % (HOSTNAME_V6, detail)
     except Exception as exc:
         status, reason = "FAIL", str(exc)
-    return _status_reason(finish_group(group, status, reason, require_ipv6_loopback=True))
+    return _status_reason(finish_group(
+        group, status, reason, require_ipv6_loopback=True, require_atyp=3, require_v6only="0"))
 
 
 def case_udp(binary, server_cfg, client_cfg, balance_cfg, label):
@@ -848,7 +898,8 @@ def case_udp(binary, server_cfg, client_cfg, balance_cfg, label):
         status, reason = "PASS", label + "; " + udp_associate_transfer(IPV6_LOOPBACK, IPV6_LOOPBACK, CONTENT_PORT)
     except Exception as exc:
         status, reason = "FAIL", str(exc)
-    return _status_reason(finish_group(group, status, reason, require_ipv6_loopback=True))
+    return _status_reason(finish_group(
+        group, status, reason, require_ipv6_loopback=True, require_atyp=4, require_v6only="0"))
 
 
 def case_pipeline_tcp(binary):
@@ -862,7 +913,8 @@ def case_pipeline_tcp(binary):
             IPV6_LOOPBACK, IPV6_LOOPBACK, CONTENT_PORT, expect_atyp=4)
     except Exception as exc:
         status, reason = "FAIL", str(exc)
-    return _status_reason(finish_group(group, status, reason, require_ipv6_loopback=True))
+    return _status_reason(finish_group(
+        group, status, reason, require_ipv6_loopback=True, require_atyp=4, require_v6only="0"))
 
 
 def case_dual_stack(binary):
@@ -883,7 +935,8 @@ def case_dual_stack(binary):
             IPV4_LOOPBACK, IPV4_LOOPBACK, DUAL_CONTENT_PORT, expect_atyp=1)
     except Exception as exc:
         status, reason = "FAIL", str(exc)
-    return _status_reason(finish_group(group, status, reason, require_ipv6_loopback=False))
+    return _status_reason(finish_group(
+        group, status, reason, require_ipv6_loopback=False, require_atyp=1, require_v6only="0"))
 
 
 def case_fallback(binary):
@@ -900,6 +953,8 @@ def case_fallback(binary):
         if rc != 0:
             return "FAIL", "fallback returned %d | %s" % (rc, excerpt(logs))
         assert_resolved_ipv6_loopback(logs)
+        if "IPV6_V6ONLY=0" not in logs:
+            raise RuntimeError("fallback listener did not log IPV6_V6ONLY=0")
         return "PASS", "HTTPS fallback via [::1]"
     except Exception as exc:
         return "FAIL", str(exc)
@@ -916,7 +971,60 @@ def case_ipv4_hostname(binary):
         status, reason = "PASS", "IPv4 ATYP 3 %s; %s" % (HOSTNAME_V4, detail)
     except Exception as exc:
         status, reason = "FAIL", str(exc)
-    return _status_reason(finish_group(group, status, reason, require_ipv6_loopback=False))
+    return _status_reason(finish_group(group, status, reason, require_ipv6_loopback=False, require_atyp=3))
+
+
+def resolver_addresses(host, port):
+    found = []
+    for info in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM):
+        addr = info[4][0]
+        if addr not in found:
+            found.append(addr)
+    return found
+
+
+def case_prefer_ipv4(binary, server_cfg, expect_addr, label):
+    group = ProcGroup(binary)
+    status, reason = "FAIL", "unknown"
+    try:
+        families = resolver_addresses(HOSTNAME_DUAL, DUAL_CONTENT_PORT)
+        if IPV4_LOOPBACK not in families or not any(":" in addr for addr in families):
+            raise RuntimeError("dual hostname families were %s" % families)
+        require_pair(group, server_cfg, "ipv6_client.json", IPV6_LOOPBACK, IPV6_LOOPBACK)
+        detail = tcp_get_post(IPV6_LOOPBACK, HOSTNAME_DUAL, DUAL_CONTENT_PORT, expect_atyp=3)
+        status, reason = "PASS", "%s; %s" % (label, detail)
+    except Exception as exc:
+        status, reason = "FAIL", str(exc)
+    status, reason, text = finish_group(
+        group, status, reason, require_ipv6_loopback=False, require_atyp=3, require_v6only="0")
+    if status == "PASS":
+        resolved = RESOLVED_TO_RE.findall(text or "")
+        if expect_addr not in resolved:
+            status, reason = "FAIL", "resolved %s, expected %s | %s" % (
+                resolved, expect_addr, excerpt(text))
+        else:
+            reason = "resolved to %s; %s" % (expect_addr, reason)
+    return status, reason
+
+
+def case_ipv6_only(binary):
+    group = ProcGroup(binary)
+    status, reason = "FAIL", "unknown"
+    try:
+        server = group.start("ipv6_server_v6only.json")
+        if not wait_until(lambda: port_open(IPV6_LOOPBACK, SERVER_PORT), server):
+            raise RuntimeError("ipv6_only server did not accept ::1")
+        if port_open(IPV4_LOOPBACK, SERVER_PORT):
+            raise RuntimeError("ipv6_only server accepted 127.0.0.1")
+        client = group.start("ipv6_client.json")
+        if not wait_until(lambda: port_open(IPV6_LOOPBACK, SOCKS_PORT), client):
+            raise RuntimeError("client did not listen")
+        detail = tcp_get_post(IPV6_LOOPBACK, IPV6_LOOPBACK, CONTENT_PORT, expect_atyp=4)
+        status, reason = "PASS", "IPV6_V6ONLY rejects 127.0.0.1; " + detail
+    except Exception as exc:
+        status, reason = "FAIL", str(exc)
+    return _status_reason(finish_group(
+        group, status, reason, require_ipv6_loopback=True, require_atyp=4, require_v6only="1"))
 
 
 def case_nat(binary, enabled):
@@ -1024,6 +1132,13 @@ def main(binary, include_expected_fail=False, include_ipv4_reference=False):
             ("forward_pipeline_udp_ipv6", lambda: _forward_pipe_udp(binary)),
             ("fallback_ipv6", lambda: case_fallback(binary)),
             ("dualstack_v4_client_to_v6_server", lambda: case_dual_stack(binary)),
+            ("ipv6_only_listener", lambda: case_ipv6_only(binary)),
+            ("prefer_ipv4_dual_hostname", lambda: case_prefer_ipv4(
+                binary, "ipv6_server.json", IPV4_LOOPBACK, "tcp.prefer_ipv4=true")),
+            ("prefer_ipv4_default_dual_hostname", lambda: case_prefer_ipv4(
+                binary, "ipv6_server_resolver_default.json",
+                resolver_addresses(HOSTNAME_DUAL, DUAL_CONTENT_PORT)[0],
+                "tcp.prefer_ipv4 default")),
             ("nat_ipv6", lambda: case_nat(binary, include_expected_fail)),
             ("tun_ipv6", lambda: case_tun(binary, include_expected_fail)),
         ]

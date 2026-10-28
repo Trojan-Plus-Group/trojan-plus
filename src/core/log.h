@@ -99,6 +99,38 @@ class Log {
     static LogCallback log_callback;
 };
 
+// IPv6 endpoints are written as [addr]:port. IPv4 stays addr:port.
+inline tp::string format_ip_endpoint(const boost::asio::ip::address& address, unsigned short port) {
+    tp::string host(address.to_string().c_str());
+    if (address.is_v6()) {
+        host = tp::string("[") + host + "]";
+    }
+    host += ':';
+    host += tp::to_string(port);
+    return host;
+}
+
+inline tp::string format_ip_endpoint(const boost::asio::ip::tcp::endpoint& endpoint) {
+    return format_ip_endpoint(endpoint.address(), endpoint.port());
+}
+
+inline tp::string format_ip_endpoint(const boost::asio::ip::udp::endpoint& endpoint) {
+    return format_ip_endpoint(endpoint.address(), endpoint.port());
+}
+
+inline tp::string format_host_port(const tp::string& host, const tp::string& port) {
+    boost::system::error_code ec;
+    const auto address = boost::asio::ip::make_address(host.c_str(), ec);
+    if (!ec && address.is_v6()) {
+        return tp::string("[") + host + "]:" + port;
+    }
+    return host + ':' + port;
+}
+
+inline tp::string format_host_port(const tp::string& host, unsigned short port) {
+    return format_host_port(host, tp::to_string(port));
+}
+
 const static size_t __max_debug_str_buf_size = 1024;
 extern tp::tj_unique_ptr<char[]> __debug_str_buf;
 

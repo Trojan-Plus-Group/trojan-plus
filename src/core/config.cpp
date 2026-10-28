@@ -176,6 +176,7 @@ void Config::populate(const ptree& tree) {
     ssl.dhparam                = tree.get("ssl.dhparam", std::string()).c_str();
 
     tcp.prefer_ipv4      = tree.get("tcp.prefer_ipv4", false);
+    tcp.ipv6_only        = tree.get("tcp.ipv6_only", false);
     tcp.no_delay         = tree.get("tcp.no_delay", true);
     tcp.keep_alive       = tree.get("tcp.keep_alive", true);
     tcp.reuse_port       = tree.get("tcp.reuse_port", false);
