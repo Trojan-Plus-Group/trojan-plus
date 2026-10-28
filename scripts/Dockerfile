@@ -8,7 +8,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         cmake \
         libboost-all-dev \
-        libssl-dev \
         libmariadb-dev \
         libmimalloc-dev \
         git \

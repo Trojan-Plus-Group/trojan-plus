@@ -316,10 +316,10 @@ include_directories(${PROJECT_SOURCE_DIR}/GSL/include)
 # as developer, I am always add this option...
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# ===== wolfSSL configuration (replaces OpenSSL) =====
-# wolfSSL is built from source as a static library via add_subdirectory.
-# The WOLFSSL_ASIO option enables Boost.Asio compatibility and automatically
-# enables OPENSSL_EXTRA and OPENSSL_ALL for the OpenSSL compatibility layer.
+# ===== wolfSSL (static library from the wolfssl submodule) =====
+# There is no system SSL library and no backend switch.
+# WOLFSSL_ASIO enables Boost.Asio and the wolfSSL OpenSSL-compatible API
+# (OPENSSL_EXTRA / OPENSSL_ALL). Those are wolfSSL features, not a link to libssl.
 set(WOLFSSL_ASIO "yes" CACHE STRING "" FORCE)
 set(WOLFSSL_TLS13 "yes" CACHE STRING "" FORCE)
 set(WOLFSSL_ALPN "yes" CACHE STRING "" FORCE)
@@ -405,6 +405,8 @@ if(ENABLE_QUIC)
     set(ENABLE_STATIC_LIB   ON  CACHE BOOL "" FORCE)
     set(ENABLE_SHARED_LIB   OFF CACHE BOOL "" FORCE)
     set(ENABLE_WOLFSSL      ON  CACHE BOOL "" FORCE)
+    # ngtcp2 defaults ENABLE_OPENSSL to ON, which calls find_package(OpenSSL).
+    # Force it off so QUIC crypto stays on the in-tree wolfSSL backend.
     set(ENABLE_OPENSSL      OFF CACHE BOOL "" FORCE)
     set(BUILD_TESTING       OFF CACHE BOOL "" FORCE)
 
