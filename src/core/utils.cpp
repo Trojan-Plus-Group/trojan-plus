@@ -21,8 +21,16 @@
 
 #include "utils.h"
 
+#include <cerrno>
+#include <cstring>
 #include <fstream>
 #include <gsl/gsl>
+
+#ifndef _WIN32
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#endif
 
 #include "core/service.h"
 #include "core/version.h"
@@ -749,25 +757,98 @@ tp::string dump_data_summary(const uint8_t* data, std::size_t len) {
 }
 
 #ifndef _WIN32 // nat mode does not support in windows platform
-// copied from shadowsocks-libev udpreplay.c
-static int get_dstaddr(struct msghdr* msg, struct sockaddr_storage* dstaddr) {
+
+static bool cmsg_holds(const struct cmsghdr* cmsg, size_t payload_size) {
+    return cmsg != nullptr && cmsg->cmsg_len >= CMSG_LEN(payload_size);
+}
+
+// IPv4-mapped IPv6 (::ffff:a.b.c.d) is returned as an IPv4 literal so callers
+// encode ATYP 1 and bind an AF_INET reply socket. A non-zero scope id is kept
+// by address_v6::to_string() (fe80::1%eth0) and stays ATYP 3.
+static tp::pair<tp::string, uint16_t> endpoint_from_sockaddr(const struct sockaddr_storage& addr) {
     _guard;
 
-    struct cmsghdr* cmsg = nullptr;
-    for (cmsg = CMSG_FIRSTHDR(msg); cmsg; cmsg = CMSG_NXTHDR(msg, cmsg)) {
-        if (cmsg->cmsg_level == SOL_IP && cmsg->cmsg_type == IP_RECVORIGDSTADDR) {
-            memcpy(dstaddr, CMSG_DATA(cmsg), sizeof(struct sockaddr_in));
-            dstaddr->ss_family = AF_INET;
-            return 0;
+    if (addr.ss_family == AF_INET) {
+        const auto* sa = reinterpret_cast<const struct sockaddr_in*>(&addr);
+        address_v4::bytes_type bytes{};
+        std::memcpy(bytes.data(), &sa->sin_addr, bytes.size());
+        return tp::make_pair(tp::string(make_address_v4(bytes).to_string().c_str()), ntohs(sa->sin_port));
+    }
+    if (addr.ss_family == AF_INET6) {
+        const auto* sa = reinterpret_cast<const struct sockaddr_in6*>(&addr);
+        address_v6::bytes_type bytes{};
+        std::memcpy(bytes.data(), &sa->sin6_addr, bytes.size());
+        const address_v6 v6(bytes, sa->sin6_scope_id);
+        const uint16_t port = ntohs(sa->sin6_port);
+        if (v6.is_v4_mapped()) {
+            const auto mapped = make_address_v4(v4_mapped, v6);
+            return tp::make_pair(tp::string(mapped.to_string().c_str()), port);
         }
+        return tp::make_pair(tp::string(v6.to_string().c_str()), port);
+    }
+    return tp::make_pair(tp::string(""), static_cast<uint16_t>(0));
 
-        if (cmsg->cmsg_level == SOL_IPV6 && cmsg->cmsg_type == IPV6_RECVORIGDSTADDR) {
-            memcpy(dstaddr, CMSG_DATA(cmsg), sizeof(struct sockaddr_in6));
-            dstaddr->ss_family = AF_INET6;
-            return 0;
+    _unguard;
+}
+
+static bool sockaddr_is_v4_mapped(const struct sockaddr_storage& addr) {
+    if (addr.ss_family != AF_INET6) {
+        return false;
+    }
+    const auto* sa = reinterpret_cast<const struct sockaddr_in6*>(&addr);
+    address_v6::bytes_type bytes{};
+    std::memcpy(bytes.data(), &sa->sin6_addr, bytes.size());
+    return address_v6(bytes).is_v4_mapped();
+}
+
+// Copied from shadowsocks-libev udprelay.c and extended for dual-stack.
+// An IPv4 datagram on an AF_INET6 socket carries SOL_IP/IP_RECVORIGDSTADDR.
+// An IPv6 datagram carries SOL_IPV6/IPV6_RECVORIGDSTADDR. Prefer the cmsg
+// that matches the source family so a dual-stack listener does not unwrap
+// the wrong one when both are present.
+static int get_dstaddr(
+  struct msghdr* msg, struct sockaddr_storage* dstaddr, const struct sockaddr_storage* src) {
+    _guard;
+
+    struct sockaddr_storage v4_dst {};
+    struct sockaddr_storage v6_dst {};
+    bool have_v4 = false;
+    bool have_v6 = false;
+
+    for (struct cmsghdr* cmsg = CMSG_FIRSTHDR(msg); cmsg; cmsg = CMSG_NXTHDR(msg, cmsg)) {
+        if (cmsg->cmsg_level == SOL_IP && cmsg->cmsg_type == IP_RECVORIGDSTADDR &&
+            cmsg_holds(cmsg, sizeof(struct sockaddr_in))) {
+            std::memcpy(&v4_dst, CMSG_DATA(cmsg), sizeof(struct sockaddr_in));
+            v4_dst.ss_family = AF_INET;
+            have_v4          = true;
+        } else if (cmsg->cmsg_level == SOL_IPV6 && cmsg->cmsg_type == IPV6_RECVORIGDSTADDR &&
+                   cmsg_holds(cmsg, sizeof(struct sockaddr_in6))) {
+            std::memcpy(&v6_dst, CMSG_DATA(cmsg), sizeof(struct sockaddr_in6));
+            v6_dst.ss_family = AF_INET6;
+            have_v6          = true;
         }
     }
 
+    const bool src_is_ipv4 = src->ss_family == AF_INET || sockaddr_is_v4_mapped(*src);
+    if (src_is_ipv4) {
+        if (have_v4) {
+            *dstaddr = v4_dst;
+            return 0;
+        }
+        if (have_v6) {
+            *dstaddr = v6_dst;
+            return 0;
+        }
+    } else {
+        if (have_v6) {
+            *dstaddr = v6_dst;
+            return 0;
+        }
+        if (have_v4) {
+            *dstaddr = v4_dst;
+            return 0;
+        }
+    }
     return 1;
 
     _unguard;
@@ -791,67 +872,75 @@ static int get_ttl(struct msghdr* msg) {
     _unguard;
 }
 
-static tp::pair<tp::string, uint16_t> get_addr(struct sockaddr_storage addr) {
-    _guard;
-
-    const int buf_size = 256;
-    char buf[buf_size]{};
-
-    if (addr.ss_family == AF_INET) {
-        auto* sa = (sockaddr_in*)&addr;
-        if (inet_ntop(AF_INET, &(sa->sin_addr), (char*)buf, buf_size) != nullptr) {
-            return tp::make_pair(tp::string(buf), ntohs(sa->sin_port));
-        }
-    } else {
-        auto* sa = (sockaddr_in6*)&addr;
-        if (inet_ntop(AF_INET6, &(sa->sin6_addr), (char*)buf, buf_size) != nullptr) {
-            return tp::make_pair(tp::string(buf), ntohs(sa->sin6_port));
-        }
+static int read_original_dst(
+  int fd, int level, int optname, struct sockaddr_storage* dest, const char* name) {
+    std::memset(dest, 0, sizeof(*dest));
+    socklen_t socklen = sizeof(*dest);
+    if (getsockopt(fd, level, optname, dest, &socklen) != 0) {
+        const int err = errno;
+        _log_with_date_time(tp::string("recv_target_endpoint getsockopt ") + name + " failed: " + std::strerror(err) +
+                              " (errno=" + tp::to_string(err) + ")",
+          Log::INFO);
+        return -1;
     }
-
-    return tp::make_pair(tp::string(""), 0);
-    _unguard;
+    return 0;
 }
 
 tp::pair<tp::string, uint16_t> recv_target_endpoint(int _fd, bool use_tproxy) {
     _guard;
 
 #ifdef ENABLE_NAT
-    // Taken from
-    // https://github.com/shadowsocks/shadowsocks-libev/blob/31dd81649d4c7f40daab46afc73eb0f03c517aa3/src/redir.c#L111
-    sockaddr_storage destaddr;
-    memset(&destaddr, 0, sizeof(sockaddr_storage));
-    socklen_t socklen = sizeof(destaddr);
-
+    // REDIRECT stores the pre-NAT destination in conntrack. IPv6 sockets need
+    // SOL_IPV6/IP6T_SO_ORIGINAL_DST (both option numbers are 80; the level
+    // differs). SOL_IP/SO_ORIGINAL_DST returns -1 (ENOENT) on a real IPv6
+    // socket. An IPv4 connection accepted on a dual-stack socket has a
+    // v4-mapped local address and the original destination is in the IPv4
+    // conntrack, so SO_ORIGINAL_DST is tried first in that case.
+    // TPROXY publishes the same address via getsockname on the accepted socket.
+    struct sockaddr_storage destaddr {};
     int error = 0;
     if (use_tproxy) {
-        error = getsockname(_fd, (sockaddr*)&destaddr, &socklen);
-        _log_with_date_time(tp::string("recv_target_endpoint + getsockname error ") + tp::to_string(error), Log::INFO);
-    } else {
-        error = getsockopt(_fd, SOL_IPV6, IP6T_SO_ORIGINAL_DST, &destaddr, &socklen);
-        if (error) {
-            error = getsockopt(_fd, SOL_IP, SO_ORIGINAL_DST, &destaddr, &socklen);
+        socklen_t socklen = sizeof(destaddr);
+        error             = getsockname(_fd, reinterpret_cast<struct sockaddr*>(&destaddr), &socklen);
+        if (error != 0) {
+            const int err = errno;
+            _log_with_date_time(tp::string("recv_target_endpoint getsockname failed: ") + std::strerror(err) +
+                                  " (errno=" + tp::to_string(err) + ")",
+              Log::INFO);
         }
-
-        _log_with_date_time(tp::string("recv_target_endpoint + getsockopt error ") + tp::to_string(error), Log::INFO);
+    } else {
+        struct sockaddr_storage local {};
+        socklen_t local_len = sizeof(local);
+        bool prefer_ipv6    = false;
+        if (getsockname(_fd, reinterpret_cast<struct sockaddr*>(&local), &local_len) == 0) {
+            prefer_ipv6 = local.ss_family == AF_INET6 && !sockaddr_is_v4_mapped(local);
+        }
+        if (prefer_ipv6) {
+            error = read_original_dst(_fd, SOL_IPV6, IP6T_SO_ORIGINAL_DST, &destaddr, "IP6T_SO_ORIGINAL_DST");
+            if (error) {
+                error = read_original_dst(_fd, SOL_IP, SO_ORIGINAL_DST, &destaddr, "SO_ORIGINAL_DST");
+            }
+        } else {
+            error = read_original_dst(_fd, SOL_IP, SO_ORIGINAL_DST, &destaddr, "SO_ORIGINAL_DST");
+            if (error) {
+                error = read_original_dst(_fd, SOL_IPV6, IP6T_SO_ORIGINAL_DST, &destaddr, "IP6T_SO_ORIGINAL_DST");
+            }
+        }
     }
 
     if (error) {
-        return tp::make_pair(tp::string(""), 0);
+        return tp::make_pair(tp::string(""), static_cast<uint16_t>(0));
     }
 
-    char ipstr[INET6_ADDRSTRLEN];
-    uint16_t port;
-    if (destaddr.ss_family == AF_INET) {
-        auto* sa = (sockaddr_in*)&destaddr;
-        inet_ntop(AF_INET, &(sa->sin_addr), ipstr, INET_ADDRSTRLEN);
-        port = ntohs(sa->sin_port);
-    } else {
-        auto* sa = (sockaddr_in6*)&destaddr;
-        inet_ntop(AF_INET6, &(sa->sin6_addr), ipstr, INET6_ADDRSTRLEN);
-        port = ntohs(sa->sin6_port);
+    const auto endpoint = endpoint_from_sockaddr(destaddr);
+    if (endpoint.first.empty() || endpoint.second == 0) {
+        _log_with_date_time("recv_target_endpoint original destination is empty", Log::INFO);
+        return tp::make_pair(tp::string(""), static_cast<uint16_t>(0));
     }
-    return tp::make_pair(tp::string(ipstr), port);
+    _log_with_date_time(
+      tp::string("recv_target_endpoint original destination ") + format_host_port(endpoint.first, endpoint.second),
+      Log::INFO);
+    return endpoint;
 #else  // ENABLE_NAT
     return tp::make_pair(use_tproxy ? tp::string("") : tp::string("0"), (uint16_t)_fd);
 #endif // ENABLE_NAT
@@ -859,16 +948,19 @@ tp::pair<tp::string, uint16_t> recv_target_endpoint(int _fd, bool use_tproxy) {
     _unguard;
 }
 
-// copied from shadowsocks-libev udpreplay.c
+// copied from shadowsocks-libev udprelay.c
 // it works if in NAT mode
 tp::pair<tp::string, uint16_t> recv_tproxy_udp_msg(
   int fd, boost::asio::ip::udp::endpoint& target_endpoint, char* buf, int& buf_len, int& ttl) {
     _guard;
 
-    const size_t max_control_buffer_size = 64;
+    // 64 bytes fits an IPv4 origdst plus a TTL cmsg, and one IPv6 origdst, but
+    // not IPV6_ORIGDSTADDR together with IPV6_HOPLIMIT or both address families.
+    // CMSG_SPACE(sockaddr_in6) + CMSG_SPACE(sockaddr_in) + CMSG_SPACE(int) is
+    // about 104 bytes on 64-bit Linux; 256 leaves room for alignment.
+    char control_buffer[256];
+    std::memset(control_buffer, 0, sizeof(control_buffer));
     struct sockaddr_storage src_addr {};
-
-    char control_buffer[max_control_buffer_size]{};
     struct msghdr msg {};
     struct iovec iov[1]{};
     struct sockaddr_storage dst_addr {};
@@ -876,21 +968,25 @@ tp::pair<tp::string, uint16_t> recv_tproxy_udp_msg(
     msg.msg_name    = &src_addr;
     msg.msg_namelen = sizeof(struct sockaddr_storage);
 
-    msg.msg_control    = (void*)control_buffer;
-    msg.msg_controllen = max_control_buffer_size;
+    msg.msg_control    = control_buffer;
+    msg.msg_controllen = sizeof(control_buffer);
 
     const int packet_size = DEFAULT_PACKET_SIZE;
     const int buf_size    = DEFAULT_PACKET_SIZE * 2;
 
     iov[0].iov_base = buf;
     iov[0].iov_len  = buf_size;
-    msg.msg_iov     = (struct iovec*)iov;
+    msg.msg_iov     = iov;
     msg.msg_iovlen  = 1;
 
     buf_len = recvmsg(fd, &msg, 0);
     if (buf_len == -1) {
-        _log_with_date_time("[udp] server_recvmsg failed!", Log::FATAL);
+        _log_with_date_time(tp::string("[udp] server_recvmsg failed: ") + std::strerror(errno), Log::FATAL);
     } else {
+        if ((msg.msg_flags & MSG_CTRUNC) != 0) {
+            _log_with_date_time(
+              "[udp] recvmsg control buffer truncated; original destination may be missing", Log::WARN);
+        }
         if (buf_len > packet_size) {
             _log_with_date_time(tp::string("[udp] UDP server_recv_recvmsg fragmentation, MTU at least be: ") +
                                   tp::to_string(buf_len + PACKET_HEADER_SIZE),
@@ -898,60 +994,98 @@ tp::pair<tp::string, uint16_t> recv_tproxy_udp_msg(
         }
 
         ttl = get_ttl(&msg);
-        if (get_dstaddr(&msg, &dst_addr) != 0) {
+        if (get_dstaddr(&msg, &dst_addr, &src_addr) != 0) {
             _log_with_date_time("[udp] unable to get dest addr!", Log::FATAL);
         } else {
-            auto target_dst = get_addr(dst_addr);
-            auto src_dst    = get_addr(src_addr);
-            target_endpoint.address(boost::asio::ip::make_address(src_dst.first.c_str()));
+            const auto target_dst = endpoint_from_sockaddr(dst_addr);
+            const auto src_dst    = endpoint_from_sockaddr(src_addr);
+            if (target_dst.first.empty() || target_dst.second == 0 || src_dst.first.empty()) {
+                _log_with_date_time("[udp] original destination or source address is empty", Log::FATAL);
+                return tp::make_pair(tp::string(""), static_cast<uint16_t>(0));
+            }
+            boost::system::error_code ec;
+            const auto source = boost::asio::ip::make_address(src_dst.first.c_str(), ec);
+            if (ec) {
+                _log_with_date_time(tp::string("[udp] cannot parse source address ") + src_dst.first, Log::FATAL);
+                return tp::make_pair(tp::string(""), static_cast<uint16_t>(0));
+            }
+            target_endpoint.address(source);
             target_endpoint.port(src_dst.second);
+            _log_with_date_time(tp::string("[udp] original destination ") +
+                                  format_host_port(target_dst.first, target_dst.second),
+              Log::INFO);
             return target_dst;
         }
     }
 
-    return tp::make_pair(tp::string(""), 0);
+    return tp::make_pair(tp::string(""), static_cast<uint16_t>(0));
 
     _unguard;
 }
 
-bool prepare_transparent_socket(int fd, bool is_ipv4) {
-    int opt = 1;
-    int sol = is_ipv4 ? SOL_IP : SOL_IPV6;
-
-    if (setsockopt(fd, sol, IP_TRANSPARENT, &opt, sizeof(opt)) != 0) {
-        _log_with_date_time("setsockopt fd [" + tp::to_string(fd) + "] IP_TRANSPARENT failed!", Log::FATAL);
+static bool setsockopt_int_logged(int fd, int level, int optname, const char* name, Log::Level level_on_fail) {
+    const int opt = 1;
+    if (setsockopt(fd, level, optname, &opt, sizeof(opt)) != 0) {
+        const int err = errno;
+        _log_with_date_time(tp::string("setsockopt fd [") + tp::to_string(fd) + "] " + name + " failed: " +
+                              std::strerror(err) + " (errno=" + tp::to_string(err) + ")",
+          level_on_fail);
         return false;
     }
-
     return true;
+}
+
+bool prepare_transparent_socket(int fd, bool is_ipv4) {
+    // IPv4: SOL_IP / IP_TRANSPARENT (19). IPv6: SOL_IPV6 / IPV6_TRANSPARENT (75).
+    if (is_ipv4) {
+        return setsockopt_int_logged(fd, SOL_IP, IP_TRANSPARENT, "IP_TRANSPARENT", Log::FATAL);
+    }
+    return setsockopt_int_logged(fd, SOL_IPV6, IPV6_TRANSPARENT, "IPV6_TRANSPARENT", Log::FATAL);
 }
 
 bool prepare_nat_udp_bind(int fd, bool is_ipv4, bool recv_ttl) {
     _guard;
 
-    int opt     = 1;
-    int sol     = is_ipv4 ? SOL_IP : SOL_IPV6;
-    int ip_recv = is_ipv4 ? IP_RECVORIGDSTADDR : IPV6_RECVORIGDSTADDR;
-
+    const int opt = 1;
     if (!prepare_transparent_socket(fd, is_ipv4)) {
-        _log_with_date_time("[udp] setsockopt IP_TRANSPARENT failed!", Log::FATAL);
+        _log_with_date_time("[udp] setsockopt transparent failed!", Log::FATAL);
         return false;
     }
 
-    if (setsockopt(fd, sol, ip_recv, &opt, sizeof(opt)) != 0) {
-        _log_with_date_time("[udp] setsockopt IP_RECVORIGDSTADDR failed!", Log::FATAL);
-        return false;
+    if (is_ipv4) {
+        if (!setsockopt_int_logged(fd, SOL_IP, IP_RECVORIGDSTADDR, "IP_RECVORIGDSTADDR", Log::FATAL)) {
+            return false;
+        }
+        if (recv_ttl) {
+            // Hop limit / TTL is diagnostic only. Keep going if the kernel rejects it.
+            setsockopt_int_logged(fd, SOL_IP, IP_RECVTTL, "IP_RECVTTL", Log::ERROR);
+        }
+    } else {
+        if (!setsockopt_int_logged(fd, SOL_IPV6, IPV6_RECVORIGDSTADDR, "IPV6_RECVORIGDSTADDR", Log::FATAL)) {
+            return false;
+        }
+        if (recv_ttl) {
+            setsockopt_int_logged(fd, SOL_IPV6, IPV6_RECVHOPLIMIT, "IPV6_RECVHOPLIMIT", Log::ERROR);
+        }
+
+        // Dual-stack (IPV6_V6ONLY=0): IPv4 datagrams deliver a sockaddr_in in
+        // SOL_IP/IP_RECVORIGDSTADDR, not the IPv6 cmsg. A v6-only socket may
+        // reject the IPv4 options; IPv6 reception still stands.
+        int v6only          = 0;
+        socklen_t v6only_len = sizeof(v6only);
+        const bool known    = getsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &v6only, &v6only_len) == 0;
+        if (!known || v6only == 0) {
+            setsockopt_int_logged(fd, SOL_IP, IP_TRANSPARENT, "IP_TRANSPARENT", Log::WARN);
+            setsockopt_int_logged(fd, SOL_IP, IP_RECVORIGDSTADDR, "IP_RECVORIGDSTADDR", Log::WARN);
+            if (recv_ttl) {
+                setsockopt_int_logged(fd, SOL_IP, IP_RECVTTL, "IP_RECVTTL", Log::WARN);
+            }
+        }
     }
 
     if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) != 0) {
         _log_with_date_time("[udp] setsockopt SO_REUSEADDR failed!", Log::FATAL);
         return false;
-    }
-
-    if (recv_ttl) {
-        if (setsockopt(fd, sol, is_ipv4 ? IP_RECVTTL : IPV6_RECVHOPLIMIT, &opt, sizeof(opt)) != 0) {
-            _log_with_date_time("[udp] setsockopt IP_RECVOPTS/IPV6_RECVHOPLIMIT failed!", Log::ERROR);
-        }
     }
 
     return true;
@@ -961,10 +1095,9 @@ bool prepare_nat_udp_bind(int fd, bool is_ipv4, bool recv_ttl) {
 bool prepare_nat_udp_target_bind(
   int fd, bool is_ipv4, const boost::asio::ip::udp::endpoint& udp_target_endpoint, int buf_size) {
     _guard;
-    int opt = 1;
-    int sol = is_ipv4 ? SOL_IPV6 : SOL_IP;
-    if (setsockopt(fd, sol, IP_TRANSPARENT, &opt, sizeof(opt)) != 0) {
-        _log_with_endpoint(udp_target_endpoint, "[udp] setsockopt IP_TRANSPARENT failed!", Log::FATAL);
+    const int opt = 1;
+    if (!prepare_transparent_socket(fd, is_ipv4)) {
+        _log_with_endpoint(udp_target_endpoint, "[udp] setsockopt transparent failed!", Log::FATAL);
         return false;
     }
 

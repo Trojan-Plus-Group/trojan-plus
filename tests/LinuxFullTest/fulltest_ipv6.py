@@ -25,12 +25,16 @@
  The default IPv4 run (-n / -f / -t / -d / -q) is unchanged. -6 may be
  combined with those flags; the IPv6 suite runs after they finish.
 
- NAT and client_tun IPv6 cases are registered here but skipped unless
+ NAT without an ip6tables rule, and client_tun, are skipped unless
  --ipv6-include-expected-fail is set. When executed they must match a
- documented failure signature (NAT: getsockopt error -1 and a 0-byte
- probe; TUN: "fatal: Invalid argument"). A different outcome, including
- an unexpected pass, fails the suite. The default -6 run still skips
- them, so it does not affect the default IPv4 run.
+ documented failure signature (NAT: IP6T_SO_ORIGINAL_DST failed and a
+ 0-byte probe; TUN: "fatal: Invalid argument"). A different outcome,
+ including an unexpected pass, fails the suite.
+
+ Real IPv6 REDIRECT and TPROXY transfers are opt-in via --ipv6-nat.
+ They need sudo -n, a network namespace, and ip6tables, and SKIP when
+ that environment is missing. See fulltest_ipv6_nat.py and
+ IPV6_BASELINE.md. The default -6 run still skips them.
 
  PySocks refuses IPv6 destinations (socks.py connect raises
  "PySocks doesn't support IPv6"), so client-mode cases speak SOCKS5
@@ -1173,9 +1177,9 @@ def case_nat(binary, enabled):
     except Exception as exc:
         setup_error = str(exc)
     text = group.stop()
-    signature = ("getsockopt error -1" in text) and data == b""
+    signature = ("IP6T_SO_ORIGINAL_DST failed" in text) and data == b""
     if setup_error is None and signature:
-        return "EXPECTED-FAIL", "matched utils.cpp getsockopt error -1 and a 0-byte probe"
+        return "EXPECTED-FAIL", "matched IP6T_SO_ORIGINAL_DST failed and a 0-byte probe"
     if data:
         reason = "NAT IPv6 unexpectedly returned %d bytes" % len(data)
     else:
@@ -1211,7 +1215,7 @@ def case_tun(binary, enabled):
     return "FAIL", reason
 
 
-def main(binary, include_expected_fail=False, include_ipv4_reference=False):
+def main(binary, include_expected_fail=False, include_ipv4_reference=False, include_nat=False):
     os.chdir(TEST_ROOT)
     RESULTS.clear()
     install_hosts_guards()
@@ -1260,6 +1264,21 @@ def main(binary, include_expected_fail=False, include_ipv4_reference=False):
             ("nat_ipv6", lambda: case_nat(binary, include_expected_fail)),
             ("tun_ipv6", lambda: case_tun(binary, include_expected_fail)),
         ]
+        import fulltest_ipv6_nat
+        nat_cache = {}
+
+        def nat_case(case_id):
+            def run():
+                if "rows" not in nat_cache:
+                    nat_cache["rows"] = fulltest_ipv6_nat.run_cases(binary, include_nat)
+                for row_id, status, reason in nat_cache["rows"]:
+                    if row_id == case_id:
+                        return status, reason
+                return "FAIL", "nat case %s did not run" % case_id
+            return run
+
+        for case_id in fulltest_ipv6_nat.CASE_IDS:
+            cases.append((case_id, nat_case(case_id)))
         if include_ipv4_reference:
             cases.insert(2, ("ipv4_client_tcp_socks_hostname", lambda: case_ipv4_hostname(binary)))
 
@@ -1288,7 +1307,7 @@ def main(binary, include_expected_fail=False, include_ipv4_reference=False):
     if failed:
         print_time_log("IPv6 suite failed %d case(s)" % failed)
         return 1
-    print_time_log("IPv6 suite passed (NAT/TUN skipped or matched the expected-fail signature)")
+    print_time_log("IPv6 suite passed")
     return 0
 
 
@@ -1319,4 +1338,5 @@ if __name__ == "__main__":
     sys.exit(main(
         os.path.realpath(sys.argv[1]),
         include_expected_fail="--include-expected-fail" in sys.argv,
-        include_ipv4_reference="--include-ipv4-reference" in sys.argv))
+        include_ipv4_reference="--include-ipv4-reference" in sys.argv,
+        include_nat="--ipv6-nat" in sys.argv))

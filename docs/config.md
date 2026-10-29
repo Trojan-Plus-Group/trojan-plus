@@ -120,7 +120,16 @@ PROTIP: If you simply want to redirect a raw TCP connection, you can use `iptabl
 
 ## A valid nat.json
 
-The NAT config is for transparent proxy. You'll need to [setup iptables rules](https://github.com/shadowsocks/shadowsocks-libev/tree/v3.3.1#transparent-proxy) to use it. Everything is the same as the client config.
+The NAT config is for transparent proxy. IPv4 uses `iptables`. IPv6 uses the same `run_type` with `ip6tables` (examples below). A listener on `::` is dual-stack unless `tcp.ipv6_only` is true. An IPv4-mapped original destination (`::ffff:a.b.c.d`) is normalized to IPv4 before it is sent to the server, so the Trojan request uses ATYP 1.
+
+`tcp.use_tproxy` selects the TCP original-destination lookup:
+
+- `false` (default): `REDIRECT`. IPv4 calls `getsockopt(SOL_IP, SO_ORIGINAL_DST)`. IPv6 calls `getsockopt(SOL_IPV6, IP6T_SO_ORIGINAL_DST)`. A dual-stack socket that accepted an IPv4 connection uses `SO_ORIGINAL_DST`.
+- `true`: `TPROXY`. The listener sets `IP_TRANSPARENT` (IPv4) or `IPV6_TRANSPARENT` (IPv6). `getsockname` on the accepted socket is the original destination.
+
+UDP always reads the original destination from `recvmsg` ancillary data: `IP_RECVORIGDSTADDR` for IPv4 and `IPV6_RECVORIGDSTADDR` for IPv6. A dual-stack socket sets both. The UDP reply socket binds that original destination and sets the transparent option for its family.
+
+Do not redirect the Trojan server's own address, or the NAT process will loop. A full IPv6 example is [nat-ipv6.json-example](../examples/nat-ipv6.json-example).
 
 ```json
 {
@@ -150,6 +159,7 @@ The NAT config is for transparent proxy. You'll need to [setup iptables rules](h
     },
     "tcp": {
         "ipv6_only": false,
+        "use_tproxy": false,
         "no_delay": true,
         "keep_alive": true,
         "reuse_port": false,
@@ -158,6 +168,33 @@ The NAT config is for transparent proxy. You'll need to [setup iptables rules](h
     }
 }
 ```
+
+### IPv6 REDIRECT (TCP)
+
+`tcp.use_tproxy` stays false. `local_port` is the port below.
+
+```bash
+ip6tables -t nat -A PREROUTING -p tcp -d 2001:db8:1::/64 -j REDIRECT --to-ports 12345
+ip6tables -t nat -A OUTPUT -p tcp -d 2001:db8:1::/64 -j REDIRECT --to-ports 12345
+```
+
+Match the destinations to proxy, and leave the Trojan server's prefix out of that match. `OUTPUT` covers processes on the same host. `PREROUTING` covers forwarded traffic.
+
+### IPv6 TPROXY (TCP and UDP)
+
+Set `tcp.use_tproxy` to true. The same listening port receives TCP and UDP.
+
+```bash
+ip -6 rule add fwmark 1 lookup 100
+ip -6 route add local ::/0 dev lo table 100
+
+ip6tables -t mangle -A PREROUTING -p tcp -d 2001:db8:1::/64 -j TPROXY --on-port 12345 --tproxy-mark 0x1
+ip6tables -t mangle -A PREROUTING -p udp -d 2001:db8:1::/64 -j TPROXY --on-port 12345 --tproxy-mark 0x1
+ip6tables -t mangle -A OUTPUT -p tcp -d 2001:db8:1::/64 -j MARK --set-mark 1
+ip6tables -t mangle -A OUTPUT -p udp -d 2001:db8:1::/64 -j MARK --set-mark 1
+```
+
+IPv4 keeps the same shape with `iptables`, `ip rule`, and `ip route add local 0.0.0.0/0 dev lo table 100`. On a dual-stack listener (`local_addr` `::`, `tcp.ipv6_only` false) one process handles both families. IPv4 datagrams on that socket arrive with `IP_RECVORIGDSTADDR`.
 
 ## A valid server.json
 

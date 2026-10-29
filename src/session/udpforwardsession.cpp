@@ -72,13 +72,10 @@ void UDPForwardSession::start_udp(const std::string_view& data) {
     auto cb   = [this, self]() {
         if (is_nat) {
             udp_target_socket.open(out_udp_endpoint.protocol());
-            // NAT only. prepare_nat_udp_target_bind (utils.cpp) selects SOL_IPV6 when
-            // its flag is true, so the historical caller compared against v6(). The
-            // two inversions cancel and the socket level stays correct. The
-            // transparent-socket option values are left for the NAT step.
-            const bool nat_bind_flag =
-              out_udp_endpoint.protocol().family() == boost::asio::ip::tcp::v6().family();
-            if (prepare_nat_udp_target_bind((int)udp_target_socket.native_handle(), nat_bind_flag, out_udp_endpoint,
+            // is_ipv4 selects IP_TRANSPARENT versus IPV6_TRANSPARENT. A v4-mapped
+            // original destination is already unwrapped to IPv4 by recv_tproxy_udp_msg.
+            const bool is_ipv4 = out_udp_endpoint.address().is_v4();
+            if (prepare_nat_udp_target_bind((int)udp_target_socket.native_handle(), is_ipv4, out_udp_endpoint,
                   get_config().get_udp_socket_buf())) {
                 udp_target_socket.bind(out_udp_endpoint);
             } else {

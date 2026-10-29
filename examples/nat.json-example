@@ -25,6 +25,7 @@
     },
     "tcp": {
         "ipv6_only": false,
+        "use_tproxy": false,
         "no_delay": true,
         "keep_alive": true,
         "reuse_port": false,
