@@ -335,7 +335,8 @@ def main():
         return fulltest_ipv6.main(
             binary_path,
             include_expected_fail=cmd_args.ipv6_include_expected_fail,
-            include_ipv4_reference=cmd_args.ipv6_include_ipv4_reference)
+            include_ipv4_reference=cmd_args.ipv6_include_ipv4_reference,
+            include_nat=cmd_args.ipv6_nat)
 
     print_time_log("start testing server...")
     test_server_process = run_test_server()
@@ -415,7 +416,8 @@ def main():
         if fulltest_ipv6.main(
                 binary_path,
                 include_expected_fail=cmd_args.ipv6_include_expected_fail,
-                include_ipv4_reference=cmd_args.ipv6_include_ipv4_reference) != 0:
+                include_ipv4_reference=cmd_args.ipv6_include_ipv4_reference,
+                include_nat=cmd_args.ipv6_nat) != 0:
             return 1
 
     print_time_log("!!!!! ALL SUCC, GREAT JOB !!!!")
@@ -441,12 +443,18 @@ if __name__ == "__main__":
     parser.add_argument("-q", "--quic", help="whether test QUIC transport mode, optional test case (e.g. T1, T2)",
                         nargs='?', const='all', default=None)
     parser.add_argument("-6", "--ipv6", help="run the IPv6 suite (client/forward/pipeline/fallback/dual-stack). "
-                        "Does not change the default IPv4 run. NAT and TUN IPv6 cases are skipped unless "
-                        "--ipv6-include-expected-fail is set.",
+                        "Does not change the default IPv4 run. NAT and TUN expected-fail cases are skipped unless "
+                        "--ipv6-include-expected-fail is set. IPv6 REDIRECT/TPROXY transfers are skipped unless "
+                        "--ipv6-nat is set.",
                         action='store_true', default=False)
     parser.add_argument("--ipv6-include-expected-fail",
-                        help="with -6, also execute NAT and TUN IPv6 cases. They are expected to fail until later PRs "
-                        "and do not change the IPv6 suite exit status.",
+                        help="with -6, also execute the no-rule NAT probe and the TUN IPv6 case. They are expected "
+                        "to fail with a documented signature and do not change the IPv6 suite exit status.",
+                        action='store_true', default=False)
+    parser.add_argument("--ipv6-nat",
+                        help="with -6, run IPv6 REDIRECT and TPROXY transfers in a network namespace. "
+                        "Requires sudo -n, ip, and ip6tables. SKIPs when those are unavailable. "
+                        "TPROXY uses ip6tables when the target exists, otherwise nft.",
                         action='store_true', default=False)
     parser.add_argument("--ipv6-include-ipv4-reference",
                         help="with -6, also run the IPv4 hostname SOCKS reference case used by the baseline matrix.",

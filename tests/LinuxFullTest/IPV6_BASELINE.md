@@ -1,7 +1,7 @@
 # IPv6 LinuxFullTest baseline
 
 This file records the IPv6 pass/fail matrix for `tests/LinuxFullTest`.
-Core TCP and UDP-over-TCP paths (server, client, forward) now set `IPV6_V6ONLY`, encode address literals with ATYP 1/4, return the real SOCKS bind address, and log IPv6 endpoints as `[addr]:port`. QUIC, NAT/TPROXY, and TUN behaviour are unchanged. QUIC tests were not run.
+Core TCP and UDP-over-TCP paths (server, client, forward) set `IPV6_V6ONLY`, encode address literals with ATYP 1/4, return the real SOCKS bind address, and log IPv6 endpoints as `[addr]:port`. Linux NAT now does the same for REDIRECT and TPROXY: IPv6 sockets use `IPV6_TRANSPARENT` and `IP6T_SO_ORIGINAL_DST`, and a dual-stack listener unwraps IPv4-mapped original destinations to IPv4. TUN behaviour is unchanged. QUIC tests were not run.
 
 The default IPv4 invocation is unchanged. CI (`azure-pipelines.yml`, `build_and_test.sh`) does not pass `-6`.
 
@@ -13,10 +13,15 @@ From `tests/LinuxFullTest/`, with IPv6 loopback enabled (`::1` present, `net.ipv
 # IPv4 suite used for the IPv4 column (client, pipeline, forward, fallback).
 python3 -u fulltest_main.py /path/to/trojan -g -n -f
 
-# IPv6 suite. NAT and TUN are skipped. Exit status follows the in-scope cases.
+# IPv6 suite. REDIRECT/TPROXY and TUN are skipped. Exit status follows the in-scope cases.
 python3 -u fulltest_main.py /path/to/trojan -6
 
-# Also execute the expected-fail NAT and TUN cases. Their failures do not change the exit status.
+# IPv6 REDIRECT and TPROXY. Needs passwordless sudo, ip, and ip6tables.
+# Missing tools SKIP. A transfer that runs and fails the body or ATYP check fails the suite.
+# TPROXY uses the ip6tables TPROXY target when the kernel has it, otherwise nft.
+python3 -u fulltest_main.py /path/to/trojan -6 --ipv6-nat
+
+# No-rule NAT probe and the TUN case. Their expected failures do not change the exit status.
 python3 -u fulltest_main.py /path/to/trojan -6 --ipv6-include-expected-fail
 
 # Also run the IPv4 SOCKS hostname reference (not part of the default -n run).
@@ -39,7 +44,7 @@ What `-6` configures, generated at runtime from the existing JSON (not committed
 
 Client-mode cases speak SOCKS5 themselves. PySocks rejects an IPv6 destination (`socks.py` `connect()` raises `PySocks doesn't support IPv6`), so it cannot drive ATYP 4 or an IPv6 proxy address.
 
-The IPv6 content set is 2 files of 1500 bytes. The IPv4 `-g -n -f` run is the stock suite (50 files, TCP and UDP, RSS cooldown). NAT and TUN need root (`sudo -n`) when `--ipv6-include-expected-fail` is set.
+The IPv6 content set is 2 files of 1500 bytes. The IPv4 `-g -n -f` run is the stock suite (50 files, TCP and UDP, RSS cooldown). `--ipv6-nat` builds its own netns and does not use those content ports. The no-rule NAT probe and TUN need root (`sudo -n`) when `--ipv6-include-expected-fail` is set. `--ipv6-nat` needs the same sudo plus `ip` and `ip6tables`. CI does not pass either flag.
 
 ## Result matrix
 
@@ -63,41 +68,49 @@ Host: IPv6 loopback up, `net.ipv6.bindv6only=0`. Binary built from this tree wit
 | `tcp.prefer_ipv4` omitted | Code default is false: the resolver's first result. | PASS. Same dual-stack name. On this host the first `getaddrinfo` result was `::1`, and the server log said `resolved to ::1`. |
 | Scoped IPv6 literal | Not covered by `-n` (targets are IPv4). | PASS. Forward target `fe80::1%lo` and `fe80::1%nosuchiface0` are ATYP 3 on the wire. The server log keeps the original text, including the zone. |
 | IPv4-mapped literal | Not a separate `-n` case. | PASS. Forward target `::ffff:127.0.0.1` is ATYP 1 `127.0.0.1` and the transfer succeeds. A dual-stack SOCKS listener answers an IPv4 client with bind ATYP 1 `127.0.0.1:10620`. |
-| NAT | No case in `LinuxFullTest`. | SKIP on default `-6`. Opt-in returns EXPECTED-FAIL only when the log contains `getsockopt error -1` and the probe reads 0 bytes. Any other outcome fails the suite. |
+| NAT / TPROXY | No case in the default IPv4 suite. | SKIP on default `-6`. `--ipv6-nat` PASSed five transfers in a netns: ip6tables TCP REDIRECT to `fd00:9:9::9` (ATYP 4), iptables TCP REDIRECT of `10.9.9.9` on a dual-stack listener (ATYP 1, not `::ffff:`), nft TCP TPROXY (ATYP 4), nft UDP TPROXY (ATYP 4), and nft UDP TPROXY of an IPv4 datagram on the same listener (ATYP 1, peer `10.9.6.2`). `--ipv6-include-expected-fail` still expects the no-rule probe to log `IP6T_SO_ORIGINAL_DST failed` and read 0 bytes. |
 | TUN (`client_tun`) | Not run here. Existing `-t` installs a `tun0` default route; CI runs that on a privileged agent. | SKIP on default `-6`. Opt-in returns EXPECTED-FAIL only when the log contains `fatal: Invalid argument`. Any other outcome (including a missing `/dev/net/tun`) fails the suite. |
 
 IPv4 command: `python3 -u fulltest_main.py ../../build/trojan -g -n -f` exited 0 (`ALL SUCC`). Stages: client, client pipeline, forward, forward pipeline, fallback.
 
-IPv6 command: `python3 -u fulltest_main.py ../../build/trojan -6` exited 0 on two consecutive runs. Every in-scope case passed, including `ipv6_only_listener`, `prefer_ipv4_dual_hostname` (`resolved to 127.0.0.1`), `prefer_ipv4_default_dual_hostname` (`resolved to ::1`), `forward_zoned_link_local` (`ATYP 3 fe80::1%lo`), `forward_zoned_unknown_iface` (`ATYP 3 fe80::1%nosuchiface0`), `forward_v4_mapped` (`ATYP 1 127.0.0.1`), and `socks_v4_mapped_bind`. `nat_ipv6` and `tun_ipv6` were `SKIP`.
+IPv6 command on this branch: `python3 -u fulltest_main.py ../../build/trojan -6 --ipv6-nat --ipv6-include-expected-fail` exited 0. Every in-scope case passed (`ipv6_only_listener`, `prefer_ipv4_dual_hostname` resolved to `127.0.0.1`, `prefer_ipv4_default_dual_hostname` resolved to `::1`, zoned forwards, `forward_v4_mapped`, `socks_v4_mapped_bind`). `nat_ipv6` and `tun_ipv6` were EXPECTED-FAIL. The five `--ipv6-nat` cases were PASS. Default `-6` still SKIPs `nat_ipv6`, those five cases, and `tun_ipv6`.
 
-Opt-in command: `python3 -u fulltest_main.py ../../build/trojan -6 --ipv6-include-expected-fail` exited 0. NAT and TUN returned EXPECTED-FAIL after matching `getsockopt error -1` plus a 0-byte probe, and `fatal: Invalid argument`. A different outcome fails the suite. The same in-scope cases passed.
+This kernel's ip6tables has no TPROXY extension (`unknown option "--on-port"`, missing `xt_TPROXY`), so the three TPROXY cases used nftables. TCP REDIRECT used ip6tables and iptables. Logs:
+
+```
+[utils.cpp:940] recv_target_endpoint original destination [fd00:9:9::9]:18082
+[natsession.cpp:51] forwarding to [fd00:9:9::9]:18082 via [fd00:9:6::1]:24650
+[serversession.cpp:341] requested connection to [fd00:9:9::9]:18082 atyp 4
+
+[utils.cpp:940] recv_target_endpoint original destination 10.9.9.9:18083
+[natsession.cpp:51] forwarding to 10.9.9.9:18083 via [fd00:9:6::1]:24650
+[serversession.cpp:341] requested connection to 10.9.9.9:18083 atyp 1
+
+[utils.cpp:1014] [udp] original destination [fd00:9:9::9]:18084
+[serversession.cpp:327] requested UDP associate to [fd00:9:9::9]:18084 atyp 4
+
+[utils.cpp:1014] [udp] original destination 10.9.9.9:18085
+[service.cpp:723] new UDP session from 10.9.6.2, not ::ffff:10.9.6.2
+[serversession.cpp:327] requested UDP associate to 10.9.9.9:18085 atyp 1
+```
+
+The accepted TCP peer of the IPv4 REDIRECT was still logged as `[::ffff:10.9.6.2]`. That string is the socket remote address. The original destination that was forwarded was `10.9.9.9`.
+
+That same command included `--ipv6-include-expected-fail`. `nat_ipv6` matched `IP6T_SO_ORIGINAL_DST failed` and a 0-byte probe. `tun_ipv6` matched `fatal: Invalid argument`. Either check failing with a different outcome fails the suite.
 
 ## Failure notes
 
-No in-scope IPv6 case failed on this host. The two failures are the deferred NAT and TUN cases.
+No in-scope IPv6 case failed on this host. TUN is still deferred. NAT and TPROXY transfers pass under `--ipv6-nat`.
 
-### NAT (`nat_ipv6`)
+### NAT
 
-Observed with `run_type=nat`, `local_addr=::1`, `tcp.use_tproxy=false`, and a plain TCP connect (no ip6tables redirect):
+`recv_target_endpoint` picks the conntrack option from the accepted socket. A real IPv6 local address uses `SOL_IPV6/IP6T_SO_ORIGINAL_DST` (option 80). `SOL_IP/SO_ORIGINAL_DST` on that socket returns ENOENT. An IPv4 connection on a dual-stack listener has a v4-mapped local address after REDIRECT (`::ffff:127.0.0.1`); `IP6T_SO_ORIGINAL_DST` returns ENOENT and `SO_ORIGINAL_DST` returns the IPv4 original destination. A v4-mapped `sockaddr_in6` is turned into an IPv4 literal before the Trojan request is built, so the server log says `atyp 1`.
 
-```
-[utils.cpp:836] recv_target_endpoint + getsockopt error -1
-[clientsession.cpp:834] session_id: 0 disconnected, 0 bytes received, 0 bytes sent
-```
+`prepare_transparent_socket` sets `SOL_IP/IP_TRANSPARENT` (19) or `SOL_IPV6/IPV6_TRANSPARENT` (75). Option 19 on `SOL_IPV6` is `IPV6_MULTICAST_LOOP`, which is what the old IPv6 call set, so `setsockopt` succeeded without making the socket transparent. `prepare_nat_udp_target_bind` inverted the family and always passed `IP_TRANSPARENT`; the caller inverted the flag to compensate. Both sites now pass a real `is_ipv4` and the matching option. A dual-stack UDP listener (`IPV6_V6ONLY=0`) also sets `IP_RECVORIGDSTADDR`: an IPv4 datagram delivers cmsg level `SOL_IP` type 20 (`sockaddr_in`), not `IPV6_RECVORIGDSTADDR`. The `recvmsg` control buffer is 256 bytes so an IPv6 original destination and a hop limit both fit. The UDP peer is unwrapped too, because the reply is sent from an `AF_INET` socket bound to the original destination.
 
-`recv_target_endpoint` (`src/core/utils.cpp:831`) calls `getsockopt(SOL_IPV6, IP6T_SO_ORIGINAL_DST)` and, on failure, `getsockopt(SOL_IP, SO_ORIGINAL_DST)`. Both fail on a normal accept, so it returns port 0 (`utils.cpp:839`). `NATSession::start` then destroys the session (`src/session/natsession.cpp:47`). The probe read 0 bytes. The listener itself did come up: `trojan plus service (nat) started at [::1]:20621` (`service.cpp`). IPv6 endpoints in the core logs use `[addr]:port`.
+GitHub issue #14 is this bug. NAT on `::` with `use_tproxy` and an ip6tables UDP TPROXY rule timed out, while the TCP listener logged that it would process TPROXY. The socket was not transparent. TUN and DNS mentioned around that report are out of scope.
 
-An earlier probe with `tcp.use_tproxy=true` and no TPROXY rule is not the committed case (it self-connects). It logged:
-
-```
-[service.cpp:80] [nat] [tcp] to process TPROXY tcp message
-[utils.cpp:829] recv_target_endpoint + getsockname error 0
-[natsession.cpp:51] forwarding to [::1]:20621 via [::1]:4650
-```
-
-`getsockname` on the accepted socket is the listen address, so the session forwards to itself and accepts again. The committed test leaves `use_tproxy` false to avoid that loop.
-
-Not hit by this TCP probe. In the NAT UDP path, `UDPForwardSession::start_udp` still passes a flag that is true for IPv6 into `prepare_nat_udp_target_bind`, and that function selects `SOL_IPV6` when the flag is true (`src/core/utils.cpp`). The two inversions cancel, so the socket level is unchanged. `utils.cpp` transparent-socket options (`IP_TRANSPARENT` at the IPv4/IPv6 `setsockopt` sites) are left for the NAT step. The call site names the flag for what it does today and does not change the value.
+Without a redirect rule, both `getsockopt` calls fail, the log contains `IP6T_SO_ORIGINAL_DST failed`, and `NATSession::start` destroys the session after a 0-byte probe. That check stays behind `--ipv6-include-expected-fail`. `getsockname` without a TPROXY rule is still the listen address, so the suite does not connect in that configuration. The `--ipv6-nat` cases install a real rule; the logged destination is `fd00:9:9::9` or `10.9.9.9`.
 
 ### TUN (`tun_ipv6`)
 

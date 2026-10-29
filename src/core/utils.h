@@ -83,6 +83,11 @@ using reuse_port = boost::asio::detail::socket_option::boolean<SOL_SOCKET, SO_RE
 #define IP_TRANSPARENT 19
 #endif
 
+// linux/in6.h. Option 19 on SOL_IPV6 is IPV6_MULTICAST_LOOP, not transparency.
+#ifndef IPV6_TRANSPARENT
+#define IPV6_TRANSPARENT 75
+#endif
+
 #ifndef IP_RECVORIGDSTADDR
 #ifdef IP_ORIGDSTADDR
 #define IP_RECVORIGDSTADDR IP_ORIGDSTADDR
