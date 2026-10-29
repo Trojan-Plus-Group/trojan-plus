@@ -115,6 +115,12 @@ class Config {
         tp::string tun_name;
         tp::string net_ip;
         tp::string net_mask;
+        // Empty disables IPv6 unless net_ip itself is an IPv6 literal.
+        // Existing IPv4 configs leave this empty and keep the IPv4 path.
+        tp::string net_ipv6;
+        // Prefix length to configure on the host side of the TUN device.
+        // 64 when the key is omitted.
+        uint8_t net_ipv6_prefix{64};
         uint16_t mtu;
         int tun_fd;
         bool redirect_local; // redirect all ip to localhost for test

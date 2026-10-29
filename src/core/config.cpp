@@ -269,9 +269,17 @@ void Config::populate(const ptree& tree) {
             Log::WARN);
     }
 
-    tun.tun_name       = tree.get("tun.tun_name", std::string()).c_str();
-    tun.net_ip         = tree.get("tun.net_ip", std::string()).c_str();
-    tun.net_mask       = tree.get("tun.net_mask", std::string()).c_str();
+    tun.tun_name = tree.get("tun.tun_name", std::string()).c_str();
+    tun.net_ip   = tree.get("tun.net_ip", std::string()).c_str();
+    tun.net_mask = tree.get("tun.net_mask", std::string()).c_str();
+    tun.net_ipv6 = tree.get("tun.net_ipv6", std::string()).c_str();
+    const int ipv6_prefix = tree.get("tun.net_ipv6_prefix", 64);
+    if (ipv6_prefix < 0 || ipv6_prefix > 128) {
+        _log_with_date_time("[tun] net_ipv6_prefix out of range, using 64", Log::ERROR);
+        tun.net_ipv6_prefix = 64;
+    } else {
+        tun.net_ipv6_prefix = static_cast<uint8_t>(ipv6_prefix);
+    }
     tun.mtu            = tree.get("tun.mtu", default_tun_mtu);
     tun.tun_fd         = tree.get("tun.tun_fd", default_tun_fd);
     tun.redirect_local = tree.get("tun.redirect_local", false);

@@ -1,7 +1,7 @@
 # IPv6 LinuxFullTest baseline
 
 This file records the IPv6 pass/fail matrix for `tests/LinuxFullTest`.
-Core TCP and UDP-over-TCP paths (server, client, forward) set `IPV6_V6ONLY`, encode address literals with ATYP 1/4, return the real SOCKS bind address, and log IPv6 endpoints as `[addr]:port`. Linux NAT now does the same for REDIRECT and TPROXY: IPv6 sockets use `IPV6_TRANSPARENT` and `IP6T_SO_ORIGINAL_DST`, and a dual-stack listener unwraps IPv4-mapped original destinations to IPv4. TUN behaviour is unchanged. QUIC tests were not run.
+Core TCP and UDP-over-TCP paths (server, client, forward) set `IPV6_V6ONLY`, encode address literals with ATYP 1/4, return the real SOCKS bind address, and log IPv6 endpoints as `[addr]:port`. Linux NAT now does the same for REDIRECT and TPROXY: IPv6 sockets use `IPV6_TRANSPARENT` and `IP6T_SO_ORIGINAL_DST`, and a dual-stack listener unwraps IPv4-mapped original destinations to IPv4. TUN mode carries IPv6 TCP and non-DNS UDP in addition to IPv4. QUIC tests were not run. Built-in TUN DNS (AAAA and DNS over IPv6) and IPv6 route-table matching are still deferred.
 
 The default IPv4 invocation is unchanged. CI (`azure-pipelines.yml`, `build_and_test.sh`) does not pass `-6`.
 
@@ -13,7 +13,8 @@ From `tests/LinuxFullTest/`, with IPv6 loopback enabled (`::1` present, `net.ipv
 # IPv4 suite used for the IPv4 column (client, pipeline, forward, fallback).
 python3 -u fulltest_main.py /path/to/trojan -g -n -f
 
-# IPv6 suite. REDIRECT/TPROXY and TUN are skipped. Exit status follows the in-scope cases.
+# IPv6 suite. REDIRECT/TPROXY are skipped. TUN IPv6 runs when root and
+# /dev/net/tun are available, and is skipped otherwise.
 python3 -u fulltest_main.py /path/to/trojan -6
 
 # IPv6 REDIRECT and TPROXY. Needs passwordless sudo, ip, and ip6tables.
@@ -21,7 +22,8 @@ python3 -u fulltest_main.py /path/to/trojan -6
 # TPROXY uses the ip6tables TPROXY target when the kernel has it, otherwise nft.
 python3 -u fulltest_main.py /path/to/trojan -6 --ipv6-nat
 
-# No-rule NAT probe and the TUN case. Their expected failures do not change the exit status.
+# No-rule NAT probe. Its expected failure does not change the exit status.
+# TUN IPv6 is a real case and is not gated by this flag.
 python3 -u fulltest_main.py /path/to/trojan -6 --ipv6-include-expected-fail
 
 # Also run the IPv4 SOCKS hostname reference (not part of the default -n run).
@@ -44,7 +46,7 @@ What `-6` configures, generated at runtime from the existing JSON (not committed
 
 Client-mode cases speak SOCKS5 themselves. PySocks rejects an IPv6 destination (`socks.py` `connect()` raises `PySocks doesn't support IPv6`), so it cannot drive ATYP 4 or an IPv6 proxy address.
 
-The IPv6 content set is 2 files of 1500 bytes. The IPv4 `-g -n -f` run is the stock suite (50 files, TCP and UDP, RSS cooldown). `--ipv6-nat` builds its own netns and does not use those content ports. The no-rule NAT probe and TUN need root (`sudo -n`) when `--ipv6-include-expected-fail` is set. `--ipv6-nat` needs the same sudo plus `ip` and `ip6tables`. CI does not pass either flag.
+The IPv6 content set is 2 files of 1500 bytes. The IPv4 `-g -n -f` run is the stock suite (50 files, TCP and UDP, RSS cooldown). `--ipv6-nat` builds its own netns and does not use those content ports. The no-rule NAT probe needs root (`sudo -n`) when `--ipv6-include-expected-fail` is set. `--ipv6-nat` needs the same sudo plus `ip` and `ip6tables`. TUN IPv6 needs root, `/dev/net/tun`, and `ip netns` whenever it runs; without them the case is `SKIP`. CI does not pass `--ipv6-nat` or `--ipv6-include-expected-fail`.
 
 ## Result matrix
 
@@ -68,14 +70,16 @@ Host: IPv6 loopback up, `net.ipv6.bindv6only=0`. Binary built from this tree wit
 | `tcp.prefer_ipv4` omitted | Code default is false: the resolver's first result. | PASS. Same dual-stack name. On this host the first `getaddrinfo` result was `::1`, and the server log said `resolved to ::1`. |
 | Scoped IPv6 literal | Not covered by `-n` (targets are IPv4). | PASS. Forward target `fe80::1%lo` and `fe80::1%nosuchiface0` are ATYP 3 on the wire. The server log keeps the original text, including the zone. |
 | IPv4-mapped literal | Not a separate `-n` case. | PASS. Forward target `::ffff:127.0.0.1` is ATYP 1 `127.0.0.1` and the transfer succeeds. A dual-stack SOCKS listener answers an IPv4 client with bind ATYP 1 `127.0.0.1:10620`. |
-| NAT / TPROXY | No case in the default IPv4 suite. | SKIP on default `-6`. `--ipv6-nat` PASSed five transfers in a netns: ip6tables TCP REDIRECT to `fd00:9:9::9` (ATYP 4), iptables TCP REDIRECT of `10.9.9.9` on a dual-stack listener (ATYP 1, not `::ffff:`), nft TCP TPROXY (ATYP 4), nft UDP TPROXY (ATYP 4), and nft UDP TPROXY of an IPv4 datagram on the same listener (ATYP 1, peer `10.9.6.2`). `--ipv6-include-expected-fail` still expects the no-rule probe to log `IP6T_SO_ORIGINAL_DST failed` and read 0 bytes. |
-| TUN (`client_tun`) | Not run here. Existing `-t` installs a `tun0` default route; CI runs that on a privileged agent. | SKIP on default `-6`. Opt-in returns EXPECTED-FAIL only when the log contains `fatal: Invalid argument`. Any other outcome (including a missing `/dev/net/tun`) fails the suite. |
+| NAT / TPROXY | No case in the default IPv4 suite. | SKIP on default `-6`. `--ipv6-nat` runs five transfers in a netns: ip6tables TCP REDIRECT to `fd00:9:9::9` (ATYP 4), iptables TCP REDIRECT of `10.9.9.9` on a dual-stack listener (ATYP 1, not `::ffff:`), nft TCP TPROXY (ATYP 4), nft UDP TPROXY (ATYP 4), and nft UDP TPROXY of an IPv4 datagram on the same listener (ATYP 1). `--ipv6-include-expected-fail` still expects the no-rule probe to log `IP6T_SO_ORIGINAL_DST failed` and read 0 bytes. |
+| TUN (`client_tun`) | PASS. `sudo python3 -u fulltest_main.py ../../build/trojan -t` after `tun0` `10.0.0.1/24` and `/32` routes for `188.188.188.188` and `199.199.199.199`. Non-pipeline and pipeline, proxy and direct, TCP and UDP, all `SUCC`. This kernel rejected a second metric-0 default route (`RTNETLINK File exists`), so the CI default route via `10.0.0.2` was not installed. `-d` was not run: `114.114.114.114:53` timed out. | PASS when root, `/dev/net/tun`, and `ip netns` are available. Otherwise `SKIP`. The case is not gated by `--ipv6-include-expected-fail`. |
 
 IPv4 command: `python3 -u fulltest_main.py ../../build/trojan -g -n -f` exited 0 (`ALL SUCC`). Stages: client, client pipeline, forward, forward pipeline, fallback.
 
-IPv6 command on this branch: `python3 -u fulltest_main.py ../../build/trojan -6 --ipv6-nat --ipv6-include-expected-fail` exited 0. Every in-scope case passed (`ipv6_only_listener`, `prefer_ipv4_dual_hostname` resolved to `127.0.0.1`, `prefer_ipv4_default_dual_hostname` resolved to `::1`, zoned forwards, `forward_v4_mapped`, `socks_v4_mapped_bind`). `nat_ipv6` and `tun_ipv6` were EXPECTED-FAIL. The five `--ipv6-nat` cases were PASS. Default `-6` still SKIPs `nat_ipv6`, those five cases, and `tun_ipv6`.
+IPv6 command: `python3 -u fulltest_main.py ../../build/trojan -6` exited 0. Every in-scope case passed, including `ipv6_only_listener`, `prefer_ipv4_dual_hostname` (`resolved to 127.0.0.1`), `prefer_ipv4_default_dual_hostname` (`resolved to ::1`), `forward_zoned_link_local` (`ATYP 3 fe80::1%lo`), `forward_zoned_unknown_iface` (`ATYP 3 fe80::1%nosuchiface0`), `forward_v4_mapped` (`ATYP 1 127.0.0.1`), and `socks_v4_mapped_bind`. `nat_ipv6` and the five `--ipv6-nat` cases were `SKIP`. `tun_ipv6` was `PASS` (`ATYP 4 TCP and UDP to fd00:c::1`).
 
-This kernel's ip6tables has no TPROXY extension (`unknown option "--on-port"`, missing `xt_TPROXY`), so the three TPROXY cases used nftables. TCP REDIRECT used ip6tables and iptables. Logs:
+Opt-in command: `python3 -u fulltest_main.py ../../build/trojan -6 --ipv6-include-expected-fail` exited 0. `nat_ipv6` matched `IP6T_SO_ORIGINAL_DST failed` and a 0-byte probe. `tun_ipv6` passed. A different NAT outcome fails the suite.
+
+NAT command: `sudo python3 -u fulltest_main.py ../../build/trojan -6 --ipv6-nat --ipv6-include-expected-fail` exited 0. The in-scope cases passed, `nat_ipv6` was EXPECTED-FAIL, `tun_ipv6` was PASS, and the five REDIRECT/TPROXY cases were PASS (`nat_ipv6_redirect_tcp`, `nat_ipv6_redirect_v4mapped`, `nat_ipv6_tproxy_tcp`, `nat_ipv6_tproxy_udp`, `nat_ipv6_tproxy_udp_v4mapped`). This kernel's ip6tables has no TPROXY extension (`unknown option "--on-port"`, missing `xt_TPROXY`), so the three TPROXY cases used nftables. TCP REDIRECT used ip6tables and iptables. Logs:
 
 ```
 [utils.cpp:940] recv_target_endpoint original destination [fd00:9:9::9]:18082
@@ -96,11 +100,9 @@ This kernel's ip6tables has no TPROXY extension (`unknown option "--on-port"`, m
 
 The accepted TCP peer of the IPv4 REDIRECT was still logged as `[::ffff:10.9.6.2]`. That string is the socket remote address. The original destination that was forwarded was `10.9.9.9`.
 
-That same command included `--ipv6-include-expected-fail`. `nat_ipv6` matched `IP6T_SO_ORIGINAL_DST failed` and a 0-byte probe. `tun_ipv6` matched `fatal: Invalid argument`. Either check failing with a different outcome fails the suite.
-
 ## Failure notes
 
-No in-scope IPv6 case failed on this host. TUN is still deferred. NAT and TPROXY transfers pass under `--ipv6-nat`.
+No in-scope IPv6 case failed on this host. NAT and TPROXY transfers pass under `--ipv6-nat`. The no-rule probe stays EXPECTED-FAIL. TUN IPv6 TCP and UDP pass when root and `/dev/net/tun` are available.
 
 ### NAT
 
@@ -114,16 +116,11 @@ Without a redirect rule, both `getsockopt` calls fail, the log contains `IP6T_SO
 
 ### TUN (`tun_ipv6`)
 
-Observed with `run_type=client_tun`, `tun.net_ip=fd00::2`, `tun.net_mask=ffff:ffff:ffff:ffff::`, route tables loaded, and `/dev/net/tun` opened:
+`tun.net_ipv6` (default empty) enables IPv6. Omitting it leaves the IPv4 netif path unchanged. An IPv6 literal in `tun.net_ip` is also accepted, so `fd00::2` no longer throws `make_address_v4` / `Invalid argument`. `tun.net_ipv6_prefix` defaults to 64 and is the prefix to assign on the host side of the TUN device. lwIP is built with `LWIP_IPV6` (`src/tun/lwip_custom/lwipopts.h`). The netif gets that address at index 0 in state `IP6_ADDR_PREFERRED`, `output_ip6` writes packets back to the TUN fd, and IPv6 input calls `ip6_input`. A second TCP listener (`IPADDR_TYPE_V6`) accepts IPv6 SYNs. The destination handed to the Trojan client is ATYP 4, or ATYP 1 when lwIP presents an IPv4-mapped address. Non-DNS IPv6 UDP is parsed in `TUNDev`, forwarded with the original endpoints, and answered with an IPv6 UDP packet whose checksum is `udp_ip6_checksum`.
 
-```
-[tundev.cpp:115] [tun] /dev/net/tun ifr.ifr_mtu: 4097
-[main.cpp:245] fatal: Invalid argument [system:22]
-```
+The passing case needs root. It creates a client netns, a veth to the Trojan server (`fd00:1::1`), and a content address `fd00:c::1/128` on `lo` in the root netns. The client routes only `fd00:c::1/128` into the TUN. TCP and UDP echoes must succeed, the client must log `[tun] IPv6 netif fd00::2/64`, and the server must log `requested connection to [fd00:c::1]:18083 atyp 4` and `requested UDP associate to [fd00:c::1]:18084 atyp 4`. Without root, `/dev/net/tun`, or permission to create a netns, the case is `SKIP`.
 
-`TUNDev`'s constructor parses both addresses with `make_address_v4` (`src/tun/tundev.cpp:128` and `:130`). `fd00::2` is not an IPv4 address, so Boost.Asio throws `EINVAL` and `main_impl` exits at `src/main.cpp:245`.
-
-The process never reached packet handling. The same class is explicitly IPv4-only (`src/tun/tundev.h:76`). IPv6 input is discarded (`src/tun/tundev.cpp:279`), lwIP endpoints are built with `make_address_v4` (`src/tun/lwip_tcp_client.cpp:41`), the built-in DNS socket is `make_address_v4("0.0.0.0")` (`src/tun/dnsserver.cpp:58`), and the route matcher is `IPv4Matcher` (`src/core/utils.h:416`). This run did not exercise those lines; they are the next failures once address parsing no longer aborts startup.
+IPv6 route matchers are not implemented. A non-mapped IPv6 destination is proxied. An IPv4-mapped destination still uses the existing IPv4 matchers. The built-in DNS interceptor stays on the IPv4 TUN address (`0.0.0.0` when the TUN is IPv6-only). AAAA handling and DNS over IPv6 are unchanged and out of scope. `redirect_local` still rewrites the proxied destination to `127.0.0.1` and is left false for this case.
 
 ## Notes on cases that passed
 

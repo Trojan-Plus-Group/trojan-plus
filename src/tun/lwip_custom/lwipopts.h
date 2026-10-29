@@ -47,9 +47,14 @@
 #define LWIP_NETCONN         0
 #define LWIP_SOCKET          0
 #define PPP_SUPPORT          0
-#define LWIP_IPV6            1
-#define LWIP_IPV6_MLD        0
-#define LWIP_IPV6_AUTOCONFIG 0
+// TUN mode feeds IPv6 packets to ip6_input and sends replies with
+// netif->output_ip6. Keep IPv6 compiled in. MLD, SLAAC, and router
+// solicitations stay off: the TUN address is configured statically and this
+// process does not run nd6_tmr.
+#define LWIP_IPV6                     1
+#define LWIP_IPV6_MLD                 0
+#define LWIP_IPV6_AUTOCONFIG          0
+#define LWIP_IPV6_SEND_ROUTER_SOLICIT 0
 //#define LWIP_WND_SCALE       1
 //#define TCP_RCV_SCALE        5
 

@@ -28,6 +28,7 @@
 
 #include "core/log.h"
 #include "mem/memallocator.h"
+#include "tun/lwip_addr.h"
 
 using namespace boost::asio::ip;
 
@@ -36,11 +37,11 @@ lwip_tcp_client::lwip_tcp_client(struct tcp_pcb* _pcb, std::shared_ptr<TUNSessio
 
     _guard;
 
-    // special for reverse local to remote
-    m_remote_addr =
-      tcp::endpoint(make_address_v4((address_v4::uint_type)ntoh32(_pcb->local_ip.u_addr.ip4.addr)), _pcb->local_port);
-    m_local_addr =
-      tcp::endpoint(make_address_v4((address_v4::uint_type)ntoh32(_pcb->remote_ip.u_addr.ip4.addr)), _pcb->remote_port);
+    // lwIP's local address is the destination the host connected to. Swap it
+    // onto the remote endpoint so the Trojan request carries that destination.
+    // address_from_lwip unwraps IPv4-mapped IPv6 to ATYP 1.
+    m_remote_addr = tcp::endpoint(address_from_lwip(_pcb->local_ip), _pcb->local_port);
+    m_local_addr  = tcp::endpoint(address_from_lwip(_pcb->remote_ip), _pcb->remote_port);
 
     m_tun_session->set_tcp_connect(m_local_addr, m_remote_addr);
     m_tun_session->set_write_to_lwip(

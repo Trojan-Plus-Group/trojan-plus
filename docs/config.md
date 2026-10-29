@@ -273,4 +273,22 @@ IPv4 keeps the same shape with `iptables`, `ip rule`, and `ip route add local 0.
     - `fast_open`: whether to enable TCP Fast Open (kernel support required)
     - `fast_open_qlen`: the server's limit on the size of the queue of TFO requests that have not yet completed the three-way handshake
 
+## TUN mode (`client_tun`)
+
+`run_type` `client_tun` reads IP packets from a TUN device and forwards them through the Trojan client. IPv4 behaviour is unchanged: `tun.net_ip` and `tun.net_mask` are the lwIP netif address and mask (for example `10.0.0.2` and `255.255.255.0`).
+
+IPv6 is off unless you set it. Add `tun.net_ipv6` (a unicast IPv6 address without a zone id) and, optionally, `tun.net_ipv6_prefix` (0–128, default 64). An existing config that omits both keeps working and does not install an IPv6 address on the lwIP netif. Putting an IPv6 literal in `tun.net_ip` is also accepted: that address is used as `net_ipv6`, and if `net_mask` is an IPv6 mask its prefix length is used. Do not set `net_ip` to an IPv6 literal and `net_ipv6` at the same time.
+
+On the host, assign the other side of the prefix and route the destinations you want to capture. For `net_ipv6` `fd00::2` and prefix 64:
+
+```bash
+ip link set tun0 up
+ip -6 addr add fd00::1/64 dev tun0 nodad
+ip -6 route add 2001:db8:1::/64 dev tun0
+```
+
+lwIP accepts TCP for any IPv6 destination (`pretend TCP`) and writes the replies with `output_ip6`. The destination passed to the Trojan client is ATYP 4, or ATYP 1 when the destination is an IPv4-mapped IPv6 address. Non-DNS IPv6 UDP is forwarded the same way, and the reply written back to the TUN is an IPv6 UDP packet with a checksum. IPv6 route-table matching and the built-in DNS server (AAAA, DNS over IPv6) are not part of this path: every non-mapped IPv6 destination is proxied, and DNS interception stays on the IPv4 TUN address.
+
+`redirect_local` still rewrites the proxied destination to `127.0.0.1` for the IPv4 test suite. Leave it false when the Trojan server should connect to the real IPv6 destination.
+
 [Homepage](.) | [Prev Page](protocol) | [Next Page](build)

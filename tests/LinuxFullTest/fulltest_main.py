@@ -443,13 +443,14 @@ if __name__ == "__main__":
     parser.add_argument("-q", "--quic", help="whether test QUIC transport mode, optional test case (e.g. T1, T2)",
                         nargs='?', const='all', default=None)
     parser.add_argument("-6", "--ipv6", help="run the IPv6 suite (client/forward/pipeline/fallback/dual-stack). "
-                        "Does not change the default IPv4 run. NAT and TUN expected-fail cases are skipped unless "
+                        "Does not change the default IPv4 run. The no-rule NAT probe is skipped unless "
                         "--ipv6-include-expected-fail is set. IPv6 REDIRECT/TPROXY transfers are skipped unless "
-                        "--ipv6-nat is set.",
+                        "--ipv6-nat is set. TUN IPv6 runs when root and /dev/net/tun are available and is skipped otherwise.",
                         action='store_true', default=False)
     parser.add_argument("--ipv6-include-expected-fail",
-                        help="with -6, also execute the no-rule NAT probe and the TUN IPv6 case. They are expected "
-                        "to fail with a documented signature and do not change the IPv6 suite exit status.",
+                        help="with -6, also execute the no-rule NAT probe. It is expected to fail with "
+                        "IP6T_SO_ORIGINAL_DST failed and a 0-byte read, and does not change the IPv6 suite exit status. "
+                        "TUN IPv6 is a real case and is not gated by this flag.",
                         action='store_true', default=False)
     parser.add_argument("--ipv6-nat",
                         help="with -6, run IPv6 REDIRECT and TPROXY transfers in a network namespace. "

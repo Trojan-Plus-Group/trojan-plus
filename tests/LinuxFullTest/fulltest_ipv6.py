@@ -25,11 +25,14 @@
  The default IPv4 run (-n / -f / -t / -d / -q) is unchanged. -6 may be
  combined with those flags; the IPv6 suite runs after they finish.
 
- NAT without an ip6tables rule, and client_tun, are skipped unless
- --ipv6-include-expected-fail is set. When executed they must match a
- documented failure signature (NAT: IP6T_SO_ORIGINAL_DST failed and a
- 0-byte probe; TUN: "fatal: Invalid argument"). A different outcome,
+ NAT without an ip6tables rule is skipped unless
+ --ipv6-include-expected-fail is set. When executed it must match
+ IP6T_SO_ORIGINAL_DST failed and a 0-byte probe. A different outcome,
  including an unexpected pass, fails the suite.
+
+ TUN IPv6 is a real TCP+UDP case. It runs when root and /dev/net/tun
+ are available and skips cleanly otherwise, including on the default
+ -6 run.
 
  Real IPv6 REDIRECT and TPROXY transfers are opt-in via --ipv6-nat.
  They need sudo -n, a network namespace, and ip6tables, and SKIP when
@@ -41,8 +44,8 @@
  directly. That is what lets the suite send ATYP 4 and ATYP 3 exactly.
 
  The suite exit status is non-zero when an in-scope IPv6 case fails,
- or when an executed NAT/TUN case does not match its expected-fail
- signature. See IPV6_BASELINE.md.
+ when TUN IPv6 runs and fails, or when the executed no-rule NAT probe
+ does not match its expected-fail signature. See IPV6_BASELINE.md.
 '''
 
 import atexit
@@ -56,6 +59,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import traceback
 
@@ -341,15 +345,20 @@ def write_configs():
 
     tun = tune_timeouts(load_json("client_config.json"))
     tun["run_type"] = "client_tun"
-    tun["remote_addr"] = IPV6_LOOPBACK
-    tun["remote_port"] = SERVER_PORT
+    tun["remote_addr"] = "fd00:1::1"
+    tun["remote_port"] = 24650
     tun["tun"]["tun_name"] = "tunipv6"
-    tun["tun"]["net_ip"] = "fd00::2"
-    tun["tun"]["net_mask"] = "ffff:ffff:ffff:ffff::"
-    # Keep routing enabled so the failure is the IPv6 address parse, not the
-    # "tun mode need route's config support" warning.
+    tun["tun"]["net_ip"] = ""
+    tun["tun"]["net_mask"] = ""
+    tun["tun"]["net_ipv6"] = "fd00::2"
+    tun["tun"]["net_ipv6_prefix"] = 64
+    tun["tun"]["redirect_local"] = False
+    tun["quic"] = {"enabled": False}
+    if "dns" in tun:
+        tun["dns"]["enabled"] = False
     if "route" in tun:
         tun["route"]["enabled"] = True
+        tun["route"]["proxy_type"] = 0
     save_json("ipv6_tun.json", tun)
 
 
@@ -1190,29 +1199,297 @@ def case_nat(binary, enabled):
     return "FAIL", reason
 
 
-def case_tun(binary, enabled):
-    if not enabled:
-        return "SKIP", (
-            "expected-fail, skipped by default. Pass --ipv6-include-expected-fail to execute. "
-            "client_tun IPv6 (lwIP + built-in DNS + routing) is deferred and must not fail the default run."
-        )
-    group = ProcGroup(binary)
-    setup_error = None
+TUN_SERVER_PORT = 24650
+TUN_TCP_PORT = 18083
+TUN_UDP_PORT = 18084
+TUN_DST = "fd00:c::1"
+TUN_HOST = "fd00::1"
+TUN_LWIP = "fd00::2"
+TUN_VETH_SRV = "fd00:1::1"
+TUN_VETH_CLI = "fd00:1::2"
+TUN_PROBE = r'''
+import socket, sys
+host, tcp_port, udp_port = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+tcp = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+tcp.settimeout(10)
+tcp.connect((host, tcp_port, 0, 0))
+tcp.sendall(b"GET / HTTP/1.1\r\nHost: tun6\r\nConnection: close\r\n\r\n")
+data = b""
+while True:
+    chunk = tcp.recv(4096)
+    if not chunk:
+        break
+    data += chunk
+tcp.close()
+if b"TUN6TCP_OK" not in data:
+    sys.stderr.write("tcp body %r\n" % data[:300])
+    sys.exit(2)
+udp = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+udp.settimeout(10)
+payload = b"TUN6UDP_OK"
+udp.sendto(payload, (host, udp_port, 0, 0))
+reply, _addr = udp.recvfrom(2048)
+udp.close()
+if reply != payload:
+    sys.stderr.write("udp reply %r\n" % reply)
+    sys.exit(3)
+print("tcp+udp ok")
+'''
+
+
+def root_args(args):
+    if os.geteuid() == 0:
+        return list(args)
+    return ["sudo", "-n"] + list(args)
+
+
+def run_root(args, check=True, timeout=20):
+    proc = subprocess.run(
+        root_args(args), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        universal_newlines=True, timeout=timeout)
+    text = ((proc.stderr or "") + (proc.stdout or "")).strip()
+    if check and proc.returncode != 0:
+        raise RuntimeError("%s -> %s" % (" ".join(args), text or ("exit %s" % proc.returncode)))
+    return proc, text
+
+
+def tun_skip_reason():
+    if not os.path.exists("/dev/net/tun"):
+        return "skipped: /dev/net/tun is not available"
+    if os.geteuid() != 0:
+        probe = subprocess.run(["sudo", "-n", "true"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if probe.returncode != 0:
+            return "skipped: TUN IPv6 needs root (sudo -n) to configure the interface"
+    if not os.path.exists("/usr/sbin/ip") and not os.path.exists("/sbin/ip"):
+        return "skipped: iproute2 is not available"
+    return None
+
+
+def _serve_tun_tcp(stop, bound):
+    sock = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
     try:
-        proc = group.start("ipv6_tun.json", use_sudo=True)
-        time.sleep(1.5)
-        if proc.poll() is None:
-            setup_error = "tun process stayed up with IPv6 net_ip fd00::2"
+        sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind((TUN_DST, TUN_TCP_PORT))
+        sock.listen(4)
+        sock.settimeout(0.5)
+        bound.set()
+        while not stop.is_set():
+            try:
+                conn, _addr = sock.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            try:
+                conn.settimeout(5)
+                conn.recv(4096)
+                conn.sendall(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nTUN6TCP_OK")
+            except OSError:
+                pass
+            finally:
+                conn.close()
+    finally:
+        sock.close()
+
+
+def _serve_tun_udp(stop, bound):
+    sock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+    try:
+        sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+        sock.bind((TUN_DST, TUN_UDP_PORT))
+        sock.settimeout(0.5)
+        bound.set()
+        while not stop.is_set():
+            try:
+                data, addr = sock.recvfrom(2048)
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            try:
+                sock.sendto(data, addr)
+            except OSError:
+                break
+    finally:
+        sock.close()
+
+
+def _stop_process_group(proc):
+    if proc is None or proc.poll() is not None:
+        return
+    try:
+        os.killpg(proc.pid, signal.SIGINT)
+    except (ProcessLookupError, PermissionError):
+        return
+    try:
+        proc.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        try:
+            proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            pass
+
+
+def case_tun(binary):
+    reason = tun_skip_reason()
+    if reason:
+        return "SKIP", reason
+
+    tag = str(os.getpid())[-5:]
+    ns = "tp6" + tag
+    tun_name = "tn" + tag
+    veth_srv = "v6s" + tag
+    veth_cli = "v6c" + tag
+    group = ProcGroup(binary)
+    client = None
+    client_log = None
+    stop = threading.Event()
+    threads = []
+    status, detail = "FAIL", "TUN IPv6 did not finish"
+    client_text = ""
+    server_text = ""
+
+    def netns(*args, check=True, timeout=20):
+        return run_root(["ip", "netns", "exec", ns] + list(args), check=check, timeout=timeout)
+
+    try:
+        run_root(["ip", "netns", "del", ns], check=False)
+        run_root(["ip", "link", "del", veth_srv], check=False)
+        run_root(["ip", "-6", "addr", "del", TUN_DST + "/128", "dev", "lo"], check=False)
+
+        try:
+            run_root(["ip", "netns", "add", ns])
+        except RuntimeError as exc:
+            message = str(exc).lower()
+            if "not permitted" in message or "not supported" in message:
+                return "SKIP", "skipped: cannot create a network namespace (%s)" % exc
+            raise
+
+        run_root(["ip", "link", "add", veth_srv, "type", "veth", "peer", "name", veth_cli])
+        run_root(["ip", "link", "set", veth_cli, "netns", ns])
+        run_root(["ip", "link", "set", veth_srv, "up"])
+        run_root(["ip", "-6", "addr", "add", TUN_VETH_SRV + "/64", "dev", veth_srv, "nodad"])
+        netns("ip", "link", "set", "lo", "up")
+        netns("ip", "link", "set", veth_cli, "up")
+        netns("ip", "-6", "addr", "add", TUN_VETH_CLI + "/64", "dev", veth_cli, "nodad")
+        run_root(["ip", "-6", "addr", "add", TUN_DST + "/128", "dev", "lo", "nodad"])
+
+        tcp_ready = threading.Event()
+        udp_ready = threading.Event()
+        threads = [
+            threading.Thread(target=_serve_tun_tcp, args=(stop, tcp_ready)),
+            threading.Thread(target=_serve_tun_udp, args=(stop, udp_ready)),
+        ]
+        for thread in threads:
+            thread.daemon = True
+            thread.start()
+        if not tcp_ready.wait(3) or not udp_ready.wait(3):
+            raise RuntimeError("content sockets did not bind %s" % TUN_DST)
+
+        server = tune_timeouts(load_json("server_config.json"))
+        server["local_addr"] = TUN_VETH_SRV
+        server["local_port"] = TUN_SERVER_PORT
+        server["tcp"]["prefer_ipv4"] = True
+        server["quic"] = {"enabled": False}
+        save_json("ipv6_tun_server.json", server)
+
+        client_cfg = tune_timeouts(load_json("client_config.json"))
+        client_cfg["run_type"] = "client_tun"
+        client_cfg["remote_addr"] = TUN_VETH_SRV
+        client_cfg["remote_port"] = TUN_SERVER_PORT
+        client_cfg["tun"]["tun_name"] = tun_name
+        client_cfg["tun"]["net_ip"] = ""
+        client_cfg["tun"]["net_mask"] = ""
+        client_cfg["tun"]["net_ipv6"] = TUN_LWIP
+        client_cfg["tun"]["net_ipv6_prefix"] = 64
+        client_cfg["tun"]["redirect_local"] = False
+        client_cfg["quic"] = {"enabled": False}
+        if "dns" in client_cfg:
+            client_cfg["dns"]["enabled"] = False
+        if "route" in client_cfg:
+            client_cfg["route"]["enabled"] = True
+            client_cfg["route"]["proxy_type"] = 0
+        save_json("ipv6_tun.json", client_cfg)
+
+        server_proc = group.start("ipv6_tun_server.json", use_sudo=True)
+        if not wait_until(lambda: port_open(TUN_VETH_SRV, TUN_SERVER_PORT), server_proc, timeout=6):
+            raise RuntimeError("trojan server did not listen on %s:%d" % (TUN_VETH_SRV, TUN_SERVER_PORT))
+
+        client_log_path = os.path.join(CONFIG_DIR, "ipv6_tun_client.output")
+        client_log = open(client_log_path, "w+", encoding="utf-8", errors="replace")
+        client = subprocess.Popen(
+            root_args(["ip", "netns", "exec", ns, binary, "-c",
+                       os.path.join(CONFIG_DIR, "ipv6_tun.json")]),
+            stdout=client_log, stderr=client_log, cwd=TEST_ROOT, start_new_session=True)
+        if not wait_until(
+                lambda: netns("ip", "link", "show", tun_name, check=False)[0].returncode == 0,
+                client, timeout=6):
+            raise RuntimeError("TUN device %s did not appear" % tun_name)
+
+        netns("ip", "link", "set", tun_name, "up")
+        netns("ip", "-6", "addr", "add", TUN_HOST + "/64", "dev", tun_name, "nodad")
+        netns("ip", "-6", "route", "replace", TUN_DST + "/128", "dev", tun_name)
+        _route_proc, route_text = netns("ip", "-6", "route", "get", TUN_DST)
+        if tun_name not in route_text:
+            raise RuntimeError("route to %s did not use %s: %s" % (TUN_DST, tun_name, route_text))
+        _srv_route, srv_route = netns("ip", "-6", "route", "get", TUN_VETH_SRV)
+        if tun_name in srv_route:
+            raise RuntimeError("trojan server route leaked into %s: %s" % (tun_name, srv_route))
+
+        probe_path = os.path.join(CONFIG_DIR, "ipv6_tun_probe.py")
+        with open(probe_path, "w", encoding="utf-8") as handle:
+            handle.write(TUN_PROBE)
+        probe, probe_text = netns(
+            sys.executable, probe_path, TUN_DST, str(TUN_TCP_PORT), str(TUN_UDP_PORT),
+            timeout=25)
+        if probe.returncode != 0 or "tcp+udp ok" not in probe_text:
+            raise RuntimeError("probe failed: %s" % (probe_text or "exit %s" % probe.returncode))
+        status, detail = "PASS", "IPv6 TCP and UDP through TUN"
     except Exception as exc:
-        setup_error = str(exc)
-    text = group.stop()
-    if setup_error is None and "fatal: Invalid argument" in text:
-        return "EXPECTED-FAIL", "matched fatal: Invalid argument from make_address_v4"
-    reason = setup_error or "TUN IPv6 did not log fatal: Invalid argument"
-    extra = excerpt(text)
-    if extra:
-        reason = "%s | %s" % (reason, extra)
-    return "FAIL", reason
+        status, detail = "FAIL", str(exc)
+    finally:
+        stop.set()
+        _stop_process_group(client)
+        if client_log is not None:
+            client_log.close()
+            try:
+                with open(client_log.name, encoding="utf-8", errors="replace") as handle:
+                    client_text = handle.read()
+            except OSError:
+                client_text = ""
+        server_text = group.stop()
+        for thread in threads:
+            thread.join(timeout=2)
+        run_root(["ip", "netns", "del", ns], check=False)
+        run_root(["ip", "link", "del", veth_srv], check=False)
+        run_root(["ip", "-6", "addr", "del", TUN_DST + "/128", "dev", "lo"], check=False)
+
+    text = client_text + "\n" + server_text
+    if status == "PASS":
+        tcp_line = "requested connection to [%s]:%d atyp 4" % (TUN_DST, TUN_TCP_PORT)
+        udp_line = "requested UDP associate to [%s]:%d atyp 4" % (TUN_DST, TUN_UDP_PORT)
+        ipv6_line = "[tun] IPv6 netif %s/64" % TUN_LWIP
+        if ipv6_line not in client_text:
+            status, detail = "FAIL", "client did not log %s" % ipv6_line
+        elif tcp_line not in server_text:
+            status, detail = "FAIL", "server did not log %s" % tcp_line
+        elif udp_line not in server_text:
+            status, detail = "FAIL", "server did not log %s" % udp_line
+        elif "fatal:" in client_text:
+            status, detail = "FAIL", "client logged fatal during a passing transfer"
+        else:
+            detail = "ATYP 4 TCP and UDP to %s" % TUN_DST
+    if status != "PASS":
+        extra = excerpt(text)
+        if extra:
+            detail = "%s | %s" % (detail, extra)
+    return status, detail
 
 
 def main(binary, include_expected_fail=False, include_ipv4_reference=False, include_nat=False):
@@ -1221,9 +1498,10 @@ def main(binary, include_expected_fail=False, include_ipv4_reference=False, incl
     install_hosts_guards()
     print_time_log("IPv6 suite binary " + binary)
     print_time_log(
-        "NAT/TUN IPv6 cases are %s"
+        "no-rule NAT is %s; REDIRECT/TPROXY are %s; TUN IPv6 runs when root and /dev/net/tun are available"
         % ("EXECUTED (must match the expected-fail signature)" if include_expected_fail
-           else "SKIPPED (expected-fail)"))
+           else "SKIPPED (expected-fail)",
+           "EXECUTED" if include_nat else "SKIPPED"))
     restore_error = None
     try:
         try:
@@ -1262,7 +1540,7 @@ def main(binary, include_expected_fail=False, include_ipv4_reference=False, incl
             ("forward_v4_mapped", lambda: case_forward_v4_mapped(binary)),
             ("socks_v4_mapped_bind", lambda: case_v4_mapped_socks_bind(binary)),
             ("nat_ipv6", lambda: case_nat(binary, include_expected_fail)),
-            ("tun_ipv6", lambda: case_tun(binary, include_expected_fail)),
+            ("tun_ipv6", lambda: case_tun(binary)),
         ]
         import fulltest_ipv6_nat
         nat_cache = {}
