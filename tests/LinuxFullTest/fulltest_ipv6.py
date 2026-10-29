@@ -1237,6 +1237,111 @@ print("tcp+udp ok")
 '''
 
 
+TUN_REGRESS = r'''
+import os
+import socket
+import struct
+import time
+
+import psutil
+
+IFNAME, DST = sys.argv[1], sys.argv[2]
+TCP_PORT, UDP_PORT = int(sys.argv[3]), int(sys.argv[4])
+
+
+def checksum(data):
+    if len(data) % 2:
+        data += b"\x00"
+    words = struct.unpack("!%dH" % (len(data) // 2), data)
+    total = sum(words)
+    while total >> 16:
+        total = (total & 0xFFFF) + (total >> 16)
+    return (~total) & 0xFFFF
+
+
+def send_packet(packet, ethertype):
+    sock = socket.socket(socket.AF_PACKET, socket.SOCK_DGRAM, socket.htons(ethertype))
+    sock.bind((IFNAME, 0))
+    sock.send(packet)
+    sock.close()
+
+
+def ipv6_fixed(payload_len, next_header, src, dst):
+    return struct.pack("!IHBB", 0x60000000, payload_len, next_header, 64) + src + dst
+
+
+def find_client():
+    mine = os.stat("/proc/self/ns/net").st_ino
+    for proc in psutil.process_iter(["name"]):
+        if proc.info["name"] != "trojan":
+            continue
+        try:
+            if os.stat("/proc/%d/ns/net" % proc.pid).st_ino == mine:
+                return proc
+        except OSError:
+            continue
+    raise SystemExit("trojan client not in this netns")
+
+
+def tcp_ok():
+    tcp = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+    tcp.settimeout(8)
+    tcp.connect((DST, TCP_PORT, 0, 0))
+    tcp.sendall(b"GET / HTTP/1.1\r\nHost: tun6\r\nConnection: close\r\n\r\n")
+    data = b""
+    while True:
+        chunk = tcp.recv(4096)
+        if not chunk:
+            break
+        data += chunk
+    tcp.close()
+    if b"TUN6TCP_OK" not in data:
+        raise SystemExit("regress tcp body %r" % data[:200])
+
+
+client = find_client()
+client.cpu_percent(interval=None)
+src = socket.inet_pton(socket.AF_INET6, "fd00::1")
+dst = socket.inet_pton(socket.AF_INET6, DST)
+bad6 = ipv6_fixed(65496, 6, src, dst)
+bad4 = struct.pack("!BBHHHBBH4s4s", 0x45, 0, 0, 0, 0, 64, 6, 0,
+                   socket.inet_aton("10.0.0.1"), socket.inet_aton("1.2.3.4"))
+for _ in range(40):
+    send_packet(bad6, 0x86DD)
+    send_packet(bad4, 0x0800)
+cpu = client.cpu_percent(interval=0.6)
+tcp_ok()
+if cpu > 50:
+    raise SystemExit("malformed headers pegged the client at %.1f%%" % cpu)
+
+rss0 = client.memory_info().rss
+mapped = b"\x00" * 10 + b"\xff\xff" + socket.inet_aton("10.9.9.9")
+tcp_syn = struct.pack("!HHIIBBHHH", 40000, 80, 1, 0, 5 << 4, 0x02, 65535, 0, 0)
+syn = ipv6_fixed(len(tcp_syn), 6, src, mapped) + tcp_syn
+for _ in range(300):
+    send_packet(syn, 0x86DD)
+time.sleep(0.3)
+rss1 = client.memory_info().rss
+delta = rss1 - rss0
+# A leaked pbuf is about 1.5 KiB. 300 of them are well above this ceiling.
+if delta > 128 * 1024:
+    raise SystemExit("mapped SYNs grew RSS by %d" % delta)
+
+hbh = struct.pack("!BB", 17, 0) + b"\x01\x04" + b"\x00" * 4
+udp_payload = b"hbh"
+udp_len = 8 + len(udp_payload)
+udp_src = socket.inet_pton(socket.AF_INET6, "fd00::1")
+udp_dst = socket.inet_pton(socket.AF_INET6, "fd00:eeee::1")
+udp = struct.pack("!HHHH", 41000, 9, udp_len, 0) + udp_payload
+pseudo = udp_src + udp_dst + struct.pack("!I", udp_len) + struct.pack("!I", 17)
+udp = struct.pack("!HHHH", 41000, 9, udp_len, checksum(pseudo + udp)) + udp_payload
+hbh_pkt = ipv6_fixed(len(hbh) + len(udp), 0, udp_src, udp_dst) + hbh + udp
+send_packet(hbh_pkt, 0x86DD)
+time.sleep(0.3)
+print("regress ok rss_delta=%d cpu=%.1f" % (delta, cpu))
+'''
+
+
 def root_args(args):
     if os.geteuid() == 0:
         return list(args)
@@ -1349,6 +1454,7 @@ def case_tun(binary):
     group = ProcGroup(binary)
     client = None
     client_log = None
+    regress_note = ""
     stop = threading.Event()
     threads = []
     status, detail = "FAIL", "TUN IPv6 did not finish"
@@ -1450,6 +1556,95 @@ def case_tun(binary):
             timeout=25)
         if probe.returncode != 0 or "tcp+udp ok" not in probe_text:
             raise RuntimeError("probe failed: %s" % (probe_text or "exit %s" % probe.returncode))
+
+        regress_path = os.path.join(CONFIG_DIR, "ipv6_tun_regress.py")
+        with open(regress_path, "w", encoding="utf-8") as handle:
+            handle.write("import sys\n" + TUN_REGRESS)
+        regress, regress_text = netns(
+            sys.executable, regress_path, tun_name, TUN_DST, str(TUN_TCP_PORT), str(TUN_UDP_PORT),
+            timeout=30)
+        if regress.returncode != 0 or "regress ok" not in regress_text:
+            raise RuntimeError("malformed/mapped regress failed: %s" % (regress_text or "exit %s" % regress.returncode))
+        regress_note = regress_text.strip().splitlines()[-1]
+
+        # IPv6 disabled: a wrapped IPv6 length must not stall the IPv4 parser.
+        v4_name = "t4" + tag
+        v4_cfg = tune_timeouts(load_json("client_config.json"))
+        v4_cfg["run_type"] = "client_tun"
+        v4_cfg["remote_addr"] = TUN_VETH_SRV
+        v4_cfg["remote_port"] = TUN_SERVER_PORT
+        v4_cfg["tun"]["tun_name"] = v4_name
+        v4_cfg["tun"]["net_ip"] = "10.66.0.2"
+        v4_cfg["tun"]["net_mask"] = "255.255.255.0"
+        v4_cfg["tun"]["net_ipv6"] = ""
+        v4_cfg["tun"]["redirect_local"] = False
+        v4_cfg["quic"] = {"enabled": False}
+        if "dns" in v4_cfg:
+            v4_cfg["dns"]["enabled"] = False
+        if "route" in v4_cfg:
+            v4_cfg["route"]["enabled"] = True
+            v4_cfg["route"]["proxy_type"] = 0
+        save_json("ipv6_tun_v4only.json", v4_cfg)
+        v4_log_path = os.path.join(CONFIG_DIR, "ipv6_tun_v4only.output")
+        v4_log = open(v4_log_path, "w+", encoding="utf-8", errors="replace")
+        v4_cmd = ["ip", "netns", "exec", ns]
+        if os.path.exists("/usr/bin/stdbuf"):
+            v4_cmd += ["stdbuf", "-oL", "-eL"]
+        v4_cmd += [binary, "-c", os.path.join(CONFIG_DIR, "ipv6_tun_v4only.json")]
+        v4_proc = subprocess.Popen(
+            root_args(v4_cmd), stdout=v4_log, stderr=v4_log, cwd=TEST_ROOT, start_new_session=True)
+        try:
+            if not wait_until(
+                    lambda: netns("ip", "link", "show", v4_name, check=False)[0].returncode == 0,
+                    v4_proc, timeout=6):
+                raise RuntimeError("IPv4-only TUN %s did not appear" % v4_name)
+            netns("ip", "link", "set", v4_name, "up")
+            v4_script = os.path.join(CONFIG_DIR, "ipv6_tun_v4inject.py")
+            with open(v4_script, "w", encoding="utf-8") as handle:
+                handle.write(
+                    "import socket, struct, sys\n"
+                    "ifname = sys.argv[1]\n"
+                    "def send(pkt, et):\n"
+                    "    s = socket.socket(socket.AF_PACKET, socket.SOCK_DGRAM, socket.htons(et))\n"
+                    "    s.bind((ifname, 0))\n"
+                    "    s.send(pkt)\n"
+                    "    s.close()\n"
+                    "bad6 = struct.pack('!IHBB', 0x60000000, 65496, 6, 64) + b'\\x00'*32\n"
+                    "bad4 = struct.pack('!BBHHHBBH4s4s', 0x45, 0, 0, 0, 0, 64, 6, 0, "
+                    "socket.inet_aton('10.66.0.1'), socket.inet_aton('1.2.3.4'))\n"
+                    "for _ in range(20):\n"
+                    "    send(bad6, 0x86DD)\n"
+                    "    send(bad4, 0x0800)\n"
+                    "src = socket.inet_aton('10.66.0.1')\n"
+                    "dst = socket.inet_aton('1.2.3.4')\n"
+                    "payload = b'ping'\n"
+                    "udp_len = 8 + len(payload)\n"
+                    "def csum(data):\n"
+                    "    if len(data) % 2: data += b'\\x00'\n"
+                    "    total = sum(struct.unpack('!%dH' % (len(data)//2), data))\n"
+                    "    while total >> 16: total = (total & 0xFFFF) + (total >> 16)\n"
+                    "    return (~total) & 0xFFFF\n"
+                    "udp = struct.pack('!HHHH', 40000, 9, udp_len, 0) + payload\n"
+                    "udp = struct.pack('!HHHH', 40000, 9, udp_len, "
+                    "csum(src+dst+struct.pack('!BBH', 0, 17, udp_len)+udp)) + payload\n"
+                    "ip = struct.pack('!BBHHHBBH', 0x45, 0, 20+len(udp), 0, 0, 64, 17, 0) + src + dst\n"
+                    "ip = struct.pack('!BBHHHBBH', 0x45, 0, 20+len(udp), 0, 0, 64, 17, csum(ip)) + src + dst\n"
+                    "send(ip+udp, 0x0800)\n"
+                    "print('v4 inject ok')\n")
+            injected, inject_text = netns(sys.executable, v4_script, v4_name, timeout=15)
+            if injected.returncode != 0:
+                raise RuntimeError("v4 inject failed: %s" % inject_text)
+            time.sleep(0.4)
+        finally:
+            _stop_process_group(v4_proc)
+            v4_log.close()
+        with open(v4_log_path, encoding="utf-8", errors="replace") as handle:
+            v4_text = handle.read()
+        if "drop malformed IPv6 packet" not in v4_text:
+            raise RuntimeError("IPv4-only TUN did not drop the wrapped IPv6 header")
+        if "proxy connect: 1.2.3.4" not in v4_text:
+            raise RuntimeError("IPv4-only TUN did not make progress after the bad header | %s" % excerpt(v4_text))
+
         status, detail = "PASS", "IPv6 TCP and UDP through TUN"
     except Exception as exc:
         status, detail = "FAIL", str(exc)
@@ -1483,8 +1678,14 @@ def case_tun(binary):
             status, detail = "FAIL", "server did not log %s" % udp_line
         elif "fatal:" in client_text:
             status, detail = "FAIL", "client logged fatal during a passing transfer"
+        elif "drop malformed IPv6 packet" not in client_text or "drop malformed IPv4 packet" not in client_text:
+            status, detail = "FAIL", "client did not drop the wrapped IPv6 or zero IPv4 length"
+        elif "drop IPv4-mapped IPv6 packet before lwIP" not in client_text:
+            status, detail = "FAIL", "client did not drop the IPv4-mapped SYN"
+        elif "fd00:eeee::1" not in client_text:
+            status, detail = "FAIL", "hop-by-hop UDP was not forwarded"
         else:
-            detail = "ATYP 4 TCP and UDP to %s" % TUN_DST
+            detail = "ATYP 4 TCP and UDP through TUN; malformed lengths and mapped SYNs dropped; %s" % regress_note
     if status != "PASS":
         extra = excerpt(text)
         if extra:
