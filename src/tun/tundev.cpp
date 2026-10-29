@@ -185,6 +185,44 @@ TunAddresses resolve_tun_addresses(const tp::string& net_ip, const tp::string& n
     return out;
 }
 
+bool ipv6_bytes_is_v4_mapped(const uint8_t* addr) {
+    static const uint8_t kMappedPrefix[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff};
+    return std::memcmp(addr, kMappedPrefix, sizeof(kMappedPrefix)) == 0;
+}
+
+// Walk hop-by-hop, routing, and destination options. Fragment, AH, and ESP are
+// not reassembled on the UDP path (return 0 so the packet is left for lwIP).
+// -1 means the chain is truncated and the packet should be dropped.
+int ipv6_locate_udp(uint8_t* payload, int payload_len, uint8_t next, uint8_t** out_udp, int* out_len) {
+    constexpr uint8_t kHopByHop = 0;
+    constexpr uint8_t kRouting  = 43;
+    constexpr uint8_t kFragment = 44;
+    constexpr uint8_t kDestOpts = 60;
+
+    while (next == kHopByHop || next == kRouting || next == kDestOpts || next == kFragment) {
+        if (next == kFragment) {
+            return 0;
+        }
+        if (payload_len < 2) {
+            return -1;
+        }
+        const uint8_t ext_next = payload[0];
+        const int hdr_len      = (static_cast<int>(payload[1]) + 1) * 8;
+        if (hdr_len < 8 || hdr_len > payload_len) {
+            return -1;
+        }
+        next         = ext_next;
+        payload     += hdr_len;
+        payload_len -= hdr_len;
+    }
+    if (next != IPV6_NEXT_UDP) {
+        return 0;
+    }
+    *out_udp = payload;
+    *out_len = payload_len;
+    return 1;
+}
+
 } // namespace
 
 TUNDev* TUNDev::sm_tundev = nullptr;
@@ -403,6 +441,24 @@ err_t TUNDev::netif_input_func(struct pbuf* p, struct netif* inp) {
         } break;
         case IPV6: {
             if (m_ipv6_enabled) {
+                // lwIP's ip6_input rejects IPv4-mapped addresses and multicast
+                // sources with ERR_OK and does not free the pbuf (badvpn
+                // ip6.c). Drop them here so the buffer is released. Mapped
+                // TCP is not proxied; native IPv4 packets are the IPv4 path.
+                uint8_t hdr[sizeof(struct ipv6_header)];
+                if (pbuf_copy_partial(p, hdr, sizeof(hdr), 0) == sizeof(hdr)) {
+                    const uint8_t* src = hdr + 8;
+                    const uint8_t* dst = hdr + 24;
+                    const bool mapped  = ipv6_bytes_is_v4_mapped(src) || ipv6_bytes_is_v4_mapped(dst);
+                    const bool mcast_src = src[0] == 0xff;
+                    if (mapped || mcast_src) {
+                        const char* why = mapped ? "[tun] drop IPv4-mapped IPv6 packet before lwIP"
+                                                 : "[tun] drop IPv6 packet with multicast source";
+                        _log_with_date_time(why, Log::INFO);
+                        pbuf_free(p);
+                        return ERR_OK;
+                    }
+                }
                 return ip6_input(p, inp);
             }
         } break;
@@ -602,62 +658,64 @@ void TUNDev::input_netif_packet(const uint8_t* data, uint16_t packet_len) {
 
 void TUNDev::parse_packet() {
     _guard;
-    if (m_packet_parse_buff.empty()) {
-        // need more byte for version
-        return;
-    }
 
-    auto* data      = (uint8_t*)m_packet_parse_buff.c_str();
-    auto data_len   = m_packet_parse_buff.length();
-    auto ip_version = (data[0] >> half_byte_shift_4_bits) & half_byte_mask_0xF;
+    // Lengths are size_t. A uint16_t sum of an IPv6 payload_length and the
+    // 40-byte header wraps (65496 + 40 == 0) and substr(0) then re-parses the
+    // same bytes forever. An IPv4 total_length of 0 does the same.
+    while (!m_packet_parse_buff.empty()) {
+        auto* data             = (uint8_t*)m_packet_parse_buff.c_str();
+        const size_t data_len  = m_packet_parse_buff.length();
+        const auto ip_version  = (data[0] >> half_byte_shift_4_bits) & half_byte_mask_0xF;
 
-    if (ip_version == IPV4 || ip_version == IPV6) {
+        if (ip_version != IPV4 && ip_version != IPV6) {
+            m_packet_parse_buff.clear();
+            break;
+        }
 
-        uint16_t total_length = 0;
-
+        size_t header_len   = 0;
+        size_t total_length = 0;
         if (ip_version == IPV4) {
-            if (data_len < sizeof(struct ipv4_header)) {
+            header_len = sizeof(struct ipv4_header);
+            if (data_len < header_len) {
                 return;
             }
             struct ipv4_header ipv4_hdr;
             memcpy(&ipv4_hdr, data, sizeof(ipv4_hdr));
             total_length = ntoh16(ipv4_hdr.total_length);
-
-            //_log_with_date_time("parse_packet length:" + tp::to_string(data_len) + " ipv4 protocol: "
-            //+
-            // tp::to_string((int)ipv4_hdr.protocol) + " total_length: " + tp::to_string(total_length));
-
         } else {
-            if (data_len < sizeof(struct ipv6_header)) {
+            header_len = sizeof(struct ipv6_header);
+            if (data_len < header_len) {
                 return;
             }
             struct ipv6_header ipv6_hdr;
             memcpy(&ipv6_hdr, data, sizeof(ipv6_hdr));
-            total_length = ntoh16(ipv6_hdr.payload_length) + sizeof(ipv6_hdr);
-
-            //_log_with_date_time("parse_packet length:" + tp::to_string(data_len) + " ipv6 next header:
-            //" +
-            // tp::to_string((int)ipv6_hdr.next_header) + " total_length: " + tp::to_string(total_length));
+            total_length = static_cast<size_t>(ntoh16(ipv6_hdr.payload_length)) + header_len;
         }
 
-        if (total_length <= data_len) {
-            auto result = try_to_process_udp_packet(data, (int)total_length);
-            if (result == 0) {
-                input_netif_packet(data, total_length);
-            }
-
-            if (data_len == total_length) {
-                //_log_with_date_time("full packet process");
-                m_packet_parse_buff.clear();
-            } else {
-                //_log_with_date_time("split packet process--------------");
-                m_packet_parse_buff = m_packet_parse_buff.substr(total_length);
-                parse_packet();
-            }
+        // Shorter than the header, or larger than the TUN MTU: not a frame we
+        // can skip safely. Drop everything already buffered so the next read
+        // starts clean, including when IPv6 is disabled.
+        if (total_length < header_len || total_length > m_mtu) {
+            _log_with_date_time(tp::string("[tun] drop malformed IPv") + (ip_version == IPV4 ? "4" : "6") +
+                                  " packet, length " + tp::to_string(total_length),
+              Log::WARN);
+            m_packet_parse_buff.clear();
+            break;
+        }
+        if (total_length > data_len) {
+            return;
         }
 
-    } else {
-        m_packet_parse_buff.clear();
+        const auto result = try_to_process_udp_packet(data, static_cast<int>(total_length));
+        if (result == 0) {
+            input_netif_packet(data, static_cast<uint16_t>(total_length));
+        }
+
+        if (data_len == total_length) {
+            m_packet_parse_buff.clear();
+            break;
+        }
+        m_packet_parse_buff = m_packet_parse_buff.substr(total_length);
     }
 
     _unguard;
@@ -932,16 +990,31 @@ int TUNDev::try_to_process_udp_packet(uint8_t* data, int data_len) {
             return 0;
         }
 
-        // Non-UDP packets, including TCP, are given to lwIP.
-        if (data_len < (int)sizeof(struct ipv6_header) ||
-            data[offsetof(struct ipv6_header, next_header)] != IPV6_NEXT_UDP) {
+        // TCP and anything that is not UDP after hop-by-hop, routing, or
+        // destination options is given to lwIP. Fragments are not reassembled here.
+        if (data_len < (int)sizeof(struct ipv6_header)) {
             return 0;
         }
 
         struct ipv6_header ipv6_hdr;
-        if (ipv6_check(data, data_len, &ipv6_hdr, &data, &data_len) == 0) {
+        uint8_t* payload = nullptr;
+        int payload_len  = 0;
+        if (ipv6_check(data, data_len, &ipv6_hdr, &payload, &payload_len) == 0) {
             return 1;
         }
+
+        uint8_t* udp_bytes = nullptr;
+        int udp_len        = 0;
+        const int located =
+          ipv6_locate_udp(payload, payload_len, ipv6_hdr.next_header, &udp_bytes, &udp_len);
+        if (located < 0) {
+            return 1;
+        }
+        if (located == 0) {
+            return 0;
+        }
+        data     = udp_bytes;
+        data_len = udp_len;
 
         struct udp_header udp_hdr;
         if (udp_check(data, data_len, &udp_hdr, &data, &data_len) == 0) {
@@ -962,9 +1035,9 @@ int TUNDev::try_to_process_udp_packet(uint8_t* data, int data_len) {
         std::memcpy(source_bytes.data(), ipv6_hdr.source_address, source_bytes.size());
         std::memcpy(destination_bytes.data(), ipv6_hdr.destination_address, destination_bytes.size());
 
-        // Keep the packet family so the reply written back to the TUN is IPv6,
-        // including for an IPv4-mapped destination. TrojanRequest encoding still
-        // turns that mapped literal into ATYP 1.
+        // Keep the packet family so the reply written back to the TUN is IPv6.
+        // TrojanRequest encoding turns an IPv4-mapped UDP literal into ATYP 1.
+        // Mapped TCP is dropped in netif_input_func; lwIP does not accept it.
         auto local_endpoint =
           udp::endpoint(make_address_v6(source_bytes), ntoh16(udp_hdr.source_port));
         auto remote_endpoint =
