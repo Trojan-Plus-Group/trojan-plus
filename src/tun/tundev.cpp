@@ -21,12 +21,21 @@
 
 #include "tundev.h"
 
+#include <cstring>
+#include <stdexcept>
+
 #include <boost/asio/buffer.hpp>
+#include <boost/asio/ip/address.hpp>
 #include <boost/asio/ip/address_v4.hpp>
+#include <boost/asio/ip/address_v6.hpp>
 #include <functional>
 
+#include <lwip/ip6.h>
+#include <lwip/ip6_addr.h>
 #include <misc/ipv4_proto.h>
 #include <misc/udp_proto.h>
+
+#include "tun/lwip_addr.h"
 
 #include "proto/ipv4_header.h"
 #include "proto/ipv6_header.h"
@@ -78,12 +87,114 @@ class TUNDNSQueryer : public DNSServer::IDataQueryer {
     }
 };
 
+namespace {
+
+using boost::asio::ip::address_v4;
+using boost::asio::ip::address_v6;
+using boost::asio::ip::make_address;
+using boost::asio::ip::make_address_v4;
+using boost::asio::ip::make_address_v6;
+
+struct TunAddresses {
+    bool have_v4{false};
+    bool have_v6{false};
+    address_v4 v4;
+    address_v6 v6;
+    uint8_t prefix{64};
+};
+
+address_v6 parse_tun_ipv6(const tp::string& text) {
+    if (text.find('%') != tp::string::npos) {
+        throw std::runtime_error("[tun] IPv6 address must not include a zone id");
+    }
+
+    boost::system::error_code ec;
+    const auto addr = make_address(text.c_str(), ec);
+    if (ec || !addr.is_v6()) {
+        throw std::runtime_error((tp::string("[tun] invalid IPv6 address ") + text).c_str());
+    }
+
+    const auto v6 = addr.to_v6();
+    if (v6.is_unspecified() || v6.is_multicast() || v6.is_v4_mapped() || v6.scope_id() != 0) {
+        throw std::runtime_error((tp::string("[tun] unsupported IPv6 tun address ") + text).c_str());
+    }
+    return v6;
+}
+
+uint8_t prefix_from_ipv6_mask(const tp::string& mask, uint8_t fallback) {
+    if (mask.empty() || mask.find(':') == tp::string::npos) {
+        return fallback;
+    }
+
+    boost::system::error_code ec;
+    const auto addr = make_address(mask.c_str(), ec);
+    if (ec || !addr.is_v6()) {
+        return fallback;
+    }
+
+    uint8_t prefix = 0;
+    bool seen_zero = false;
+    for (const auto byte : addr.to_v6().to_bytes()) {
+        for (int bit = 7; bit >= 0; --bit) {
+            if ((byte & static_cast<uint8_t>(1u << bit)) != 0) {
+                if (seen_zero) {
+                    return fallback;
+                }
+                ++prefix;
+            } else {
+                seen_zero = true;
+            }
+        }
+    }
+    return prefix;
+}
+
+TunAddresses resolve_tun_addresses(const tp::string& net_ip, const tp::string& net_mask, const tp::string& net_ipv6,
+  uint8_t prefix) {
+    TunAddresses out;
+    out.prefix = prefix;
+
+    if (!net_ipv6.empty()) {
+        out.v6      = parse_tun_ipv6(net_ipv6);
+        out.have_v6 = true;
+    }
+
+    if (!net_ip.empty()) {
+        if (net_ip.find(':') != tp::string::npos) {
+            if (out.have_v6) {
+                throw std::runtime_error("[tun] net_ip is IPv6 but tun.net_ipv6 is also set");
+            }
+            out.v6      = parse_tun_ipv6(net_ip);
+            out.have_v6 = true;
+            out.prefix  = prefix_from_ipv6_mask(net_mask, prefix);
+        } else {
+            // Same exception as the historical IPv4-only parser for a bad net_ip.
+            out.v4      = make_address_v4(net_ip.c_str());
+            out.have_v4 = true;
+        }
+    }
+
+    if (!out.have_v4 && !out.have_v6) {
+        throw std::runtime_error("[tun] tun.net_ip or tun.net_ipv6 is required");
+    }
+
+    if (out.have_v4) {
+        // Reject a bad IPv4 mask before the device is opened.
+        (void)make_address_v4(net_mask.c_str());
+    }
+    return out;
+}
+
+} // namespace
+
 TUNDev* TUNDev::sm_tundev = nullptr;
 
 TUNDev::TUNDev(Service* _service, const tp::string& _tun_name, const tp::string& _ipaddr, const tp::string& _netmask,
   uint16_t _mtu, int _outside_tun_fd)
     : m_netif_configured(false),
+      m_ipv6_enabled(false),
       m_tcp_listener(nullptr),
+      m_tcp_listener_v6(nullptr),
       m_service(_service),
       m_tun_fd(_outside_tun_fd),
       m_is_outside_tun_fd(_outside_tun_fd != -1),
@@ -95,6 +206,11 @@ TUNDev::TUNDev(Service* _service, const tp::string& _tun_name, const tp::string&
 
     _assert(sm_tundev == nullptr);
     sm_tundev = this;
+
+    const auto& tun_config = m_service->get_config().get_tun();
+    const TunAddresses addresses =
+      resolve_tun_addresses(_ipaddr, _netmask, tun_config.net_ipv6, tun_config.net_ipv6_prefix);
+    m_ipv6_enabled = addresses.have_v6;
 
     if (m_tun_fd == -1) {
 #ifdef __linux__
@@ -123,15 +239,19 @@ TUNDev::TUNDev(Service* _service, const tp::string& _tun_name, const tp::string&
     // init lwip
     lwip_init();
 
-    // make addresses for netif
+    // make addresses for netif. IPv4-only configs keep the historical host-order
+    // assignment. An IPv6-only config uses 0.0.0.0 so netif_add still succeeds.
     ip4_addr_t addr;
-    addr.addr = make_address_v4(_ipaddr).to_uint();
-
     ip4_addr_t netmask;
-    netmask.addr = make_address_v4(_netmask).to_uint();
-
     ip4_addr_t gw;
     ip4_addr_set_any(&gw);
+    if (addresses.have_v4) {
+        addr.addr    = addresses.v4.to_uint();
+        netmask.addr = make_address_v4(_netmask.c_str()).to_uint();
+    } else {
+        ip4_addr_set_any(&addr);
+        ip4_addr_set_any(&netmask);
+    }
 
     // init netif
     if (netif_add(&m_netif, &addr, &netmask, &gw, nullptr, (netif_init_fn)static_netif_init_func,
@@ -151,38 +271,35 @@ TUNDev::TUNDev(Service* _service, const tp::string& _tun_name, const tp::string&
     // tp::set netif default
     netif_set_default(&m_netif);
 
+    if (m_ipv6_enabled) {
+        ip6_addr_t ip6addr;
+        std::memset(&ip6addr, 0, sizeof(ip6addr));
+        const auto bytes = addresses.v6.to_bytes();
+        std::memcpy(ip6addr.addr, bytes.data(), bytes.size());
+        netif_ip6_addr_set(&m_netif, 0, &ip6addr);
+        netif_ip6_addr_set_state(&m_netif, 0, IP6_ADDR_PREFERRED);
+        _log_with_date_time("[tun] IPv6 netif " + addresses.v6.to_string() + "/" +
+                              tp::to_string(static_cast<unsigned>(addresses.prefix)),
+          Log::INFO);
+    }
+
     m_netif_configured = true;
 
-    // init listener
-    struct tcp_pcb* l = tcp_new_ip_type(IPADDR_TYPE_V4);
-    if (l == nullptr) {
-        throw std::runtime_error(tp::string("[tun] tcp_new_ip_type failed").c_str());
+    m_tcp_listener = listen_on_netif(IPADDR_TYPE_V4);
+    if (m_ipv6_enabled) {
+        m_tcp_listener_v6 = listen_on_netif(IPADDR_TYPE_V6);
     }
-
-    // bind listener
-    if (tcp_bind_to_netif(l, "ho0") != ERR_OK) {
-        tcp_close(l);
-        throw std::runtime_error(tp::string("[tun] tcp_bind_to_netif failed").c_str());
-    }
-
-    tcp_bind_netif(l, &m_netif);
-
-    // listen listener
-    m_tcp_listener = tcp_listen(l);
-    if (m_tcp_listener == nullptr) {
-        tcp_close(l);
-        throw std::runtime_error(tp::string("[tun] tcp_listen failed").c_str());
-    }
-
-    tcp_arg(m_tcp_listener, this);
-
-    // setup listener accept handler
-    tcp_accept(m_tcp_listener, static_listener_accept_func);
 
     async_read();
 
-    // prepare dns server
-    m_dns_server_endpoint.address(make_address_v4(_ipaddr));
+    // The built-in DNS interceptor matches an IPv4 endpoint. IPv6 DNS (AAAA
+    // and DNS over IPv6) is a later step, so an IPv6-only TUN does not claim
+    // a DNS address. Non-DNS IPv6 UDP is forwarded below.
+    if (addresses.have_v4) {
+        m_dns_server_endpoint.address(addresses.v4);
+    } else {
+        m_dns_server_endpoint.address(make_address_v4("0.0.0.0"));
+    }
     m_dns_server_endpoint.port(m_service->get_config().get_dns().port);
 
     m_dns_queryer =
@@ -232,9 +349,14 @@ void TUNDev::destroy() {
     }
     m_udp_clients.clear();
 
-    // free listener
+    // free listeners
     if (m_tcp_listener != nullptr) {
         tcp_close(m_tcp_listener);
+        m_tcp_listener = nullptr;
+    }
+    if (m_tcp_listener_v6 != nullptr) {
+        tcp_close(m_tcp_listener_v6);
+        m_tcp_listener_v6 = nullptr;
     }
 
     // free netif
@@ -259,6 +381,9 @@ err_t TUNDev::netif_init_func(struct netif* netif) const {
     netif->name[1] = 'o';
     netif->mtu     = m_mtu;
     netif->output  = static_netif_output_func;
+    if (m_ipv6_enabled) {
+        netif->output_ip6 = static_netif_output_ip6_func;
+    }
     return ERR_OK;
 
     _unguard;
@@ -277,7 +402,9 @@ err_t TUNDev::netif_input_func(struct pbuf* p, struct netif* inp) {
             return ip_input(p, inp);
         } break;
         case IPV6: {
-            // throw std::runtime_error(tp::string("haven't supported ipv6").c_str());
+            if (m_ipv6_enabled) {
+                return ip6_input(p, inp);
+            }
         } break;
     }
 
@@ -288,6 +415,38 @@ err_t TUNDev::netif_input_func(struct pbuf* p, struct netif* inp) {
 }
 
 err_t TUNDev::netif_output_func(struct netif*, struct pbuf* p, const ip4_addr_t*) {
+    return write_pbuf_to_tun(p);
+}
+
+err_t TUNDev::netif_output_ip6_func(struct netif*, struct pbuf* p, const ip6_addr_t*) {
+    return write_pbuf_to_tun(p);
+}
+
+struct tcp_pcb* TUNDev::listen_on_netif(uint8_t ip_type) {
+    struct tcp_pcb* l = tcp_new_ip_type(ip_type);
+    if (l == nullptr) {
+        throw std::runtime_error(tp::string("[tun] tcp_new_ip_type failed").c_str());
+    }
+
+    if (tcp_bind_to_netif(l, "ho0") != ERR_OK) {
+        tcp_close(l);
+        throw std::runtime_error(tp::string("[tun] tcp_bind_to_netif failed").c_str());
+    }
+
+    tcp_bind_netif(l, &m_netif);
+
+    struct tcp_pcb* listener = tcp_listen(l);
+    if (listener == nullptr) {
+        tcp_close(l);
+        throw std::runtime_error(tp::string("[tun] tcp_listen failed").c_str());
+    }
+
+    tcp_arg(listener, this);
+    tcp_accept(listener, static_listener_accept_func);
+    return listener;
+}
+
+err_t TUNDev::write_pbuf_to_tun(struct pbuf* p) {
     _guard;
 
     if (m_quitting) {
@@ -348,26 +507,35 @@ bool TUNDev::proxy_by_route(uint32_t ip) const {
     _unguard;
 }
 
+bool TUNDev::should_proxy(const boost::asio::ip::address& addr) const {
+    if (addr.is_v4()) {
+        return proxy_by_route(addr.to_v4().to_uint());
+    }
+    // IPv4-mapped destinations still consult the IPv4 route tables. Other
+    // IPv6 destinations are proxied; IPv6 route matchers are a later step.
+    if (addr.is_v6() && addr.to_v6().is_v4_mapped()) {
+        return proxy_by_route(make_address_v4(v4_mapped, addr.to_v6()).to_uint());
+    }
+    return true;
+}
+
 err_t TUNDev::listener_accept_func(struct tcp_pcb* newpcb, err_t err) {
     _guard;
     if (err != ERR_OK) {
         return err;
     }
 
-    auto proxy                     = proxy_by_route(ntoh32(newpcb->local_ip.u_addr.ip4.addr));
+    const auto dest                = address_from_lwip(newpcb->local_ip);
+    auto proxy                     = should_proxy(dest);
     std::shared_ptr<TUNSession> session = nullptr;
     if (proxy) {
 
-        _log_with_date_time_ALL(
-          "[tun] [tcp] proxy connect: " +
-          make_address_v4((address_v4::uint_type)ntoh32(newpcb->local_ip.u_addr.ip4.addr)).to_string());
+        _log_with_date_time_ALL("[tun] [tcp] proxy connect: " + dest.to_string());
 
         session = TP_MAKE_SHARED(TUNProxySession, m_service, false);
     } else {
 
-        _log_with_date_time_ALL(
-          "[tun] [tcp] directly connect: " +
-          make_address_v4((address_v4::uint_type)ntoh32(newpcb->local_ip.u_addr.ip4.addr)).to_string());
+        _log_with_date_time_ALL("[tun] [tcp] directly connect: " + dest.to_string());
 
         session = TP_MAKE_SHARED(TUNLocalSession, m_service, false);
     }
@@ -495,10 +663,82 @@ void TUNDev::parse_packet() {
     _unguard;
 }
 
+int TUNDev::handle_write_udp_ipv6(const boost::asio::ip::udp::endpoint& local_endpoint,
+  const boost::asio::ip::udp::endpoint& remote_endpoint, std::string_view& data_str) {
+    _guard;
+
+    if (!local_endpoint.address().is_v6() || !remote_endpoint.address().is_v6()) {
+        _log_with_date_time("[tun] drop UDP reply with mixed address families", Log::ERROR);
+        return 1;
+    }
+
+    auto data_len = data_str.length();
+    if (data_len == 0) {
+        return 0;
+    }
+
+    const auto* data   = (const uint8_t*)data_str.data();
+    auto header_length = (uint16_t)(sizeof(struct ipv6_header) + sizeof(struct udp_header));
+    auto max_len       = std::min(std::numeric_limits<uint16_t>::max(), m_mtu);
+    if (max_len <= header_length) {
+        return 1;
+    }
+    max_len = max_len - header_length;
+    if (data_len > max_len) {
+        data_len = max_len;
+    }
+
+    const auto source_bytes      = remote_endpoint.address().to_v6().to_bytes();
+    const auto destination_bytes = local_endpoint.address().to_v6().to_bytes();
+
+    struct ipv6_header ipv6_hdr;
+    std::memset(&ipv6_hdr, 0, sizeof(ipv6_hdr));
+    ipv6_hdr.version4_tc4   = hton8(static_cast<uint8_t>(6 << 4));
+    ipv6_hdr.payload_length = hton16(uint16_t(sizeof(struct udp_header) + data_len));
+    ipv6_hdr.next_header    = hton8(IPV6_NEXT_UDP);
+    ipv6_hdr.hop_limit      = hton8(64);
+    std::memcpy(ipv6_hdr.source_address, source_bytes.data(), source_bytes.size());
+    std::memcpy(ipv6_hdr.destination_address, destination_bytes.data(), destination_bytes.size());
+
+    struct udp_header udp_hdr;
+    udp_hdr.source_port = hton16(remote_endpoint.port());
+    udp_hdr.dest_port   = hton16(local_endpoint.port());
+    udp_hdr.length      = hton16(uint16_t(sizeof(udp_hdr) + data_len));
+    udp_hdr.checksum    = hton16(0);
+    udp_hdr.checksum    = udp_ip6_checksum(&udp_hdr, data, static_cast<uint16_t>(data_len), ipv6_hdr.source_address,
+      ipv6_hdr.destination_address);
+
+    auto packat_length = header_length + data_len;
+    auto* write_buf =
+      static_cast<uint8_t*>(boost::asio::buffer_sequence_begin(m_write_fill_buf.prepare(packat_length))->data());
+
+    memcpy(write_buf, &ipv6_hdr, sizeof(ipv6_hdr));
+    memcpy(write_buf + sizeof(ipv6_hdr), &udp_hdr, sizeof(udp_hdr));
+    memcpy(write_buf + sizeof(ipv6_hdr) + sizeof(udp_hdr), data, data_len);
+    m_write_fill_buf.commit(packat_length);
+
+    _log_with_endpoint_ALL(local_endpoint, "<- " + remote_endpoint.address().to_string() + ":" +
+                                             tp::to_string(remote_endpoint.port()) + " length:" + tp::to_string(data_len));
+
+    write_to_tun();
+
+    data_str = data_str.substr(data_len);
+    if (data_str.length() > 0) {
+        handle_write_udp_ipv6(local_endpoint, remote_endpoint, data_str);
+    }
+
+    return 0;
+    _unguard;
+}
+
 int TUNDev::handle_write_upd_data(const boost::asio::ip::udp::endpoint& local_endpoint,
   const boost::asio::ip::udp::endpoint& remote_endpoint, std::string_view& data_str) {
 
     _guard;
+    if (local_endpoint.address().is_v6() || remote_endpoint.address().is_v6()) {
+        return handle_write_udp_ipv6(local_endpoint, remote_endpoint, data_str);
+    }
+
     auto* local_addr  = (struct sockaddr_in*)local_endpoint.data();
     auto* remote_addr = (struct sockaddr_in*)remote_endpoint.data();
 
@@ -569,6 +809,61 @@ int TUNDev::handle_write_upd_data(const TUNSession* _session, std::string_view& 
     _unguard;
 }
 
+void TUNDev::open_udp_session(const udp::endpoint& local_endpoint, const udp::endpoint& remote_endpoint,
+  const uint8_t* data, int data_len, bool proxy) {
+    std::shared_ptr<TUNSession> session = nullptr;
+    if (proxy) {
+        _log_with_date_time_ALL("[tun] [udp] proxy connect: " + remote_endpoint.address().to_string());
+        session = TP_MAKE_SHARED(TUNProxySession, m_service, true);
+    } else {
+        _log_with_date_time_ALL("[tun] [udp] directly connect: " + remote_endpoint.address().to_string());
+        session = TP_MAKE_SHARED(TUNLocalSession, m_service, true);
+    }
+    session->set_udp_connect(local_endpoint, remote_endpoint);
+    session->set_write_to_lwip([this](const TUNSession* _se, std::string_view* _data) {
+        _guard;
+        _assert(_data != nullptr);
+        return handle_write_upd_data(_se, *_data);
+        _unguard;
+    });
+
+    session->set_close_callback([this](TUNSession* _session) {
+        _guard;
+        for (auto it = m_udp_clients.begin(); it != m_udp_clients.end(); it++) {
+            if (it->get() == _session) {
+                m_udp_clients.erase(it);
+                break;
+            }
+        }
+        _unguard;
+    });
+
+    session->out_async_send(data, data_len, [](boost::system::error_code) {}); // send as buf
+    m_udp_clients.emplace_back(session);
+
+    _log_with_endpoint(local_endpoint,
+      "TUNDev start to connected " + remote_endpoint.address().to_string() + ":" +
+        tp::to_string(remote_endpoint.port()),
+      Log::INFO);
+
+    if (!proxy) {
+        session->start();
+    } else {
+        m_service->start_session(session, [session, local_endpoint, remote_endpoint](boost::system::error_code ec) {
+            _guard;
+
+            if (!ec) {
+                session->start();
+            } else {
+                output_debug_info_ec(ec);
+                session->destroy();
+            }
+
+            _unguard;
+        });
+    }
+}
+
 int TUNDev::try_to_process_udp_packet(uint8_t* data, int data_len) {
     _guard;
 
@@ -627,64 +922,66 @@ int TUNDev::try_to_process_udp_packet(uint8_t* data, int data_len) {
             }
         }
 
-        std::shared_ptr<TUNSession> session = nullptr;
-        bool proxy                     = proxy_by_route(ntoh32(ipv4_hdr.destination_address));
-        if (proxy) {
-            _log_with_date_time_ALL("[tun] [udp] proxy connect: " + remote_endpoint.address().to_string());
-            session = TP_MAKE_SHARED(TUNProxySession, m_service, true);
-        } else {
-            _log_with_date_time_ALL("[tun] [udp] directly connect: " + remote_endpoint.address().to_string());
-            session = TP_MAKE_SHARED(TUNLocalSession, m_service, true);
-        }
-        session->set_udp_connect(local_endpoint, remote_endpoint);
-        session->set_write_to_lwip([this](const TUNSession* _se, std::string_view* _data) {
-            _guard;
-            _assert(_data != nullptr);
-            return handle_write_upd_data(_se, *_data);
-            _unguard;
-        });
-
-        session->set_close_callback([this](TUNSession* _session) {
-            _guard;
-            for (auto it = m_udp_clients.begin(); it != m_udp_clients.end(); it++) {
-                if (it->get() == _session) {
-                    m_udp_clients.erase(it);
-                    break;
-                }
-            }
-            _unguard;
-        });
-
-        session->out_async_send(data, data_len, [](boost::system::error_code) {}); // send as buf
-        m_udp_clients.emplace_back(session);
-
-        _log_with_endpoint(local_endpoint,
-          "TUNDev start to connected " + remote_endpoint.address().to_string() + ":" +
-            tp::to_string(remote_endpoint.port()),
-          Log::INFO);
-
-        if (!proxy) {
-            session->start();
-        } else {
-            m_service->start_session(session, [session, local_endpoint, remote_endpoint](boost::system::error_code ec) {
-                _guard;
-
-                if (!ec) {
-                    session->start();
-                } else {
-                    output_debug_info_ec(ec);
-                    session->destroy();
-                }
-
-                _unguard;
-            });
-        }
-
+        open_udp_session(local_endpoint, remote_endpoint, data, data_len,
+          proxy_by_route(ntoh32(ipv4_hdr.destination_address)));
         return 1;
     }
 
     if (ip_version == IPV6) {
-        // TODO
+        if (!m_ipv6_enabled) {
+            return 0;
+        }
+
+        // Non-UDP packets, including TCP, are given to lwIP.
+        if (data_len < (int)sizeof(struct ipv6_header) ||
+            data[offsetof(struct ipv6_header, next_header)] != IPV6_NEXT_UDP) {
+            return 0;
+        }
+
+        struct ipv6_header ipv6_hdr;
+        if (ipv6_check(data, data_len, &ipv6_hdr, &data, &data_len) == 0) {
+            return 1;
+        }
+
+        struct udp_header udp_hdr;
+        if (udp_check(data, data_len, &udp_hdr, &data, &data_len) == 0) {
+            return 1;
+        }
+
+        // IPv6 UDP checksums are mandatory. A zero or mismatched checksum is dropped.
+        uint16_t checksum_in_packet = udp_hdr.checksum;
+        udp_hdr.checksum            = 0;
+        uint16_t checksum_computed  = udp_ip6_checksum(&udp_hdr, data, static_cast<uint16_t>(data_len),
+          ipv6_hdr.source_address, ipv6_hdr.destination_address);
+        if (checksum_in_packet != checksum_computed) {
+            return 1;
+        }
+
+        address_v6::bytes_type source_bytes{};
+        address_v6::bytes_type destination_bytes{};
+        std::memcpy(source_bytes.data(), ipv6_hdr.source_address, source_bytes.size());
+        std::memcpy(destination_bytes.data(), ipv6_hdr.destination_address, destination_bytes.size());
+
+        // Keep the packet family so the reply written back to the TUN is IPv6,
+        // including for an IPv4-mapped destination. TrojanRequest encoding still
+        // turns that mapped literal into ATYP 1.
+        auto local_endpoint =
+          udp::endpoint(make_address_v6(source_bytes), ntoh16(udp_hdr.source_port));
+        auto remote_endpoint =
+          udp::endpoint(make_address_v6(destination_bytes), ntoh16(udp_hdr.dest_port));
+
+        _log_with_endpoint_ALL(local_endpoint, " -> " + remote_endpoint.address().to_string() + ":" +
+                                                 tp::to_string(remote_endpoint.port()) +
+                                                 " [tun] length:" + tp::to_string(data_len));
+
+        for (auto& it : m_udp_clients) {
+            if (it->try_to_process_udp(local_endpoint, remote_endpoint, data, data_len)) {
+                return 1;
+            }
+        }
+
+        open_udp_session(local_endpoint, remote_endpoint, data, data_len, should_proxy(remote_endpoint.address()));
+        return 1;
     }
 
     return 0;

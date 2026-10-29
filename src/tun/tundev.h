@@ -41,6 +41,7 @@
 #endif
 
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/ip/address.hpp>
 #include <boost/asio/posix/stream_descriptor.hpp>
 #include <boost/asio/streambuf.hpp>
 
@@ -73,7 +74,7 @@ class lwip_tcp_client;
 class TUNSession;
 class DNSServer;
 class TUNDNSQueryer;
-// this class canot support ipv6
+
 class TUNDev {
 
     enum IPVersion { IPV4 = 4, IPV6 = 6 };
@@ -90,6 +91,10 @@ class TUNDev {
         return sm_tundev->netif_output_func(netif, p, ipaddr);
     }
 
+    static err_t static_netif_output_ip6_func(struct netif* netif, struct pbuf* p, const ip6_addr_t* ipaddr) {
+        return sm_tundev->netif_output_ip6_func(netif, p, ipaddr);
+    }
+
     static err_t static_listener_accept_func(void* arg, struct tcp_pcb* newpcb, err_t err) {
         return ((TUNDev*)arg)->listener_accept_func(newpcb, err);
     }
@@ -97,15 +102,20 @@ class TUNDev {
     // lwip TUN netif device handler
     struct netif m_netif {};
     bool m_netif_configured;
+    bool m_ipv6_enabled;
 
-    // lwip TCP listener
+    // lwip TCP listeners. The IPv6 listener is created only when IPv6 is enabled.
     struct tcp_pcb* m_tcp_listener;
+    struct tcp_pcb* m_tcp_listener_v6;
 
     err_t netif_init_func(struct netif* netif) const;
     err_t netif_input_func(struct pbuf* p, struct netif* inp);
     err_t netif_output_func(struct netif* netif, struct pbuf* p, const ip4_addr_t* ipaddr);
+    err_t netif_output_ip6_func(struct netif* netif, struct pbuf* p, const ip6_addr_t* ipaddr);
+    err_t write_pbuf_to_tun(struct pbuf* p);
 
     err_t listener_accept_func(struct tcp_pcb* newpcb, err_t err);
+    struct tcp_pcb* listen_on_netif(uint8_t ip_type);
 
   private:
     tp::list<std::shared_ptr<lwip_tcp_client>> m_tcp_clients;
@@ -137,8 +147,13 @@ class TUNDev {
     int handle_write_upd_data(const TUNSession* _session, std::string_view& data_str);
     int handle_write_upd_data(const boost::asio::ip::udp::endpoint& local_endpoint,
       const boost::asio::ip::udp::endpoint& remote_endpoint, std::string_view& data_str);
+    int handle_write_udp_ipv6(const boost::asio::ip::udp::endpoint& local_endpoint,
+      const boost::asio::ip::udp::endpoint& remote_endpoint, std::string_view& data_str);
+    void open_udp_session(const boost::asio::ip::udp::endpoint& local_endpoint,
+      const boost::asio::ip::udp::endpoint& remote_endpoint, const uint8_t* data, int data_len, bool proxy);
 
     [[nodiscard]] bool proxy_by_route(uint32_t ip) const;
+    [[nodiscard]] bool should_proxy(const boost::asio::ip::address& addr) const;
 
   public:
     TUNDev(Service* _service, const tp::string& _tun_name, const tp::string& _ipaddr, const tp::string& _netmask,

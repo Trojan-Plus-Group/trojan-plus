@@ -235,8 +235,19 @@ void Service::run() {
                               format_host_port(local_addr, local_port),
           Log::FATAL);
     } else {
+        tp::string tun_addrs = config.get_tun().net_ip;
+        if (!config.get_tun().net_mask.empty()) {
+            tun_addrs += "/" + config.get_tun().net_mask;
+        }
+        if (!config.get_tun().net_ipv6.empty()) {
+            if (!tun_addrs.empty()) {
+                tun_addrs += " ";
+            }
+            tun_addrs += config.get_tun().net_ipv6 + "/" +
+                         tp::to_string(static_cast<unsigned>(config.get_tun().net_ipv6_prefix));
+        }
         _log_with_date_time(tp::string("trojan plus service (") + rt + ") started at [" + config.get_tun().tun_name + "] " +
-                              config.get_tun().net_ip + "/" + config.get_tun().net_mask,
+                              tun_addrs,
           Log::FATAL);
     }
 
