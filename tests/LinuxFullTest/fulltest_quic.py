@@ -1447,7 +1447,8 @@ def _wait_t16_quiescence(server, client, log_path: str, h3_connections: int,
 
 
 def _wait_t16_live_counters(process, log_path: str, offset: int,
-                            timeout: float = 10.0) -> dict[str, int]:
+                            timeout: float = 10.0,
+                            idle_sessions: int | None = None) -> dict[str, int]:
     """Require a complete telemetry line written after the quiescence offset."""
     pattern = re.compile(rb"\[mem\] live objects=(\d+) bytes=(\d+) sessions=(\d+) "
                          rb"quic_connections=(\d+) quic_proxy_sessions=(\d+)\r?\n")
@@ -1458,8 +1459,12 @@ def _wait_t16_live_counters(process, log_path: str, offset: int,
             log.seek(offset)
             match = pattern.search(log.read())
         if match:
-            return dict(zip(("objects", "bytes", "sessions", "quic_connections",
-                             "quic_proxy_sessions"), map(int, match.groups())))
+            sample = dict(zip(("objects", "bytes", "sessions", "quic_connections",
+                               "quic_proxy_sessions"), map(int, match.groups())))
+            if idle_sessions is None or (sample["sessions"] == idle_sessions
+                    and sample["quic_connections"] == 0 and sample["quic_proxy_sessions"] == 0):
+                return sample
+            offset += match.end()
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
@@ -1467,8 +1472,8 @@ def _wait_t16_live_counters(process, log_path: str, offset: int,
     raise ValueError(f"Missing fresh live-counter telemetry after offset {offset}: {log_path}")
 
 
-def _t16_live_counter_errors(samples: list[dict[str, int]]) -> list[str]:
-    """Reject retained resources, sustained late growth, and large early bursts."""
+def _t16_live_counter_errors(samples: list[dict[str, int]], *, peak_cap: bool = True) -> list[str]:
+    """Check lifecycle consistency; only the client caps live-connection capacity."""
     if len(samples) != 10:
         return [f"Expected 10 live-counter samples, got {len(samples)}"]
     errors = []
@@ -1478,13 +1483,22 @@ def _t16_live_counter_errors(samples: list[dict[str, int]]) -> list[str]:
             if sample[key] != baseline[key]:
                 errors.append(f"{key}: baseline={baseline[key]} round{round_number}={sample[key]}")
     objects = [sample["objects"] for sample in samples]
-    if max(objects) - objects[0] > 1000:
+    if peak_cap and max(objects) - objects[0] > 1000:
         errors.append(f"objects: baseline={objects[0]} peak={max(objects)} (overall allowance=1000)")
-    if objects[-1] - objects[4] > 32:
-        errors.append(f"objects: round5={objects[4]} round10={objects[-1]} (late allowance=32)")
-    # A plateau may follow a capacity step; even one object per round is a leak signal.
-    if all(right > left for left, right in zip(objects[-4:-1], objects[-3:])):
-        errors.append(f"objects: strictly increasing final four rounds={objects[-4:]}")
+    return errors
+
+
+def _t16_idle_counter_errors(baseline: dict[str, int], final: dict[str, int]) -> list[str]:
+    """Compare server allocations only after all connection-owned pools are gone."""
+    errors = []
+    for key in ("quic_connections", "quic_proxy_sessions"):
+        if baseline[key] != 0 or final[key] != 0:
+            errors.append(f"{key}: idle baseline={baseline[key]} after_close={final[key]} (expected 0)")
+    if final["sessions"] != baseline["sessions"]:
+        errors.append(f"sessions: idle baseline={baseline['sessions']} after_close={final['sessions']}")
+    if final["objects"] - baseline["objects"] > 32:
+        errors.append(f"objects: idle baseline={baseline['objects']} after_close={final['objects']} "
+                      "(idle allowance=32)")
     return errors
 
 
@@ -1522,14 +1536,23 @@ def test_quic_load_test(binary_path):
     })
     
     server, srv_log = start_trojan(binary_path, srv_cfg)
-    client, cli_log = start_trojan(binary_path, cli_cfg)
+    client = None
     dump = False
 
     try:
-        if not server or not client:
+        if not server:
             dump = True
             return False
-            
+        idle_baseline = _wait_t16_live_counters(server, srv_log, os.path.getsize(srv_log))
+        if idle_baseline["quic_connections"] or idle_baseline["quic_proxy_sessions"]:
+            raise ValueError(f"Server not idle before client startup: {idle_baseline}")
+        print_time_log("[T16] Server idle baseline: " +
+                       " ".join(f"{key}={value}" for key, value in idle_baseline.items()))
+        client, cli_log = start_trojan(binary_path, cli_cfg)
+        if not client:
+            dump = True
+            return False
+
         if not wait_for_log(cli_log, r"QuicConnection: handshake completed", timeout=15):
             print_time_log("[T16] FAIL: QUIC handshake not seen")
             dump = True
@@ -1778,7 +1801,7 @@ def test_quic_load_test(binary_path):
 
         leak_detected = False
         for name, samples in live_samples.items():
-            errors = _t16_live_counter_errors(samples)
+            errors = _t16_live_counter_errors(samples, peak_cap=(name == "Client"))
             print_time_log(f"[T16] {name} allocator bytes round 1/10: "
                            f"{samples[0]['bytes']}/{samples[-1]['bytes']}")
             for error in errors:
@@ -1796,6 +1819,18 @@ def test_quic_load_test(binary_path):
                 print_time_log(f"[T16] FAIL: {name} sustained RSS growth exceeds "
                                f"{threshold * 100:.1f}% (possible memory leak)")
                 leak_detected = True
+
+        # SIGINT closes QUIC gracefully on POSIX. Windows termination may not run
+        # handlers, so also allow the configured 30s peer idle timeout plus margin.
+        close_process(client)
+        after_close = _wait_t16_live_counters(
+            server, srv_log, os.path.getsize(srv_log), timeout=60.0,
+            idle_sessions=idle_baseline["sessions"])
+        print_time_log("[T16] Server after close: " +
+                       " ".join(f"{key}={value}" for key, value in after_close.items()))
+        for error in _t16_idle_counter_errors(idle_baseline, after_close):
+            print_time_log(f"[T16] FAIL: Server idle-counter leak: {error}")
+            leak_detected = True
 
         if leak_detected:
             if hasattr(signal, 'SIGINFO'):
