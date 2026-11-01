@@ -303,8 +303,11 @@ void Service::stop() {
     _guard;
 
     if (live_counters_timer) {
-        boost::system::error_code ec;
-        live_counters_timer->cancel(ec);
+        try {
+            live_counters_timer->cancel();
+        } catch (const boost::system::system_error& ec) {
+            _log_with_date_time("Live counters timer cancel failed: " + tp::string(ec.what()), Log::WARN);
+        }
     }
 
 // don't destroy all components in order to speed up Android disconnection
