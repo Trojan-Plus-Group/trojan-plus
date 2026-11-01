@@ -50,10 +50,10 @@ void QuicClientEndpoint::stop() {
     m_handshake_timer.cancel();
     fail_all_pending_streams();
     auto conn = std::move(m_conn);
-    QuicEndpoint::stop();
     if (conn && !conn->is_closed()) {
         conn->close();
     }
+    QuicEndpoint::stop();
 }
 
 void QuicClientEndpoint::connect_to_server() {

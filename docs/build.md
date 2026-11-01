@@ -220,16 +220,23 @@ or another DNS service).
 
 T16 enables `log_live_counters` only in its temporary configs. Fresh periodic
 snapshots after quiescence record tp allocator live objects/bytes, Session count,
-QUIC connections, and QUIC proxy sessions. Lifecycle counts must match round 1
-in every round. Allocator objects may warm up: rounds 5-10 allow at most 32 net
-new objects, but strictly increasing counts across the final four rounds fail
-(even one object per round). A step followed by a plateau passes within those
-bounds. Peak growth over round 1 is capped at 1000 objects, including warm-up.
-The macOS series 173,296,296,414,414,414,414,414,414,414 motivates the warm-up
-window; Linux measured late deltas below 10. These are bounded retention gates,
-not proof against every small/intermittent leak. Missing telemetry fails;
-allocator bytes are diagnostic. `check_t16_live_counters.py` covers that macOS
-plateau, linear leaks, continuing late growth, large bursts and lifecycle leaks.
+QUIC connections, and QUIC proxy sessions. Exactly ten round samples are required;
+lifecycle counts must match round 1 in every round. Client allocator peak growth
+over round 1 is capped at 1000 objects, including warm-up. Server round samples
+have no allocator peak cap. Neither side uses late-growth or monotonic-growth
+gates for round samples.
+
+Before starting the client, T16 records a fresh server idle baseline. After closing
+the client, it waits for a fresh server snapshot with all QUIC connection and proxy
+session pools gone. Both idle samples must have zero QUIC connections and proxy
+sessions; the final Session count must equal the baseline. Final allocator object
+growth over that baseline may not exceed 32; decreases are allowed. The client has
+no idle-baseline comparison because it eagerly connects at startup and reconnects;
+process exit is not a useful live-counter snapshot. Missing or stale telemetry
+fails; allocator bytes are diagnostic. `check_t16_live_counters.py` covers round
+plateaus and growth, optional peak caps, lifecycle leftovers, and the post-close
+32-object retention limit. These are bounded retention gates, not proof against
+every small/intermittent leak.
 
 RSS remains a secondary gate: sample every round, discard the first three
 warm-up rounds, and measure median pairwise slope across rounds 4-10 relative
