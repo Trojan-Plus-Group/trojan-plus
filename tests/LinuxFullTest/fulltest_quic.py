@@ -1467,15 +1467,24 @@ def _wait_t16_live_counters(process, log_path: str, offset: int,
     raise ValueError(f"Missing fresh live-counter telemetry after offset {offset}: {log_path}")
 
 
-def _t16_live_counter_errors(baseline: dict[str, int], final: dict[str, int]) -> list[str]:
-    """Compare matching idle states; allocator bytes are diagnostic, not RSS."""
+def _t16_live_counter_errors(samples: list[dict[str, int]]) -> list[str]:
+    """Reject retained resources, sustained late growth, and large early bursts."""
+    if len(samples) != 10:
+        return [f"Expected 10 live-counter samples, got {len(samples)}"]
     errors = []
-    for key in ("sessions", "quic_connections", "quic_proxy_sessions"):
-        if final[key] != baseline[key]:
-            errors.append(f"{key}: baseline={baseline[key]} final={final[key]}")
-    if abs(final["objects"] - baseline["objects"]) > 200:
-        errors.append(f"objects: baseline={baseline['objects']} final={final['objects']} "
-                      "(absolute allowance=200)")
+    baseline = samples[0]
+    for round_number, sample in enumerate(samples[1:], 2):
+        for key in ("sessions", "quic_connections", "quic_proxy_sessions"):
+            if sample[key] != baseline[key]:
+                errors.append(f"{key}: baseline={baseline[key]} round{round_number}={sample[key]}")
+    objects = [sample["objects"] for sample in samples]
+    if max(objects) - objects[0] > 1000:
+        errors.append(f"objects: baseline={objects[0]} peak={max(objects)} (overall allowance=1000)")
+    if objects[-1] - objects[4] > 32:
+        errors.append(f"objects: round5={objects[4]} round10={objects[-1]} (late allowance=32)")
+    # A plateau may follow a capacity step; even one object per round is a leak signal.
+    if all(right > left for left, right in zip(objects[-4:-1], objects[-3:])):
+        errors.append(f"objects: strictly increasing final four rounds={objects[-4:]}")
     return errors
 
 
@@ -1769,7 +1778,7 @@ def test_quic_load_test(binary_path):
 
         leak_detected = False
         for name, samples in live_samples.items():
-            errors = _t16_live_counter_errors(samples[0], samples[-1])
+            errors = _t16_live_counter_errors(samples)
             print_time_log(f"[T16] {name} allocator bytes round 1/10: "
                            f"{samples[0]['bytes']}/{samples[-1]['bytes']}")
             for error in errors:
