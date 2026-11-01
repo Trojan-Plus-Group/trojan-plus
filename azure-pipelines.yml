@@ -160,11 +160,17 @@ stages:
         BINARY="$PIPELINE_WORKSPACE/macOSBinary/trojan"
         chmod +x "$BINARY"
         cd tests/LinuxFullTest/
-        python3 -m pip install PySocks psutil dnspython aioquic --break-system-packages --ignore-installed
-        python3 -u fulltest_main.py $BINARY -g -n -d 5333 -f
-        python3 -u fulltest_main.py $BINARY -q
+        python3 -m venv "$AGENT_TEMPDIRECTORY/fulltest-venv"
+        PYTHON="$AGENT_TEMPDIRECTORY/fulltest-venv/bin/python3"
+        "$PYTHON" -m pip install PySocks psutil dnspython aioquic
+        # Restore generated files even on failure; QUIC runs as the agent user.
+        trap 'sudo -n chown -R "$(id -u):$(id -g)" "$PWD"' EXIT
+        sudo -n env TF_BUILD=True "$PYTHON" -u fulltest_main.py "$BINARY" -g -n -d 5333 -f
+        sudo -n chown -R "$(id -u):$(id -g)" "$PWD"
+        "$PYTHON" -u fulltest_main.py "$BINARY" -q
       env:
         PIPELINE_WORKSPACE: $(Pipeline.Workspace)
+        AGENT_TEMPDIRECTORY: $(Agent.TempDirectory)
 
 - stage: Package
   jobs:

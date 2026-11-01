@@ -82,7 +82,8 @@ sudo env TP_IPV6_REQUIRE_ALL=1 python3 fulltest_main.py /absolute/path/to/trojan
   Container `/etc/hosts` may be bind-mounted; the IPv6 suite falls back to in-place rewrite,
   verifies readback and restores original bytes on exit/signals.
 - `-d` uses a local DNS fixture at `127.0.0.1:53`, no public resolver.
-  macOS/Windows skip DNS only when the fixture cannot bind; Linux bind failures fail.
+  Fixture bind failures fail under `TF_BUILD` or `CI`; local macOS/Windows may skip.
+  macOS CI runs IPv4/DNS with sudo and restores generated-file ownership.
 - From repository root, run `tests/test_*.py` with Python. Production-code compile checks
   require a C++17 compiler and Boost headers. Also run relevant
   `tests/LinuxFullTest/check_*.py` regressions; some require the Python dependencies above.

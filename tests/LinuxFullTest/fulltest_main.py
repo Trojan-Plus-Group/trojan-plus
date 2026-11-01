@@ -487,6 +487,8 @@ if __name__ == "__main__":
             try:
                 dns_fixture_config = fixtures.enter_context(fulltest_dns.local_fixture())
             except OSError as error:
+                if "TF_BUILD" in os.environ or "CI" in os.environ:
+                    raise RuntimeError(f"DNS fixture required in CI: cannot bind 127.0.0.1:53: {error}") from error
                 if not (is_windows_system() or is_macos_system()):
                     raise
                 print_time_log(f"SKIP DNS: cannot bind local fixture 127.0.0.1:53: {error}")
