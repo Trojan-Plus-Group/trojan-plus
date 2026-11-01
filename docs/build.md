@@ -214,9 +214,12 @@ reserved `.test` names, fixed answers, and NXDOMAIN checks for both direct and
 proxied queries. Timeouts fail the suite; no public resolver or Internet domain
 is required. The IPv4 TUN job routes only fixture destinations
 `188.188.188.188/32` and `199.199.199.199/32` through `tun0`, leaving the
-runner's default route intact. Linux CI runs as root. macOS/Windows report an explicit DNS skip
-only when binding the local fixture fails (for example, privileged port access
-or another DNS service).
+runner's default route intact. Linux CI runs as root. macOS CI runs the IPv4/DNS
+suite with passwordless sudo and the same isolated Python environment, then
+restores generated-file ownership before running QUIC as the agent user.
+Fixture bind failures are fatal whenever `TF_BUILD` or `CI` is present.
+Local macOS/Windows runs may report an explicit DNS skip when binding fails
+(for example, privileged port access or another DNS service).
 
 T16 enables `log_live_counters` only in its temporary configs. Fresh periodic
 snapshots after quiescence record tp allocator live objects/bytes, Session count,
