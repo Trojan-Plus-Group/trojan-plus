@@ -34,13 +34,24 @@ def check() -> None:
             baseline = quic._wait_t16_live_counters(process, str(path), offset)
         assert poll.wait.call_count == 1
         assert baseline["bytes"] == 8192
-        assert not quic._t16_live_counter_errors(baseline, baseline.copy())
-        # Each live resource leak fails even when allocator count and RSS stay flat.
+        def errors(objects: list[int]) -> list[str]:
+            return quic._t16_live_counter_errors([baseline | {"objects": n} for n in objects])
+
+        assert not errors([1000] * 10)
+        assert not errors([173, 296, 296, 414, 414, 414, 414, 414, 414, 414])
+        assert not errors([197, 210, 220, 235, 235, 235, 235, 235, 235, 235])
+        assert not errors([1000] * 8 + [1032, 1032])  # Bounded late step, then flat.
+        assert errors(list(range(1000, 1010)))  # One leaked object per round.
+        assert errors([1000] * 6 + [1100, 1101, 1102, 1103])  # Late continuing leak.
+        assert errors([1000] * 8 + [1033, 1033])  # Excess late net growth.
+        assert errors([1000, 2001] + [2001] * 8)  # Large early plateau still fails.
+        assert not errors([1000, 2000] + [2000] * 8)
+        assert errors([1000] * 9)
+        # Even a transient lifecycle leak fails; allocator count and RSS may stay flat.
         for key in ("sessions", "quic_connections", "quic_proxy_sessions"):
-            assert quic._t16_live_counter_errors(baseline, baseline | {key: baseline[key] + 1})
-        assert not quic._t16_live_counter_errors(baseline, baseline | {"objects": 1200})
-        assert quic._t16_live_counter_errors(baseline, baseline | {"objects": 1201})
-        assert quic._t16_live_counter_errors(baseline, baseline | {"objects": 799})
+            samples = [baseline.copy() for _ in range(10)]
+            samples[5][key] += 1
+            assert quic._t16_live_counter_errors(samples)
         # Incomplete records are not accepted as a counter sample.
         path.write_text(LINE.rstrip("\n"))
         try:
