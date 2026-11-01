@@ -436,6 +436,36 @@ class IPv4Matcher {
     static void test_cases();
 };
 
+class IPv6Matcher {
+    using Address = boost::asio::ip::address_v6::bytes_type;
+    struct Range {
+        Address first;
+        Address last;
+    };
+    tp::vector<Range> ranges;
+
+  public:
+    bool load_from_stream(std::istream& is, const tp::string& filename, size_t& loaded_count);
+    bool load_from_file(const tp::string& filename, size_t& loaded_count);
+    [[nodiscard]] bool is_match(const boost::asio::ip::address_v6& ip) const;
+};
+
+class IPMatcher {
+    IPv4Matcher ipv4;
+    IPv6Matcher ipv6;
+    size_t ipv6_entries = 0;
+
+  public:
+    bool load_from_stream(std::istream& is, const tp::string& filename, size_t& ipv4_count, size_t& ipv6_count);
+    bool load_from_file(const tp::string& filename, size_t& ipv4_count, size_t& ipv6_count);
+    [[nodiscard]] bool is_match(const boost::asio::ip::address& ip) const;
+    [[nodiscard]] bool has_ipv6() const {
+        _guard;
+        return ipv6_entries != 0;
+        _unguard;
+    }
+};
+
 // prefer_ipv4 keeps the first result when false (the historical default). When
 // true and an IPv4 result exists, that result is used. Otherwise the first
 // result is kept, so an IPv6-only name still connects.

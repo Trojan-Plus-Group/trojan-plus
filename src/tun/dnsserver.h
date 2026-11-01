@@ -22,6 +22,7 @@
 #ifndef _TROJAN_DNS_SERVER_HPP
 #define _TROJAN_DNS_SERVER_HPP
 
+#include <algorithm>
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/streambuf.hpp>
 #include <ctime>
@@ -52,23 +53,31 @@ class DNSServer : public std::enable_shared_from_this<DNSServer> {
     enum { DEFAULT_UP_STREAM_NS_SVR_PORT = 53 };
 
     class DNSCache {
+        using TTLFields = tp::vector<std::pair<size_t, uint32_t>>;
         tp::string domain;
-        int ttl;
-        tp::vector<uint32_t> ips;
+        uint16_t qtype;
+        uint32_t ttl;
+        tp::vector<std::pair<size_t, uint32_t>> ttl_fields;
+        tp::vector<boost::asio::ip::address> ips;
         bool proxyed;
         time_t cached_time{time(nullptr)};
         tp::string answer_data;
 
       public:
         DNSCache(
-          tp::string _domain, int _ttl, tp::vector<uint32_t>& _ips, bool _proxyed, const std::string_view& data)
-            : domain(std::move(_domain)), ttl(_ttl), ips(std::move(_ips)), proxyed(_proxyed), answer_data(data) {}
+          tp::string _domain, uint16_t _qtype, uint32_t _ttl,
+          tp::vector<std::pair<size_t, uint32_t>>&& _ttl_fields, tp::vector<boost::asio::ip::address>& _ips,
+          bool _proxyed, const std::string_view& data)
+            : domain(std::move(_domain)), qtype(_qtype), ttl(_ttl), ttl_fields(std::move(_ttl_fields)),
+              ips(std::move(_ips)), proxyed(_proxyed), answer_data(data) {}
 
-        [[nodiscard]] inline bool expired(time_t curr) const { return int(curr - cached_time) >= ttl; }
+        [[nodiscard]] inline bool expired(time_t curr) const { return std::max<time_t>(0, curr - cached_time) >= ttl; }
 
         _define_getter_const(const tp::string&, domain);
-        _define_getter_const(int, ttl);
-        _define_getter_const(const tp::vector<uint32_t>&, ips);
+        _define_getter_const(uint16_t, qtype);
+        _define_getter_const(uint32_t, ttl);
+        _define_getter_const(const TTLFields&, ttl_fields);
+        _define_getter_const(const tp::vector<boost::asio::ip::address>&, ips);
         _define_getter_const(time_t, cached_time);
         _define_is_const(proxyed);
 
@@ -93,7 +102,10 @@ class DNSServer : public std::enable_shared_from_this<DNSServer> {
     };
 
     Service* m_service;
-    tp::vector<DNSCache> m_dns_cache;
+    tp::map<std::pair<tp::string, uint16_t>, DNSCache> m_dns_cache;
+    mutable tp::map<boost::asio::ip::address, time_t> m_proxy_address_expiry;
+    static boost::asio::ip::address normalize_address(const boost::asio::ip::address& ip);
+    void index_addresses(const DNSCache& cache);
 
     std::shared_ptr<IDataQueryer> m_data_queryer;
     boost::asio::ip::udp::endpoint m_udp_recv_endpoint;
@@ -128,7 +140,10 @@ class DNSServer : public std::enable_shared_from_this<DNSServer> {
 
     void destroy();
     [[nodiscard]] bool start();
-    [[nodiscard]] bool is_ip_in_gfwlist(uint32_t ip) const;
+    [[nodiscard]] bool is_ip_in_gfwlist(const boost::asio::ip::address& ip) const;
+    [[nodiscard]] bool is_ip_in_gfwlist(uint32_t ip) const {
+        return is_ip_in_gfwlist(boost::asio::ip::address_v4(ip));
+    }
 
     [[nodiscard]] static bool get_dns_lock();
 };

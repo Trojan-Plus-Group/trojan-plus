@@ -145,13 +145,13 @@ class Config {
         RouteType proxy_type;
 
         tp::string cn_mainland_ips_file;
-        IPv4Matcher _cn_mainland_ips_matcher;
+        IPMatcher _cn_mainland_ips_matcher;
 
         tp::string white_ips;
-        IPv4Matcher _white_ips_matcher;
+        IPMatcher _white_ips_matcher;
 
         tp::string proxy_ips;
-        IPv4Matcher _proxy_ips_matcher;
+        IPMatcher _proxy_ips_matcher;
     };
 
   private:

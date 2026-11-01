@@ -1,7 +1,7 @@
 # IPv6 LinuxFullTest baseline
 
 This file records the IPv6 pass/fail matrix for `tests/LinuxFullTest`.
-Core TCP and UDP-over-TCP paths (server, client, forward) set `IPV6_V6ONLY`, encode address literals with ATYP 1/4, return the real SOCKS bind address, and log IPv6 endpoints as `[addr]:port`. Linux NAT now does the same for REDIRECT and TPROXY: IPv6 sockets use `IPV6_TRANSPARENT` and `IP6T_SO_ORIGINAL_DST`, and a dual-stack listener unwraps IPv4-mapped original destinations to IPv4. TUN mode carries IPv6 TCP and non-DNS UDP in addition to IPv4. QUIC tests were not run. Built-in TUN DNS (AAAA and DNS over IPv6) and IPv6 route-table matching are still deferred.
+Core TCP and UDP-over-TCP paths (server, client, forward) set `IPV6_V6ONLY`, encode address literals with ATYP 1/4, return the real SOCKS bind address, and log IPv6 endpoints as `[addr]:port`. Linux NAT now does the same for REDIRECT and TPROXY: IPv6 sockets use `IPV6_TRANSPARENT` and `IP6T_SO_ORIGINAL_DST`, and a dual-stack listener unwraps IPv4-mapped original destinations to IPv4. TUN mode carries IPv6 TCP and non-DNS UDP in addition to IPv4. QUIC tests were not run. Step 4b adds type-isolated A/AAAA caching for built-in DNS, dual-stack socket / TUN DNS, and mixed IPv4 / IPv6 route files. See the step 4b validation section below.
 
 The default IPv4 invocation is unchanged. CI (`azure-pipelines.yml`, `build_and_test.sh`) does not pass `-6`.
 
@@ -120,7 +120,7 @@ Without a redirect rule, both `getsockopt` calls fail, the log contains `IP6T_SO
 
 The passing case needs root. It creates a client netns, a veth to the Trojan server (`fd00:1::1`), and a content address `fd00:c::1/128` on `lo` in the root netns. The client routes only `fd00:c::1/128` into the TUN. TCP and UDP echoes must succeed, the client must log `[tun] IPv6 netif fd00::2/64`, and the server must log `requested connection to [fd00:c::1]:18083 atyp 4` and `requested UDP associate to [fd00:c::1]:18084 atyp 4`. Without root, `/dev/net/tun`, or permission to create a netns, the case is `SKIP`.
 
-IPv6 route matchers are not implemented. A native IPv6 destination is proxied. An IPv4-mapped UDP destination still uses the existing IPv4 matchers; mapped TCP is dropped. The built-in DNS interceptor stays on the IPv4 TUN address (`0.0.0.0` when the TUN is IPv6-only). AAAA handling and DNS over IPv6 are unchanged and out of scope. `redirect_local` still rewrites the proxied destination to `127.0.0.1` and is left false for this case. The `tun_ipv6` case also injects a `payload_length` 65496 header, an IPv4 `total_length` 0 header, 300 IPv4-mapped SYNs, and one hop-by-hop UDP datagram. The following TCP probe must still finish, RSS must not grow by the leaked pbuf size, and an IPv4-only TUN must still log the UDP that follows the bad headers.
+Step 4b adds IPMatcher, dispatching each line of the existing three route files to the IPv4 / IPv6 matcher. Explicit proxy / white lists take priority; mainland mode falls back to proxying when the mainland list has no valid IPv6 entries. GFWList mode queries unexpired proxy DNS address mappings and connects directly on a miss. IPv4-mapped UDP is unwrapped and uses the IPv4 matcher; mapped TCP is still dropped. Built-in DNS intercepts the IPv4 and enabled IPv6 TUN addresses, with A / AAAA caches isolated by `(name, qtype)`. `redirect_local` still rewrites the proxied destination to `127.0.0.1` and is left false for this case. The `tun_ipv6` case also injects a `payload_length` 65496 header, an IPv4 `total_length` 0 header, 300 IPv4-mapped SYNs, and one hop-by-hop UDP datagram. The following TCP probe must still finish, RSS must not grow by the leaked pbuf size, and an IPv4-only TUN must still log the UDP that follows the bad headers.
 
 ## Notes on cases that passed
 
@@ -131,3 +131,130 @@ TCP CONNECT replies carry the accepted socket's local endpoint. An IPv6 SOCKS li
 Listening sockets on IPv6 set `IPV6_V6ONLY` from `tcp.ipv6_only` (default false) and log `listening socket IPV6_V6ONLY=0` or `=1`. The dual-stack case requires `=0` and a successful `127.0.0.1` connection. The `ipv6_only` case requires `=1` and a refused `127.0.0.1` connection. The pure-IPv6 content server is separate and sets `IPV6_V6ONLY=1`, so those cases cannot succeed by connecting to `127.0.0.1`. Literal SOCKS requests are rejected unless the ATYP byte on the wire is 4.
 
 `TrojanRequest::generate` and the UDP packet address encoder write ATYP 1 for IPv4 literals and for IPv4-mapped IPv6 literals (`::ffff:127.0.0.1`), ATYP 4 for unscoped IPv6 literals, and ATYP 3 for domains. A scoped literal (`fe80::1%lo`, or any text containing `%`, or a non-zero scope id) stays ATYP 3 with the original text so the zone is not dropped. `SOCKS5Address::generate` keeps the port and the family of an unspecified address (`::` is ATYP 4, `0.0.0.0` is ATYP 1). Forward cases for `::1` require the server log to contain `atyp 4` and not `atyp 1` or `atyp 3`. Client literal cases require `atyp 4`. Hostname cases require `atyp 3`. Parsed IPv6 text is the compressed form from `address_v6::to_string()` (`::1`). The uncompressed form fails the pure-IPv6 log check. Endpoint logs use `[addr]:port`.
+
+## Step 4b validation (2026-10-31)
+
+New checks run automatically within `tun_ipv6` under `-6`, using the existing TUN permission / netns requirements. Fake DNS listens on `127.0.0.1:53` and `[::1]:53` in an isolated netns; no public resolvers are used.
+
+| Target | Check | Result |
+| :--- | :--- | :--- |
+| A / AAAA cache isolation | Same-name A, AAAA, AAAA, A queries; strictly check question / answer types, addresses, and IDs; upstream receives each type once | PASS (r5) |
+| Dual-stack DNS | Both socket loopbacks and TUN IPv4 / IPv6 DNS addresses; upstream counts must contain only AF_INET6 | PASS (r5) |
+| Mixed route files | 8 profiles: white, proxy, proxy overriding white, mainland match / miss, mainland bypass, and IPv4-only file compatibility; real TCP content and direct / proxy logs | PASS (r5) |
+| IPv6Matcher | `python3 tests/test_ipv6_matcher.py`: `/0`, `/48`, `/64`, `/128` boundaries, merging, invalid lines, reload, mixed loading of 8800 IPv4 + 1500 IPv6 entries (about 0.019 seconds) | PASS |
+| DNS cache unit checks | `python3 tests/test_dns_cache.py`: type isolation, TTL aging / expiry, shortest CNAME TTL, zero TTL, truncated packets | PASS |
+| Host build | `cmake -S . -B build && cmake --build build -j4` | PASS |
+
+GFWList supports AAAA address mappings through an expiring ordered index with O(log n) lookups. Socket fallback to IPv4 when IPv6 is unavailable is implemented and logged; this matrix does not disable kernel IPv6. QUIC-specific tests were not run; `src/quic` is unchanged, while shared `core/config.*` and `core/utils.*` were extended.
+
+### change1 final container acceptance
+
+Log directory: `/home/hermes/work/logs/4b-dev-r5`. The planned runner completed; its summary and five logs confirmed:
+
+```text
+build=0
+v4_normal_fallback=0
+v6_core=0
+v6_nat=0
+v4_tun=0
+```
+
+Both IPv6 runs passed `tun_ipv6`, including local DNS, cache upstream counts, and TCP content checks for 8 mixed-route profiles. The no-rule NAT probe remained EXPECTED-FAIL as planned; all five real REDIRECT / TPROXY cases passed. IPv4 normal / fallback and TUN runs reported `ALL SUCC`.
+
+The earlier DNS probe failed because an empty GFWList file caused existing config loading to disable socket DNS. A valid file containing the unrelated domain `unused.invalid` fixed the setup; queries still use only netns-local fake DNS. Old failure results are retained; the old r4 design does not count toward change1 acceptance.
+
+## review1 acceptance (r6)
+
+Final logs: `/home/hermes/work/logs/4b-dev-r6`. The runner completed; the summary, build, four integration logs, and two unit logs were read. All exit codes were 0.
+
+| Review item | Test | Result |
+| :--- | :--- | :--- |
+| Mainland IPv6 fallback | Unit: when only proxy / white lists contain IPv6, other IPv6 addresses still proxy in mainland mode; with mainland IPv6 entries, matches decide | PASS |
+| Ordered short-circuiting | Unit counts: proxy matches skip white; white matches skip mainland / DNS; each mode queries only required matchers | PASS |
+| Guards / config docs | Full build and unit checks; docs require upstream IP literals and state that hostnames are rejected at startup | PASS |
+| GFWList IPv6 | Netns-local fake DNS: GFW AAAA resolves through proxy, then TCP proxies; non-GFW AAAA resolves, then TCP connects directly. Content and logs checked; units cover expiry, replacement, shared addresses, IPv4 / mapped addresses | PASS |
+| RFC 2308 negative caching | Fake DNS: two NODATA / NXDOMAIN queries reach upstream once; without SOA, twice. Units cover expiry, ID / TTL aging, qtype isolation, 300-second cap, zero TTL, malformed SOA | PASS |
+
+```text
+build=0
+v4_normal_fallback=0
+v6_core=0
+v6_nat=0
+v4_tun=0
+unit_test_dns_cache=0
+unit_test_ipv6_matcher=0
+```
+
+Mixed loading of 8800 IPv4 + 1500 IPv6 entries took about 0.013 seconds. Both `tun_ipv6` runs passed; the no-rule NAT probe remained EXPECTED-FAIL, and real REDIRECT / TPROXY cases passed. Negative caching requires an authority IN SOA; shorter ordinary RR TTLs anywhere in the packet also cap cache lifetime. In r6, cache updates rebuilt the proxy address index; review2 replaces that work with incremental updates while keeping route hot-path lookups O(log n).
+
+## 4b test coverage validation (agy ownership acceptance)
+
+Additional tests validate all PR 4b changes and edge cases:
+1. **IPv4-only route compatibility and log format**: Units load IPv4-only lists, check `has_ipv6() == false`, and verify `[route] load X IPv4 + 0 IPv6 ...` logs. `should_proxy` covers IPv4 destinations in all 6 modes and proxy/white priority; integration tests check the legacy format.
+2. **Malformed IPv6 lines in mixed route files**: Units cover prefixes > 128, negative / empty / nonnumeric prefixes, oversized numbers, `%eth0` / `%2` zone IDs, non-IP text containing colons, and plain text. Invalid lines are skipped with warnings, without crashes; surrounding valid IPv4 and IPv6 entries load and match correctly.
+3. **Malformed DNS compression pointers and long names**: Units cover self-pointer loops at offsets 0 and 4, forward pointers, names exceeding 255 bytes, reserved Sign bits (0x40/0x80), and out-of-bounds pointers. `read_label` and `read_answer` set failbit and return promptly without loops or crashes; `store_in_dns_cache` safely ignores malformed packets.
+4. **Strict upstream DNS literal validation**: Integration tests configure hostnames such as `dns.google` and `localhost` in `up_dns_server` and `up_gfw_dns_server`, checking real-binary startup failure with `[dns] upstream must be an IPv4 or IPv6 literal: <hostname>`. The copied-lambda unit check was removed in review2.
+5. **Full IPv6 coverage for route_bypass_local_and_cn_mainland (mode 3)**: Unit and integration tests cover native IPv6 proxy fallback without mainland IPv6 entries, mainland direct / non-mainland proxy behavior with entries, forced direct via white, forced proxy via proxy, and IPv4-mapped unwrapping. Integration coverage expands to 11 profiles.
+6. **Caching disabled when dns.enable_cached is false**: Units verify that neither positive (A/AAAA) nor negative (NODATA/NXDOMAIN) responses enter or hit the cache. Integration tests with a live client verify that every repeated query reaches upstream fake DNS.
+7. **DNS packet structure validation**: Units verify cache misses for `QDCOUNT != 1` and no caching for `TC == 1` (truncated).
+
+
+## review2 acceptance (r7)
+
+Final logs: `/home/hermes/work/logs/4b-dev-r7`. The runner completed; summary, build, all four integration logs, and both unit logs were checked. Every exit status is zero:
+
+```text
+build=0
+v4_normal_fallback=0
+v6_core=0
+v6_nat=0
+v4_tun=0
+unit_test_dns_cache=0
+unit_test_ipv6_matcher=0
+```
+
+The proxy address index is maintained incrementally in every route mode. Each cached proxied positive answer extends address expiry with `max(existing, cached_time + ttl)`. Replacing a domain/type entry leaves its former addresses valid until their original expiry; tests now assert this intentional retention instead of immediate removal. Shared-address expiry never shrinks. Expired lookups erase the address, and cache-query pruning removes expired cache and index entries together.
+
+DNS records are keyed by `(name, qtype)` in a map, so storing a response no longer scans the cache or rebuilds the address index. Address insertion costs O(k log n), plus the keyed cache update; address lookup remains O(log n). Query-side expiry pruning still scans the maps, matching the existing cache-pruning lifecycle.
+
+Units cover incremental extension, replacement retention, shared addresses, expiry removal, IPv4/mapped normalization, and positive/negative cache behavior. Both `tun_ipv6` runs passed with real-binary hostname rejection, GFW AAAA proxy/non-GFW direct TCP, negative-cache upstream counts, caching-disabled checks, and 11 route profiles. IPv4 suites report `ALL SUCC`; the no-rule NAT probe remains the intentional EXPECTED-FAIL. Mixed 8800 IPv4 + 1500 IPv6 loading took about 0.012 seconds.
+
+Changed and untracked repository files contain no CJK characters under the requested grep check. Code comments, documentation, docstrings, and test messages are English.
+
+## Round 2 acceptance & benchmark (4b-agy-accept2)
+
+Log directory: `/home/hermes/work/logs/4b-agy-accept2`. The full acceptance matrix completed; summary, build, four integration logs, and both unit logs were verified. All exit codes are zero:
+
+```text
+build=0
+v4_normal_fallback=0
+v6_core=0
+v6_nat=0
+v4_tun=0
+unit_test_dns_cache=0
+unit_test_ipv6_matcher=0
+```
+
+Unit tests in `tests/test_dns_cache.py` cover all 8 requirements for incremental maintenance:
+1. Incremental extend (larger TTL extends expiry, smaller TTL retains maximum).
+2. Replacement retention (old addresses remain indexed until their own expiry; advancing past old expiry removes old while keeping new address).
+3. Shared address between domains (max expiry retained across distinct domains; replacement or unproxied answers on other domains do not truncate expiry).
+4. Lazy expiry erase on lookup (expired IPv4, native IPv6, v4-mapped IPv6, and uint32_t queries erase the expired entry and return false).
+5. Pruning on `find_in_dns_cache` (expired DNS cache and proxy index entries pruned together; unexpired entries retained).
+6. IPv4 and v4-mapped normalization (`normalize_address` normalizes v4-mapped IPv6 to IPv4 across indexing and lookups).
+7. Non-proxied answers not indexed (answers cached in DNS cache but never enter proxy address index).
+8. Negative answers not indexed (RFC 2308 NODATA and NXDOMAIN with SOA cached in DNS cache without generating proxy address entries).
+
+Performance benchmark (`tests/bench_dns_index.py`) compiles production code under `-O2` and compares incremental maintenance against full index rebuild reconstructed from `4b-pre-r7.diff`:
+- N=100: old 21.10 us/op vs new 3.62 us/op (5.8x speedup)
+- N=1000: old 209.94 us/op vs new 3.78 us/op (55x speedup)
+- N=5000: old 1254.59 us/op vs new 3.86 us/op (325x speedup)
+- N=20000: old 5972.27 us/op vs new 4.04 us/op (1478x speedup)
+- Hot-path lookup latency (`is_ip_in_gfwlist`): 37.5 ns to 138.5 ns across all cache sizes.
+
+Integration suites match baseline exactly:
+- `v4_normal_fallback`: ALL SUCC
+- `v4_tun`: ALL SUCC
+- `v6_core`: 18 PASS, 6 SKIP (opt-in NAT cases)
+- `v6_nat`: 23 PASS, 1 EXPECTED-FAIL (no-rule NAT probe)
+

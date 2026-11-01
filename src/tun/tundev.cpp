@@ -330,9 +330,10 @@ TUNDev::TUNDev(Service* _service, const tp::string& _tun_name, const tp::string&
 
     async_read();
 
-    // The built-in DNS interceptor matches an IPv4 endpoint. IPv6 DNS (AAAA
-    // and DNS over IPv6) is a later step, so an IPv6-only TUN does not claim
-    // a DNS address. Non-DNS IPv6 UDP is forwarded below.
+    // Keep both DNS addresses; replies retain the client's packet family.
+    if (addresses.have_v6) {
+        m_dns_server_endpoint_v6 = udp::endpoint(addresses.v6, m_service->get_config().get_dns().port);
+    }
     if (addresses.have_v4) {
         m_dns_server_endpoint.address(addresses.v4);
     } else {
@@ -343,7 +344,8 @@ TUNDev::TUNDev(Service* _service, const tp::string& _tun_name, const tp::string&
     m_dns_queryer =
       TP_MAKE_SHARED(TUNDNSQueryer, [this](const boost::asio::ip::udp::endpoint& local, const std::string_view& data) {
           std::string_view data_str(data);
-          return handle_write_upd_data(local, m_dns_server_endpoint, data_str) == 0;
+          const auto& source = local.address().is_v6() ? m_dns_server_endpoint_v6 : m_dns_server_endpoint;
+          return handle_write_upd_data(local, source, data_str) == 0;
       });
 
     m_dns_server = TP_MAKE_SHARED(DNSServer, m_service, m_dns_queryer);
@@ -533,46 +535,37 @@ err_t TUNDev::write_pbuf_to_tun(struct pbuf* p) {
     _unguard;
 }
 
-bool TUNDev::proxy_by_route(uint32_t ip) const {
+bool TUNDev::should_proxy(const boost::asio::ip::address& addr) const {
     _guard;
-
-    auto route = m_service->get_config().get_route();
-    if (route._proxy_ips_matcher.is_match(ip)) {
+    auto destination = addr;
+    if (destination.is_v6() && destination.to_v6().is_v4_mapped()) {
+        destination = make_address_v4(v4_mapped, destination.to_v6());
+    }
+    const auto& route = m_service->get_config().get_route();
+    if (route._proxy_ips_matcher.is_match(destination)) {
         return true;
     }
-
-    if (route._white_ips_matcher.is_match(ip)) {
+    if (route._white_ips_matcher.is_match(destination)) {
         return false;
     }
-
     switch (route.proxy_type) {
         case Config::route_all:          // Controlled by route tables
         case Config::route_bypass_local: // Controlled by route tables
             return true;
         case Config::route_bypass_cn_mainland:
-        case Config::route_bypass_local_and_cn_mainland: // Local ips Controlled by route tables
-            return !route._cn_mainland_ips_matcher.is_match(ip);
+        case Config::route_bypass_local_and_cn_mainland:
+            return !route._cn_mainland_ips_matcher.is_match(destination);
         case Config::route_gfwlist:
-            return m_dns_server != nullptr && m_dns_server->is_ip_in_gfwlist(ip);
+            return m_dns_server != nullptr && m_dns_server->is_ip_in_gfwlist(destination);
         case Config::route_cn_mainland:
-            return route._cn_mainland_ips_matcher.is_match(ip);
+            if (destination.is_v6() && !route._cn_mainland_ips_matcher.has_ipv6()) {
+                return true; // No mainland IPv6 data: preserve the historical proxy fallback.
+            }
+            return route._cn_mainland_ips_matcher.is_match(destination);
         default:
-            throw std::logic_error((tp::string("[dns] error proxy type: ") + tp::to_string((int)route.proxy_type)).c_str());
+            throw std::logic_error("[route] invalid proxy type");
     }
-
     _unguard;
-}
-
-bool TUNDev::should_proxy(const boost::asio::ip::address& addr) const {
-    if (addr.is_v4()) {
-        return proxy_by_route(addr.to_v4().to_uint());
-    }
-    // IPv4-mapped destinations still consult the IPv4 route tables. Other
-    // IPv6 destinations are proxied; IPv6 route matchers are a later step.
-    if (addr.is_v6() && addr.to_v6().is_v4_mapped()) {
-        return proxy_by_route(make_address_v4(v4_mapped, addr.to_v6()).to_uint());
-    }
-    return true;
 }
 
 err_t TUNDev::listener_accept_func(struct tcp_pcb* newpcb, err_t err) {
@@ -981,7 +974,7 @@ int TUNDev::try_to_process_udp_packet(uint8_t* data, int data_len) {
         }
 
         open_udp_session(local_endpoint, remote_endpoint, data, data_len,
-          proxy_by_route(ntoh32(ipv4_hdr.destination_address)));
+          should_proxy(boost::asio::ip::address_v4(ntoh32(ipv4_hdr.destination_address))));
         return 1;
     }
 
@@ -1051,6 +1044,11 @@ int TUNDev::try_to_process_udp_packet(uint8_t* data, int data_len) {
             if (it->try_to_process_udp(local_endpoint, remote_endpoint, data, data_len)) {
                 return 1;
             }
+        }
+
+        if (m_dns_server_endpoint_v6 == remote_endpoint) {
+            m_dns_queryer->recved(local_endpoint, std::string_view((const char*)data, data_len));
+            return 1;
         }
 
         open_udp_session(local_endpoint, remote_endpoint, data, data_len, should_proxy(remote_endpoint.address()));

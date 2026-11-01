@@ -287,7 +287,31 @@ ip -6 addr add fd00::1/64 dev tun0 nodad
 ip -6 route add 2001:db8:1::/64 dev tun0
 ```
 
-lwIP accepts TCP for any native IPv6 destination (`pretend TCP`) and writes the replies with `output_ip6`. The destination passed to the Trojan client is ATYP 4. An IPv6 packet whose source or destination is IPv4-mapped (`::ffff:0:0/96`) is dropped before lwIP; that stack rejects those addresses and would leak the packet buffer. Use a native IPv4 packet for an IPv4 destination. Non-DNS IPv6 UDP is forwarded with the original endpoints, and the reply written back to the TUN is an IPv6 UDP packet with a checksum. UDP may follow a hop-by-hop, routing, or destination-options header. Fragments, AH, and ESP are not reassembled on that path. IPv6 route-table matching and the built-in DNS server (AAAA, DNS over IPv6) are not part of this path: every native IPv6 destination is proxied, and DNS interception stays on the IPv4 TUN address. Packets whose length is shorter than the IP header, or longer than `tun.mtu`, are dropped so a wrapped length cannot stall the reader.
+### TUN IPv6 route rules
+
+When `route.enabled` is true and `run_type` is `client_tun`, the same three file paths apply. Each file can mix IPv4 and IPv6:
+
+```json
+"route": {
+  "enabled": true,
+  "proxy_type": 2,
+  "cn_mainland_ips_file": "china_mainland_ips.txt",
+  "white_ips": "white_ips.txt",
+  "proxy_ips": "proxy_ips.txt"
+}
+```
+
+- One address or CIDR per line. Addresses containing a colon go to IPv6Matcher; others retain existing IPv4 parsing and error logging. IPv6 supports `/0` through `/128`, blank lines, surrounding whitespace, and `#` comments. CIDRs have host bits cleared; zone IDs are rejected. Invalid IPv6 lines are skipped with a WARN naming the file and line; read failures also log WARN.
+- IPv6 ranges are sorted and overlapping or adjacent ranges merged at load time. Binary-search lookups take `O(log n)`. Load logs report valid IPv4 and IPv6 input lines separately, not merged range counts.
+- Priority: `proxy_ips` forces proxying and overrides `white_ips`, which forces direct access. Other addresses follow `proxy_type`: `0` / `1` proxy all; `2` / `3` proxy non-mainland addresses; `5` proxies only mainland addresses. Local bypass remains controlled by the system routing table.
+- Checks short-circuit in priority order: a `proxy_ips` match proxies immediately; otherwise a `white_ips` match connects directly. Only `2` / `3` / `5` query the mainland list; only `4` queries DNS GFWList address mappings.
+- `4` (GFWList) queries the DNS address mapping for IPv4 / native IPv6 addresses absent from explicit lists. Missing mappings or mappings not marked GFWList connect directly.
+- `5` (mainland-only proxy) falls back to proxying native IPv6 addresses absent from explicit lists when the mainland list has no valid IPv6 entries, even if white or proxy lists contain IPv6 entries. Once the mainland list has valid IPv6 entries, only mainland matches are proxied. An empty path, empty file, read failure, or file containing only invalid lines counts as having no valid IPv6 entries.
+- IPv4 rules are unchanged. Unified address dispatch unwraps IPv4-mapped IPv6 before checking IPv4 rules. Raw mapped TUN packets remain subject to the drop restrictions below.
+
+Standalone matcher check: `python3 tests/test_ipv6_matcher.py` (requires a C++17 compiler and Boost headers).
+
+lwIP accepts TCP for any native IPv6 destination (`pretend TCP`) and writes the replies with `output_ip6`. The destination passed to the Trojan client is ATYP 4. An IPv6 packet whose source or destination is IPv4-mapped (`::ffff:0:0/96`) is dropped before lwIP; that stack rejects those addresses and would leak the packet buffer. Use a native IPv4 packet for an IPv4 destination. Non-DNS IPv6 UDP is forwarded with the original endpoints, and the reply written back to the TUN is an IPv6 UDP packet with a checksum. UDP may follow a hop-by-hop, routing, or destination-options header. Fragments, AH, and ESP are not reassembled on that path. Native IPv6 uses the route rules above; mainland-only mode falls back to proxy when the mainland list has no valid IPv6 entries. Built-in DNS intercepts UDP requests to `dns.port` on both the TUN IPv4 address and `tun.net_ipv6`, replying in the client's address family; IPv6 UDP checksums reuse the existing helper. A / AAAA caches are isolated by `(name, qtype)`, with TTLs decreasing as entries age. Valid cached A / AAAA records for GFWList domains populate an expiring address index with `O(log n)` route lookups; negative cache entries create no address mappings. NODATA / NXDOMAIN responses are cached only when authority contains SOA, for at most `min(SOA TTL, SOA MINIMUM, 300 seconds)`; responses without SOA are not cached. Socket DNS first tries dual-stack `::`, logging WARN and falling back to IPv4 if IPv6 is unavailable. `dns.up_dns_server` and `dns.up_gfw_dns_server` require IPv4 or IPv6 literals, such as `["::1"]`; hostnames are rejected at startup. The upstream port is fixed at 53. Packets whose length is shorter than the IP header, or longer than `tun.mtu`, are dropped so a wrapped length cannot stall the reader.
 
 `redirect_local` still rewrites the proxied destination to `127.0.0.1` for the IPv4 test suite. Leave it false when the Trojan server should connect to the real IPv6 destination.
 
