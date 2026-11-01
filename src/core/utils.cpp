@@ -620,6 +620,153 @@ void IPv4Matcher::test_cases() {
     _test_case_assert(matcher.is_match(get_ip_value("180.163.198.33")), true);
 }
 
+bool IPv6Matcher::load_from_stream(std::istream& is, const tp::string& filename, size_t& loaded_count) {
+    _guard;
+    loaded_count = 0;
+    ranges.clear();
+    if (!is) {
+        return false;
+    }
+    size_t line_number = 0;
+    for (tp::string line; std::getline(is, line);) {
+        ++line_number;
+        const auto comment = line.find('#');
+        if (comment != tp::string::npos) {
+            line.erase(comment);
+        }
+        const auto first = line.find_first_not_of(" \t\r\n");
+        if (first == tp::string::npos) {
+            continue;
+        }
+        line = line.substr(first, line.find_last_not_of(" \t\r\n") - first + 1);
+        const auto slash = line.find('/');
+        const auto host = line.substr(0, slash);
+        unsigned prefix = 128;
+        bool valid = host.find('%') == tp::string::npos;
+        if (slash != tp::string::npos) {
+            const auto mask = line.substr(slash + 1);
+            valid = valid && !mask.empty();
+            prefix = 0;
+            for (char c : mask) {
+                if (c < '0' || c > '9' || prefix > 128) {
+                    valid = false;
+                    break;
+                }
+                prefix = prefix * 10 + static_cast<unsigned>(c - '0');
+            }
+            valid = valid && prefix <= 128;
+        }
+        boost::system::error_code ec;
+        const auto address = boost::asio::ip::make_address_v6(host.c_str(), ec);
+        if (!valid || ec) {
+            _log_with_date_time("[route] invalid IPv6 entry in " + filename + ":" + tp::to_string(line_number) +
+                                  ": " + line, Log::WARN);
+            continue;
+        }
+        Range range{address.to_bytes(), address.to_bytes()};
+        for (unsigned i = 0; i < 16; ++i) {
+            const unsigned bits = prefix >= 8 ? 8 : prefix;
+            const auto mask = static_cast<unsigned char>(0xffu << (8 - bits));
+            range.first[i] &= mask;
+            range.last[i] |= static_cast<unsigned char>(~mask);
+            prefix -= bits;
+        }
+        ranges.push_back(range);
+        ++loaded_count;
+    }
+    std::sort(ranges.begin(), ranges.end(), [](const Range& a, const Range& b) { return a.first < b.first; });
+    size_t merged = 0;
+    for (const auto& range : ranges) {
+        bool overlaps = false;
+        if (merged != 0) {
+            auto next = ranges[merged - 1].last;
+            // Saturating successor also merges adjacent CIDR ranges.
+            for (size_t i = next.size(); i > 0; --i) {
+                if (++next[i - 1] != 0) {
+                    break;
+                }
+                if (i == 1) {
+                    next.fill(0xff);
+                }
+            }
+            overlaps = range.first <= next;
+        }
+        if (overlaps) {
+            ranges[merged - 1].last = std::max(ranges[merged - 1].last, range.last);
+        } else {
+            ranges[merged++] = range;
+        }
+    }
+    ranges.resize(merged);
+    return !is.bad();
+    _unguard;
+}
+
+bool IPv6Matcher::load_from_file(const tp::string& filename, size_t& loaded_count) {
+    _guard;
+    tp::ifstream stream(filename.c_str());
+    return load_from_stream(stream, filename, loaded_count);
+    _unguard;
+}
+
+bool IPv6Matcher::is_match(const boost::asio::ip::address_v6& ip) const {
+    _guard;
+    const auto bytes = ip.to_bytes();
+    auto it = std::upper_bound(ranges.begin(), ranges.end(), bytes,
+      [](const Address& address, const Range& range) { return address < range.first; });
+    return it != ranges.begin() && bytes <= (--it)->last;
+    _unguard;
+}
+
+bool IPMatcher::load_from_stream(
+  std::istream& is, const tp::string& filename, size_t& ipv4_count, size_t& ipv6_count) {
+    _guard;
+    ipv4 = IPv4Matcher{};
+    ipv6 = IPv6Matcher{};
+    ipv4_count = ipv6_count = ipv6_entries = 0;
+    if (!is) {
+        return false;
+    }
+    tp::stringstream v4_lines;
+    tp::stringstream v6_lines;
+    for (tp::string line; std::getline(is, line);) {
+        const auto comment = line.find('#');
+        const auto colon = line.find(':');
+        if (colon != tp::string::npos && (comment == tp::string::npos || colon < comment)) {
+            v6_lines << line;
+        } else {
+            v4_lines << line;
+        }
+        v4_lines << '\n';
+        v6_lines << '\n'; // Keep original line numbers in IPv6 diagnostics.
+    }
+    const bool v4_ok = ipv4.load_from_stream(v4_lines, filename, ipv4_count);
+    const bool v6_ok = ipv6.load_from_stream(v6_lines, filename, ipv6_count);
+    ipv6_entries = ipv6_count;
+    return !is.bad() && v4_ok && v6_ok;
+    _unguard;
+}
+
+bool IPMatcher::load_from_file(const tp::string& filename, size_t& ipv4_count, size_t& ipv6_count) {
+    _guard;
+    tp::ifstream stream(filename.c_str());
+    return load_from_stream(stream, filename, ipv4_count, ipv6_count);
+    _unguard;
+}
+
+bool IPMatcher::is_match(const boost::asio::ip::address& ip) const {
+    _guard;
+    if (ip.is_v4()) {
+        return ipv4.is_match(ip.to_v4().to_uint());
+    }
+    const auto v6 = ip.to_v6();
+    if (v6.is_v4_mapped()) {
+        return ipv4.is_match(boost::asio::ip::make_address_v4(boost::asio::ip::v4_mapped, v6).to_uint());
+    }
+    return ipv6.is_match(v6);
+    _unguard;
+}
+
 bool set_udp_send_recv_buf(int fd, int buf_size) {
     _guard;
     if (buf_size > 0) {

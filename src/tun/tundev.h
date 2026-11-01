@@ -125,6 +125,7 @@ class TUNDev {
     std::shared_ptr<DNSServer> m_dns_server;
     std::shared_ptr<TUNDNSQueryer> m_dns_queryer;
     boost::asio::ip::udp::endpoint m_dns_server_endpoint;
+    boost::asio::ip::udp::endpoint m_dns_server_endpoint_v6;
     int m_tun_fd;
     const bool m_is_outside_tun_fd;
     uint16_t m_mtu;
@@ -152,7 +153,6 @@ class TUNDev {
     void open_udp_session(const boost::asio::ip::udp::endpoint& local_endpoint,
       const boost::asio::ip::udp::endpoint& remote_endpoint, const uint8_t* data, int data_len, bool proxy);
 
-    [[nodiscard]] bool proxy_by_route(uint32_t ip) const;
     [[nodiscard]] bool should_proxy(const boost::asio::ip::address& addr) const;
 
   public:

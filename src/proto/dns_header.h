@@ -296,6 +296,8 @@ class dns_answer {
         uint16_t TYPE;
         uint16_t CLASS;
         uint32_t TTL;
+        size_t ttl_offset;
+        uint32_t soa_minimum{};
         tp::string RD;
 
         uint32_t A;

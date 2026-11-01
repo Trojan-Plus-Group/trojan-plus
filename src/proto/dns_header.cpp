@@ -78,41 +78,36 @@ std::istream& dns_header::read_label(std::istream& is, tp::string& name) {
     _guard;
 
     is >> std::noskipws;
-
-    uint8_t sign;
-    if (!(is >> sign)) {
-        return is;
-    }
-    if ((sign & 0xc0) != 0) {
-        uint8_t low;
-        if (!(is >> low)) {
+    std::streampos resume = -1;
+    size_t wire_length = 1;
+    // Bound both expanded names and pointer hops; pointers must refer backwards.
+    for (size_t hops = 0; hops < 256; ++hops) {
+        const auto start = is.tellg();
+        uint8_t sign;
+        if (!(is >> sign)) return is;
+        if ((sign & 0xc0) == 0xc0) {
+            uint8_t low;
+            if (!(is >> low)) return is;
+            const uint16_t ptr = (uint16_t(sign & 0x3f) << 8) | low;
+            if (std::streampos(ptr) >= start) break;
+            if (resume == std::streampos(-1)) resume = is.tellg();
+            is.seekg(ptr);
+            if (!is) return is;
+            continue;
+        }
+        if ((sign & 0xc0) != 0) break;
+        if (sign == 0) {
+            if (resume != std::streampos(-1)) is.seekg(resume);
             return is;
         }
-        uint16_t ptr = uint16_t(sign & 0x3f) + uint16_t(low);
-
-        auto curr = is.tellg();
-        is.seekg(ptr);
-        read_label(is, name);
-
-        is.seekg(curr);
-
-        return is;
+        wire_length += sign + 1;
+        if (wire_length > 255) break;
+        char buf[63];
+        if (!is.read(buf, sign)) return is;
+        if (!name.empty()) name.append(1, label_split_char);
+        name.append(buf, sign);
     }
-
-    if (sign == 0) {
-        return is;
-    }
-
-    char buf[std::numeric_limits<uint8_t>::max()];
-    is.read((char*)buf, sign);
-
-    if (!name.empty()) {
-        name.append(1, label_split_char);
-    }
-
-    name.append(buf, sign);
-
-    read_label(is, name);
+    is.setstate(std::ios::failbit);
     return is;
 
     _unguard;
@@ -232,10 +227,33 @@ std::istream& dns_answer::read_answer(std::istream& is, answer& an) {
 
     an.TYPE         = dns_question::decode(is);
     an.CLASS        = dns_question::decode(is);
+    an.ttl_offset   = static_cast<size_t>(is.tellg());
     an.TTL          = dns_question::decode32(is);
     uint16_t length = dns_question::decode(is);
+    if (!is || (an.TYPE == dns_header::QTYPE_A_RECORD && length != 4) ||
+        (an.TYPE == dns_header::QTYPE_AAAA_RECORD && length != 16)) {
+        is.setstate(std::ios::failbit);
+        return is;
+    }
+    const auto rd_start = is.tellg();
+    const auto rd_end = rd_start + std::streamoff(length);
     if (an.TYPE == dns_header::QTYPE_CNAME_RECORD) {
         dns_header::read_label(is, an.RD);
+    } else if (an.TYPE == dns_header::QTYPE_SOA) {
+        tp::string mname, rname;
+        dns_header::read_label(is, mname);
+        // Each encoded name must remain within RDLENGTH, even when compressed.
+        if (!is || is.tellg() >= rd_end) {
+            is.setstate(std::ios::failbit);
+            return is;
+        }
+        dns_header::read_label(is, rname);
+        if (!is || is.tellg() + std::streamoff(20) != rd_end) {
+            is.setstate(std::ios::failbit);
+            return is;
+        }
+        for (int i = 0; i < 4; ++i) (void)dns_question::decode32(is);
+        an.soa_minimum = dns_question::decode32(is);
     } else {
         uint8_t c;
         while (length-- > 0) {
@@ -247,6 +265,7 @@ std::istream& dns_answer::read_answer(std::istream& is, answer& an) {
         }
     }
 
+    if (is && is.tellg() != rd_end) is.setstate(std::ios::failbit);
     if (is) {
         if (an.TYPE == dns_header::QTYPE_A_RECORD) {
             an.A     = parse_uint32(0, an.RD);

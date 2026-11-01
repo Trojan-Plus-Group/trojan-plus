@@ -236,7 +236,7 @@ def tune_timeouts(cfg):
     tcp = cfg.setdefault("tcp", {})
     tcp["connect_time_out"] = 5
     if "dns" in cfg:
-        # Built-in DNS is part of the later TUN PR, not this suite.
+        # Ordinary transport cases disable DNS; case_tun exercises it locally.
         cfg["dns"]["enabled"] = False
     if "route" in cfg:
         cfg["route"]["enabled"] = False
@@ -1645,6 +1645,13 @@ def case_tun(binary):
         if "proxy connect: 1.2.3.4" not in v4_text:
             raise RuntimeError("IPv4-only TUN did not make progress after the bad header | %s" % excerpt(v4_text))
 
+        # Reuse this isolated namespace after the transport regressions.
+        _stop_process_group(client)
+        client = None
+        import fulltest_ipv6_dns
+        dns_route_note = fulltest_ipv6_dns.exercise(
+            sys.modules[__name__], binary, ns, tun_name, netns, client_cfg)
+        regress_note += "; " + dns_route_note
         status, detail = "PASS", "IPv6 TCP and UDP through TUN"
     except Exception as exc:
         status, detail = "FAIL", str(exc)

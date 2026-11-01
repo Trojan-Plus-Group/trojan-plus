@@ -303,16 +303,18 @@ void Config::populate(const ptree& tree) {
 
     if (route.enabled) {
         if (run_type == CLIENT_TUN) {
-            size_t count = 0;
-            route._cn_mainland_ips_matcher.load_from_file(route.cn_mainland_ips_file, count);
-            _log_with_date_time(
-              "[route] load " + tp::to_string(count) + " cn_mainland_ips from file " + route.cn_mainland_ips_file);
-
-            route._white_ips_matcher.load_from_file(route.white_ips, count);
-            _log_with_date_time("[route] load " + tp::to_string(count) + " white_ips from file " + route.white_ips);
-
-            route._proxy_ips_matcher.load_from_file(route.proxy_ips, count);
-            _log_with_date_time("[route] load " + tp::to_string(count) + " proxy_ips from file " + route.proxy_ips);
+            const auto load_ips = [](IPMatcher& matcher, const tp::string& filename, const char* key) {
+                size_t ipv4_count = 0;
+                size_t ipv6_count = 0;
+                if (!matcher.load_from_file(filename, ipv4_count, ipv6_count) && !filename.empty()) {
+                    _log_with_date_time("[route] cannot load " + tp::string(key) + " from file " + filename, Log::WARN);
+                }
+                _log_with_date_time("[route] load " + tp::to_string(ipv4_count) + " IPv4 + " +
+                                   tp::to_string(ipv6_count) + " IPv6 " + key + " from file " + filename);
+            };
+            load_ips(route._cn_mainland_ips_matcher, route.cn_mainland_ips_file, "cn_mainland_ips");
+            load_ips(route._white_ips_matcher, route.white_ips, "white_ips");
+            load_ips(route._proxy_ips_matcher, route.proxy_ips, "proxy_ips");
 
             if (route.proxy_type == RouteType::route_gfwlist && !dns.enabled) {
                 _log_with_date_time("[route] route_gfwlist need dns with gfw's list support!", Log::ERROR);
@@ -381,6 +383,15 @@ void Config::load_dns(const boost::property_tree::ptree& tree) {
         if (dns.up_gfw_dns_server.empty()) {
             _log_with_date_time("[dns] up_gfw_dns_server is empty, filled by default up stream server!", Log::WARN);
             dns.up_gfw_dns_server.emplace_back("8.8.8.8");
+        }
+        for (const auto* servers : {&dns.up_dns_server, &dns.up_gfw_dns_server}) {
+            for (const auto& server : *servers) {
+                boost::system::error_code ec;
+                boost::asio::ip::make_address(server, ec);
+                if (ec) {
+                    throw std::runtime_error((tp::string("[dns] upstream must be an IPv4 or IPv6 literal: ") + server).c_str());
+                }
+            }
         }
     }
     _unguard;
