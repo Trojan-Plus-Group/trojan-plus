@@ -49,6 +49,7 @@
 '''
 
 import atexit
+import errno
 import ipaddress
 import json
 import os
@@ -691,9 +692,9 @@ def _run_checked(cmd, action):
 def atomic_replace_hosts(data):
     """Replace /etc/hosts by writing a temp file and renaming it into place.
 
-    A crash during the write leaves the previous file intact. sudo is used
-    only when the current user cannot create a file in /etc. Every privileged
-    command's exit code is checked.
+    Prefer atomic rename; bind mounts require an in-place, fsynced rewrite.
+    The original bytes and exit/signal restoration are managed by the caller.
+    Every privileged command's exit code and the final readback are checked.
     """
     if isinstance(data, str):
         data = data.encode("utf-8")
@@ -712,8 +713,17 @@ def atomic_replace_hosts(data):
                 handle.flush()
                 os.fsync(handle.fileno())
             os.chmod(etc_tmp, 0o644)
-            os.replace(etc_tmp, HOSTS_PATH)
-            etc_tmp = None
+            try:
+                os.replace(etc_tmp, HOSTS_PATH)
+                etc_tmp = None
+            except OSError as exc:
+                if exc.errno not in (errno.EBUSY, errno.EXDEV):
+                    raise
+                with open(HOSTS_PATH, "r+b") as handle:
+                    handle.truncate(0)
+                    handle.write(data)
+                    handle.flush()
+                    os.fsync(handle.fileno())
         except PermissionError:
             if etc_tmp and os.path.exists(etc_tmp):
                 try:
@@ -724,14 +734,30 @@ def atomic_replace_hosts(data):
             _run_checked(["sudo", "-n", "cp", local_path, remote_tmp], "copy hosts temp")
             try:
                 _run_checked(["sudo", "-n", "chmod", "644", remote_tmp], "chmod hosts temp")
-                _run_checked(["sudo", "-n", "mv", "-f", remote_tmp, HOSTS_PATH], "rename hosts temp")
-            except Exception:
-                subprocess.run(["sudo", "-n", "rm", "-f", remote_tmp], check=False)
-                raise
+                script = (
+                    "import errno, os, sys\n"
+                    "source, target = sys.argv[1:]\n"
+                    "try:\n"
+                    "    os.replace(source, target)\n"
+                    "except OSError as exc:\n"
+                    "    if exc.errno not in (errno.EBUSY, errno.EXDEV): raise\n"
+                    "    with open(source, 'rb') as src, open(target, 'r+b') as dst:\n"
+                    "        data = src.read()\n"
+                    "        dst.truncate(0)\n"
+                    "        dst.write(data)\n"
+                    "        dst.flush()\n"
+                    "        os.fsync(dst.fileno())\n"
+                )
+                _run_checked(["sudo", "-n", sys.executable, "-c", script, remote_tmp, HOSTS_PATH],
+                             "replace hosts temp")
+            finally:
+                _run_checked(["sudo", "-n", "rm", "-f", remote_tmp], "remove hosts temp")
         readback = read_hosts_bytes()
         if readback != data:
             raise RuntimeError("/etc/hosts contents do not match the bytes just written")
     finally:
+        if etc_tmp and os.path.exists(etc_tmp):
+            os.unlink(etc_tmp)
         if os.path.exists(local_path):
             os.unlink(local_path)
 
@@ -1700,6 +1726,13 @@ def case_tun(binary):
     return status, detail
 
 
+def required_case_skipped(row, include_expected_fail, include_nat, nat_case_ids):
+    return (os.environ.get("TP_IPV6_REQUIRE_ALL") == "1"
+            and row["status"] == "SKIP"
+            and (row["case"] != "nat_ipv6" or include_expected_fail)
+            and (row["case"] not in nat_case_ids or include_nat))
+
+
 def main(binary, include_expected_fail=False, include_ipv4_reference=False, include_nat=False):
     os.chdir(TEST_ROOT)
     RESULTS.clear()
@@ -1789,6 +1822,9 @@ def main(binary, include_expected_fail=False, include_ipv4_reference=False, incl
     for row in RESULTS:
         print_time_log("%s\t%s\t%s" % (row["status"], row["case"], row["reason"].replace("\n", " ")[:500]))
         if row["status"] == "FAIL":
+            failed += 1
+        elif required_case_skipped(row, include_expected_fail, include_nat, fulltest_ipv6_nat.CASE_IDS):
+            print_time_log("Required IPv6 case skipped: " + row["case"])
             failed += 1
     if failed:
         print_time_log("IPv6 suite failed %d case(s)" % failed)

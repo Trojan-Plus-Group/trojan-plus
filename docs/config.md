@@ -4,6 +4,16 @@ In this page, we will look at the config file of trojan. Trojan uses [`JSON`](ht
 
 **Note: all "\\" in the paths under Windows MUST be replaced with "/".**
 
+## Optional live diagnostics
+
+Top-level `log_live_counters` defaults to `false`. When enabled, an event-loop
+timer logs `[mem] live objects=... bytes=... sessions=... quic_connections=...
+quic_proxy_sessions=...` at INFO every second on Linux, macOS and Windows.
+Object/byte totals cover the tp allocator (including registered wolfSSL hooks),
+not every allocation made by third-party libraries. QUIC counts are zero when
+QUIC is compiled out. No timer is created when disabled. T16 enables this only
+in its temporary configs to check fresh post-quiescence snapshots.
+
 ## A valid client.json
 
 ```json

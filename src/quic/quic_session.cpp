@@ -45,11 +45,13 @@ QuicProxySession::QuicProxySession(std::shared_ptr<QuicConnection> conn, int64_t
     m_quic_recv_buf.reserve(kQuicRecvBufReserveSize);
     _log_with_date_time("QuicProxySession: QuicProxySession constructed stream_id=" + 
                         tp::to_string(stream_id), Log::INFO);
+    s_live_count.fetch_add(1, std::memory_order_relaxed);
 }
 
 QuicProxySession::~QuicProxySession() {
     _log_with_date_time("QuicProxySession: QuicProxySession destructed stream_id=" + 
                         tp::to_string(m_stream_id), Log::INFO);
+    s_live_count.fetch_sub(1, std::memory_order_relaxed);
 }
 
 void QuicProxySession::start() {

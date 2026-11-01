@@ -104,6 +104,7 @@ void Config::populate(const ptree& tree) {
     _guard;
     // read the log_level first
     log_level = static_cast<Log::Level>(tree.get("log_level", default_log_level));
+    log_live_counters = tree.get("log_live_counters", false);
     if (Log::level == Log::INVALID) {
         // don't let load-balance config override the log level
         Log::level = log_level;

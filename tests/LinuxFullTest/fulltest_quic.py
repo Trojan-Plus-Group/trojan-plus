@@ -30,6 +30,7 @@ import sys
 import time
 import traceback
 import urllib.request
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from subprocess import Popen, PIPE
 
@@ -192,6 +193,9 @@ def start_http_target():
     if not wait_for_port(HTTP_TARGET_PORT, timeout=8):
         print_time_log(f"HTTP target server failed to start on {HTTP_TARGET_PORT}")
         proc.kill()
+        proc.wait()
+        log_file.seek(0)
+        print_time_log(log_file.read())
         log_file.close()
         return None
     print_time_log(f"HTTP target server ready on {HTTP_TARGET_PORT}")
@@ -865,6 +869,11 @@ def test_quic_disabled(binary_path):
 # Test cases  T9 – T14 (new)
 # ---------------------------------------------------------------------------
 
+# Exceeds both the 63-byte DNS label and 253-byte hostname limits. Native
+# getaddrinfo rejects this ASCII name locally, without querying public DNS.
+_RESOLVER_FAILURE_HOST = "x" * 256
+
+
 def test_client_retry_no_server(binary_path):
     """T9: retry_connect_timeout_ms > 0 fires retry; = 0 does not retry.
 
@@ -875,9 +884,9 @@ def test_client_retry_no_server(binary_path):
     print_time_log("[T9] client_retry_no_server: starting...")
 
     # --- Part A: retry_connect_timeout_ms=500, should see "retrying" ---
-    # Use an unresolvable hostname (.invalid TLD is reserved by RFC 2606).
+    # Force native resolver failure locally, independent of DNS configuration.
     cli_cfg_a = patch_quic_config("quic_client_config.json", {
-        "remote_addr": "quic-test-unreachable.invalid",
+        "remote_addr": _RESOLVER_FAILURE_HOST,
         "quic": {"enabled": True, "retry_connect_timeout_ms": 500},
     })
     client_a, cli_log_a = start_trojan(binary_path, cli_cfg_a)
@@ -913,7 +922,7 @@ def test_client_retry_no_server(binary_path):
 
     # --- Part B: retry_connect_timeout_ms=0, must NOT see "retrying" ---
     cli_cfg_b = patch_quic_config_with_suffix("quic_client_config.json", ".tmpb.json", {
-        "remote_addr": "quic-test-unreachable.invalid",
+        "remote_addr": _RESOLVER_FAILURE_HOST,
         "quic": {"enabled": True, "retry_connect_timeout_ms": 0},
     })
     client_b, cli_log_b = start_trojan(binary_path, cli_cfg_b)
@@ -923,8 +932,11 @@ def test_client_retry_no_server(binary_path):
         if not client_b:
             dump_b = True
         else:
-            # Wait for DNS failure first.
-            wait_for_log(cli_log_b, r"server resolve failed", timeout=10)
+            # Require the failure path before checking that retries stay disabled.
+            if not wait_for_log(cli_log_b, r"server resolve failed", timeout=10):
+                print_time_log("[T9] FAIL: Part B — no resolve-failed log with retry_ms=0")
+                dump_b = True
+                return False
             time.sleep(2)  # Extra grace period; if retry_ms=0, no retry should fire.
             with open(cli_log_b, 'r', errors='replace') as f:
                 content = f.read()
@@ -1092,10 +1104,10 @@ def test_h1_upstream_dns_failure(binary_path):
     """
     print_time_log("[T13] h1_upstream_dns_failure: starting...")
 
-    # Configure h1_upstream with an unresolvable hostname.
+    # Force native resolver failure locally, independent of DNS configuration.
     srv_cfg = patch_quic_config("quic_server_config.json", {
         "remote_port": HTTP_TARGET_PORT,
-        "quic": {"enabled": True, "h1_upstream": "quic-test-h1-stream.invalid:443"},
+        "quic": {"enabled": True, "h1_upstream": f"{_RESOLVER_FAILURE_HOST}:443"},
     })
     # Wrong password forces the server into forward_to_h1_upstream().
     cli_cfg = patch_quic_config("quic_client_config.json", {
@@ -1128,7 +1140,7 @@ def test_h1_upstream_dns_failure(binary_path):
         except Exception:
             pass  # Expected: DNS fails, session is dropped.
 
-        # DNS resolution for .invalid can be slow on some resolvers; allow up to 20 s.
+        # The oversized ASCII name fails in the native resolver without DNS traffic.
         m = wait_for_log(srv_log, r"h1_upstream TCP resolve failed", timeout=20)
         if not m:
             print_time_log("[T13] FAIL: 'h1_upstream TCP resolve failed' not in server log")
@@ -1376,6 +1388,97 @@ def test_no_crlf_fallback(binary_path):
         close_process(server, dump)
         close_process(mock, dump)
 
+def _parse_h3_load_results(stdout: str, requested: list[str]) -> dict[str, list[tuple[int, str]]]:
+    """Require one successful H3 result per request, including repeated paths."""
+    results: dict[str, list[tuple[int, str]]] = {}
+    for line in stdout.splitlines():
+        if line.startswith(("H3_FILE_ERROR:", "AIOQUIC_ERROR:")):
+            raise ValueError(line)
+        if line.startswith("FILE:"):
+            parts = line.split(":")
+            if len(parts) != 5 or parts[2] != "OK":
+                raise ValueError(f"Invalid H3 result: {line}")
+            results.setdefault(parts[1], []).append((int(parts[3]), parts[4]))
+    if Counter({name: len(items) for name, items in results.items()}) != Counter(requested):
+        raise ValueError("H3 result counts do not match requests")
+    return results
+
+
+def _t16_sustained_growth(samples: list[int]) -> float:
+    """Measure steady-state median pairwise RSS slope over its observed window.
+
+    Discard three allocator/cache warm-up rounds. Median pairwise slope resists
+    isolated RSS spikes and drops without selecting a favorable baseline.
+    RSS is secondary; live counters provide the primary leak verdict.
+    """
+    from statistics import median
+    if len(samples) < 7 or any(value <= 0 for value in samples):
+        raise ValueError("T16 requires at least seven valid per-round RSS samples")
+    steady = samples[3:]
+    slopes = [(steady[j] - steady[i]) / (j - i)
+              for i in range(len(steady)) for j in range(i + 1, len(steady))]
+    return median(slopes) * (len(steady) - 1) / median(steady)
+
+
+def _wait_t16_quiescence(server, client, log_path: str, h3_connections: int,
+                         timeout: float = 20.0) -> bool:
+    """Wait for load sessions and H3 connections to die; keep Trojan connection."""
+    deadline = time.monotonic() + timeout
+    poll = threading.Event()
+    while True:
+        if server.poll() is not None or client.poll() is not None:
+            return False
+        with open(log_path, errors="replace") as log:
+            text = log.read()
+        created = text.count("QuicConnection: QuicConnection constructed for peer ")
+        destroyed = text.count("QuicConnection: ~QuicConnection destructed for peer ")
+        sessions = text.count("QuicProxySession: QuicProxySession constructed stream_id=")
+        finished = text.count("QuicProxySession: QuicProxySession destructed stream_id=")
+        if (destroyed >= h3_connections and created == destroyed + 1
+                and sessions > 0 and sessions == finished):
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            print_time_log(f"[T16] Teardown timeout: connections={created - destroyed} "
+                           f"(expected 1), H3 destroyed={destroyed}/{h3_connections}, "
+                           f"sessions={sessions - finished}")
+            return False
+        poll.wait(min(0.1, remaining))
+
+
+def _wait_t16_live_counters(process, log_path: str, offset: int,
+                            timeout: float = 10.0) -> dict[str, int]:
+    """Require a complete telemetry line written after the quiescence offset."""
+    pattern = re.compile(rb"\[mem\] live objects=(\d+) bytes=(\d+) sessions=(\d+) "
+                         rb"quic_connections=(\d+) quic_proxy_sessions=(\d+)\r?\n")
+    deadline = time.monotonic() + timeout
+    poll = threading.Event()
+    while process.poll() is None:
+        with open(log_path, "rb") as log:
+            log.seek(offset)
+            match = pattern.search(log.read())
+        if match:
+            return dict(zip(("objects", "bytes", "sessions", "quic_connections",
+                             "quic_proxy_sessions"), map(int, match.groups())))
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        poll.wait(min(0.1, remaining))
+    raise ValueError(f"Missing fresh live-counter telemetry after offset {offset}: {log_path}")
+
+
+def _t16_live_counter_errors(baseline: dict[str, int], final: dict[str, int]) -> list[str]:
+    """Compare matching idle states; allocator bytes are diagnostic, not RSS."""
+    errors = []
+    for key in ("sessions", "quic_connections", "quic_proxy_sessions"):
+        if final[key] != baseline[key]:
+            errors.append(f"{key}: baseline={baseline[key]} final={final[key]}")
+    if abs(final["objects"] - baseline["objects"]) > 200:
+        errors.append(f"objects: baseline={baseline['objects']} final={final['objects']} "
+                      "(absolute allowance=200)")
+    return errors
+
+
 def test_quic_load_test(binary_path):
     """T16: QUIC Load Test - parallel proxy and H3 fallback traffic."""
     print_time_log("[T16] quic_load_test: starting...")
@@ -1388,13 +1491,14 @@ def test_quic_load_test(binary_path):
     SOCKS_CONCURRENCY = 30
     H3_CONCURRENCY    = 30
 
-    CLIENT_MEMORY_GROW_THRESHOLD = 0.35
-    SERVER_MEMORY_GROW_THRESHOLD = 0.35
+    CLIENT_MEMORY_GROW_THRESHOLD = 0.80
+    SERVER_MEMORY_GROW_THRESHOLD = 0.80
     LOAD_RUNS         = 10
     # ---------------------
 
     # 1. Server config: proxy to HTTP_TARGET_PORT, fallback to HTTP_TARGET_PORT.
     srv_cfg = patch_quic_config("quic_server_config.json", {
+        "log_live_counters": True,
         "remote_port": HTTP_TARGET_PORT,
         "quic": {
             "h1_upstream": f"127.0.0.1:{HTTP_TARGET_PORT}",
@@ -1402,6 +1506,7 @@ def test_quic_load_test(binary_path):
         }
     })
     cli_cfg = patch_quic_config("quic_client_config.json", {
+        "log_live_counters": True,
         "quic": {
             "alpn_token": "trojan"
         }
@@ -1430,8 +1535,9 @@ def test_quic_load_test(binary_path):
         init_srv_mem = get_process_memory(server.pid)
         init_cli_mem = get_process_memory(client.pid)
         print_time_log(f"[T16] Initial memory - Server PID {server.pid}: {init_srv_mem / 1024 / 1024:.2f} MB, Client PID {client.pid}: {init_cli_mem / 1024 / 1024:.2f} MB")
-        srv_mem_before = 0
-        cli_mem_before = 0
+        srv_memory_samples = []
+        cli_memory_samples = []
+        live_samples = {"Server": [], "Client": []}
 
         # Get list of files from target server
         url_base = f"http://127.0.0.1:{HTTP_TARGET_PORT}/"
@@ -1605,6 +1711,7 @@ def test_quic_load_test(binary_path):
                 for fname, ok, info in proxy_results:
                     if not ok:
                         print_time_log(f"[T16] FAIL: proxy failure for {fname}: {info} (iteration {run_idx + 1})")
+                        dump = True
                         return False
                 print_time_log(f"[T16] Proxy parallel requests OK (iteration {run_idx + 1})")
 
@@ -1619,75 +1726,67 @@ def test_quic_load_test(binary_path):
                     if h3_stderr: print_time_log(f"STDERR: {h3_stderr}")
                     return False
                     
-                # Parse aioquic output
-                h3_results = {}
-                for line in h3_stdout.splitlines():
-                    if line.startswith("FILE:"):
-                        parts = line.split(":")
-                        if len(parts) >= 5 and parts[2] == "OK":
-                            fname = parts[1]
-                            size = int(parts[3])
-                            md5 = parts[4]
-                            h3_results[fname] = (size, md5)
-                        else:
-                            print_time_log(f"[T16] FAIL: aioquic error line: {line} (iteration {run_idx + 1})")
-                            return False
+                try:
+                    h3_results = _parse_h3_load_results(h3_stdout, test_files)
+                except ValueError as e:
+                    print_time_log(f"[T16] FAIL: {e} (iteration {run_idx + 1})")
+                    return False
 
                 import hashlib
-                for fname in test_files:
-                    if fname not in h3_results:
-                        print_time_log(f"[T16] FAIL: {fname} missing from H3 results (iteration {run_idx + 1})")
-                        return False
-                    
+                for fname in set(test_files):
                     with open(os.path.join(TEST_FILES_DIR, fname), 'rb') as f:
                         want_data = f.read()
                         want_md5 = hashlib.md5(want_data).hexdigest()
                         want_size = len(want_data)
                     
-                    got_size, got_md5 = h3_results[fname]
-                    if got_size != want_size or got_md5 != want_md5:
-                        print_time_log(f"[T16] FAIL: H3 content mismatch for {fname} (got {got_size} bytes, md5 {got_md5}; want {want_size} bytes, md5 {want_md5}) (iteration {run_idx + 1})")
-                        return False
+                    for got_size, got_md5 in h3_results[fname]:
+                        if got_size != want_size or got_md5 != want_md5:
+                            print_time_log(f"[T16] FAIL: H3 content mismatch for {fname} (got {got_size} bytes, md5 {got_md5}; want {want_size} bytes, md5 {want_md5}) (iteration {run_idx + 1})")
+                            return False
                 
                 print_time_log(f"[T16] H3 parallel requests OK (iteration {run_idx + 1})")
             
-            if run_idx == 0:
-                srv_mem_before = get_process_memory(server.pid)
-                cli_mem_before = get_process_memory(client.pid)
-                print_time_log(f"[T16] Baseline memory recorded - Server PID {server.pid}: {srv_mem_before / 1024 / 1024:.2f} MB, Client PID {client.pid}: {cli_mem_before / 1024 / 1024:.2f} MB")
-
-            if run_idx < LOAD_RUNS - 1:
-                print_time_log(f"[T16] Sleeping 3 seconds before next iteration...")
-                time.sleep(3)
-        
-        # Wait a short cooldown for connections to completely close and clear from memory.
-        print_time_log("[T16] Waiting 5 seconds for connections to tear down and memory recovery...")
-        time.sleep(5)
-
-        # Get final memory usage and check for memory leaks
-        srv_mem_after = get_process_memory(server.pid)
-        cli_mem_after = get_process_memory(client.pid)
-        print_time_log(f"[T16] Final memory - Server PID {server.pid}: {srv_mem_after / 1024 / 1024:.2f} MB, Client PID {client.pid}: {cli_mem_after / 1024 / 1024:.2f} MB")
+            # Match baseline and final lifecycle state, not a CPU-dependent delay.
+            if not _wait_t16_quiescence(server, client, srv_log,
+                                        (run_idx + 1) if ENABLE_H3_LOAD else 0):
+                print_time_log(f"[T16] FAIL: teardown incomplete (iteration {run_idx + 1})")
+                dump = True
+                return False
+            # Capture both offsets now, before waiting for either process's next tick.
+            offsets = {"Server": os.path.getsize(srv_log), "Client": os.path.getsize(cli_log)}
+            print_time_log(f"[T16] Teardown complete (iteration {run_idx + 1})")
+            for name, process, log_path in (("Server", server, srv_log),
+                                             ("Client", client, cli_log)):
+                sample = _wait_t16_live_counters(process, log_path, offsets[name])
+                live_samples[name].append(sample)
+                print_time_log(f"[T16] {name} live round {run_idx + 1}: " +
+                               " ".join(f"{key}={value}" for key, value in sample.items()))
+            srv_memory_samples.append(get_process_memory(server.pid))
+            cli_memory_samples.append(get_process_memory(client.pid))
+            print_time_log(f"[T16] RSS round {run_idx + 1}: "
+                           f"server={srv_memory_samples[-1] / 1024 / 1024:.2f} MB "
+                           f"client={cli_memory_samples[-1] / 1024 / 1024:.2f} MB")
 
         leak_detected = False
-
-        if srv_mem_before > 0:
-            srv_ratio = (srv_mem_after - srv_mem_before) / srv_mem_before
-            print_time_log(f"[T16] Server memory change: {srv_ratio * 100:.2f}%")
-            if srv_ratio > SERVER_MEMORY_GROW_THRESHOLD:
-                print_time_log(f"[T16] FAIL: Server memory grew by {srv_ratio * 100:.2f}%, exceeding {SERVER_MEMORY_GROW_THRESHOLD * 100}% threshold (possible memory leak)")
+        for name, samples in live_samples.items():
+            errors = _t16_live_counter_errors(samples[0], samples[-1])
+            print_time_log(f"[T16] {name} allocator bytes round 1/10: "
+                           f"{samples[0]['bytes']}/{samples[-1]['bytes']}")
+            for error in errors:
+                print_time_log(f"[T16] FAIL: {name} live-counter leak: {error}")
                 leak_detected = True
-        else:
-            print_time_log("[T16] WARN: Could not retrieve server initial memory")
-
-        if cli_mem_before > 0:
-            cli_ratio = (cli_mem_after - cli_mem_before) / cli_mem_before
-            print_time_log(f"[T16] Client memory change: {cli_ratio * 100:.2f}%")
-            if cli_ratio > CLIENT_MEMORY_GROW_THRESHOLD:
-                print_time_log(f"[T16] FAIL: Client memory grew by {cli_ratio * 100:.2f}%, exceeding {CLIENT_MEMORY_GROW_THRESHOLD * 100}% threshold (possible memory leak)")
+        for name, samples, threshold in (
+                ("Server", srv_memory_samples, SERVER_MEMORY_GROW_THRESHOLD),
+                ("Client", cli_memory_samples, CLIENT_MEMORY_GROW_THRESHOLD)):
+            ratio = _t16_sustained_growth(samples)
+            print_time_log(f"[T16] {name} RSS series (MB): " +
+                           ", ".join(f"{value / 1024 / 1024:.2f}" for value in samples))
+            print_time_log(f"[T16] {name} sustained growth: {ratio * 100:.2f}% "
+                           f"(rounds 4-10 slope over {LOAD_RUNS - 4} observed intervals)")
+            if ratio > threshold:
+                print_time_log(f"[T16] FAIL: {name} sustained RSS growth exceeds "
+                               f"{threshold * 100:.1f}% (possible memory leak)")
                 leak_detected = True
-        else:
-            print_time_log("[T16] WARN: Could not retrieve client initial memory")
 
         if leak_detected:
             if hasattr(signal, 'SIGINFO'):
@@ -1721,12 +1820,18 @@ def test_stateless_reset(binary_path):
     """T17: Client reconnects promptly after server restart."""
     print_time_log("[T17] stateless_reset: starting...")
 
+    # Keep the reset token valid across restarts; forbid TCP fallback.
+    quic_options = {
+        "enabled": True,
+        "debug_disable_tcp": True,
+        "stateless_reset_secret": "fulltest-t17-reset-secret",
+    }
     srv_cfg = patch_quic_config_with_suffix("quic_server_config.json", "T17.tmp.json", {
         "remote_port": HTTP_TARGET_PORT,
-        "quic": {"enabled": True},
+        "quic": quic_options,
     })
     cli_cfg = patch_quic_config_with_suffix("quic_client_config.json", "T17.tmp.json", {
-        "quic": {"enabled": True},
+        "quic": {"enabled": True, "debug_disable_tcp": True},
     })
 
     server, srv_log = start_trojan(binary_path, srv_cfg)
@@ -1769,15 +1874,18 @@ def test_stateless_reset(binary_path):
         print_time_log("[T17] Step 1 OK – first proxy request succeeded")
 
         # ── Step 2: kill server and restart it ──
+        cli_restart_offset = _get_log_offset(cli_log)
+        server.kill()  # Do not send a graceful QUIC CONNECTION_CLOSE.
+        server.wait(timeout=5)
         close_process(server, False)
         server = None
-        print_time_log("[T17] Server killed – restarting with a new secret...")
+        print_time_log("[T17] Server stopped – restarting with the same reset secret...")
         time.sleep(0.5)
 
         # Write a fresh config so the new output log is separate.
         srv_cfg2 = patch_quic_config_with_suffix("quic_server_config.json", "T17.svr2.tmp.json", {
             "remote_port": HTTP_TARGET_PORT,
-            "quic": {"enabled": True},
+            "quic": quic_options,
         })
         server, srv_log2 = start_trojan(binary_path, srv_cfg2)
         if not server:
@@ -1791,13 +1899,15 @@ def test_stateless_reset(binary_path):
             return False
         print_time_log("[T17] Step 2 OK – server restarted")
 
-        # ── Step 3: the stale request must fail promptly instead of hanging ──
+        # A reset may already have triggered reconnect before this request.
         started = time.monotonic()
         try:
-            http_get_via_socks5(url, QUIC_CLIENT_PROXY_PORT, timeout=3)
-            print_time_log("[T17] FAIL: stale request unexpectedly succeeded")
-            dump = True
-            return False
+            got_stale = http_get_via_socks5(url, QUIC_CLIENT_PROXY_PORT, timeout=3)
+            if got_stale != want:
+                print_time_log("[T17] FAIL: restart request content mismatch")
+                dump = True
+                return False
+            print_time_log("[T17] Step 3 OK – request succeeded after early reconnect")
         except Exception as e:
             elapsed = time.monotonic() - started
             if elapsed >= 3:
@@ -1806,8 +1916,20 @@ def test_stateless_reset(binary_path):
                 return False
             print_time_log(f"[T17] Step 3 OK – stale request failed in {elapsed:.2f}s: {type(e).__name__}")
 
+        # Require reset detection, not an idle timeout or TCP fallback.
+        if not _wait_for_log_after(cli_log, r"QuicConnection: stateless reset received",
+                                   cli_restart_offset, timeout=3):
+            print_time_log("[T17] FAIL: client did not detect stateless reset")
+            dump = True
+            return False
+        if not wait_for_log(srv_log2, r"QuicServerEndpoint: sending Stateless Reset", timeout=3):
+            print_time_log("[T17] FAIL: restarted server did not send stateless reset")
+            dump = True
+            return False
+
         # ── Step 4: automatic reconnect must make the next request succeed ──
-        if not wait_for_log(cli_log, r"QuicClientEndpoint: retrying QUIC connection", timeout=3):
+        if not _wait_for_log_after(cli_log, r"QuicClientEndpoint: retrying QUIC connection|reconnect quic client!",
+                                   cli_restart_offset, timeout=3):
             print_time_log("[T17] FAIL: client did not retry QUIC after server restart")
             dump = True
             return False
@@ -1870,7 +1992,7 @@ def _wait_for_log_after(log_path, pattern, offset, timeout=10):
 
 
 def _start_udp_echo_server(port):
-    """Start a UDP echo server on 127.0.0.1:port.  Returns (socket, stop_event)."""
+    """Start UDP echo server; return (socket, stop_event, thread)."""
     import threading
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.bind(('127.0.0.1', port))
@@ -1884,9 +2006,14 @@ def _start_udp_echo_server(port):
                 s.sendto(data, addr)
             except socket.timeout:
                 continue
+            except OSError:
+                if not stop.is_set():
+                    raise
+                break
 
-    threading.Thread(target=_run, daemon=True).start()
-    return s, stop
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+    return s, stop, thread
 
 
 def _socks5_udp_send(proxy_host, proxy_port, target_host, target_port, data, timeout=5):
@@ -1971,6 +2098,7 @@ def test_bidirectional_stream_close(binary_path):
     dump = False
     udp_echo_sock = None
     udp_stop = None
+    udp_thread = None
     try:
         if not server or not client:
             dump = True
@@ -2018,7 +2146,7 @@ def test_bidirectional_stream_close(binary_path):
 
         # ── Part B: UDP stream close via m_udp_fin_received ──────────────────
         print_time_log("[T18] Part B: UDP proxy stream close")
-        udp_echo_sock, udp_stop = _start_udp_echo_server(UDP_ECHO_PORT)
+        udp_echo_sock, udp_stop, udp_thread = _start_udp_echo_server(UDP_ECHO_PORT)
         log_offset_b = _get_log_offset(srv_log)
 
         echo = _socks5_udp_send("127.0.0.1", QUIC_CLIENT_PROXY_PORT,
@@ -2043,6 +2171,8 @@ def test_bidirectional_stream_close(binary_path):
     finally:
         if udp_stop:
             udp_stop.set()
+        if udp_thread:
+            udp_thread.join()  # recvfrom wakes within the socket's 0.3s timeout.
         if udp_echo_sock:
             try:
                 udp_echo_sock.close()

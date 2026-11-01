@@ -111,19 +111,23 @@ def make_http_server(bind_host, port, ipv6_v6only=False):
     except ImportError:
         server_cls = HTTPServer
 
-    if not is_ipv6_host(bind_host):
-        return server_cls((bind_host, port), ServerHandler)
-
-    v6only_value = 1 if ipv6_v6only else 0
-
-    class V6HTTPServer(server_cls):
-        address_family = socket.AF_INET6
+    class LocalHTTPServer(server_cls):
+        # T16 drives 30 SOCKS and 30 H3 upstream connections concurrently.
+        request_queue_size = 128
+        address_family = socket.AF_INET6 if is_ipv6_host(bind_host) else socket.AF_INET
 
         def server_bind(self):
-            self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, v6only_value)
-            super().server_bind()
+            if self.address_family == socket.AF_INET6:
+                self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY,
+                                       1 if ipv6_v6only else 0)
+            # HTTPServer.server_bind calls getfqdn(), which can block on external DNS.
+            # This fixture only needs a numeric bind address, not a canonical name.
+            from socketserver import TCPServer
+            TCPServer.server_bind(self)
+            self.server_name = bind_host
+            self.server_port = self.server_address[1]
 
-    return V6HTTPServer((bind_host, port), ServerHandler)
+    return LocalHTTPServer((bind_host, port), ServerHandler)
 
 
 def run(dir, port, bind_host="127.0.0.1", ipv6_v6only=False):
@@ -141,7 +145,12 @@ def run(dir, port, bind_host="127.0.0.1", ipv6_v6only=False):
     httpd = make_http_server(bind_host, port, ipv6_v6only)
     print_time_log("start fulltest server " + bind_host + " port: " + str(port) +
                    (" ipv6_v6only" if ipv6_v6only else ""))
-    httpd.serve_forever()
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        httpd.server_close()
 
 
 if __name__ == '__main__':

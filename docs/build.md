@@ -166,7 +166,7 @@ Options:
 
 ## Docker Build Environment
 
-To ensure a consistent build environment and run tests easily, you can use the provided Docker scripts. These scripts use a lightweight Alpine Linux image with all necessary dependencies pre-installed (including mimalloc).
+To ensure a consistent build environment and run tests easily, you can use the provided Docker scripts. These scripts use a Debian trixie image with all necessary dependencies pre-installed (including mimalloc).
 
 ### 1. Build the Docker Image
 First, build the local Docker image (`trojan-builder`):
@@ -194,6 +194,52 @@ This script will:
 2.  Configure CMake with `-DENABLE_MIMALLOC=ON`.
 3.  Compile the project.
 4.  Run the full Python integration test suite (excluding DNS tests).
+
+### CI IPv6 coverage
+
+Azure Linux Test runs `tests/test_*.py`, `fulltest_main.py BINARY -6`, and
+`fulltest_main.py BINARY -6 --ipv6-nat --ipv6-include-expected-fail` before the IPv4 suites.
+The privileged container installs `iproute2`, `iptables`, `nftables`, a C++ compiler,
+and Boost headers, enables kernel IPv6, and checks binding to `::1`.
+`TP_IPV6_REQUIRE_ALL=1` makes a skipped required IPv6 case fail CI; the intentionally
+opt-in no-rule NAT and REDIRECT/TPROXY cases are not required in the core-only run.
+TUN and NAT coverage requires `/dev/net/tun`, network namespaces, and passwordless sudo.
+Hosts updates prefer atomic rename. Container bind mounts returning `EBUSY` or
+`EXDEV` use an in-place rewrite with `fsync` and readback verification, including
+the sudo path. Exit and signal handlers restore the original bytes.
+The local Docker image includes the same firewall tools.
+
+DNS forwarding (`-d 5333`) uses a local UDP DNS fixture at `127.0.0.1:53`,
+reserved `.test` names, fixed answers, and NXDOMAIN checks for both direct and
+proxied queries. Timeouts fail the suite; no public resolver or Internet domain
+is required. The IPv4 TUN job routes only fixture destinations
+`188.188.188.188/32` and `199.199.199.199/32` through `tun0`, leaving the
+runner's default route intact. Linux CI runs as root. macOS/Windows report an explicit DNS skip
+only when binding the local fixture fails (for example, privileged port access
+or another DNS service).
+
+T16 enables `log_live_counters` only in its temporary configs. Fresh periodic
+snapshots after quiescence record tp allocator live objects/bytes, Session count,
+QUIC connections, and QUIC proxy sessions. The primary leak gate compares rounds
+1 and 10: lifecycle counts must match exactly, and allocator object delta must
+stay within 200 objects. Missing telemetry fails; allocator bytes are diagnostic.
+`check_t16_live_counters.py` proves synthetic lifecycle/allocation leaks fail.
+
+RSS remains a secondary gate: sample every round, discard the first three
+warm-up rounds, and measure median pairwise slope across rounds 4-10 relative
+to median steady-state RSS. Growth above 80% fails. No tail heuristic or
+warm-up extrapolation is used. `tests/test_t16_rss_growth.py` checks warm-up,
+noise, and large sustained resident leaks; object accounting detects smaller
+retained allocations independently of mimalloc's resident-page behavior.
+
+QUIC regression checks require one validated H3 result per request, including
+repeated paths. T17 requires observed Stateless Reset receipt, server reset
+transmission, a fresh handshake, and matching response content; either immediate
+request failure or successful early recovery is valid.
+
+macOS and Windows keep the IPv4 and QUIC suites. The current `-6` suite edits
+`/etc/hosts` and includes Linux TUN/netns checks, so it is not an unprivileged
+cross-platform suite. IPv6 coverage on those runners remains unverified.
 
 After installation, config examples will be installed to `${CMAKE_INSTALL_DOCDIR}/examples/` and a server config will be installed to `${CMAKE_INSTALL_FULL_SYSCONFDIR}/trojan/config.json`.
 

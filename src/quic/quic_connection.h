@@ -45,6 +45,12 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     QuicConnection(QuicEndpoint& endpoint, std::shared_ptr<QuicTlsCtx> tls_ctx,
                    const boost::asio::ip::udp::endpoint& peer);
     ~QuicConnection();
+    static uint64_t live_count() { return s_live_count.load(std::memory_order_relaxed); }
+
+  private:
+    inline static std::atomic<uint64_t> s_live_count{0};
+
+  public:
 
     QuicConnection(const QuicConnection&)            = delete;
     QuicConnection& operator=(const QuicConnection&) = delete;
@@ -75,8 +81,9 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     // called by QuicProxySession, this func has re-try timer and ack-delay mechanisms 
     void send_stream_data(int64_t stream_id, std::shared_ptr<ReadBufWithGuard> buf, bool fin, IoHandler sent_cb);
 
-    // called by h3 which has own re-try timer and ack
-    int64_t send_stream_vecs(int64_t stream_id, const ngtcp2_vec* datav, std::size_t datavcnt, bool fin, const char* debug_path);
+    // Called by H3, which owns retries and ACKs. accepted also distinguishes
+    // an accepted empty FIN (true, 0 bytes) from backpressure (false, 0 bytes).
+    int64_t send_stream_vecs(int64_t stream_id, const ngtcp2_vec* datav, std::size_t datavcnt, bool fin, bool& accepted, const char* debug_path);
     
     // Open a new server-initiated unidirectional stream (for H3 control/QPACK).
     // Returns the stream ID, or -1 on error.
@@ -184,7 +191,7 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
 
     // Send vectorised stream data sourced from nghttp3 (multi-vec variant).
     // Returns pdatalen (bytes accepted by ngtcp2), 0 if flow-controlled, -1 on error.
-    int64_t send_stream_vecs_impl(int64_t stream_id, const ngtcp2_vec* datav, std::size_t datavcnt, bool fin, const char* debug_path);
+    int64_t send_stream_vecs_impl(int64_t stream_id, const ngtcp2_vec* datav, std::size_t datavcnt, bool fin, bool& accepted, const char* debug_path);
 
     QuicEndpoint& m_endpoint;
     std::shared_ptr<QuicTlsCtx> m_tls_ctx;

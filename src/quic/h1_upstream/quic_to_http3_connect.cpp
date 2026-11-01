@@ -164,16 +164,18 @@ void QuicToHttp3Connect::pump_h3_response(const char* debug_path) {
         if (stream_id == -1) break;  // nothing to write
 
         // nghttp3_vec and ngtcp2_vec are layout-compatible ({uint8_t* base, size_t len})
+        bool accepted = false;
         int64_t consumed = m_owner.send_stream_vecs(
             stream_id,
             reinterpret_cast<const ngtcp2_vec*>(h3vecs),
             static_cast<std::size_t>(n),
-            fin != 0, debug_path);
+            fin != 0, accepted, debug_path);
 
-        // Always report back to nghttp3 how many bytes ngtcp2 accepted
-        int rv_offset = nghttp3_conn_add_write_offset(
+        // A zero offset commits an empty FIN in nghttp3. Do not commit it
+        // when congestion prevented ngtcp2 from accepting a stream frame.
+        int rv_offset = accepted && consumed >= 0 ? nghttp3_conn_add_write_offset(
             m_conn, stream_id,
-            consumed > 0 ? static_cast<std::size_t>(consumed) : 0);
+            consumed > 0 ? static_cast<std::size_t>(consumed) : 0) : 0;
         if (rv_offset < 0) {
             _log_with_date_time(
                 "QuicToHttp3Connect::pump_h3_response: add_write_offset failed: " +
@@ -200,7 +202,7 @@ void QuicToHttp3Connect::pump_h3_response(const char* debug_path) {
             continue; // Keep pumping for other streams
         }
 
-        if (consumed == 0 && n > 0) {
+        if (consumed == 0 && (n > 0 || !accepted)) {
             // QUIC flow-control blocked
             if (m_owner.is_stream_flow_control_blocked(stream_id)) {
                 _log_with_date_time("QuicToHttp3Connect::pump_h3_response: stream " + tp::to_string(stream_id) + 

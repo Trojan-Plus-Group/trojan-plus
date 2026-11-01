@@ -1,225 +1,109 @@
-# Trojan Plus - Development Context
+# Trojan Plus: Agent Guide
 
-`trojan-plus` is a high-performance C++17 proxy server compatible with the original Trojan protocol. It is optimized for cross-platform deployment (Linux, macOS, Windows, Android, iOS) and incorporates key experimental features:
-- **QUIC / HTTP3** - Trojan-over-QUIC transport via ngtcp2 + nghttp3 + wolfSSL, supporting HTTP/1.1 and HTTP/3 upstream fallback
-- **UDP over NAT** - High-speed transparent UDP proxy
-- **Pipeline Mode** - Request pipelining to minimize latency
-- **Load Balancing** - Multi-upstream server load balancing and failover
-- **TUN Mode** - Integrated lwIP user-space TCP/IP stack with transparent TUN proxying and built-in DNS server
-- **ICMP Proxying** - ICMP echo/reply proxying daemon
-- **Custom Memory Pool** - Fine-grained memory tracking and mimalloc allocator integration
+C++17 Trojan-compatible proxy for Linux, macOS, Windows, Android and iOS.
+Run modes: `client` (SOCKS5), `server`, `forward`, `nat` (Linux), `client_tun`.
+QUIC uses ngtcp2 + nghttp3 + wolfSSL; TUN uses embedded lwIP.
 
-### Run Modes (`run_type`)
-- `client`: SOCKS5 local client mode
-- `server`: Server mode accepting Trojan connections, with HTTP/HTTPS fallback
-- `forward`: Port forwarding proxy mode
-- `nat`: Transparent proxy via Linux netfilter/iptables NAT (Linux only)
-- `client_tun`: TUN interface transparent proxy mode (Linux / mobile platforms)
+## Conventions and safety
 
-### Target Artifacts
-- **Executable**: Standalone CLI binary (`trojan` / `trojan.exe`)
-- **Shared Library (`.so`)**: Android JNI library (`libtrojan.so`) with JNI exports in `com.trojan_plus.android.TrojanPlusVPNService`
-- **Static Library / Framework (`.a` / `.xcframework`)**: iOS / macOS library (`libtrojan.a` / `trojan.xcframework`) exposing unified C exports in [src/platform_exports.h](src/platform_exports.h) (`trojan_run_main`, `trojan_stop_main`, `trojan_get_version`)
+- All repository text is English: comments, docs, log messages, commit messages and PR text.
+- No commit/push unless the user or maintainer's workflow explicitly requests it; never push to master.
+- Preserve user changes and failure evidence. Do not overwrite failed run results with retries.
+- Follow `.clang-format` and Microsoft GSL conventions.
+- Do not enable `ENABLE_SSL_KEYLOG` outside debugging: it exposes TLS secrets.
 
----
+## Non-obvious architecture rules
+
+- Linux favors multiple processes with `SO_REUSEPORT`, not threads sharing session state.
+  Each process has its own `boost::asio::io_context`; session state stays on that event loop.
+- Performance-sensitive core/session paths use `tp::` containers, not raw `std::` heap containers.
+  See [src/mem/memallocator.h](src/mem/memallocator.h): `tp::string`, `tp::vector`,
+  `TP_NEW`/`TP_DELETE`, `TP_MALLOC`/`TP_FREE`, `TP_MAKE_UNIQUE`, `TP_MAKE_SHARED`.
+  Wrap Asio handlers with `tp::bind_mem_alloc`.
+- Main directories: `src/core` (config/lifecycle), `src/session` (proxy modes),
+  `src/proto` (wire formats), `src/ssl`, `src/quic` (including `h1_upstream`),
+  `src/tun` (lwIP/DNS), `src/mem`.
+- Submodules include wolfSSL, ngtcp2, nghttp3, mimalloc, GSL, badvpn and mobile dependencies.
+
+## Address, IPv6 and DNS invariants
+
+- SOCKS5/Trojan: ATYP 1 for IPv4; ATYP 4 for native IPv6. Unwrap IPv4-mapped
+  addresses to IPv4. Keep scoped literals (`%zone`) as ATYP 3 text.
+- Log IPv6 endpoints as `[addr]:port`. `tcp.ipv6_only` controls `IPV6_V6ONLY`
+  on `::` listeners; do not assume kernel defaults.
+- `tun.net_ipv6` / `tun.net_ipv6_prefix` enable TUN IPv6; old IPv4 configs remain valid.
+- Built-in DNS caches by `(name, qtype)`, including AAAA and RFC 2308 negative answers.
+- Route list files (`cn_mainland_ips_file`, `white_ips`, `proxy_ips`) accept mixed IPv4/IPv6.
+  Mainland modes keep proxying native IPv6 when the mainland list has no IPv6 entries.
+- GFWList domains always use the proxied DNS upstream in every route mode because
+  mainland answers may be poisoned. Do not gate this on `route_gfwlist`.
+- `dns.up_dns_server` / `dns.up_gfw_dns_server` must contain IP literals, not hostnames.
+- Details: [docs/config.md](docs/config.md),
+  [tests/LinuxFullTest/IPV6_BASELINE.md](tests/LinuxFullTest/IPV6_BASELINE.md).
 
 ## Build
 
-### Prerequisites
-- **C++17 Compiler**: GCC >= 7.0, Clang >= 5.0, AppleClang, or MSVC >= 2017 (15.7+)
-- **CMake**: >= 3.20
-- **Boost**: >= 1.77.0 (1.85.0+ recommended, program_options required)
-- **Submodules / Included**: wolfSSL, ngtcp2, nghttp3, mimalloc, GSL, badvpn (lwIP)
-- **Mobile SDKs**: Android NDK >= r23b (Android); Xcode with iOS SDK (iOS)
-- **Test Dependencies**: Python 3 with `PySocks`, `psutil`, `dnspython`, `aioquic`
-
-### Quick Build & Test Scripts
-The repository provides unified platform-aware scripts:
-```bash
-# macOS / Linux / Windows MSYS (auto-detects CPU count and platform flags)
-./build_and_test.sh
-
-# Windows (MSVC batch script)
-build_and_test.bat
-
-# Docker (Linux automated build & test)
-./build_and_test_docker_linux.sh
-```
-
-### Standard CMake Build
+Requires C++17, CMake >=3.20, Boost >=1.77 (`program_options`), initialized submodules.
 
 ```bash
-# Initialize submodules
 git submodule update --init --recursive
-
-# Linux
 cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --parallel $(nproc)
-
-# macOS
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --parallel $(sysctl -n hw.ncpu)
-
-# Windows (MSVC)
-cmake -B build
-cmake --build build --config Release --parallel
+cmake --build build --parallel
 ```
 
-### Mobile Platforms
-```bash
-# Android (.so for arm64-v8a, x86_64, etc.)
-./build_android_so.sh /path/to/android-ndk
-
-# iOS (.a static library)
-./make_ios.sh
-
-# iOS XCFramework
-./make_xcframework_ios.sh
-```
-
-### CMake Options
-| Option | Default | Description |
-| :--- | :--- | :--- |
-| `ENABLE_QUIC` | `ON` | Build QUIC/HTTP3 transport via ngtcp2 + nghttp3 + wolfSSL |
-| `ENABLE_MIMALLOC` | `ON` | Build and statically link mimalloc allocator |
-| `ENABLE_NAT` | `ON` | Build with Linux NAT transparent proxy (Linux only) |
-| `ENABLE_REUSE_PORT` | `ON` | Enable `SO_REUSEPORT` socket option (Linux only) |
-| `ENABLE_TLS13_CIPHERSUITES` | `ON` | Enable TLS 1.3 ciphersuites support |
-| `FORCE_TCP_FASTOPEN` | `OFF` | Force build with TCP Fast Open support |
-| `BUILD_LIBRARY` | `OFF` | Build as library without `main()` (auto-enabled on iOS/Android) |
-| `ENABLE_SSL_KEYLOG` | `OFF` | Enable SSLKEYLOGFILE export (**DEBUG ONLY** - exposes TLS master secrets) |
-| `USE_GUARD_BACKSTACK` | `OFF` | Wrap functions in try/catch for backstack error guarding |
-| `ENABLE_ANDROID_LOG` | `ON` | Output logs to Android LogCat (Android only) |
-| `ENABLE_IOS_LOG` | `ON` | Output logs to iOS unified logging (iOS only) |
-
----
+Use `build_and_test.sh` on Linux/macOS/MSYS, `build_and_test.bat` on MSVC,
+or `build_and_test_docker_linux.sh` for Docker. Important defaults:
+`ENABLE_QUIC=ON`, `ENABLE_MIMALLOC=ON`, Linux `ENABLE_NAT=ON`.
+`BUILD_LIBRARY` produces libraries and is enabled automatically for mobile builds.
+Android: `build_android_so.sh`; iOS: `make_ios.sh`, `make_xcframework_ios.sh`.
+Library exports: [src/platform_exports.h](src/platform_exports.h).
+More: [docs/build.md](docs/build.md), `CMakeLists.txt`.
 
 ## Testing
 
-### 修改后的日常远端验证闭环
+Install Python dependencies: `pip install PySocks psutil dnspython aioquic`.
+Run from `tests/LinuxFullTest`; use an absolute binary path.
+Suites without `-g` need existing `tests/LinuxFullTest/html`; generate content with `-g`.
 
-用户要求执行本地到远端验证时，严格按以下顺序迭代：
-
-1. 本地修改代码。
-2. 本地构建并运行相关 fulltest。
-3. 本地测试全部通过后提交本轮代码；提交仅用于用户明确要求的验证流程，禁止 `git push`。
-4. 使用 `quic_proxy_test_remote/scripts/sync_remote.py --jobs 1` 通过 git bundle 将远端同名测试分支 `reset --hard` 到本地当前已提交分支；不得 reset 其他分支或执行 `git clean`。
-5. 在远端以相同 commit 单线程编译。
-6. 执行 `client`、`nat`、`client_tun` 三模式 TCP TLS/强制 QUIC smoke。
-7. 六组 smoke、内容校验、协议校验和 cleanup 全部通过，才宣布本轮验证通过。
-
-本地构建或 fulltest 失败时，返回步骤 1 修复；不得提交失败版本。远端同步、编译或多模式 smoke 失败时，保留失败证据，返回步骤 1 修复；本地测试通过后创建新 commit、新 Run ID，再同步和重测。禁止修改或删除原失败结果。
-
-详细命令、安全规则和验收条件见 [quic_proxy_test_remote/AGENTS.md](quic_proxy_test_remote/AGENTS.md)。
-
-Integration tests reside in [tests/LinuxFullTest/](tests/LinuxFullTest/).
-
-### Python Dependencies
 ```bash
-pip install PySocks psutil dnspython aioquic
+python3 fulltest_main.py /absolute/path/to/trojan -g -n -f
+sudo python3 fulltest_main.py /absolute/path/to/trojan -g -n -d 5333 -f
+sudo python3 fulltest_main.py /absolute/path/to/trojan -t -d 5333
+python3 fulltest_main.py /absolute/path/to/trojan -q
+python3 fulltest_main.py /absolute/path/to/trojan -q T22
+sudo python3 fulltest_main.py /absolute/path/to/trojan -6
+sudo env TP_IPV6_REQUIRE_ALL=1 python3 fulltest_main.py /absolute/path/to/trojan -6 --ipv6-nat --ipv6-include-expected-fail
 ```
 
-### Running Tests
-```bash
-cd tests/LinuxFullTest/
+- QUIC cases extend through T22; `fulltest_quic.py BINARY all` is the direct runner.
+- TUN requires root, `/dev/net/tun`, and appropriate interface/routes; see CI setup.
+  IPv6 NAT needs root/passwordless sudo, network namespaces and ip6tables/nftables.
+- CI uses `TP_IPV6_REQUIRE_ALL=1`: required IPv6 cases must fail rather than silently skip.
+  Container `/etc/hosts` may be bind-mounted; the IPv6 suite falls back to in-place rewrite,
+  verifies readback and restores original bytes on exit/signals.
+- `-d` uses a local DNS fixture at `127.0.0.1:53`, no public resolver.
+  macOS/Windows skip DNS only when the fixture cannot bind; Linux bind failures fail.
+- From repository root, run `tests/test_*.py` with Python. Production-code compile checks
+  require a C++17 compiler and Boost headers. Also run relevant
+  `tests/LinuxFullTest/check_*.py` regressions; some require the Python dependencies above.
+- Stable tests use event-based waits with bounded deadlines, not fixed sleeps as synchronization.
+  Avoid public-network dependencies. Verify flaky fixes with repeated runs on one CPU.
+- T16 enables optional `log_live_counters` (default false): periodic tp allocator live
+  objects/bytes, Session, QUIC connection and proxy-session counts. Fresh quiescent snapshots
+  are the primary leak gate; RSS is secondary with an 80% sustained-growth threshold.
+- [azure-pipelines.yml](azure-pipelines.yml) runs IPv4, QUIC, local DNS and, on Linux,
+  IPv6 plus unit/regression checks. A red pipeline is a blocker.
+- Manual fixtures: [quic_proxy_test/](quic_proxy_test/).
 
-# Standard proxy & pipeline test
-python3 fulltest_main.py /path/to/build/trojan -g -n
+## Remote validation: only when requested
 
-# Linux Full Test with DNS & Root privileges
-sudo python3 fulltest_main.py /path/to/build/trojan -g -d 5333
+Follow [quic_proxy_test_remote/AGENTS.md](quic_proxy_test_remote/AGENTS.md) for host
+confirmation, exact commands, safe sync, result retention and cleanup.
 
-# TUN Mode (requires root / privileges)
-sudo python3 fulltest_main.py /path/to/build/trojan -t -n -d 5333
-
-# Server Fallback test
-python3 fulltest_main.py /path/to/build/trojan -f
-
-# QUIC Test Suite (runs all QUIC cases T1-T19)
-python3 fulltest_main.py /path/to/build/trojan -q
-
-# Run single QUIC test case (e.g. T4)
-python3 fulltest_main.py /path/to/build/trojan -q T4
-
-# Direct QUIC test runner
-python3 fulltest_quic.py /path/to/build/trojan [all|T1|T2|...|T19]
-```
-> [!NOTE]
-> On macOS, DNS forwarding test (`-d`) is automatically skipped in `fulltest_main.py` due to local macOS resolver timeouts.
-
-### Manual Testing Suite
-- [quic_proxy_test/](quic_proxy_test/) - Local manual verification scripts (`start_server.sh`, `start_client.sh`, `start_http1.sh`)
-- [quic_proxy_test_remote/AGENTS.md](quic_proxy_test_remote/AGENTS.md) - Required workflow and safety rules for local/remote QUIC baselines, `client`/`nat`/`client_tun` comparisons, stress tests, result retention, and cleanup. Reconfirm remote host settings before every iteration.
-
----
-
-## Architecture & Directory Layout
-
-### Codebase Organization
-- [src/core/](src/core/) - Service instantiation, lifecycle, config parser (`Config`), logging (`Log`), pipeline coordinator, ICMP daemon
-- [src/session/](src/session/) - Session implementations:
-  - `ClientSession`: Inbound SOCKS5 handling and upstream Trojan forwarding
-  - `ServerSession`: Inbound Trojan authentication, proxy tunneling, and fallback dispatch
-  - `ForwardSession` / `NATSession`: Port-forwarding and Linux netfilter NAT redirection
-  - `PipelineSession` / `PipelineComponent`: Request multiplexing over persistent connections
-  - `UDPForwardSession`: UDP packet encapsulation and proxying
-- [src/proto/](src/proto/) - Protocol headers and packet parsers: SOCKS5, Trojan protocol, DNS packets, ICMP, IPv4/IPv6 headers
-- [src/ssl/](src/ssl/) - wolfSSL context abstraction and TLS handshake logic
-- [src/tun/](src/tun/) - TUN interface (`TunDev`), embedded lwIP TCP/IP stack, built-in DNS server, and local UDP forwarder
-- [src/quic/](src/quic/) - ngtcp2 + nghttp3 + wolfSSL QUIC transport:
-  - `QuicEndpoint`, `QuicClientEndpoint`, `QuicServerEndpoint`: UDP socket event loops, connection demuxing, packet dispatch
-  - `QuicConnection`: ngtcp2 connection state machine, packet send/recv loops, crypto callbacks, loss/idle timers
-  - `QuicSession`: High-level session translating between SOCKS5/Trojan and QUIC streams
-  - [src/quic/h1_upstream/](src/quic/h1_upstream/): HTTP/1.1 and HTTP/3 upstream fallback and connection tunneling
-  - `OutboundTransport`: Unified polymorphic transport abstraction
-- [src/mem/](src/mem/) - Custom memory allocator wrappers (`tp::` namespace) backed by mimalloc
-
-### Concurrency Model
-- **Multi-Process + `SO_REUSEPORT`**: On Linux, Trojan Plus favors multi-process architecture over multi-threading for the core event loop. Each process runs an isolated, lock-free `boost::asio::io_context` bound to shared sockets via `SO_REUSEPORT` for kernel-level load balancing.
-- **Single-Threaded Session State**: Session objects operate entirely within their parent `io_context` strand/thread, eliminating mutex contention in data paths.
-
----
-
-## Submodules
-
-| Submodule | Description |
-| :--- | :--- |
-| `wolfssl` | Embedded TLS 1.3 / 1.2 library (forked for Trojan Plus) |
-| `ngtcp2` | IETF QUIC protocol implementation (forked) |
-| `nghttp3` | HTTP/3 protocol implementation (forked) |
-| `mimalloc` | High-performance memory allocator (source tree) |
-| `badvpn` | lwIP TCP/IP stack wrapper for TUN interface (forked) |
-| `GSL` | Microsoft Guidelines Support Library (C++ Core Guidelines) |
-| `trojan-plus-android-libs` | Precompiled Boost and dependencies for Android architectures |
-| `trojan-plus-ios-libs` | Precompiled Boost and dependencies for iOS device and simulator |
-
----
-
-## Development & Safety Conventions
-
-### Memory Allocators
-**Strict Rule**: Avoid raw `std::` heap containers in performance-sensitive core and session paths. Use the custom `tp::` namespace:
-```cpp
-#include "mem/memallocator.h"
-
-// Containers
-tp::string, tp::vector, tp::map, tp::list, tp::set, tp::unordered_map, ...
-
-// Allocation Macros
-TP_NEW(Type, ...) / TP_DELETE(ptr)
-TP_NEW_ARR(Type, num) / TP_DELETE_ARR(ptr)
-TP_MALLOC(size) / TP_FREE(ptr)
-TP_MAKE_UNIQUE(Type, ...) / TP_MAKE_SHARED(Type, ...)
-
-// Asio Handlers
-tp::bind_mem_alloc(handler)
-```
-See [src/mem/memallocator.h](src/mem/memallocator.h).
-
-### Code Style
-- Configured via [.clang-format](.clang-format)
-- Adhere to Microsoft GSL practices (`gsl::span`, `gsl::narrow_cast`, etc.)
-
-### Critical Git Safety Rule
-- **No Unauthorized Git Commit / Push**:
-  - **DO NOT** execute `git commit`, `git push`, or alter remote branches without explicit, direct instructions from the user.
+1. Local build and relevant fulltest must pass before a validation-only commit; no push.
+2. Run `python3 quic_proxy_test_remote/scripts/sync_remote.py --jobs 1`.
+   Sync only the same-named test branch via git bundle; never reset other branches or clean files.
+3. Build remotely at the same commit, single-threaded; keep local builds parallel.
+4. Run `client`, `nat`, `client_tun` TCP-TLS and forced-QUIC smoke: all six must pass
+   content/protocol checks and cleanup. On failure, retain evidence, fix locally, and use a new
+   commit/Run ID only after local tests pass again.

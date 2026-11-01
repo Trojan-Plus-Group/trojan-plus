@@ -83,6 +83,8 @@ class Service {
 #endif
 
     const Config& config;
+    tp::tj_unique_ptr<boost::asio::steady_timer> live_counters_timer;
+    void schedule_live_counters();
 
   public:
     explicit Service(Config& config, bool test = false);

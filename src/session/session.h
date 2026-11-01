@@ -52,7 +52,7 @@ class Session : public std::enable_shared_from_this<Session> {
     bytes_stat stat;
     const char* session_name;
 
-    static size_t s_total_session_count;
+    static std::atomic<size_t> s_total_session_count;
 
   protected:
     inline void set_session_name(const char* name) { session_name = name; }
@@ -60,6 +60,7 @@ class Session : public std::enable_shared_from_this<Session> {
   public:
     Session(Service* _service, const Config& _config);
     virtual ~Session();
+    static size_t live_count() { return s_total_session_count.load(std::memory_order_relaxed); }
 
     virtual void start()                             = 0;
     virtual void destroy(bool pipeline_call = false) = 0;

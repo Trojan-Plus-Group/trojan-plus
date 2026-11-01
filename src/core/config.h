@@ -168,6 +168,7 @@ class Config {
     int udp_forward_socket_buf;
     int udp_recv_buf;
     Log::Level log_level;
+    bool log_live_counters = false;
     SSLConfig ssl;
     TCPConfig tcp;
     Experimental experimental;
@@ -206,6 +207,7 @@ class Config {
     _define_getter_const(int, udp_forward_socket_buf);
     _define_getter_const(int, udp_recv_buf);
     _define_getter_const(Log::Level, log_level);
+    _define_getter_const(bool, log_live_counters);
     _define_getter_const(const SSLConfig&, ssl);
     _define_getter_const(const TCPConfig&, tcp);
     _define_getter_const(const Experimental&, experimental);

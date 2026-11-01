@@ -25,7 +25,7 @@
 #include "mem/memallocator.h"
 
 
-size_t Session::s_total_session_count = 0;
+std::atomic<size_t> Session::s_total_session_count{0};
 Session::Session(Service* _service, const Config& _config)
     : service(_service),
       udp_gc_timer(_service->get_io_context()),
@@ -33,13 +33,13 @@ Session::Session(Service* _service, const Config& _config)
       is_udp_forward(false),
       config(_config),
       session_name("Session") {
-    s_total_session_count++;
+    s_total_session_count.fetch_add(1, std::memory_order_relaxed);
 }
 
 Session::~Session() {
-    s_total_session_count--;
+    s_total_session_count.fetch_sub(1, std::memory_order_relaxed);
     _log_with_date_time_ALL((is_udp_forward_session() ? tp::string("[udp] ~") : tp::string("[tcp] ~")) + tp::string(session_name) +
-                            " called, current all sessions:  " + tp::to_string(s_total_session_count));
+                            " called, current all sessions:  " + tp::to_string(live_count()));
 };
 
 int Session::get_udp_timer_timeout_val() const { return get_config().get_udp_timeout(); }
