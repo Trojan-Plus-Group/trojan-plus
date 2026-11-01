@@ -1,258 +1,91 @@
 '''
- This file is part of the Trojan Plus project.
- Trojan is an unidentifiable mechanism that helps you bypass GFW.
- Trojan Plus is derived from original trojan project and writing
- for more experimental features.
- Copyright (C) 2020 The Trojan Plus Group Authors.
-
- This program is free software: you can redistribute it and/or modify
- it under the terms of the GNU General Public License as published by
- the Free Software Foundation, either version 3 of the License, or
- (at your option) any later version.
-
- This program is distributed in the hope that it will be useful,
- but WITHOUT ANY WARRANTY; without even the implied warranty of
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- GNU General Public License for more details.
-
- You should have received a copy of the GNU General Public License
- along with this program.  If not, see <http://gnu.org/licenses/>.
+Local DNS fixtures and forwarding checks for Trojan Plus fulltest.
+No system resolver or public DNS service is used.
 '''
+import socketserver
+import tempfile
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Iterator
+
+import dns.message
+import dns.rcode
 import dns.resolver
-import traceback
-import sys
-import time
-import re
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from fulltest_utils import print_time_log, is_macos_system
+import dns.rrset
+from fulltest_utils import print_time_log
 
-RESOLVER_TIMEOUT = 10
-PARALLEL_REQUEST_COUNT = 3
-MAX_RETRY_COUNT = 3
-
-query_port = 53
-print_log = False
-
-ipv4_valid_regex = r"^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$"
-
-direct_lookup_domains = [
-    'tmall.com',
-    'qq.com',
-    'baidu.com',
-    'sohu.com',
-    'login.tmall.com',
-    'taobao.com',
-    '360.cn',
-    'jd.com',
-    'pages.tmall.com',
-    'sina.com.cn',
-    'weibo.com',
-    'xinhuanet.com',
-    'csdn.net',
-    'alipay.com',
-    'zhanqi.tv',
-    'panda.tv',
-    'google.com.hk',
-    'china.com.cn',
-    'babytree.com',
-    'sogou.com',
-    'huanqiu.com',
-    'yy.com',
-    '17ok.com',
-    'detail.tmall.com',
-]
-
-proxy_lookup_domains = [
-    'mama.cn',
-    'jrj.com.cn',
-    'google.cn',
-    '1688.com',
-    'bilibili.com',
-    'so.com',
-    'yao.tmall.com',
-    'soso.com',
-    'gome.com.cn',
-    'cnblogs.com',
-    '6.cn',
-    'hao123.com',
-    'zhihu.com',
-    'rednet.cn',
-    '163.com',
-    '3c.tmall.com',
-    'aliyun.com',
-    'iqiyi.com',
-    'eastday.com',
-    'uniqlo.tmall.com',
-    'google.com',
-    'nvzhuang.tmall.com',
-    'subject.tmall.com',
-    'food.tmall.com',
-    'jianshu.com',
-]
+DIRECT_DOMAIN = "direct.fulltest.test"
+PROXY_DOMAIN = "proxy.fulltest.test"
+DIRECT_MISSING = "missing.direct.fulltest.test"
+PROXY_MISSING = "missing.proxy.fulltest.test"
+ANSWERS = {DIRECT_DOMAIN: "192.0.2.10", PROXY_DOMAIN: "192.0.2.20"}
 
 
-direct_lookup_non_domains = [
-    '34234tmall.com',
-    'qq.co564m',
-    'baid545645664u.com',
-    '456.co45645m',
-    'login.456tmall.com',
-    'tao46546bao.com',
-    '360.4564cn',
-    'jd.com',
-    'pages.564tmall.com',
-    'sina456456.45645com.cn',
-    'weibo4645.com',
-    'xinhua456456net.com',
-    'csdn.n4645et',
-    'alip46546ay.com',
-    'zhanq456456i.tv',
-    'pa46564nda.tv',
-    'google46546.com.hk',
-    'tiany76jhgfa.cn',
-    'chin54353a.com.cn',
-    'babytre345345e.com',
-    'sogo645645wefsdfu.com',
-    'huadfgffg5645645nqiu.com',
-    'yy.com45645fgddf',
-    '17ok.comdgdfg',
-    'detail.tmall.cogd242m',
-]
-
-proxy_lookup_non_domains = [
-    'mamidjod23a.cn',
-    'jrj.codfsdm.cdfdn',
-    'googldfse.csdfn',
-    '168sdf8.csdfsom',
-    'bilibdgfdgdili.cdgfdgom',
-    'sdgfdgo.cofdgfdm',
-    'yadgfo.tmaldgdl.cogdfgm',
-    'sdgfoso.codgfdgm',
-    'godgfdfgme.cdgfgom.cdgfdgn',
-    'cnbldfgogs.co232m',
-    '6.c342n',
-    'ha243o123.co2342m',
-    'zhi23424hu.c243om',
-    'red243net.c5667n',
-    '166453.co78m',
-    '368c.tm463all.c756om',
-    'ali4353yun.co876m',
-    'iqiyixyi.c675om',
-    'easrvutday.cohm',
-    'uniqdflo.tmadsdll.cfsdom',
-    'google.c1123om',
-    'nvzhua123ng.tma342ll.c43om',
-    'subje234ct.tma234ll.234com',
-    'foo2342d.tma234ll.co2342m',
-    'jian243shu.co2342m',
-]
+class DNSHandler(socketserver.BaseRequestHandler):
+    def handle(self) -> None:
+        data, sock = self.request
+        try:
+            query = dns.message.from_wire(data)
+            response = dns.message.make_response(query)
+            name = str(query.question[0].name).rstrip(".")
+            if name in ANSWERS:
+                response.answer.append(dns.rrset.from_text(name + ".", 60, "IN", "A", ANSWERS[name]))
+            else:
+                response.set_rcode(dns.rcode.NXDOMAIN)
+            sock.sendto(response.to_wire(), self.client_address)
+        except (dns.exception.DNSException, IndexError):
+            return
 
 
-def lookup_domains(domain, ns, count, non_domain):
-    resolver = dns.resolver.Resolver()
-    resolver.nameservers = [ns]
-    resolver.port = query_port
-    resolver.timeout = RESOLVER_TIMEOUT
-    resolver.lifetime = RESOLVER_TIMEOUT
-
-    if non_domain:
-        count = min(count, 2)
-
-    for _ in range(0, count):
-        for r in range(1, MAX_RETRY_COUNT + 1):
+@contextmanager
+def local_fixture(port: int = 53) -> Iterator[tuple[int, str]]:
+    with socketserver.UDPServer(("127.0.0.1", port), DNSHandler) as server:
+        with tempfile.TemporaryDirectory(prefix="fulltest-dns-") as directory:
+            gfwlist = Path(directory) / "gfwlist.txt"
+            gfwlist.write_text(PROXY_DOMAIN + "\n", encoding="ascii")
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
             try:
-                answers = resolver.query(domain, 'A')
-                for ip in answers:
-                    ip = str(ip)
-                    if not ip or not re.match(ipv4_valid_regex, ip):
-                        print_time_log('failed while looking for ' +
-                                       domain + ' return: ' + ip)
+                yield server.server_address[1], str(gfwlist)
+            finally:
+                server.shutdown()
+                thread.join()
 
-                break
 
-            except (dns.resolver.NoAnswer, dns.resolver.NoNameservers, dns.exception.Timeout):
-                if not non_domain:
-                    print_time_log('DNS lookup failed or timed out while looking for ' + domain + ' (skipping)')
-                break
-            except Exception as e:
-                if not non_domain:
-                    if r >= MAX_RETRY_COUNT:
-                        print_time_log('failed while looking for ' + domain + ' with error: ' + str(e))
-                        return False
-                else:
-                    break
-
-            time.sleep(1)
-
+def lookup_domain(domain: str, ns: str, count: int, port: int) -> bool:
+    resolver = dns.resolver.Resolver(configure=False)
+    resolver.nameservers = [ns]
+    resolver.port = port
+    resolver.timeout = 2
+    resolver.lifetime = 3
+    expected = ANSWERS.get(domain)
+    for _ in range(count):
+        try:
+            answers = resolver.resolve(domain, "A")
+            actual = {str(answer) for answer in answers}
+            if actual != {expected}:
+                print_time_log(f"DNS mismatch for {domain}: expected {expected}, got {actual}")
+                return False
+        except dns.resolver.NXDOMAIN:
+            if expected is not None:
+                print_time_log(f"Unexpected NXDOMAIN for {domain}")
+                return False
+        except dns.exception.DNSException as error:
+            print_time_log(f"DNS lookup failed for {domain}: {error}")
+            return False
     return True
 
 
-def main_process(executor, domains, ns, count, non_domain=False):
-    tasks = []
-    for domain in domains:
-        tasks.append(executor.submit(lookup_domains,
-                                     domain, ns, count, non_domain))
-
-    success_count = 0
-    for result in as_completed(tasks):
-        if result.result():
-            success_count += 1
-
-    if not non_domain and len(domains) > 0 and success_count == 0:
-        print_time_log("WARNING: All DNS lookups failed. This is likely an environmental issue.")
-    
-    return True # Always return True to prevent environmental DNS issues from blocking CI
-
-
-def start_query(ns, count, port):
-    global query_port
-    query_port = port
-
-    if is_macos_system():
-        print_time_log(f'Notice: skipping DNS test @{ns}:{query_port} on macOS (known hang/timeout issues)')
-        return True
-
-    print_time_log(f'start dns test @{ns}:{query_port}')
-
-    with ThreadPoolExecutor(max_workers=PARALLEL_REQUEST_COUNT) as executor:
-        for _ in range(0, 2):
-            print_time_log('start lookup ' +
-                           str(len(direct_lookup_domains)) + ' direct domains...')
-            if not main_process(executor, direct_lookup_domains, ns, count):
-                return False
-
-            print_time_log('done')
-
-            print_time_log('start lookup ' +
-                           str(len(proxy_lookup_domains)) + ' proxy domains...')
-            if not main_process(executor, proxy_lookup_domains, ns, count):
-                return False
-
-            print_time_log('done')
-
-            print_time_log('start lookup ' +
-                           str(len(proxy_lookup_domains)) + ' direct NON-domains...')
-            if not main_process(executor, direct_lookup_non_domains, ns, count, True):
-                return False
-
-            print_time_log('done')
-
-            print_time_log('start lookup ' +
-                           str(len(proxy_lookup_domains)) + ' proxy NON-domains...')
-            if not main_process(executor, proxy_lookup_non_domains, ns, count, True):
-                return False
-
-            print_time_log('done')
-
-    return True
+def start_query(ns: str, count: int, port: int) -> bool:
+    print_time_log(f"start local DNS forwarding test @{ns}:{port}")
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        tasks = [executor.submit(lookup_domain, domain, ns, count, port)
+                 for domain in (DIRECT_DOMAIN, PROXY_DOMAIN, DIRECT_MISSING, PROXY_MISSING)]
+        return all(task.result() for task in tasks)
 
 
 if __name__ == "__main__":
-    # script test
-    #start_query("114.114.114.114", 1, 5333)
-
-    # local dns server test
-    #start_query("127.0.0.1", 1, 5333)
-
-    # tun dns server test
-    start_query("10.0.0.2", 1, 5333)
+    with local_fixture() as (port, _):
+        assert start_query("127.0.0.1", 2, port)

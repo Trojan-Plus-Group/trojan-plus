@@ -40,6 +40,10 @@
 
 #include "tun/dnsserver.h"
 #include "tun/tundev.h"
+#ifdef ENABLE_QUIC
+#include "quic/quic_connection.h"
+#include "quic/quic_session.h"
+#endif
 
 using namespace boost::asio::ip;
 using namespace boost::asio::ssl;
@@ -259,14 +263,49 @@ void Service::run() {
         m_quic_client->start();
     }
 #endif
+    if (config.get_log_live_counters()) {
+        live_counters_timer = TP_MAKE_UNIQUE(boost::asio::steady_timer, io_context);
+        schedule_live_counters();
+    }
     io_context.run();
     _log_with_date_time("trojan service stopped", Log::WARN);
 
     _unguard;
 }
 
+void Service::schedule_live_counters() {
+    live_counters_timer->expires_after(std::chrono::seconds(1));
+    // Service owns both timer and io_context; canceled handlers never access Service.
+    live_counters_timer->async_wait([this](const boost::system::error_code& ec) {
+        if (ec) {
+            return;
+        }
+        auto& allocator = tp::get_tj_mem_allocator();
+        // Sample before formatting/logging allocates temporary buffers.
+        const auto objects = allocator.get_total_object_counter();
+        const auto bytes = allocator.get_total_memory();
+        const auto sessions = Session::live_count();
+        uint64_t connections = 0;
+        uint64_t proxy_sessions = 0;
+#ifdef ENABLE_QUIC
+        connections = QuicConnection::live_count();
+        proxy_sessions = QuicProxySession::live_count();
+#endif
+        _log_with_date_time("[mem] live objects=" + tp::to_string(objects) +
+          " bytes=" + tp::to_string(bytes) + " sessions=" + tp::to_string(sessions) +
+          " quic_connections=" + tp::to_string(connections) +
+          " quic_proxy_sessions=" + tp::to_string(proxy_sessions), Log::INFO);
+        schedule_live_counters();
+    });
+}
+
 void Service::stop() {
     _guard;
+
+    if (live_counters_timer) {
+        boost::system::error_code ec;
+        live_counters_timer->cancel(ec);
+    }
 
 // don't destroy all components in order to speed up Android disconnection
 // this progress will be killed in Android

@@ -304,6 +304,7 @@ QuicConnection::QuicConnection(QuicEndpoint& endpoint, std::shared_ptr<QuicTlsCt
     _log_with_date_time("QuicConnection: QuicConnection constructed for peer " + 
                         tp::string(peer.address().to_string().c_str()) + ":" + 
                         tp::to_string(peer.port()), Log::INFO);
+    s_live_count.fetch_add(1, std::memory_order_relaxed);
 }
 
 QuicConnection::~QuicConnection() {
@@ -322,6 +323,7 @@ QuicConnection::~QuicConnection() {
     if (m_ssl) {
         wolfSSL_free(m_ssl);
     }
+    s_live_count.fetch_sub(1, std::memory_order_relaxed);
 }
 
 // ---- path helper ------------------------------------------------------------
@@ -480,6 +482,10 @@ bool QuicConnection::init_client(const boost::asio::ip::udp::endpoint& local_ep,
     callbacks.recv_stream_data              = cb_recv_stream_data;
     callbacks.stream_close                  = cb_stream_close;
     callbacks.recv_retry                    = ngtcp2_crypto_recv_retry_cb;
+    callbacks.recv_stateless_reset2 = [](ngtcp2_conn*, const ngtcp2_pkt_stateless_reset2*, void*) {
+        _log_with_date_time("QuicConnection: stateless reset received", Log::INFO);
+        return 0;
+    };
     callbacks.extend_max_local_streams_bidi = cb_extend_max_local_streams_bidi;
     callbacks.rand                          = cb_rand;
     callbacks.update_key                    = cb_update_key;
@@ -836,8 +842,8 @@ void QuicConnection::fail_all_unacked_buffers(const boost::system::error_code& e
 }
 
 int64_t QuicConnection::send_stream_vecs(int64_t stream_id, 
-    const ngtcp2_vec* datav, std::size_t datavcnt, bool fin, const char* debug_path){
-    return send_stream_vecs_impl(stream_id, datav, datavcnt, fin, debug_path);
+    const ngtcp2_vec* datav, std::size_t datavcnt, bool fin, bool& accepted, const char* debug_path){
+    return send_stream_vecs_impl(stream_id, datav, datavcnt, fin, accepted, debug_path);
 }
 
 int64_t QuicConnection::send_stream_data_impl(int64_t stream_id, const uint8_t* data, std::size_t datalen,
@@ -963,7 +969,8 @@ int64_t QuicConnection::send_stream_data_impl(int64_t stream_id, const uint8_t* 
 
 int64_t QuicConnection::send_stream_vecs_impl(int64_t stream_id,
                                           const ngtcp2_vec* datav,
-                                          std::size_t datavcnt, bool fin, const char* debug_path) {
+                                          std::size_t datavcnt, bool fin, bool& accepted, const char* debug_path) {
+    accepted = false;
     if (m_closed || !m_conn) {
         return -1;
     }
@@ -1057,6 +1064,9 @@ int64_t QuicConnection::send_stream_vecs_impl(int64_t stream_id,
         auto ts = now_nanos();
         auto nwrite = ngtcp2_conn_writev_stream(m_conn, &ps.path, &pi, m_write_buf.data(), m_write_buf.size(),
                                                 &pdatalen, flags, stream_id, active_vecs.data(), active_vecs.size(), ts);
+
+        // pdatalen == 0 accepts an empty FIN; -1 means no stream frame was accepted.
+        if (pdatalen >= 0 && (nwrite >= 0 || nwrite == NGTCP2_ERR_WRITE_MORE)) accepted = true;
 
         if (nwrite == NGTCP2_ERR_WRITE_MORE) {
             ++m_write_more_count;

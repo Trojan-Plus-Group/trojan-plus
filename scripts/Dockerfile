@@ -17,6 +17,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3-pip \
         sudo \
         iproute2 \
+        iptables \
+        nftables \
         net-tools \
         curl \
         wget \

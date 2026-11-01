@@ -40,6 +40,7 @@ class QuicProxySession : public QuicStreamHandler, public std::enable_shared_fro
     QuicProxySession(std::shared_ptr<QuicConnection> conn, int64_t stream_id,
                      const Config& config, boost::asio::io_context& io_ctx);
     ~QuicProxySession() override;
+    static uint64_t live_count() { return s_live_count.load(std::memory_order_relaxed); }
 
     void start();
 
@@ -50,6 +51,8 @@ class QuicProxySession : public QuicStreamHandler, public std::enable_shared_fro
     [[nodiscard]] int64_t stream_id() const { return m_stream_id; }
 
   private:
+    inline static std::atomic<uint64_t> s_live_count{0};
+
     void try_parse_request(std::string_view data, bool fin);
     void forward_to_h1_upstream(std::string_view data, bool fin);
     void connect_target(const tp::string& host, uint16_t port);

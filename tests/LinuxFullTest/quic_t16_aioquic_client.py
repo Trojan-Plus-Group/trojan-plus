@@ -95,11 +95,11 @@ async def main():
                 paths = [line.strip() for line in f if line.strip()]
         else:
             log(f"AIOQUIC_ERROR: file list {args.file_list} not found")
-            return
+            return 1
 
     if not paths:
         log("AIOQUIC_ERROR: no files to download")
-        return
+        return 1
 
     config = QuicConfiguration(alpn_protocols=["h3"], is_client=True)
     config.verify_mode = 0
@@ -119,6 +119,7 @@ async def main():
             tasks = [fetch_file(protocol, p, semaphore) for p in paths]
             
             done_count = 0
+            failed_count = 0
             for fut in asyncio.as_completed(tasks):
                 try:
                     path, res = await fut
@@ -128,11 +129,14 @@ async def main():
                     if done_count % 10 == 0 or done_count == len(paths):
                         log(f"H3_PROGRESS: {done_count}/{len(paths)}")
                 except Exception as e:
-                    log(f"H3_FILE_ERROR: {e}")
+                    log(f"H3_FILE_ERROR: {type(e).__name__}: {e}")
                     done_count += 1
+                    failed_count += 1
+            return 1 if failed_count else 0
     except Exception as e:
-        log(f"AIOQUIC_ERROR: {e}")
+        log(f"AIOQUIC_ERROR: {type(e).__name__}: {e}")
+        return 1
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    sys.exit(asyncio.run(main()))
 

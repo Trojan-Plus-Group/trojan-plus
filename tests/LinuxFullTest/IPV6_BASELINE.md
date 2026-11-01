@@ -3,7 +3,7 @@
 This file records the IPv6 pass/fail matrix for `tests/LinuxFullTest`.
 Core TCP and UDP-over-TCP paths (server, client, forward) set `IPV6_V6ONLY`, encode address literals with ATYP 1/4, return the real SOCKS bind address, and log IPv6 endpoints as `[addr]:port`. Linux NAT now does the same for REDIRECT and TPROXY: IPv6 sockets use `IPV6_TRANSPARENT` and `IP6T_SO_ORIGINAL_DST`, and a dual-stack listener unwraps IPv4-mapped original destinations to IPv4. TUN mode carries IPv6 TCP and non-DNS UDP in addition to IPv4. QUIC tests were not run. Step 4b adds type-isolated A/AAAA caching for built-in DNS, dual-stack socket / TUN DNS, and mixed IPv4 / IPv6 route files. See the step 4b validation section below.
 
-The default IPv4 invocation is unchanged. CI (`azure-pipelines.yml`, `build_and_test.sh`) does not pass `-6`.
+The default IPv4 invocation is unchanged. Azure Linux CI runs `-6` and `-6 --ipv6-nat --ipv6-include-expected-fail`, plus `tests/test_*.py`. `TP_IPV6_REQUIRE_ALL=1` fails CI when an enabled case skips. `build_and_test.sh` still does not pass `-6`.
 
 ## How to run
 
@@ -46,7 +46,7 @@ What `-6` configures, generated at runtime from the existing JSON (not committed
 
 Client-mode cases speak SOCKS5 themselves. PySocks rejects an IPv6 destination (`socks.py` `connect()` raises `PySocks doesn't support IPv6`), so it cannot drive ATYP 4 or an IPv6 proxy address.
 
-The IPv6 content set is 2 files of 1500 bytes. The IPv4 `-g -n -f` run is the stock suite (50 files, TCP and UDP, RSS cooldown). `--ipv6-nat` builds its own netns and does not use those content ports. The no-rule NAT probe needs root (`sudo -n`) when `--ipv6-include-expected-fail` is set. `--ipv6-nat` needs the same sudo plus `ip` and `ip6tables`. TUN IPv6 needs root, `/dev/net/tun`, and `ip netns` whenever it runs; without them the case is `SKIP`. CI does not pass `--ipv6-nat` or `--ipv6-include-expected-fail`.
+The IPv6 content set is 2 files of 1500 bytes. The IPv4 `-g -n -f` run is the stock suite (50 files, TCP and UDP, RSS cooldown). `--ipv6-nat` builds its own netns and does not use those content ports. The no-rule NAT probe needs root (`sudo -n`) when `--ipv6-include-expected-fail` is set. `--ipv6-nat` needs the same sudo plus `ip` and `ip6tables`. TUN IPv6 needs root, `/dev/net/tun`, and `ip netns` whenever it runs; without them the case is `SKIP`. Azure Linux CI passes both flags in its second IPv6 run, installs firewall tools and compiler/Boost dependencies, and enables/checks IPv6 loopback. Required cases may not silently skip. macOS/Windows CI does not run `-6`: this suite edits `/etc/hosts` and includes Linux-only privileged checks.
 
 ## Result matrix
 

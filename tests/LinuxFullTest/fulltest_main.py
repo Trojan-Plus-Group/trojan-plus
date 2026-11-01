@@ -28,7 +28,8 @@ import psutil
 import traceback
 import datetime
 import argparse
-from subprocess import Popen, PIPE
+from contextlib import ExitStack
+from subprocess import Popen, PIPE, TimeoutExpired
 import fulltest_gen_content
 import fulltest_server
 import fulltest_client
@@ -54,6 +55,7 @@ TEST_WATING_FOR_RSS_COOLDOWN_TIME_IN_SEC = 11
 binary_path = "..\\..\\win32-build\\Release\\trojan.exe"
 
 cmd_args = None
+dns_fixture_config = None
 
 
 def get_init_rss_limit():
@@ -100,18 +102,19 @@ def start_trojan_plus_process(config):
 def close_process(process, output_log):
     if process:
         process.output_log_file.flush()
-        if is_windows_system():
-            process.send_signal(signal.SIGTERM)
-        else:
-            process.send_signal(signal.SIGINT)
-        time.sleep(1)
+        if process.poll() is None:
+            if is_windows_system():
+                process.send_signal(signal.SIGTERM)
+            else:
+                process.send_signal(signal.SIGINT)
+            try:
+                process.wait(timeout=5)
+            except TimeoutExpired:
+                process.kill()
+                process.wait()
+                print_time_log(str(process.args) + " killed.")
         process.output_log_file.flush()
-
-        if process.returncode:
-            print_time_log(str(process.args) + " closed.")
-        else:
-            print_time_log(str(process.args) + " killed.")
-            process.kill()
+        print_time_log(str(process.args) + " closed.")
 
         if output_log:
             process.output_log_file.seek(0, 0)
@@ -122,10 +125,6 @@ def close_process(process, output_log):
 
 
 def run_test_server():
-    # Kill any existing server on that port
-    if not is_windows_system():
-        os.system(f"lsof -ti:{TEST_SERVER_PORT} | xargs kill -9 > /dev/null 2>&1")
-    
     output_log_file = open("config/test_server.output", "w+")
     process = Popen([sys.executable, "-u", "fulltest_server.py", TEST_FILES_DIR, str(TEST_SERVER_PORT)],
                     executable=sys.executable, bufsize=1024 * 1024, stdout=output_log_file, stderr=output_log_file,
@@ -137,18 +136,24 @@ def run_test_server():
         time.sleep(1)
         if process.poll() is not None:
             print_time_log("Test server died immediately!")
+            output_log_file.seek(0)
+            print_time_log(output_log_file.read())
             output_log_file.close()
             return None
         
         # Check if port is open
         import socket
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(0.5)
             if s.connect_ex(('127.0.0.1', TEST_SERVER_PORT)) == 0:
                 print_time_log(f"Test server is up and listening on {TEST_SERVER_PORT}")
                 return process
                 
     print_time_log("Test server failed to start within 5 seconds")
     process.kill()
+    process.wait()
+    output_log_file.seek(0)
+    print_time_log(output_log_file.read())
     output_log_file.close()
     return None
 
@@ -298,6 +303,14 @@ def patch_config(config_file, run_type=None, disable_route=True):
     if disable_route and "route" in config:
         config["route"]["enabled"] = False
     
+    if "dns" in config:
+        config["dns"]["enabled"] = bool(cmd_args.dns)
+        if dns_fixture_config is not None:
+            _, gfwlist = dns_fixture_config
+            config["dns"].update(port=cmd_args.dns,
+                                 up_dns_server=[LOCALHOST_IP],
+                                 up_gfw_dns_server=[LOCALHOST_IP], gfwlist=gfwlist)
+
     if "tcp" in config:
         config["tcp"]["connect_time_out"] = 10 # Increase timeout to 10s
     
@@ -325,6 +338,9 @@ def main():
         print_time_log('generating ' + str(cmd_args.genfile) +
                        ' test files each ' + str(size) + ' bytes...')
         fulltest_gen_content.gen_files(TEST_FILES_DIR, cmd_args.genfile, size)
+        if not (cmd_args.normal or cmd_args.dns or cmd_args.tun or cmd_args.fallback
+                or cmd_args.quic is not None or cmd_args.ipv6):
+            return 0
 
     global binary_path
     binary_path = os.path.realpath(cmd_args.binary)
@@ -343,7 +359,6 @@ def main():
     if not test_server_process:
         return 1
     output_log = False
-    time.sleep(3) # Wait for server to fully start
     print_time_log("done!")
     try:
         if cmd_args.normal or cmd_args.dns:
@@ -462,16 +477,21 @@ if __name__ == "__main__":
                         action='store_true', default=False)
 
     cmd_args = parser.parse_args()
-    if not cmd_args.normal and not cmd_args.dns and not cmd_args.tun and not cmd_args.fallback and cmd_args.quic is None and not cmd_args.ipv6:
+    if not cmd_args.genfile and not cmd_args.normal and not cmd_args.dns and not cmd_args.tun and not cmd_args.fallback and cmd_args.quic is None and not cmd_args.ipv6:
         print("Error: must use -n or -d or -t or -f or -q or -6 args\n\n")
         parser.print_help()
         exit(1)
 
-    if is_macos_system() and cmd_args.dns:
-        print_time_log("Notice: DNS test (-d) is skipped on macOS (known hang/timeout issues with local resolver).")
-        cmd_args.dns = None
-        if not cmd_args.normal and not cmd_args.tun and not cmd_args.fallback and cmd_args.quic is None and not cmd_args.ipv6:
-            print_time_log("No other tests specified. Exiting cleanly.")
-            exit(0)
-
-    exit(main())
+    with ExitStack() as fixtures:
+        if cmd_args.dns:
+            try:
+                dns_fixture_config = fixtures.enter_context(fulltest_dns.local_fixture())
+            except OSError as error:
+                if not (is_windows_system() or is_macos_system()):
+                    raise
+                print_time_log(f"SKIP DNS: cannot bind local fixture 127.0.0.1:53: {error}")
+                cmd_args.dns = None
+                if not (cmd_args.normal or cmd_args.tun or cmd_args.fallback
+                        or cmd_args.quic is not None or cmd_args.ipv6):
+                    exit(0)
+        exit(main())
