@@ -98,7 +98,7 @@ class Config {
 
     using QUICConfig = struct {
         bool       enabled;                    // master switch; default false
-        uint32_t   retry_connect_timeout_ms;  // client: retry delay after DNS/init failure (ms), 0 = no retry
+        uint32_t   retry_connect_timeout_ms;  // client: retry delay (ms), default 1000, 0 = no retry
         tp::string alpn_token;                // ALPN advertised; default "h3" for HTTP/3 disguise
         uint32_t   max_idle_timeout_ms;       // QUIC idle timeout
         uint32_t   max_concurrent_streams;    // per-connection bidi stream limit

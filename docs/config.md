@@ -14,6 +14,23 @@ not every allocation made by third-party libraries. QUIC counts are zero when
 QUIC is compiled out. No timer is created when disabled. T16 enables this only
 in its temporary configs to check fresh post-quiescence snapshots.
 
+## QUIC retry and timing
+
+`quic.retry_connect_timeout_ms` defaults to `1000` milliseconds when omitted.
+Set it explicitly to `0` to disable automatic client reconnection. For example:
+
+```json
+"quic": {
+    "enabled": true,
+    "retry_connect_timeout_ms": 1000
+}
+```
+
+QUIC timestamps and loss deadlines include suspend time on Linux and Android
+using `CLOCK_BOOTTIME`. Reactor waits are capped at one second so overdue loss
+deadlines are checked within one second after resume. Other platforms use
+`std::chrono::steady_clock`, whose suspend behavior is platform-dependent.
+
 ## A valid client.json
 
 ```json
