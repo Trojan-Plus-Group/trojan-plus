@@ -23,6 +23,7 @@ Test cases:
   T23: outage_idle_recovery          - proxy recovers within bound after outage exceeding server idle timeout
   T24: outage_download_flight_recovery - proxy request succeeds within bound after outage during active download
   T25: outage_server_forgot_client   - proxy recovers within bound after server forgets connection while client idle
+  T26: healthy_idle_streams          - healthy idle streams survive fresh requests without connection recovery
 """
 
 import atexit
@@ -2903,6 +2904,175 @@ def test_outage_server_forgot_client(binary_path):
         cleanup_temp_configs(srv_cfg, cli_cfg if 'cli_cfg' in locals() else None)
 
 
+def test_healthy_idle_streams(binary_path):
+    """T26: Idle stream handlers must not turn healthy receive gaps into outages."""
+    import http.client
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    print_time_log("[T26] healthy_idle_streams: starting...")
+    if socks is None:
+        print_time_log("[T26] FAIL: PySocks is required")
+        return False
+
+    body = b"t26-healthy-idle-stream\n"
+    target_sockets: list[socket.socket] = []
+    target_lock = threading.Lock()
+    stop = threading.Event()
+
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def do_GET(self) -> None:
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Connection", "keep-alive")
+            self.end_headers()
+            self.wfile.write(body)
+            self.wfile.flush()
+
+        def log_message(self, format: str, *args) -> None:
+            pass
+
+    class Target(ThreadingHTTPServer):
+        def get_request(self):
+            conn, addr = super().get_request()
+            # No HTTP keepalive expiry during the ~30s regression window.
+            # No heartbeat traffic: idle sockets stay silent until reused.
+            conn.settimeout(120)
+            with target_lock:
+                target_sockets.append(conn)
+            return conn, addr
+
+    target = Target(("127.0.0.1", 0), Handler)
+    target_thread = threading.Thread(target=target.serve_forever,
+                                     kwargs={"poll_interval": 0.05})
+    server = client = relay = None
+    srv_cfg = cli_cfg = None
+    idle_connections: list[http.client.HTTPConnection] = []
+    dump = False
+
+    def open_connection() -> http.client.HTTPConnection:
+        sock = socks.socksocket()
+        try:
+            sock.set_proxy(socks.SOCKS5, "127.0.0.1", QUIC_CLIENT_PROXY_PORT)
+            sock.settimeout(5)
+            sock.connect(target.server_address)
+            conn = http.client.HTTPConnection("127.0.0.1", target.server_port, timeout=5)
+            conn.sock = sock
+            return conn
+        except Exception:
+            sock.close()
+            raise
+
+    def request(conn: http.client.HTTPConnection) -> None:
+        original_socket = conn.sock
+        conn.request("GET", "/t26")
+        response = conn.getresponse()
+        if response.status != 200 or response.read() != body:
+            raise AssertionError("T26: incorrect HTTP response")
+        if response.will_close or conn.sock is not original_socket:
+            raise AssertionError("T26: original keepalive socket was not preserved")
+
+    def assert_no_recovery() -> None:
+        with open(cli_log, errors="replace") as log:
+            recoveries = [line.rstrip() for line in log if "connection recovery" in line.lower()]
+        if recoveries:
+            raise AssertionError(f"T26: unexpected connection recovery: {recoveries}")
+        if client.poll() is not None or server.poll() is not None:
+            raise AssertionError("T26: proxy process exited")
+
+    def wait_for_quiet() -> None:
+        # Observe both directions, including delayed ACKs and stream-close packets.
+        # Never pause/drop relay traffic: this is healthy silence, not an outage.
+        deadline = time.monotonic() + 12
+        quiet_since = time.monotonic()
+        previous = None
+        while time.monotonic() < deadline:
+            with relay.lock:
+                counts = (relay.pkt_to_server, relay.pkt_to_client)
+            now = time.monotonic()
+            if counts != previous:
+                previous = counts
+                quiet_since = now
+            elif now - quiet_since >= 3.75:
+                return
+            assert_no_recovery()
+            stop.wait(0.05)
+        raise AssertionError("T26: no packet-free 3.75s interval within 12s")
+
+    try:
+        target_thread.start()
+        quic = {"enabled": True, "debug_disable_tcp": True,
+                "max_idle_timeout_ms": 60000, "ping_interval_ms": 60000,
+                "retry_connect_timeout_ms": 1000}
+        srv_cfg = patch_quic_config_with_suffix("quic_server_config.json", ".T26.srv.tmp.json", {
+            "remote_port": target.server_port, "quic": quic,
+        })
+        server, _ = start_trojan(binary_path, srv_cfg)
+        relay = UdpRelay(0, "127.0.0.1", QUIC_SERVER_PORT)
+        cli_cfg = patch_quic_config_with_suffix("quic_client_config.json", ".T26.cli.tmp.json", {
+            "remote_port": relay.listen_port, "quic": quic,
+        })
+        client, cli_log = start_trojan(binary_path, cli_cfg)
+        if not server or not client:
+            raise AssertionError("T26: proxy startup failed")
+        if not wait_for_log(cli_log, r"QuicConnection: handshake completed", timeout=15):
+            raise AssertionError("T26: initial QUIC handshake not seen")
+        if not wait_for_port(QUIC_CLIENT_PROXY_PORT, timeout=5):
+            raise AssertionError("T26: SOCKS5 port not open")
+
+        for _ in range(4):
+            conn = open_connection()
+            idle_connections.append(conn)
+            request(conn)
+
+        # Eight verified quiet gaps provide at least 30s of healthy idle time.
+        # Keep original streams open and silent throughout all fresh requests.
+        for round_index in range(8):
+            wait_for_quiet()
+            conn = open_connection()
+            try:
+                request(conn)
+            finally:
+                conn.close()
+            assert_no_recovery()
+            print_time_log(f"[T26] Fresh request {round_index + 1}/8 passed after packet-free gap")
+
+        for conn in idle_connections:
+            request(conn)
+        assert_no_recovery()
+        print_time_log("[T26] healthy_idle_streams PASSED")
+        return True
+    except Exception:
+        traceback.print_exc()
+        dump = True
+        return False
+    finally:
+        stop.set()
+        for conn in idle_connections:
+            conn.close()
+        close_process(client, dump)
+        close_process(server, dump)
+        # close_process may kill after its bounded wait; always reap children.
+        for proc in (client, server):
+            if proc is not None:
+                proc.wait(timeout=5)
+        if relay is not None:
+            relay.stop()
+        if target_thread.ident is not None:
+            target.shutdown()
+            target_thread.join(timeout=5)
+        with target_lock:
+            for sock in target_sockets:
+                try:
+                    sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+                sock.close()
+        target.server_close()
+        cleanup_temp_configs(srv_cfg, cli_cfg)
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -2932,6 +3102,7 @@ ALL_TESTS = [
     ("T23", test_outage_idle_recovery),
     ("T24", test_outage_download_flight_recovery),
     ("T25", test_outage_server_forgot_client),
+    ("T26", test_healthy_idle_streams),
 ]
 
 def main(binary_path, test_tag='all'):
