@@ -54,7 +54,6 @@ void QuicClientEndpoint::stop() {
     m_retry_timer.cancel();
     m_handshake_timer.cancel();
     fail_all_pending_streams();
-    m_stream_receive_activity.clear();
     auto conn = std::move(m_conn);
     if (conn && !conn->is_closed()) {
         conn->close();
@@ -98,18 +97,6 @@ void QuicClientEndpoint::connect_to_server() {
               }
               auto it = m_stream_data_cb.find(stream_id);
               if (it != m_stream_data_cb.end()) {
-                  if (fin) {
-                      m_stream_receive_activity.erase(stream_id);
-                  } else if (len != 0) {
-                      const auto now = QuicClock::now();
-                      auto& activity = m_stream_receive_activity[stream_id];
-                      if (now - activity.window_started > std::chrono::seconds(1)) {
-                          activity.window_started = now;
-                          activity.bytes = 0;
-                      }
-                      activity.last_payload = now;
-                      activity.bytes += std::min<std::size_t>(len, 65536 - activity.bytes);
-                  }
                   auto callback = it->second;
                   callback(data, len, fin);
                }
@@ -137,7 +124,6 @@ void QuicClientEndpoint::connect_to_server() {
                   return;
               }
               m_stream_data_cb.erase(stream_id);
-              m_stream_receive_activity.erase(stream_id);
               drain_pending_stream_opens();
           };
 
@@ -258,20 +244,6 @@ bool QuicClientEndpoint::gate_stale_connection() {
     if (silence < std::min<std::chrono::nanoseconds>(stale_after, recovery_after)) {
         return false;
     }
-    // A probe ACK proves liveness, not recovery of the server's download cwnd.
-    // Require an unfinished bulk receive (at least 64 KiB in a one-second
-    // window) active within one second before the gap. Small keep-alive replies
-    // and open idle streams alone are not evidence of a stalled download.
-    const auto gap_started = m_conn->last_packet_received();
-    const bool receiving_at_gap = std::any_of(
-      m_stream_receive_activity.begin(), m_stream_receive_activity.end(),
-      [gap_started](const auto& stream) {
-          return stream.second.bytes >= 65536 &&
-                 stream.second.last_payload >= gap_started - std::chrono::seconds(1);
-      });
-    m_outage_recovery = receiving_at_gap &&
-      m_config.get_quic().retry_connect_timeout_ms != 0 &&
-      silence >= std::max<std::chrono::nanoseconds>(std::chrono::seconds(3), recovery_after);
     m_probing = true;
     if (!m_recovering) {
         m_recovery_started = QuicClock::now();
@@ -285,7 +257,7 @@ bool QuicClientEndpoint::gate_stale_connection() {
         if (ec || !m_running || !m_probing || !conn || conn != m_conn) {
             return;
         }
-        if (!m_outage_recovery && conn->last_packet_received() > m_probe_last_received) {
+        if (conn->last_packet_received() > m_probe_last_received) {
             finish_probe();
             drain_pending_stream_opens();
             return;
@@ -293,7 +265,7 @@ bool QuicClientEndpoint::gate_stale_connection() {
         m_probing = false;
         m_recovering = m_config.get_quic().retry_connect_timeout_ms != 0;
         _log_with_date_time("QuicClientEndpoint: connection recovery: " +
-                              tp::string(m_outage_recovery ? "active streams stalled across receive gap; " : "stale peer packets and PING probe timeout; ") +
+                              tp::string("stale peer packets and PING probe timeout; ") +
                              tp::string(m_recovering ? "reconnecting with pending opens preserved" : "automatic reconnect disabled"),
                            Log::INFO);
         // Detach before close: close callbacks must not fail preserved opens or
@@ -311,7 +283,7 @@ void QuicClientEndpoint::finish_probe() {
     if (!m_conn || m_conn->is_closed()) {
         return;
     }
-    if (m_probing && !m_outage_recovery && m_conn->last_packet_received() > m_probe_last_received) {
+    if (m_probing && m_conn->last_packet_received() > m_probe_last_received) {
         m_probing = false;
         m_probe_timer.cancel();
     }
@@ -348,7 +320,6 @@ void QuicClientEndpoint::mark_unreachable() {
     }
     auto stream_data_cb = std::move(m_stream_data_cb);
     m_stream_data_cb.clear();
-    m_stream_receive_activity.clear();
     for (auto& [stream_id, callback] : stream_data_cb) {
         if (callback) {
             callback(nullptr, 0, true);
@@ -425,5 +396,4 @@ void QuicClientEndpoint::set_stream_data_handler(
 
 void QuicClientEndpoint::remove_stream_data_handler(int64_t stream_id) { 
     m_stream_data_cb.erase(stream_id);
-    m_stream_receive_activity.erase(stream_id);
 }

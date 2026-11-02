@@ -82,7 +82,6 @@ class QuicClientEndpoint : public QuicEndpoint {
     boost::asio::steady_timer m_handshake_timer;
     boost::asio::basic_waitable_timer<QuicClock, QuicWaitTraits> m_probe_timer;
     bool m_probing{false};
-    bool m_outage_recovery{false};
     bool m_reading_packet{false};
     bool m_draining_opens{false};
     bool m_recovering{false};
@@ -92,12 +91,6 @@ class QuicClientEndpoint : public QuicEndpoint {
     // Per-stream data handlers: stream_id → handler.
     tp::unordered_map<int64_t, std::function<void(const uint8_t*, std::size_t, bool)>>
         m_stream_data_cb;
-    struct StreamReceiveActivity {
-        QuicClock::time_point window_started;
-        QuicClock::time_point last_payload;
-        std::size_t bytes{0};
-    };
-    tp::unordered_map<int64_t, StreamReceiveActivity> m_stream_receive_activity;
 
     struct PendingStreamOpen {
         PendingStreamOpenId id;
