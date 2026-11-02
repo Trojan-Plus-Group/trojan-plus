@@ -24,6 +24,7 @@ Test cases:
   T24: outage_download_flight_recovery - proxy request succeeds within bound after outage during active download
   T25: outage_server_forgot_client   - proxy recovers within bound after server forgets connection while client idle
   T26: healthy_idle_streams          - healthy idle streams survive fresh requests without connection recovery
+  T27: healthy_paused_bulk_stream    - paused bulk response survives fresh requests without connection recovery
 """
 
 import atexit
@@ -3073,6 +3074,212 @@ def test_healthy_idle_streams(binary_path):
         cleanup_temp_configs(srv_cfg, cli_cfg)
 
 
+def test_healthy_paused_bulk_stream(binary_path):
+    """T27: A healthy paused bulk response must not trigger connection recovery."""
+    import http.client
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    print_time_log("[T27] healthy_paused_bulk_stream: starting...")
+    if socks is None:
+        print_time_log("[T27] FAIL: PySocks is required")
+        return False
+
+    burst = bytes(range(256)) * 4096
+    tail = b"t27-resumed-without-reconnect\n" * 4096
+    fresh_body = b"t27-fresh-stream\n"
+    paused = threading.Event()
+    resume = threading.Event()
+    stop = threading.Event()
+    target_lock = threading.Lock()
+    target_sockets: list[socket.socket] = []
+    fixture_errors: list[str] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def do_GET(self) -> None:
+            bulk = self.path == "/bulk"
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(burst) + len(tail) if bulk else len(fresh_body)))
+            self.send_header("Connection", "keep-alive")
+            self.end_headers()
+            if not bulk:
+                self.wfile.write(fresh_body)
+                self.wfile.flush()
+                return
+            try:
+                # Leave response unfinished, with no FIN or heartbeat during pause.
+                self.wfile.write(burst)
+                self.wfile.flush()
+                paused.set()
+                if not resume.wait(25):
+                    fixture_errors.append("bulk resume event timed out")
+                    return
+                if stop.is_set():
+                    return
+                self.wfile.write(tail)
+                self.wfile.flush()
+            except OSError as exc:
+                if not stop.is_set():
+                    fixture_errors.append(str(exc))
+
+        def log_message(self, format: str, *args) -> None:
+            pass
+
+    class Target(ThreadingHTTPServer):
+        def get_request(self):
+            conn, addr = super().get_request()
+            conn.settimeout(40)
+            with target_lock:
+                target_sockets.append(conn)
+            return conn, addr
+
+    target = Target(("127.0.0.1", 0), Handler)
+    target_thread = threading.Thread(target=target.serve_forever,
+                                     kwargs={"poll_interval": 0.05})
+    server = client = relay = None
+    srv_cfg = cli_cfg = None
+    original = response = None
+    dump = False
+
+    def open_connection() -> http.client.HTTPConnection:
+        sock = socks.socksocket()
+        try:
+            sock.set_proxy(socks.SOCKS5, "127.0.0.1", QUIC_CLIENT_PROXY_PORT)
+            sock.settimeout(8)
+            sock.connect(target.server_address)
+            conn = http.client.HTTPConnection("127.0.0.1", target.server_port, timeout=8)
+            conn.sock = sock
+            return conn
+        except Exception:
+            sock.close()
+            raise
+
+    def assert_no_recovery() -> None:
+        with open(cli_log, errors="replace") as log:
+            recoveries = [line.rstrip() for line in log if "connection recovery" in line.lower()]
+        if recoveries:
+            raise AssertionError(f"T27: unexpected connection recovery: {recoveries}")
+        if client.poll() is not None or server.poll() is not None:
+            raise AssertionError("T27: proxy process exited")
+        if fixture_errors:
+            raise AssertionError(f"T27: fixture failed: {fixture_errors}")
+
+    def request(conn: http.client.HTTPConnection) -> None:
+        sock = conn.sock
+        conn.request("GET", "/fresh")
+        reply = conn.getresponse()
+        if reply.status != 200 or reply.read() != fresh_body:
+            raise AssertionError("T27: incorrect fresh response")
+        if reply.will_close or conn.sock is not sock:
+            raise AssertionError("T27: keepalive socket changed")
+
+    try:
+        target_thread.start()
+        quic = {"enabled": True, "debug_disable_tcp": True,
+                "max_idle_timeout_ms": 60000, "ping_interval_ms": 60000,
+                "retry_connect_timeout_ms": 1000}
+        srv_cfg = patch_quic_config_with_suffix("quic_server_config.json", ".T27.srv.tmp.json", {
+            "remote_port": target.server_port, "quic": quic,
+        })
+        server, _ = start_trojan(binary_path, srv_cfg)
+        relay = UdpRelay(0, "127.0.0.1", QUIC_SERVER_PORT)
+        cli_cfg = patch_quic_config_with_suffix("quic_client_config.json", ".T27.cli.tmp.json", {
+            "remote_port": relay.listen_port, "quic": quic,
+        })
+        client, cli_log = start_trojan(binary_path, cli_cfg)
+        if not server or not client:
+            raise AssertionError("T27: proxy startup failed")
+        if not wait_for_log(cli_log, r"QuicConnection: handshake completed", timeout=15):
+            raise AssertionError("T27: initial QUIC handshake not seen")
+        if not wait_for_port(QUIC_CLIENT_PROXY_PORT, timeout=5):
+            raise AssertionError("T27: SOCKS5 port not open")
+
+        original = open_connection()
+        original_socket = original.sock
+        original.request("GET", "/bulk")
+        response = original.getresponse()
+        if response.status != 200 or response.read(len(burst)) != burst:
+            raise AssertionError("T27: incorrect initial 1 MiB burst")
+        if not paused.wait(2):
+            raise AssertionError("T27: fixture did not enter pause")
+        pause_observed = time.monotonic()
+
+        # Observe both relay directions without dropping or delaying any packets.
+        # The bulk stream stays unfinished while fresh SOCKS opens test liveness.
+        deadline = time.monotonic() + 12
+        quiet_since = time.monotonic()
+        previous = None
+        while time.monotonic() < deadline:
+            with relay.lock:
+                counts = (relay.pkt_to_server, relay.pkt_to_client)
+            now = time.monotonic()
+            if counts != previous:
+                previous = counts
+                quiet_since = now
+            elif now - quiet_since >= 3.75:
+                break
+            assert_no_recovery()
+            stop.wait(0.05)
+        else:
+            raise AssertionError("T27: no packet-free 3.75s interval within 12s")
+
+        for _ in range(2):
+            if resume.is_set() or response.isclosed():
+                raise AssertionError("T27: bulk stream ended before fresh request")
+            conn = open_connection()
+            try:
+                request(conn)
+            finally:
+                conn.close()
+            assert_no_recovery()
+
+        # Release only after fresh requests and assertions, never before 5s.
+        remaining = pause_observed + 5 - time.monotonic()
+        if remaining > 0:
+            stop.wait(remaining)
+        assert_no_recovery()
+        resume.set()
+        if response.read() != tail:
+            raise AssertionError("T27: resumed response bytes differ")
+        if response.will_close or original.sock is not original_socket:
+            raise AssertionError("T27: original bulk socket was not preserved")
+        request(original)
+        assert_no_recovery()
+        print_time_log("[T27] healthy_paused_bulk_stream PASSED")
+        return True
+    except Exception:
+        traceback.print_exc()
+        dump = True
+        return False
+    finally:
+        stop.set()
+        resume.set()
+        if response is not None:
+            response.close()
+        if original is not None:
+            original.close()
+        close_process(client, dump)
+        close_process(server, dump)
+        for proc in (client, server):
+            if proc is not None:
+                proc.wait(timeout=5)
+        if relay is not None:
+            relay.stop()
+        if target_thread.ident is not None:
+            target.shutdown()
+            target_thread.join(timeout=5)
+        with target_lock:
+            for sock in target_sockets:
+                try:
+                    sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+                sock.close()
+        target.server_close()
+        cleanup_temp_configs(srv_cfg, cli_cfg)
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -3103,6 +3310,7 @@ ALL_TESTS = [
     ("T24", test_outage_download_flight_recovery),
     ("T25", test_outage_server_forgot_client),
     ("T26", test_healthy_idle_streams),
+    ("T27", test_healthy_paused_bulk_stream),
 ]
 
 def main(binary_path, test_tag='all'):
