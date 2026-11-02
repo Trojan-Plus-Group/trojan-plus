@@ -57,7 +57,7 @@ class QuicClientEndpoint : public QuicEndpoint {
         return m_connecting || (m_conn && !m_conn->is_closed() && !m_conn->is_handshake_done());
     }
     [[nodiscard]] bool is_usable() const {
-        return m_running && !m_known_unreachable && (m_connecting || (m_conn && !m_conn->is_closed()));
+        return m_running && !m_known_unreachable && (m_recovering || m_connecting || (m_conn && !m_conn->is_closed()));
     }
 
     [[nodiscard]] bool is_known_unreachable() const { return m_known_unreachable; }
@@ -72,12 +72,22 @@ class QuicClientEndpoint : public QuicEndpoint {
     void connect_to_server();
     void drain_pending_stream_opens();
     void fail_all_pending_streams();
+    bool gate_stale_connection();
+    void finish_probe();
 
     std::shared_ptr<QuicConnection> m_conn;
     bool m_known_unreachable{false};
     bool m_connecting{false};
     boost::asio::steady_timer m_retry_timer;
     boost::asio::steady_timer m_handshake_timer;
+    boost::asio::basic_waitable_timer<QuicClock, QuicWaitTraits> m_probe_timer;
+    bool m_probing{false};
+    bool m_outage_recovery{false};
+    bool m_reading_packet{false};
+    bool m_draining_opens{false};
+    bool m_recovering{false};
+    QuicClock::time_point m_probe_last_received{};
+    QuicClock::time_point m_recovery_started{};
 
     // Per-stream data handlers: stream_id → handler.
     tp::unordered_map<int64_t, std::function<void(const uint8_t*, std::size_t, bool)>>

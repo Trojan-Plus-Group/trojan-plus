@@ -19,8 +19,13 @@ Test cases:
   T19: quic_ping_keepalive          - PING keep-alive prevents idle close (Part A: no ping→idle close; Part B: ping→no idle close, second request succeeds)
   T20: quic_only_ignores_pipeline    - client bypasses TCP pipeline in QUIC-only mode
   T21: quic_preferred_over_pipeline  - QUIC wins while TCP pipeline remains fallback
+  T22: handshake_blackhole_recovery  - black-holed handshake times out, retries, and recovers
+  T23: outage_idle_recovery          - proxy recovers within bound after outage exceeding server idle timeout
+  T24: outage_download_flight_recovery - proxy request succeeds within bound after outage during active download
+  T25: outage_server_forgot_client   - proxy recovers within bound after server forgets connection while client idle
 """
 
+import atexit
 import json
 import os
 import re
@@ -47,6 +52,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.append(current_dir)
 
+from quic_relay import UdpRelay
 from fulltest_utils import print_time_log, is_windows_system
 
 try:
@@ -234,6 +240,9 @@ def start_h1_upstream_mock():
     return proc
 
 
+TEMP_CONFIG_FILES = set()
+
+
 def patch_quic_config(base_name, overrides):
     """Load a JSON config, apply overrides (nested dicts merged), write to a temp file."""
     path = os.path.join("config", base_name)
@@ -247,6 +256,7 @@ def patch_quic_config(base_name, overrides):
     tmp = path + ".tmp.json"
     with open(tmp, 'w') as f:
         json.dump(cfg, f, indent=4)
+    TEMP_CONFIG_FILES.add(tmp)
     return tmp
 
 
@@ -263,7 +273,34 @@ def patch_quic_config_with_suffix(base_name, suffix, overrides):
     tmp = path + suffix
     with open(tmp, 'w') as f:
         json.dump(cfg, f, indent=4)
+    TEMP_CONFIG_FILES.add(tmp)
     return tmp
+
+
+def cleanup_temp_configs(*paths):
+    """Delete specified temporary config files."""
+    for p in paths:
+        if p:
+            try:
+                if os.path.exists(p):
+                    os.remove(p)
+                TEMP_CONFIG_FILES.discard(p)
+            except Exception:
+                pass
+
+
+def cleanup_all_temp_configs():
+    """Delete all tracked temporary config files."""
+    for p in list(TEMP_CONFIG_FILES):
+        try:
+            if os.path.exists(p):
+                os.remove(p)
+        except Exception:
+            pass
+    TEMP_CONFIG_FILES.clear()
+
+
+atexit.register(cleanup_all_temp_configs)
 
 
 def http_get_via_socks5(url, proxy_port, timeout=60):
@@ -2471,11 +2508,11 @@ def test_handshake_blackhole_recovery(binary_path):
         print_time_log("[T22] SKIP: PySocks not available")
         return True
 
-    srv_cfg = patch_quic_config_with_suffix("quic_server_config.json", ".T22.srv.json", {
+    srv_cfg = patch_quic_config_with_suffix("quic_server_config.json", ".T22.srv.tmp.json", {
         "remote_port": HTTP_TARGET_PORT,
         "quic": {"enabled": True, "h1_upstream": ""},
     })
-    cli_cfg = patch_quic_config_with_suffix("quic_client_config.json", ".T22.cli.json", {
+    cli_cfg = patch_quic_config_with_suffix("quic_client_config.json", ".T22.cli.tmp.json", {
         "tcp": {"connect_time_out": 3},
         "quic": {"enabled": True, "retry_connect_timeout_ms": 500},
     })
@@ -2528,6 +2565,342 @@ def test_handshake_blackhole_recovery(binary_path):
             blackhole.close()
         close_process(client, dump)
         close_process(server, dump)
+        cleanup_temp_configs(srv_cfg, cli_cfg)
+
+
+def test_outage_idle_recovery(binary_path):
+    """T23: First request after network outage longer than server idle timeout must succeed within bound."""
+    print_time_log("[T23] outage_idle_recovery: starting...")
+    if socks is None:
+        if "TF_BUILD" in os.environ or "CI" in os.environ:
+            print_time_log("[T23] FAIL: PySocks is required under CI")
+            return False
+        print_time_log("[T23] SKIP: PySocks not available")
+        return True
+
+    srv_cfg = patch_quic_config_with_suffix("quic_server_config.json", ".T23.srv.tmp.json", {
+        "remote_port": HTTP_TARGET_PORT,
+        "quic": {"enabled": True, "max_idle_timeout_ms": 2000, "ping_interval_ms": 1000, "debug_disable_tcp": True},
+    })
+
+    relay = None
+    server = None
+    client = None
+    dump = False
+    try:
+        server, srv_log = start_trojan(binary_path, srv_cfg)
+        relay = UdpRelay(0, "127.0.0.1", QUIC_SERVER_PORT)
+        cli_cfg = patch_quic_config_with_suffix("quic_client_config.json", ".T23.cli.tmp.json", {
+            "remote_port": relay.listen_port,
+            "quic": {"enabled": True, "max_idle_timeout_ms": 2000, "ping_interval_ms": 1000, "debug_disable_tcp": True},
+        })
+        client, cli_log = start_trojan(binary_path, cli_cfg)
+        if not server or not client:
+            dump = True
+            return False
+
+        if not wait_for_log(cli_log, r"QuicConnection: handshake completed", timeout=15):
+            print_time_log("[T23] FAIL: initial client QUIC handshake not seen")
+            dump = True
+            return False
+
+        if not wait_for_port(QUIC_CLIENT_PROXY_PORT, timeout=5):
+            print_time_log("[T23] FAIL: client SOCKS5 port not open")
+            dump = True
+            return False
+
+        url = f"http://127.0.0.1:{HTTP_TARGET_PORT}/"
+        baseline = http_get_via_socks5(url, QUIC_CLIENT_PROXY_PORT, timeout=5)
+        if not baseline:
+            print_time_log("[T23] FAIL: baseline request returned empty response")
+            dump = True
+            return False
+
+        # Outage: pause relay so client cannot reach server.
+        # Outage of 3s exceeds the 2s server idle timeout and 2s stale_after threshold.
+        print_time_log("[T23] Outage started (relay paused for 3s > 2s idle timeout)...")
+        relay.pause()
+        time.sleep(3.0)
+
+        # Server drops/restarts during outage (with default config, generates new random reset secret)
+        print_time_log("[T23] Server drops/restarts during outage...")
+        server.kill()
+        server.wait(timeout=5)
+        close_process(server, False)
+        server = None
+        time.sleep(0.5)
+
+        server, srv_log2 = start_trojan(binary_path, srv_cfg)
+        if not server:
+            dump = True
+            return False
+        time.sleep(0.5)
+
+        # Resume relay (network restored)
+        print_time_log("[T23] Outage ended (relay resumed)...")
+        t_resume = time.monotonic()
+        relay.resume(rebind=False)
+
+        # Assert: first request after recovery must succeed within 10s bound
+        try:
+            res = http_get_via_socks5(url, QUIC_CLIENT_PROXY_PORT, timeout=10)
+            elapsed = time.monotonic() - t_resume
+            if not res:
+                print_time_log(f"[T23] FAIL: request after recovery returned empty response ({elapsed:.2f}s)")
+                dump = True
+                return False
+            if elapsed > 10.0:
+                print_time_log(f"[T23] FAIL: request after recovery took too long ({elapsed:.2f}s > 10s)")
+                dump = True
+                return False
+            print_time_log(f"[T23] Request after recovery succeeded in {elapsed:.2f}s")
+        except Exception as e:
+            elapsed = time.monotonic() - t_resume
+            print_time_log(f"[T23] FAIL: request stalled/failed after {elapsed:.2f}s: {e}")
+            dump = True
+            return False
+
+        print_time_log("[T23] outage_idle_recovery PASSED")
+        return True
+    except Exception:
+        traceback.print_exc()
+        dump = True
+        return False
+    finally:
+        if relay is not None:
+            relay.stop()
+        close_process(client, dump)
+        close_process(server, dump)
+        cleanup_temp_configs(srv_cfg, cli_cfg if 'cli_cfg' in locals() else None)
+
+
+def test_outage_download_flight_recovery(binary_path):
+    """T24: Next request after outage during in-flight download must succeed within bound."""
+    print_time_log("[T24] outage_download_flight_recovery: starting...")
+    if socks is None:
+        if "TF_BUILD" in os.environ or "CI" in os.environ:
+            print_time_log("[T24] FAIL: PySocks is required under CI")
+            return False
+        print_time_log("[T24] SKIP: PySocks not available")
+        return True
+
+    srv_cfg = patch_quic_config_with_suffix("quic_server_config.json", ".T24.srv.tmp.json", {
+        "remote_port": HTTP_TARGET_PORT,
+        "quic": {"enabled": True, "max_idle_timeout_ms": 30000, "debug_disable_tcp": True},
+    })
+
+    relay = None
+    server = None
+    client = None
+    dump = False
+    try:
+        server, srv_log = start_trojan(binary_path, srv_cfg)
+        relay = UdpRelay(0, "127.0.0.1", QUIC_SERVER_PORT)
+        cli_cfg = patch_quic_config_with_suffix("quic_client_config.json", ".T24.cli.tmp.json", {
+            "remote_port": relay.listen_port,
+            "quic": {"enabled": True, "max_idle_timeout_ms": 30000, "debug_disable_tcp": True},
+        })
+        client, cli_log = start_trojan(binary_path, cli_cfg)
+        if not server or not client:
+            dump = True
+            return False
+
+        if not wait_for_log(cli_log, r"QuicConnection: handshake completed", timeout=15):
+            print_time_log("[T24] FAIL: initial client QUIC handshake not seen")
+            dump = True
+            return False
+
+        if not wait_for_port(QUIC_CLIENT_PROXY_PORT, timeout=5):
+            print_time_log("[T24] FAIL: client SOCKS5 port not open")
+            dump = True
+            return False
+
+        # Ensure 20 MB flight test file exists
+        flight_file = os.path.join(TEST_FILES_DIR, "quic_flight_20m.bin")
+        if not os.path.exists(flight_file) or os.path.getsize(flight_file) != 20 * 1024 * 1024:
+            with open(flight_file, "wb") as f:
+                f.write(b'X' * (20 * 1024 * 1024))
+
+        # Launch large transfer in flight
+        large_url = f"http://127.0.0.1:{HTTP_TARGET_PORT}/quic_flight_20m.bin"
+        dl_started = threading.Event()
+
+        def in_flight_dl():
+            try:
+                import urllib.parse
+                u = urllib.parse.urlparse(large_url)
+                s = socks.socksocket()
+                s.set_proxy(socks.SOCKS5, "127.0.0.1", QUIC_CLIENT_PROXY_PORT)
+                s.settimeout(30)
+                s.connect((u.hostname, u.port or 80))
+                s.sendall(f"GET {u.path} HTTP/1.1\r\nHost: {u.hostname}:{u.port}\r\nConnection: close\r\n\r\n".encode())
+                dl_started.set()
+                while True:
+                    data = s.recv(65536)
+                    if not data:
+                        break
+                s.close()
+            except Exception:
+                pass
+
+        dl_t = threading.Thread(target=in_flight_dl, daemon=True)
+        dl_t.start()
+        if not dl_started.wait(timeout=5.0):
+            print_time_log("[T24] FAIL: in-flight download request failed to start")
+            dump = True
+            return False
+        time.sleep(0.1)
+
+        # Outage during transfer
+        print_time_log("[T24] Pausing relay for 12s (simulating outage while transfer in flight)...")
+        relay.pause()
+        time.sleep(12.0)
+
+        # Resume relay
+        print_time_log("[T24] Resuming relay...")
+        t_resume = time.monotonic()
+        relay.resume(rebind=False)
+
+        # Bound: the fixed client recovers in ~1.5 s; master took 6.3-9.5 s (new
+        # streams wait behind PTO backoff on the stale connection). 4.0 s keeps
+        # ~2.5x margin for slow CI agents while still failing the old behavior.
+        small_url = f"http://127.0.0.1:{HTTP_TARGET_PORT}/"
+        try:
+            res = http_get_via_socks5(small_url, QUIC_CLIENT_PROXY_PORT, timeout=10)
+            elapsed = time.monotonic() - t_resume
+            if not res:
+                print_time_log(f"[T24] FAIL: request returned empty response ({elapsed:.2f}s)")
+                dump = True
+                return False
+            if elapsed > 4.0:
+                print_time_log(f"[T24] FAIL: request stalled by in-flight transfer PTO backoff ({elapsed:.2f}s > 4.0s)")
+                dump = True
+                return False
+            print_time_log(f"[T24] Request completed in {elapsed:.2f}s")
+        except Exception as e:
+            elapsed = time.monotonic() - t_resume
+            print_time_log(f"[T24] FAIL: request failed after {elapsed:.2f}s: {e}")
+            dump = True
+            return False
+
+        print_time_log("[T24] outage_download_flight_recovery PASSED")
+        return True
+    except Exception:
+        traceback.print_exc()
+        dump = True
+        return False
+    finally:
+        if relay is not None:
+            relay.stop()
+        close_process(client, dump)
+        close_process(server, dump)
+        cleanup_temp_configs(srv_cfg, cli_cfg if 'cli_cfg' in locals() else None)
+
+
+def test_outage_server_forgot_client(binary_path):
+    """T25: Request after server idle-close while client clock paused/desynced must recover within bound."""
+    print_time_log("[T25] outage_server_forgot_client: starting...")
+    if socks is None:
+        if "TF_BUILD" in os.environ or "CI" in os.environ:
+            print_time_log("[T25] FAIL: PySocks is required under CI")
+            return False
+        print_time_log("[T25] SKIP: PySocks not available")
+        return True
+
+    reset_secret = "t25-reset-secret"
+    srv_cfg = patch_quic_config_with_suffix("quic_server_config.json", ".T25.srv.tmp.json", {
+        "remote_port": HTTP_TARGET_PORT,
+        "quic": {"enabled": True, "max_idle_timeout_ms": 2000, "ping_interval_ms": 1000, "debug_disable_tcp": True, "stateless_reset_secret": reset_secret},
+    })
+
+    relay = None
+    server = None
+    client = None
+    dump = False
+    try:
+        server, srv_log = start_trojan(binary_path, srv_cfg)
+        relay = UdpRelay(0, "127.0.0.1", QUIC_SERVER_PORT)
+        cli_cfg = patch_quic_config_with_suffix("quic_client_config.json", ".T25.cli.tmp.json", {
+            "remote_port": relay.listen_port,
+            "quic": {"enabled": True, "max_idle_timeout_ms": 2000, "ping_interval_ms": 1000, "debug_disable_tcp": True},
+        })
+        client, cli_log = start_trojan(binary_path, cli_cfg)
+        if not server or not client:
+            dump = True
+            return False
+
+        if not wait_for_log(cli_log, r"QuicConnection: handshake completed", timeout=15):
+            print_time_log("[T25] FAIL: initial client QUIC handshake not seen")
+            dump = True
+            return False
+
+        if not wait_for_port(QUIC_CLIENT_PROXY_PORT, timeout=5):
+            print_time_log("[T25] FAIL: client SOCKS5 port not open")
+            dump = True
+            return False
+
+        url = f"http://127.0.0.1:{HTTP_TARGET_PORT}/"
+        baseline = http_get_via_socks5(url, QUIC_CLIENT_PROXY_PORT, timeout=5)
+        if not baseline:
+            print_time_log("[T25] FAIL: baseline request returned empty response")
+            dump = True
+            return False
+
+        # Outage: pause relay so no pings reach server for 3s (> 2s idle timeout)
+        print_time_log("[T25] Outage started (relay paused for 3s)...")
+        relay.pause()
+        time.sleep(3.0)
+
+        # Server drops connection (restarting with same reset secret simulates server forgetting client)
+        print_time_log("[T25] Server forgets client connection...")
+        server.kill()
+        server.wait(timeout=5)
+        close_process(server, False)
+        server = None
+        time.sleep(0.5)
+
+        server, srv_log2 = start_trojan(binary_path, srv_cfg)
+        if not server:
+            dump = True
+            return False
+        time.sleep(0.5)
+
+        # Resume relay (network back)
+        print_time_log("[T25] Outage ended (relay resumed)...")
+        t_resume = time.monotonic()
+        relay.resume(rebind=False)
+
+        # Assert: the first request through proxy after recovery must succeed within 10s
+        try:
+            res = http_get_via_socks5(url, QUIC_CLIENT_PROXY_PORT, timeout=10)
+            elapsed = time.monotonic() - t_resume
+            if not res:
+                print_time_log(f"[T25] FAIL: first request after recovery returned empty response ({elapsed:.2f}s)")
+                dump = True
+                return False
+            if elapsed > 10.0:
+                print_time_log(f"[T25] FAIL: first request after recovery took too long ({elapsed:.2f}s > 10s)")
+                dump = True
+                return False
+            print_time_log(f"[T25] First request succeeded in {elapsed:.2f}s")
+        except Exception as e:
+            elapsed = time.monotonic() - t_resume
+            print_time_log(f"[T25] FAIL: first request after recovery failed after {elapsed:.2f}s: {e}")
+            dump = True
+            return False
+
+        print_time_log("[T25] outage_server_forgot_client PASSED")
+        return True
+    except Exception:
+        traceback.print_exc()
+        dump = True
+        return False
+    finally:
+        if relay is not None:
+            relay.stop()
+        close_process(client, dump)
+        close_process(server, dump)
+        cleanup_temp_configs(srv_cfg, cli_cfg if 'cli_cfg' in locals() else None)
 
 
 # ---------------------------------------------------------------------------
@@ -2556,6 +2929,9 @@ ALL_TESTS = [
     ("T20", test_quic_only_ignores_pipeline),
     ("T21", test_quic_preferred_over_pipeline),
     ("T22", test_handshake_blackhole_recovery),
+    ("T23", test_outage_idle_recovery),
+    ("T24", test_outage_download_flight_recovery),
+    ("T25", test_outage_server_forgot_client),
 ]
 
 def main(binary_path, test_tag='all'):

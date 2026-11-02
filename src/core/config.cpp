@@ -226,7 +226,7 @@ void Config::populate(const ptree& tree) {
     }
 
     quic.enabled                = tree.get("quic.enabled", false);
-    quic.retry_connect_timeout_ms = tree.get("quic.retry_connect_timeout_ms", 0U);
+    quic.retry_connect_timeout_ms = tree.get("quic.retry_connect_timeout_ms", 1000U);
     quic.alpn_token             = tree.get("quic.alpn_token", std::string("h3")).c_str();
     quic.max_idle_timeout_ms    = tree.get("quic.max_idle_timeout_ms", 60000U);
     quic.max_concurrent_streams = tree.get("quic.max_concurrent_streams", is_server ? 1000U : 100U);

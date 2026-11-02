@@ -18,6 +18,7 @@
 #include <string>
 #include <string_view>
 
+#include <boost/asio/basic_waitable_timer.hpp>
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <list>
@@ -27,6 +28,7 @@
 
 #include "mem/memallocator.h"
 #include "quic_stream_handler.h"
+#include "quic_clock.h"
 
 class QuicEndpoint;
 class QuicTlsCtx;
@@ -77,6 +79,8 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
                    const boost::asio::ip::udp::endpoint& remote_ep);
 
     void on_pump_write(const char* debug_path);
+    void probe();
+    QuicClock::time_point last_packet_received() const { return m_last_packet_received; }
 
     // called by QuicProxySession, this func has re-try timer and ack-delay mechanisms 
     void send_stream_data(int64_t stream_id, std::shared_ptr<ReadBufWithGuard> buf, bool fin, IoHandler sent_cb);
@@ -179,6 +183,11 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     ngtcp2_path make_path(const boost::asio::ip::udp::endpoint& local_ep,
                           const boost::asio::ip::udp::endpoint& remote_ep);
     void reschedule_loss_timer();
+    void resume_blocked_sends();
+    void schedule_send_wakeup();
+    bool m_send_wakeup_pending{false};
+    bool m_resuming_sends{false};
+    QuicClock::time_point m_last_packet_received{QuicClock::now()};
     void on_handshake_completed_impl();
 
 
@@ -196,7 +205,7 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     QuicEndpoint& m_endpoint;
     std::shared_ptr<QuicTlsCtx> m_tls_ctx;
     boost::asio::ip::udp::endpoint m_peer;
-    boost::asio::steady_timer m_loss_timer;
+    boost::asio::basic_waitable_timer<QuicClock, QuicWaitTraits> m_loss_timer;
 
     ngtcp2_conn* m_conn{nullptr};
     WOLFSSL* m_ssl{nullptr};
@@ -228,6 +237,7 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
       boost::asio::steady_timer m_write_timer;
       std::weak_ptr<QuicConnection> m_conn;
       bool m_timer_running{false};
+      uint64_t m_timer_generation{0};
       std::size_t m_retry_delay_ms{50};
       UnackedBuf(boost::asio::io_context& io_ctx):m_write_timer(io_ctx), m_timer_running(false), m_retry_delay_ms(50){}
       void send();
