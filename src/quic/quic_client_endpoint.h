@@ -92,6 +92,12 @@ class QuicClientEndpoint : public QuicEndpoint {
     // Per-stream data handlers: stream_id → handler.
     tp::unordered_map<int64_t, std::function<void(const uint8_t*, std::size_t, bool)>>
         m_stream_data_cb;
+    struct StreamReceiveActivity {
+        QuicClock::time_point window_started;
+        QuicClock::time_point last_payload;
+        std::size_t bytes{0};
+    };
+    tp::unordered_map<int64_t, StreamReceiveActivity> m_stream_receive_activity;
 
     struct PendingStreamOpen {
         PendingStreamOpenId id;
