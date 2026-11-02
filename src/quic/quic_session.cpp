@@ -266,7 +266,7 @@ void QuicProxySession::do_tcp_write() {
     // If we only have a FIN (no data), handle it immediately.
     if (front.data.empty() && front.fin) {
         boost::system::error_code ec;
-        ec = m_tcp_socket.shutdown(boost::asio::socket_base::shutdown_send, ec);
+        m_tcp_socket.shutdown(boost::asio::socket_base::shutdown_send, ec);
         m_tcp_write_queue.pop_front();
         do_tcp_write();
         return;
@@ -295,7 +295,7 @@ void QuicProxySession::do_tcp_write() {
             // after all data is written.
             if (fin) {
                 boost::system::error_code ec2;
-                ec2 = m_tcp_socket.shutdown(boost::asio::socket_base::shutdown_send, ec2);
+                m_tcp_socket.shutdown(boost::asio::socket_base::shutdown_send, ec2);
             }
             do_tcp_write();
         }));
@@ -348,12 +348,12 @@ void QuicProxySession::destroy(bool reset, uint64_t app_error_code, bool from_cl
     m_udp_resolver.cancel();
     boost::system::error_code ec;
     if (m_tcp_socket.is_open()) {
-        ec = m_tcp_socket.shutdown(boost::asio::socket_base::shutdown_both, ec);
-        ec = m_tcp_socket.close(ec);
+        m_tcp_socket.shutdown(boost::asio::socket_base::shutdown_both, ec);
+        m_tcp_socket.close(ec);
     }
     if (m_udp_socket.is_open()) {
-        ec = m_udp_socket.cancel(ec);
-        ec = m_udp_socket.close(ec);
+        m_udp_socket.cancel(ec);
+        m_udp_socket.close(ec);
     }
     auto locked_conn = m_conn.lock();
     if (locked_conn && !locked_conn->is_closed()) {

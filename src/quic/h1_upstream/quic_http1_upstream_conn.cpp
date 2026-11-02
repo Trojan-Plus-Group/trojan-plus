@@ -109,8 +109,8 @@ void Http1UpstreamConn::close_socket() {
     m_shutdown_pending = false;
     if (m_tcp_socket.is_open()) {
         boost::system::error_code ec;
-        ec = m_tcp_socket.shutdown(boost::asio::socket_base::shutdown_both, ec);
-        ec = m_tcp_socket.close(ec);
+        m_tcp_socket.shutdown(boost::asio::socket_base::shutdown_both, ec);
+        m_tcp_socket.close(ec);
     }
 }
 

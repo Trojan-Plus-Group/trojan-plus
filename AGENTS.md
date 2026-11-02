@@ -10,6 +10,7 @@ QUIC uses ngtcp2 + nghttp3 + wolfSSL; TUN uses embedded lwIP.
 - No commit/push unless the user or maintainer's workflow explicitly requests it; never push to master.
 - Preserve user changes and failure evidence. Do not overwrite failed run results with retries.
 - Follow `.clang-format` and Microsoft GSL conventions.
+- Keep `src/` compatible with Boost 1.77+ and `BOOST_ASIO_NO_DEPRECATED`, enforced privately on the `trojan` target.
 - Do not enable `ENABLE_SSL_KEYLOG` outside debugging: it exposes TLS secrets.
 
 ## Non-obvious architecture rules
