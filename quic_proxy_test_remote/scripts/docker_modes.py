@@ -6,6 +6,11 @@ import importlib.util
 import ipaddress
 import json
 import pathlib
+import os
+import shlex
+import shutil
+import uuid
+import concurrent.futures
 import re
 import socket
 import subprocess
@@ -81,22 +86,44 @@ def resolve_cloudflare_ipv4():
     return parse_cloudflare_ipv4((socket.gethostbyname(CLOUDFLARE_HOST),))
 
 
-def docker_commands(mode, protocol, run_id, runtime, target_ip, size=SIZE, watchdog=WATCHDOG, requests=1, concurrency=1):
+def container_engine(value=None) -> list[str]:
+    value = value or os.environ.get("CONTAINER_ENGINE")
+    candidates = [shlex.split(value)] if value else [["docker"], ["podman"], ["sudo", "-n", "podman"]]
+    for command in candidates:
+        if not command or not shutil.which(command[0]):
+            continue
+        try:
+            if subprocess.run([*command, "info"], capture_output=True, timeout=COMMAND_TIMEOUT).returncode == 0:
+                return command
+        except (OSError, subprocess.SubprocessError):
+            continue
+    raise RuntimeError("No usable container engine; set CONTAINER_ENGINE, e.g. 'sudo -n podman'")
+
+
+def protocol_evidence(client_log: str, server_log: str) -> dict:
+    return load_runner().verify_quic_logs(client_log, server_log)
+
+
+def docker_commands(mode, protocol, run_id, runtime, target_ip, size=SIZE, watchdog=WATCHDOG, requests=1, concurrency=1, engine=None, target="cloudflare", expected_sha256=""):
     validate_run_id(run_id)
     target_ip = parse_cloudflare_ipv4((target_ip,))
     if mode not in ("nat", "client_tun") or protocol not in ("tcp", "quic"):
         raise ValueError("invalid mode or protocol")
     name = f"trojan-{mode}-{protocol}-{run_id}"
     config = f"/runtime/{mode}-{protocol}.json"
-    capabilities = ["--cap-add", "NET_ADMIN"]
+    # Rootful containers need access to owner-only runtime files on the bind mount.
+    capabilities = ["--cap-add", "NET_ADMIN", "--cap-add", "DAC_OVERRIDE"]
     if mode == "nat":
         capabilities += ["--cap-add", "NET_RAW"]
-    base = ["docker", "run", "--rm", "--name", name, "--cap-drop", "ALL", *capabilities, "--device", "/dev/net/tun", "-v", f"{runtime}:/runtime:ro", IMAGE]
+    engine = engine or ["docker"]
+    base = [*engine, "run", "--rm", "--name", name, "--cap-drop", "ALL", *capabilities, "--device", "/dev/net/tun", "-v", f"{runtime}:/runtime:ro", IMAGE]
     if size == SIZE and watchdog == WATCHDOG and requests == 1 and concurrency == 1:
         tail = [mode, protocol, config, target_ip, str(SIZE), str(WATCHDOG)]
     else:
         tail = [mode, protocol, config, target_ip, str(size), str(watchdog), str(requests), str(concurrency)]
-    return {"name": name, "run": base + tail, "remove": ["docker", "rm", "-f", name]}
+    if target != "cloudflare" or expected_sha256:
+        tail = [mode, protocol, config, target_ip, str(size), str(watchdog), str(requests), str(concurrency), target, expected_sha256]
+    return {"name": name, "run": base + tail, "remove": [*engine, "rm", "-f", name]}
 
 
 def render_configs(runtime, protocol, password, cert):
@@ -118,30 +145,43 @@ def render_configs(runtime, protocol, password, cert):
 
 
 def measure_iperf3_baseline(ssh_connect_timeout=SSH_CONNECT_TIMEOUT, stop_timeout=IPERF_STOP_TIMEOUT, start_timeout=IPERF_START_TIMEOUT, client_timeout=IPERF_CLIENT_TIMEOUT):
-    remote_log = "/tmp/iperf3_docker_baseline.log"
-    subprocess.run(ssh("pkill -9 -f 'iperf3 -s' || true", ssh_connect_timeout), capture_output=True, text=True, timeout=stop_timeout)
-    start_cmd = f"nohup iperf3 -s -p 5201 > {remote_log} 2>&1 < /dev/null & sleep 1; pgrep -f 'iperf3 -s -p 5201'"
-    res = subprocess.run(ssh(start_cmd, ssh_connect_timeout), capture_output=True, text=True, timeout=start_timeout)
-    server_pid = res.stdout.strip()
-    if not server_pid:
-        return {"available": False, "error": "Failed to start remote iperf3 server"}
+    token = uuid.uuid4().hex
+    remote_log = f"/tmp/iperf3-docker-{token}.log"
+    pidfile = f"/tmp/iperf3-docker-{token}.pid"
+    result = {"available": False, "remote_log": remote_log, "pidfile": pidfile}
+    # The PID file is unique to this run; never kill unrelated iperf jobs.
+    start_cmd = (
+        "if pgrep -x iperf3 >/dev/null; then exit 73; fi; "
+        f"nohup iperf3 -s -p 5201 --pidfile {pidfile} >{remote_log} 2>&1 </dev/null & "
+        "pid=$!; sleep 1; kill -0 $pid || exit 74; printf '%s\\n' $pid"
+    )
     try:
-        client_res = subprocess.run(
-            ["iperf3", "-c", HOST, "-p", "5201", "-R", "-t", "3", "-J"],
-            capture_output=True, text=True, timeout=client_timeout
-        )
-        if client_res.returncode != 0:
-            return {"available": False, "error": client_res.stderr.strip() or "iperf3 client failed"}
-        data = json.loads(client_res.stdout)
-        bps = data["end"]["sum_received"]["bits_per_second"]
-        mbps = round(bps / 1e6, 2)
-        return {"available": True, "mbps": mbps, "raw_bps": bps}
-    except Exception as e:
-        return {"available": False, "error": str(e)}
+        res = subprocess.run(ssh(start_cmd, ssh_connect_timeout), capture_output=True, text=True, timeout=start_timeout)
+        if res.returncode != 0 or not res.stdout.strip().isdigit():
+            raise RuntimeError("Remote iperf3 unavailable or another job already running")
+        result["pid"] = int(res.stdout.strip())
+        client = subprocess.run(["iperf3", "-c", HOST, "-p", "5201", "-R", "-t", "3", "-J"],
+                                capture_output=True, text=True, timeout=client_timeout)
+        result.update({"stdout": client.stdout, "stderr": client.stderr, "exit_code": client.returncode})
+        if client.returncode != 0:
+            raise RuntimeError("iperf3 client failed")
+        bps = json.loads(client.stdout)["end"]["sum_received"]["bits_per_second"]
+        result.update({"available": True, "mbps": round(bps / 1e6, 2), "raw_bps": bps})
+    except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError) as error:
+        result["error"] = str(error)
     finally:
-        subprocess.run(ssh(f"kill -9 {server_pid} 2>/dev/null || pkill -9 -f 'iperf3 -s' || true; rm -f {remote_log}", ssh_connect_timeout),
-                       capture_output=True, text=True, timeout=stop_timeout)
-
+        stop = (f"if test -f {pidfile}; then pid=$(cat {pidfile}); "
+                "case \"$pid\" in ''|*[!0-9]*) exit 75;; esac; "
+                "if test -r /proc/$pid/cmdline; then cmd=$(tr '\\0' ' ' </proc/$pid/cmdline); "
+                f"case \"$cmd\" in *'--pidfile {pidfile}'*) kill \"$pid\"; "
+                "for n in $(seq 1 20); do test ! -e /proc/$pid && break; sleep 0.1; done; "
+                "test ! -e /proc/$pid || exit 76;; *) exit 75;; esac; fi; fi")
+        try:
+            cleanup = subprocess.run(ssh(stop, ssh_connect_timeout), capture_output=True, text=True, timeout=stop_timeout)
+            result["cleanup_valid"] = cleanup.returncode == 0
+        except (OSError, subprocess.SubprocessError) as error:
+            result.update({"cleanup_valid": False, "cleanup_error": str(error)})
+    return result
 
 def image_source_hash():
     digest = hashlib.sha256()
@@ -154,22 +194,28 @@ def image_source_hash():
 def run_docker_with_progress(command, container, timeout, progress_interval=PROGRESS_INTERVAL):
     started = time.monotonic()
     process = subprocess.Popen(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    # Drain both pipes while running: verbose failures must not block container exit.
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    output = pool.submit(process.communicate)
     while process.poll() is None:
         elapsed = int(time.monotonic() - started)
         if elapsed >= timeout:
             process.kill()
-            stdout, stderr = process.communicate()
+            stdout, stderr = output.result()
+            pool.shutdown()
             raise subprocess.TimeoutExpired(command, timeout, stdout, stderr)
         print(f"[*] Docker test running: container={container} elapsed={elapsed}s", flush=True)
         time.sleep(min(progress_interval, timeout - elapsed))
-    stdout, stderr = process.communicate()
+    stdout, stderr = output.result()
+    pool.shutdown()
     return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
 
-def build_image(inspect_timeout=IMAGE_INSPECT_TIMEOUT, build_timeout=IMAGE_BUILD_TIMEOUT):
+def build_image(inspect_timeout=IMAGE_INSPECT_TIMEOUT, build_timeout=IMAGE_BUILD_TIMEOUT, engine=None):
+    engine = engine or ["docker"]
     source_hash = image_source_hash()
     inspect = subprocess.run(
-        ["docker", "image", "inspect", IMAGE],
+        [*engine, "image", "inspect", IMAGE],
         text=True,
         capture_output=True,
         check=False,
@@ -186,14 +232,23 @@ def build_image(inspect_timeout=IMAGE_INSPECT_TIMEOUT, build_timeout=IMAGE_BUILD
         return False
     print(f"[*] Building Docker image {IMAGE} ({source_hash[:12]})")
     command_output([
-        "docker", "build", "-t", IMAGE,
+        *engine, "build", "-t", IMAGE,
         "--label", f"trojan-plus.source-hash={source_hash}",
         "-f", str(ROOT / "Dockerfile.template"), str(ROOT)
     ], build_timeout)
     return True
 
 
+def valid_samples(samples: list[dict], requests: int, size: int, expected_sha256: str) -> bool:
+    return bool(expected_sha256) and len(samples) == requests and all(
+        sample.get("exit_code") == 0 and sample.get("http_code") == 200
+        and sample.get("actual_size") == size and sample.get("size_download") == size
+        and sample.get("actual_sha256") == expected_sha256 for sample in samples)
+
+
 def smoke(args):
+    if not 0 < args.size <= 50_000_000 or args.requests < 1 or args.concurrency < 1:
+        raise ValueError("size must be 1..50000000; requests and concurrency must be positive")
     runner = load_runner()
     size = getattr(args, "size", SIZE)
     watchdog = getattr(args, "watchdog", WATCHDOG)
@@ -214,10 +269,13 @@ def smoke(args):
 
     runtime = ROOT / "runtime" / f"docker-{args.run_id}"
     results = ROOT / "results" / f"docker-{args.run_id}-{args.mode}-{args.protocol}.json"
-    if runtime.exists() or results.exists():
+    summary_path = ROOT / "results" / args.run_id / "docker" / args.mode / args.protocol / "summary.json"
+    if runtime.exists() or results.exists() or summary_path.exists():
         raise FileExistsError("Docker smoke run already exists")
     deploy_args = argparse.Namespace(run_id=args.run_id, server_disable_tcp=args.protocol == "quic")
-    server = container = remote_dir = None
+    server = container = remote_dir = bytesource = None
+    engine = None
+    target = getattr(args, "target", "bytesource")
     report = {
         "run_id": args.run_id,
         "mode": args.mode,
@@ -228,7 +286,14 @@ def smoke(args):
         "concurrency": concurrency,
         "cleanup": {}
     }
+    expected_sha256 = ""
     try:
+        expected_sha256 = (runner.bytesource_sha256(size) if target == "bytesource"
+                           else getattr(args, "expected_sha256", "") or "")
+        if not re.fullmatch(r"[0-9a-fA-F]{64}", expected_sha256):
+            raise ValueError("--target cloudflare requires --expected-sha256 with 64 hexadecimal digits")
+        expected_sha256 = expected_sha256.lower()
+        engine = container_engine(getattr(args, "container_engine", None))
         if with_iperf:
             print(f"[*] Measuring raw iperf3 download baseline against {HOST}:5201...")
             iperf_res = measure_iperf3_baseline(ssh_connect_timeout, iperf_stop_timeout, iperf_start_timeout, iperf_client_timeout)
@@ -236,8 +301,8 @@ def smoke(args):
             if iperf_res.get("available"):
                 print(f"[+] Raw network iperf3 reverse throughput: {iperf_res['mbps']} Mbps")
 
-        target_ip = resolve_cloudflare_ipv4()
-        report["cloudflare_ipv4"] = target_ip
+        target_ip = resolve_cloudflare_ipv4() if target == "cloudflare" else HOST
+        report.update({"target": target, "target_ip": target_ip, "container_engine": engine})
         runner.prepare(argparse.Namespace(run_id=args.run_id, local_repo=str(ROOT.parent), remote_repo="/root/trojan-plus", remote_runtime="/root/trojan-plus/quic_proxy_test_remote/runtime"))
         runner.trojan_deploy(deploy_args)
         metadata = runner.load_json(ROOT / "results" / args.run_id / "metadata" / "trojan-deploy.json")
@@ -248,17 +313,20 @@ def smoke(args):
         command_output(["scp", "-P", str(SSH_PORT), f"root@{HOST}:{remote_binary}", str(runtime / "trojan")], scp_timeout)
         (runtime / "trojan").chmod(0o700)
         render_configs(runtime, args.protocol, (ROOT / "runtime" / args.run_id / "password").read_text().strip(), (ROOT / "runtime" / args.run_id / "server.crt").read_bytes())
-        build_image(image_inspect_timeout, image_build_timeout)
+        build_image(image_inspect_timeout, image_build_timeout, engine)
+        if target == "bytesource":
+            bytesource = runner.bytesource_start(argparse.Namespace(run_id=args.run_id, bind=HOST))
         server = runner.trojan_start(argparse.Namespace(run_id=args.run_id))
-        commands = docker_commands(args.mode, args.protocol, args.run_id, runtime, target_ip, size, watchdog, requests, concurrency)
+        commands = docker_commands(args.mode, args.protocol, args.run_id, runtime, target_ip, size, watchdog, requests, concurrency, engine, target, expected_sha256)
         container = commands["name"]
         completed = run_docker_with_progress(commands["run"], container, watchdog + watchdog_grace, progress_interval)
+        report["docker_stdout"] = completed.stdout
+        report["docker_stderr"] = completed.stderr
+        report["exit_code"] = completed.returncode
         if not completed.stdout.strip():
             raise RuntimeError(f"Docker mode failed: {completed.stderr.strip()}")
         payload = json.loads(completed.stdout)
         report.update(payload)
-        report["docker_stderr"] = completed.stderr
-        report["exit_code"] = completed.returncode
         if "all_success" in payload:
             report["valid"] = completed.returncode == 0 and payload["all_success"]
         else:
@@ -278,22 +346,57 @@ def smoke(args):
                 warning_msg = f"Proxy throughput ({effective_mbps} Mbps) deviates significantly from iperf3 raw link ({iperf_mbps} Mbps), ratio={ratio}"
                 report["iperf_deviation_warning"] = warning_msg
                 print(f"[!] WARNING: {warning_msg}", file=sys.stderr)
+    except Exception as error:
+        report["error"] = str(error)
+        if isinstance(error, subprocess.TimeoutExpired):
+            report["docker_stdout"] = str(error.stdout or "")
+            report["docker_stderr"] = str(error.stderr or "")
     finally:
-        if container:
-            subprocess.run(["docker", "rm", "-f", container], capture_output=True, text=True, check=False, timeout=command_timeout)
-        if server:
-            runner.trojan_stop(argparse.Namespace(run_id=args.run_id))
-        if remote_dir:
+        cleanup_errors = []
+        def cleanup_step(name, action):
             try:
-                server_log = results.parent / f"docker-{args.run_id}-{args.mode}-{args.protocol}-server.log"
-                command_output(["scp", "-P", str(SSH_PORT), f"root@{HOST}:{remote_dir}/trojan-server.log", str(server_log)], server_log_scp_timeout)
-                report["server_log"] = str(server_log)
-            except Exception:
-                pass
-            command_output(ssh(f"rm -rf -- {remote_dir}", ssh_connect_timeout), command_timeout)
-        report["cleanup"]["docker"] = command_output(["docker", "ps", "-a", "--filter", f"name=trojan-{args.mode}-{args.protocol}-{args.run_id}", "--format", "{{.Names}}"], command_timeout)
+                return action()
+            except Exception as error:
+                cleanup_errors.append(f"{name}: {error}")
+                return None
+        if container:
+            cleanup_step("container removal", lambda: subprocess.run([*engine, "rm", "-f", container], capture_output=True, text=True, timeout=command_timeout))
+        deploy_path = ROOT / "results" / args.run_id / "metadata" / "trojan-deploy.json"
+        if server or deploy_path.exists():
+            cleanup_step("server/deploy stop", lambda: runner.trojan_stop(argparse.Namespace(run_id=args.run_id)))
+            outcome = cleanup_step("server stop evidence", lambda: runner.load_json(ROOT / "results" / args.run_id / "metadata" / "trojan-server-stop.json"))
+            if server and (not outcome or not outcome.get("stopped")):
+                cleanup_errors.append("server stop not verified")
+            server_log = ROOT / "results" / args.run_id / "logs" / "trojan-server.log"
+            report["server_log"] = str(server_log)
+            if args.protocol == "quic":
+                report["protocol_evidence"] = protocol_evidence(report.get("docker_stderr", ""), server_log.read_text() if server_log.exists() else "")
+        leftover = cleanup_step("container verification", lambda: command_output([*engine, "ps", "-a", "--filter", f"name=^trojan-{args.mode}-{args.protocol}-{args.run_id}$", "--format", "{{.Names}}"], command_timeout)) if engine else None
+        if leftover:
+            cleanup_errors.append("container remains: " + leftover)
+        if report.get("iperf_baseline") and not report["iperf_baseline"].get("cleanup_valid"):
+            cleanup_errors.append("iperf cleanup not verified")
+        report["cleanup"] = {"valid": not cleanup_errors, "errors": cleanup_errors}
+        samples = report.get("samples", [])
+        requests_valid = report.get("exit_code") == 0 and valid_samples(samples, requests, size, expected_sha256)
+        report["gates"] = {
+            "requests": requests_valid,
+            "protocol": args.protocol != "quic" or report.get("protocol_evidence", {}).get("valid", False),
+            "cleanup": not cleanup_errors,
+            "no_error": "error" not in report,
+        }
+        report["thresholds"] = {
+            "exit_code": 0, "http_code": 200, "sample_count": requests,
+            "actual_size": size, "size_download": size, "expected_sha256": expected_sha256,
+            "failed_requests": 0, "cleanup_errors": 0,
+            "quic_both_handshake_h3_and_streams_no_fallback": args.protocol == "quic",
+        }
+        report["valid"] = all(report["gates"].values())
+        report["passed"] = report["valid"]
         results.parent.mkdir(parents=True, exist_ok=True)
         results.write_text(json.dumps(report, indent=4) + "\n")
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        summary_path.write_text(json.dumps(report, indent=4) + "\n")
     print(results)
     if not report.get("valid"):
         if report.get("docker_stderr"):
@@ -304,10 +407,13 @@ def smoke(args):
 
 def parse_args():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--container-engine", help="Command prefix; default: CONTAINER_ENGINE or Docker/Podman autodetection")
+    parser.add_argument("--target", choices=("bytesource", "cloudflare"), default="bytesource", help="Cloudflare is opt-in and requires a trusted expected SHA-256")
+    parser.add_argument("--expected-sha256", help="Trusted payload SHA-256, required for --target cloudflare")
     parser.add_argument("--mode", required=True, choices=("nat", "client_tun"))
     parser.add_argument("--protocol", required=True, choices=("tcp", "quic"))
     parser.add_argument("--run-id", required=True, type=validate_run_id)
-    parser.add_argument("--size", type=int, default=SIZE)
+    parser.add_argument("--size", type=positive_int, default=SIZE)
     parser.add_argument("--watchdog", type=positive_int, default=WATCHDOG)
     parser.add_argument("--watchdog-grace", type=positive_int, default=WATCHDOG_GRACE)
     parser.add_argument("--command-timeout", type=positive_int, default=COMMAND_TIMEOUT)
@@ -320,8 +426,8 @@ def parse_args():
     parser.add_argument("--scp-timeout", type=positive_int, default=SCP_TIMEOUT)
     parser.add_argument("--server-log-scp-timeout", type=positive_int, default=SERVER_LOG_SCP_TIMEOUT)
     parser.add_argument("--progress-interval", type=positive_int, default=PROGRESS_INTERVAL)
-    parser.add_argument("--requests", type=int, default=1)
-    parser.add_argument("--concurrency", type=int, default=1)
+    parser.add_argument("--requests", type=positive_int, default=1)
+    parser.add_argument("--concurrency", type=positive_int, default=1)
     parser.add_argument("--with-iperf", action="store_true", help="Record raw iperf3 baseline before test")
     return parser.parse_args()
 

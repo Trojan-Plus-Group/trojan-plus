@@ -8,6 +8,13 @@ size=${5:-1048576}
 watchdog=${6:-180}
 requests=${7:-1}
 concurrency=${8:-1}
+target=${9:-cloudflare}
+expected_sha256=${10:-}
+target_port=443
+[ "$target" != bytesource ] || target_port=8001
+case "$target" in cloudflare|bytesource) ;; *) exit 64;; esac
+case "$expected_sha256" in *[!0-9a-f]*|"") exit 64;; esac
+[ "${#expected_sha256}" -eq 64 ] || exit 64
 
 case "$mode" in nat|client_tun) ;; *) exit 64;; esac
 case "$protocol" in tcp|quic) ;; *) exit 64;; esac
@@ -22,8 +29,8 @@ watchdog_pid=
 cleanup() {
     status=$?
     set +e
+    cat /tmp/trojan.log >&2 2>/dev/null
     if [ "$status" -ne 0 ]; then
-        cat /tmp/trojan.log >&2 2>/dev/null
         iptables -t nat -L OUTPUT -nvx >&2 2>/dev/null
         ip -s link show dev tun0 >&2 2>/dev/null || true
         ip route show >&2 2>/dev/null || true
@@ -31,14 +38,17 @@ cleanup() {
     test -z "$trojan_pid" || kill "$trojan_pid" 2>/dev/null
     test -z "$watchdog_pid" || kill "$watchdog_pid" 2>/dev/null
     test -z "$trojan_pid" || wait "$trojan_pid" 2>/dev/null
-    iptables -t nat -D OUTPUT -d "$target_ip/32" -p tcp --dport 443 -j REDIRECT --to-ports 12345 2>/dev/null
-    ip route del "$target_ip/32" dev tun0 2>/dev/null
+    iptables -t nat -D OUTPUT -d "$target_ip/32" -p tcp --dport "$target_port" -j REDIRECT --to-ports 12345 2>/dev/null
+    ip rule del priority 17777 2>/dev/null
+    ip route del table 17777 "$target_ip/32" dev tun0 2>/dev/null
     exit "$status"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 if [ "$mode" = nat ]; then
-    iptables -t nat -A OUTPUT -d "$target_ip/32" -p tcp --dport 443 -j REDIRECT --to-ports 12345
+    iptables -t nat -A OUTPUT -d "$target_ip/32" -p tcp --dport "$target_port" -j REDIRECT --to-ports 12345
 fi
 
 /runtime/trojan -c "$config" -l /tmp/trojan.log &
@@ -55,24 +65,21 @@ for n in $(seq 1 60); do
     fi
     if [ "$mode" = nat ]; then
         if ss -H -ltn sport = :12345 | grep -q .; then
-            if [ "$protocol" = quic ]; then
-                for q in $(seq 1 50); do
-                    grep -q "handshake completed" /tmp/trojan.log 2>/dev/null && break
-                    sleep 0.1
-                done
+            if [ "$protocol" = quic ] && ! ss -H -uanp | grep -F "pid=$trojan_pid," | grep -q .; then
+                sleep 1
+                continue
             fi
             ready=true
             break
         fi
     elif ip link show tun0 >/dev/null 2>&1; then
-        ip link set tun0 up
-        ip route replace "$target_ip/32" dev tun0
-        if [ "$protocol" = quic ]; then
-            for q in $(seq 1 50); do
-                grep -q "handshake completed" /tmp/trojan.log 2>/dev/null && break
-                sleep 0.1
-            done
+        if [ "$protocol" = quic ] && ! ss -H -uanp | grep -F "pid=$trojan_pid," | grep -q .; then
+            sleep 1
+            continue
         fi
+        ip link set tun0 up
+        ip route replace table 17777 "$target_ip/32" dev tun0
+        ip rule add priority 17777 to "$target_ip/32" ipproto tcp dport "$target_port" lookup 17777
         ready=true
         break
     fi
@@ -85,9 +92,10 @@ if [ "$ready" != true ]; then
 fi
 
 # target resolve: --resolve "speed.cloudflare.com:443:$target_ip"
-python3 - <<EOF "$target_ip" "$size" "$requests" "$concurrency" "$mode" "$protocol" "$watchdog"
+python3 - <<'EOF' "$target_ip" "$size" "$requests" "$concurrency" "$mode" "$protocol" "$watchdog" "$target" "$expected_sha256"
 import concurrent.futures
 import json
+import hashlib
 import os
 import statistics
 import subprocess
@@ -102,13 +110,16 @@ mode = sys.argv[5]
 protocol = sys.argv[6]
 watchdog = int(sys.argv[7]) if len(sys.argv) > 7 else 180
 
+target = sys.argv[8]
+expected_sha256 = sys.argv[9]
+
 max_curl_time = max(15, min(120, watchdog - 10))
 curl_write_out = '{"http_code":%{http_code},"size_download":%{size_download},"speed_download":%{speed_download},"time_total":%{time_total},"time_connect":%{time_connect}}'
 
 def run_one(req_id):
     out_path = f"/tmp/payload_{req_id}.bin"
     cmd = [
-        "curl", "--fail", "--silent", "--show-error",
+        "curl", "--noproxy", "*", "--fail", "--silent", "--show-error",
         "-H", "Connection: close",
         "--max-time", str(max_curl_time),
         "--resolve", f"speed.cloudflare.com:443:{target_ip}",
@@ -116,6 +127,8 @@ def run_one(req_id):
         "--write-out", curl_write_out,
         f"https://speed.cloudflare.com/__down?bytes={size}"
     ]
+    if target == "bytesource":
+        cmd = cmd[:cmd.index("--resolve")] + ["--output", out_path, "--write-out", curl_write_out, f"http://{target_ip}:8001/{size}"]
     start_t = time.monotonic()
     timed_out = False
     try:
@@ -124,10 +137,15 @@ def run_one(req_id):
         timed_out = True
         res = subprocess.CompletedProcess(cmd, returncode=124, stdout="", stderr=f"Request timed out after {max_curl_time}s")
     elapsed = time.monotonic() - start_t
+    actual_sha256 = ""
     actual_sz = 0
     try:
         actual_sz = os.path.getsize(out_path)
-        os.remove(out_path)
+        with open(out_path, "rb") as source:
+            digest = hashlib.sha256()
+            for chunk in iter(lambda: source.read(65536), b""):
+                digest.update(chunk)
+            actual_sha256 = digest.hexdigest()
     except OSError:
         pass
 
@@ -143,10 +161,12 @@ def run_one(req_id):
     speed_download = parsed.get("speed_download", 0.0) if parsed else 0.0
     time_total = parsed.get("time_total", elapsed) if parsed else elapsed
     time_connect = parsed.get("time_connect", 0.0) if parsed else 0.0
-    success = (res.returncode == 0 and actual_sz == size and http_code == 200 and size_download == size)
+    success = (res.returncode == 0 and actual_sz == size and http_code == 200 and size_download == size and bool(expected_sha256) and actual_sha256 == expected_sha256)
     
     return {
         "req_id": req_id,
+        "actual_sha256": actual_sha256,
+        "expected_sha256": expected_sha256,
         "exit_code": res.returncode,
         "actual_size": actual_sz,
         "size_download": size_download,
@@ -196,7 +216,9 @@ result = {
     "time_total_median": round(statistics.median(durations), 3),
     "time_connect_median": round(statistics.median(connects), 3),
     "all_success": (success_count == requests and requests > 0),
-    "failures": [s for s in samples if not s["success"]][:10]
+    "failures": [s for s in samples if not s["success"]],
+    "samples": samples,
+    "content_verified": bool(expected_sha256) and success_count == requests
 }
 
 if requests <= 5:
