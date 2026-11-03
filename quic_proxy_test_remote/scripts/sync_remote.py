@@ -19,6 +19,7 @@ import pathlib
 import shlex
 import subprocess
 import sys
+import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 HOST = "172.236.226.35"
@@ -83,16 +84,14 @@ def remote_sync_command(branch, remote_bundle):
 
 
 def sync_bundle(branch, connect_timeout, bundle_timeout, transfer_timeout, sync_timeout, cleanup_timeout):
-    bundle_file = f"/tmp/{branch}.bundle"
-    local_bundle = pathlib.Path(bundle_file)
-    remote_bundle = f"/tmp/{branch}.bundle"
+    run_cmd(["git", "check-ref-format", "--branch", branch], cwd=ROOT, timeout=bundle_timeout)
+    with tempfile.NamedTemporaryFile(prefix="tp-sync-", suffix=".bundle", dir="/tmp/opencode", delete=False) as bundle:
+        local_bundle = pathlib.Path(bundle.name)
+    remote_bundle = f"/tmp/{local_bundle.name}"
 
     print(f"[*] Step 1: Creating local git bundle for branch '{branch}'...")
-    if local_bundle.exists():
-        local_bundle.unlink()
     try:
         branch_ref = f"refs/heads/{branch}"
-        run_cmd(["git", "check-ref-format", "--branch", branch], cwd=ROOT, timeout=bundle_timeout)
         run_cmd(["git", "bundle", "create", str(local_bundle), branch_ref], cwd=ROOT, timeout=bundle_timeout)
 
         print(f"[*] Step 2: Transferring bundle to root@{HOST}:{remote_bundle} via SCP...")

@@ -44,6 +44,7 @@ NETEM_LOSSES = (0, 0.01, 0.1, 0.5, 1)
 NETEM_DEFAULT_BYTES = 1 << 20
 ITEM_TIMEOUT = 170
 RETRY_DELAYS = (3, 10)
+ALLOWED_RETRIES = 0
 DEFAULT_ATTEMPT_TIMEOUT = 140
 RUN_ITEM_ATTEMPT_TIMEOUT = 50
 SSH_CONNECT_TIMEOUT = 10
@@ -62,7 +63,7 @@ COMMAND_TIMEOUT = 30
 LONG_COMMAND_TIMEOUT = 60
 CLOUDFLARE_CONNECT_TIMEOUT = 15
 CLOUDFLARE_MAX_TIME = 170
-CLOUDFLARE_RETRIES = 2
+CLOUDFLARE_RETRIES = 0
 CLOUDFLARE_RETRY_DELAY = 3
 CLOUDFLARE_OUTER_TIMEOUT = 180
 SOAK_SAMPLE_INTERVAL = 60
@@ -101,7 +102,7 @@ def sha256_bytes(data):
 def bytesource_payload(n):
     if n < 0:
         raise ValueError("payload size must be non-negative")
-    return bytes(((i * 31 + 7) & 0xFF) for i in range(n))
+    return hashlib.shake_256(b"trojan-plus-bytesource-v1").digest(n)
 
 
 def bytesource_sha256(n):
@@ -244,6 +245,8 @@ def throughput_summary(samples):
 def validate_protocol_deploy(protocol, deploy):
     server_disable_tcp = deploy.get("server_disable_tcp", False)
     expected = protocol == "quic"
+    if protocol == "both":
+        raise ValueError("separate deployments required; choose tcp or quic")
     if server_disable_tcp is not expected:
         raise ValueError(f"protocol={protocol} requires deploy metadata server_disable_tcp={str(expected).lower()}")
     return server_disable_tcp
@@ -374,6 +377,7 @@ def prepare(args):
     commit = run(["git", "rev-parse", "HEAD"], repo)
     status = run(["git", "status", "--short", "--branch"], repo)
     dirty_diff = subprocess.run(["git", "diff", "HEAD", "--binary", "--no-ext-diff"], cwd=repo, check=True, capture_output=True).stdout
+    (results / "metadata" / "dirty.diff").write_bytes(dirty_diff)
     if not TROJAN_BINARY.is_file():
         raise FileNotFoundError(f"local binary missing: {TROJAN_BINARY}")
     manifest = {
@@ -433,7 +437,7 @@ def run_item(command, directory, name, commands_file, validator=lambda record, o
     attempt_timeout = RUN_ITEM_ATTEMPT_TIMEOUT if attempt_timeout is None else attempt_timeout
     deadline = time.monotonic() + ITEM_TIMEOUT
     attempts = []
-    for index in range(3):
+    for index in range(ALLOWED_RETRIES + 1):
         if index:
             delay = RETRY_DELAYS[index - 1]
             if time.monotonic() + delay >= deadline:
@@ -444,10 +448,16 @@ def run_item(command, directory, name, commands_file, validator=lambda record, o
             break
         record, output = execute_attempt(command, directory / f"{name}-attempt{index + 1}", min(attempt_timeout, remaining), commands_file, name, index + 1)
         record["valid"] = validator(record, output)
+        write_json((directory / f"{name}-attempt{index + 1}").with_suffix(".json"), record)
+        if not record["valid"]:
+            stage_log(f"{name}: attempt {index + 1} failed (allowed retries: {ALLOWED_RETRIES})")
         attempts.append(record)
         if record["valid"]:
             break
-    return {"name": name, "valid": bool(attempts and attempts[-1]["valid"]), "attempts": attempts}
+    return {"name": name, "valid": bool(attempts and attempts[-1]["valid"]),
+            "allowed_retries": ALLOWED_RETRIES,
+            "first_failure": attempts[0] if attempts and not attempts[0]["valid"] else None,
+            "attempts": attempts}
 
 
 def valid_iperf(record, output):
@@ -592,6 +602,14 @@ def scp_files(local_paths, remote_dir, results, commands_file, name):
 
 
 def trojan_deploy(args):
+    try:
+        return deploy_files(args)
+    except Exception:
+        trojan_stop(args)
+        raise
+
+
+def deploy_files(args):
     results = ROOT / "results" / args.run_id
     runtime = ROOT / "runtime" / args.run_id
     if not (results / "metadata" / "manifest.json").is_file():
@@ -602,6 +620,9 @@ def trojan_deploy(args):
         if not path.is_file():
             raise FileNotFoundError(f"missing prepared file: {path}")
     remote_dir = ensure_remote_dir("/tmp/trojan-r2", results, commands_file, "trojan-deploy")
+    write_json(results / "metadata" / "trojan-deploy.json", {
+        "run_id": args.run_id, "remote_dir": remote_dir,
+        "server_disable_tcp": args.server_disable_tcp})
     scp_files(sources, remote_dir, results, commands_file, "trojan-deploy")
     server = load_json(runtime / "server.json")
     server.setdefault("quic", {})["debug_disable_tcp"] = args.server_disable_tcp
@@ -635,7 +656,8 @@ def start_remote_named(name, remote_dir, command_tail, results, commands_file, m
     remote = (
         f"cd {shlex.quote(remote_dir)}; "
         f"nohup {command_tail} >{quoted_log} 2>&1 </dev/null & "
-        f"pid=$!; sleep {REMOTE_START_WAIT:g}; test -r /proc/$pid/cmdline || exit 74; "
+        f"pid=$!; printf '%s\\n' \"$pid\" > {shlex.quote(remote_dir + '/' + name + '.pid')}; "
+        f"sleep {REMOTE_START_WAIT:g}; test -r /proc/$pid/cmdline || exit 74; "
         f"tr '\\0' ' ' </proc/$pid/cmdline; printf '\\n%s\\n' \"$pid\""
     )
     item = run_item(ssh(remote), results / "logs" / name, f"{name}-start", commands_file, attempt_timeout=COMMAND_TIMEOUT)
@@ -655,7 +677,18 @@ def start_remote_named(name, remote_dir, command_tail, results, commands_file, m
 def stop_remote_named(name, results, commands_file):
     metadata_path = results / "metadata" / f"{name}.json"
     if not metadata_path.is_file():
-        return {"name": name, "skipped": True, "reason": "no metadata"}
+        deploy_path = results / "metadata" / "trojan-deploy.json"
+        if not deploy_path.is_file():
+            return {"name": name, "skipped": True, "reason": "no metadata"}
+        remote_dir = load_json(deploy_path)["remote_dir"]
+        pidfile = shlex.quote(remote_dir + '/' + name + '.pid')
+        marker = "bytesource.py" if name == "bytesource" else "-c server.json"
+        remote = (f'if test -f {pidfile}; then pid=$(cat {pidfile}); '
+                  'case "$pid" in *[!0-9]*|"") exit 75;; esac; '
+                  'if test -r /proc/$pid/cmdline; then cmd=$(tr "\\0" " " </proc/$pid/cmdline); '
+                  f'case "$cmd" in *{shlex.quote(marker)}*) kill "$pid";; *) exit 75;; esac; fi; fi')
+        item = run_item(ssh(remote), results / "logs" / name, f"{name}-stop-pidfile", commands_file, attempt_timeout=STOP_COMMAND_TIMEOUT)
+        return {"name": name, "stopped": item["valid"]}
     payload = load_json(metadata_path)
     pid = int(payload["pid"])
     marker = payload["marker"]
@@ -680,6 +713,14 @@ def trojan_start(args):
     deploy = load_json(results / "metadata" / "trojan-deploy.json")
     remote_dir = deploy["remote_dir"]
     manifest = load_json(results / "metadata" / "manifest.json")
+    record, output = execute_attempt(ssh(f"cat {shlex.quote(remote_dir + '/server.json')}"),
+        results / "metadata" / "trojan" / "deployed-config", COMMAND_TIMEOUT,
+        commands_file, "deployed-config", 1)
+    if record["exit_code"] != 0:
+        raise RuntimeError("cannot read deployed config")
+    deployed_quic = json.loads(output).get("quic", {})
+    if not deployed_quic.get("enabled") or deployed_quic.get("debug_disable_tcp", False) != deploy["server_disable_tcp"]:
+        raise RuntimeError("deployed protocol/config mismatch")
     binary = f"{manifest['remote']['repo']}/build/trojan"
     marker = f"{binary} -c server.json"
     payload = start_remote_named("trojan-server", remote_dir, f"{shlex.quote(binary)} -c server.json -l trojan-server.log", results, commands_file, marker)
@@ -705,36 +746,77 @@ def trojan_start(args):
     return payload
 
 
+def archive_remote_logs(results, commands_file, remote_dir):
+    for name in ("trojan-server", "bytesource"):
+        record, output = execute_attempt(
+            ssh(f"cat {shlex.quote(remote_dir + '/' + name + '.log')}"),
+            results / "logs" / f"{name}-archive", COMMAND_TIMEOUT,
+            commands_file, f"{name}-archive", 1)
+        if record["exit_code"] == 0:
+            (results / "logs" / f"{name}.log").write_text(output)
+
+
+def verify_quic_logs(client_log: str, server_log: str) -> dict:
+    evidence = {}
+    for role, text in (("client", client_log), ("server", server_log)):
+        evidence[role] = {
+            "handshake": bool(re.search(
+                rf"QuicConnection: handshake completed \(role={role},[^\n]*alpn=h3\)", text)),
+            "streams": len(re.findall(
+                r"(?:QuicProxySession: stream \d+ opened|send_stream_data_impl enter: stream_id=\d+ datalen=[1-9]\d*|send_stream_vecs_impl enter: stream_id=\d+)", text)),
+            "fallback": bool(re.search(r"(?:fall(?:ing)? back to (?:TCP|pipeline)|TCP fallback)", text, re.I)),
+        }
+    evidence["valid"] = all(row["handshake"] and row["streams"] > 0 and not row["fallback"]
+                            for row in evidence.values())
+    return evidence
+
+
 def trojan_stop(args):
     results = ROOT / "results" / args.run_id
-    if not (results / "metadata" / "trojan-server.json").is_file():
-        raise FileNotFoundError("trojan-server metadata missing")
     commands_file = results / "metadata" / "commands.jsonl"
     outcome = stop_remote_named("trojan-server", results, commands_file)
+    source = stop_remote_named("bytesource", results, commands_file)
+    if outcome.get("stopped") is False or source.get("stopped") is False:
+        raise RuntimeError("remote process cleanup failed; keeping directory for diagnosis")
+    deploy_path = results / "metadata" / "trojan-deploy.json"
+    if deploy_path.is_file():
+        remote_dir = load_json(deploy_path)["remote_dir"]
+        if not re.fullmatch(r"/tmp/trojan-deploy\.[A-Za-z0-9]+", remote_dir):
+            raise ValueError("refusing unsafe remote directory cleanup")
+        archive_remote_logs(results, commands_file, remote_dir)
+        record, _ = execute_attempt(ssh(f"rm -rf -- {shlex.quote(remote_dir)}"),
+            results / "metadata" / "trojan" / "cleanup", COMMAND_TIMEOUT,
+            commands_file, "deploy-cleanup", 1)
+        if record["exit_code"] != 0:
+            raise RuntimeError("remote directory cleanup failed")
     write_json(results / "metadata" / "trojan-server-stop.json", outcome)
     print(posix(results / "metadata" / "trojan-server-stop.json"))
 
 
 BYTESOURCE_SCRIPT = (
-    "import sys, re\n"
+    "import sys, re, hashlib\n"
     "from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer\n"
-    "block = bytes(((i * 31 + 7) & 0xFF) for i in range(65536))\n"
+    "seed = b'trojan-plus-bytesource-v1'\n"
     "class H(BaseHTTPRequestHandler):\n"
     "    def do_GET(self):\n"
     "        m = re.fullmatch(r'/(\\d+)', self.path)\n"
     "        if not m:\n"
     "            self.send_response(400); self.send_header('Content-Length', '0'); self.end_headers(); return\n"
     "        n = int(m.group(1))\n"
+    "        if n > 50000000:\n"
+    "            self.send_error(413); return\n"
+    "        payload = hashlib.shake_256(seed).digest(n)\n"
     "        self.send_response(200); self.send_header('Content-Length', str(n)); self.end_headers()\n"
     "        sent = 0\n"
     "        while sent < n:\n"
-    "            chunk = block[:min(len(block), n - sent)]\n"
+    "            chunk = payload[sent:sent + 65536]\n"
     "            self.wfile.write(chunk)\n"
     "            sent += len(chunk)\n"
     "    def log_message(self, *a, **k):\n"
     "        pass\n"
     "port = int(sys.argv[1]) if len(sys.argv) > 1 else 8001\n"
-    "ThreadingHTTPServer(('127.0.0.1', port), H).serve_forever()\n"
+    "bind = sys.argv[2] if len(sys.argv) > 2 else '127.0.0.1'\n"
+    "ThreadingHTTPServer((bind, port), H).serve_forever()\n"
 )
 
 
@@ -752,8 +834,9 @@ def bytesource_start(args):
     record, _ = execute_attempt(ssh(write_remote), output_prefix, COMMAND_TIMEOUT, commands_file, "bytesource-upload", 1)
     if record["exit_code"] != 0:
         raise RuntimeError("failed to upload bytesource script")
+    bind = str(ipaddress.ip_address(getattr(args, "bind", "127.0.0.1")))
     marker = f"python3 {script_name} {BYTESOURCE_PORT}"
-    payload = start_remote_named("bytesource", remote_dir, f"python3 {script_name} {BYTESOURCE_PORT}", results, commands_file, marker)
+    payload = start_remote_named("bytesource", remote_dir, f"python3 {script_name} {BYTESOURCE_PORT} {bind}", results, commands_file, marker)
     payload["script"] = script_remote
     payload["port"] = BYTESOURCE_PORT
     payload["bind"] = "127.0.0.1"
@@ -788,6 +871,7 @@ def start_local_client(runtime, protocol, port, results, commands_file):
             process.wait(timeout=LOCAL_START_STOP_TIMEOUT)
         except subprocess.TimeoutExpired:
             process.kill()
+            process.wait(timeout=LOCAL_KILL_TIMEOUT)
         raise RuntimeError(f"local trojan client {protocol} did not listen on {port}")
     record = {"protocol": protocol, "pid": process.pid, "port": port, "config": posix(config_path), "binary": posix(TROJAN_BINARY), "log": posix(log_path), "started_utc": started_utc, "process": process}
     write_json(results / "metadata" / f"client-{protocol}.json", {k: v for k, v in record.items() if k != "process"})
@@ -808,7 +892,7 @@ def stop_local_client(client, results, commands_file):
 
 
 def valid_trojan(record, output, output_path, expected_size):
-    if record["exit_code"] != 0:
+    if record["exit_code"] != 0 or output.strip() != "200":
         return False
     if not output_path.is_file():
         return False
@@ -826,7 +910,7 @@ def summarize_trojan(record, output, output_path, expected_size, run_number, pro
     actual_sha = sha256(output_path) if output_path.exists() and actual_size else ""
     expected_sha = bytesource_sha256(expected_size)
     valid = valid_trojan(record, output, output_path, expected_size)
-    return {"run": run_number, "protocol": protocol, "bytes": expected_size, "port": port, "url": url, "exit_code": record["exit_code"], "duration_seconds": record["duration_seconds"], "started_utc": record["started_utc"], "ended_utc": record["ended_utc"], "actual_size": actual_size, "expected_size": expected_size, "actual_sha256": actual_sha, "expected_sha256": expected_sha, "valid": valid}
+    return {"run": run_number, "protocol": protocol, "bytes": expected_size, "port": port, "url": url, "exit_code": record["exit_code"], "duration_seconds": record["duration_seconds"], "started_utc": record["started_utc"], "ended_utc": record["ended_utc"], "http_code": output.strip(), "actual_size": actual_size, "expected_size": expected_size, "actual_sha256": actual_sha, "expected_sha256": expected_sha, "valid": valid}
 
 
 def trojan_test(args):
@@ -847,7 +931,7 @@ def trojan_test(args):
     output_path = target_dir / f"{size}-{args.run}.bin"
     log_prefix = target_dir / f"{size}-{args.run}"
     url = f"http://127.0.0.1:{BYTESOURCE_PORT}/{size}"
-    command = ["curl", "-sS", "-o", str(output_path), "--socks5-hostname", f"127.0.0.1:{port}", url]
+    command = ["curl", "--noproxy", "", "--fail", "-sS", "--write-out", "%{http_code}", "-o", str(output_path), "--socks5-hostname", f"127.0.0.1:{port}", url]
     record, output = execute_attempt(command, log_prefix, DEFAULT_ATTEMPT_TIMEOUT, commands_file, f"trojan-test-{protocol}-{size}", args.run)
     summary = summarize_trojan(record, output, output_path, size, args.run, protocol)
     write_json(target_dir / f"{size}-{args.run}.json", summary)
@@ -879,7 +963,7 @@ def run_concurrency_stream(results, commands_file, protocol, port, size, label, 
     directory.mkdir(parents=True, exist_ok=True)
     output_path = directory / f"stream-{stream:03d}.bin"
     prefix = directory / f"stream-{stream:03d}"
-    command = ["curl", "-sS", "-o", str(output_path), "--socks5-hostname", f"127.0.0.1:{port}", f"http://127.0.0.1:{BYTESOURCE_PORT}/{size}"]
+    command = ["curl", "--noproxy", "", "--fail", "-sS", "--write-out", "%{http_code}", "-o", str(output_path), "--socks5-hostname", f"127.0.0.1:{port}", f"http://127.0.0.1:{BYTESOURCE_PORT}/{size}"]
     record, output = execute_attempt(command, prefix, DEFAULT_ATTEMPT_TIMEOUT, commands_file, f"concurrency-{label}-stream-{stream}", 1)
     sample = summarize_trojan(record, output, output_path, size, run_number, protocol)
     sample["stream"] = stream
@@ -960,7 +1044,7 @@ CURL_WRITE_OUT = '{"http_code":%{http_code},"size_download":%{size_download},"ti
 
 
 def valid_cloudflare_sample(exit_code, actual_size, expected_size, metrics):
-    return exit_code == 0 and actual_size == expected_size and metrics is not None and int(metrics.get("size_download", -1)) == expected_size
+    return exit_code == 0 and actual_size == expected_size and metrics is not None and metrics.get("http_code") == 200 and int(metrics.get("size_download", -1)) == expected_size
 
 
 def run_cloudflare_sample(results, commands_file, mode, size, warmup, number):
@@ -987,6 +1071,12 @@ def run_cloudflare_sample(results, commands_file, mode, size, warmup, number):
 
 
 def cloudflare(args):
+    if CLOUDFLARE_RETRIES:
+        raise ValueError("curl internal retries hide attempts; use separate Run IDs")
+    if not args.allow_external or not args.expected_sha256:
+        raise ValueError("Cloudflare requires --allow-external and --expected-sha256 from trusted content")
+    if not re.fullmatch(r"[0-9a-f]{64}", args.expected_sha256):
+        raise ValueError("expected-sha256 must be a lowercase SHA-256 digest")
     if args.bytes < 1 or args.bytes > CLOUDFLARE_MAX_BYTES:
         raise ValueError(f"bytes must be in [1, {CLOUDFLARE_MAX_BYTES}]")
     if args.warmup < 0 or args.runs < 1:
@@ -996,16 +1086,23 @@ def cloudflare(args):
     if not (results / "metadata" / "trojan-deploy.json").is_file():
         raise FileNotFoundError("trojan-deploy must run before cloudflare")
     commands_file = results / "metadata" / "commands.jsonl"
+    validate_protocol_deploy(args.protocol, load_json(results / "metadata" / "trojan-deploy.json"))
     summary = {"run_id": args.run_id, "started_utc": utc_now(), "bytes": args.bytes, "warmup": args.warmup, "runs": args.runs, "samples": []}
     server_meta = tcp_client = quic_client = None
     try:
         server_meta = trojan_start(argparse.Namespace(run_id=args.run_id))
-        tcp_client = start_local_client(runtime, "tcp", TROJAN_LOCAL_PORT_TCP, results, commands_file)
-        quic_client = start_local_client(runtime, "quic", TROJAN_LOCAL_PORT_QUIC, results, commands_file)
+        if args.protocol == "tcp":
+            tcp_client = start_local_client(runtime, "tcp", TROJAN_LOCAL_PORT_TCP, results, commands_file)
+        else:
+            quic_client = start_local_client(runtime, "quic", TROJAN_LOCAL_PORT_QUIC, results, commands_file)
         for warmup, count in ((True, args.warmup), (False, args.runs)):
             for number in range(1, count + 1):
-                for mode in ("direct", "tcp", "quic"):
-                    summary["samples"].append(run_cloudflare_sample(results, commands_file, mode, args.bytes, warmup, number))
+                for mode in ("direct", args.protocol):
+                    sample = run_cloudflare_sample(results, commands_file, mode, args.bytes, warmup, number)
+                    sample["actual_sha256"] = sha256(results / sample["output"])
+                    sample["expected_sha256"] = args.expected_sha256
+                    sample["valid"] = sample["valid"] and sample["actual_sha256"] == args.expected_sha256
+                    summary["samples"].append(sample)
     finally:
         summary["ended_utc"] = utc_now()
         for client in (tcp_client, quic_client):
@@ -1031,6 +1128,8 @@ def collect_soak_observation(results, commands_file, clients, server_pid, index,
     remote_command = f"printf '%s\\n' '=== STATUS ==='; cat /proc/{server_pid}/status; printf '%s\\n' '=== SMAPS_ROLLUP ==='; cat /proc/{server_pid}/smaps_rollup; printf '%s\\n' '=== SNMP ==='; cat /proc/net/snmp"
     record, output = execute_attempt(ssh(remote_command), directory / f"{index:05d}-remote", COMMAND_TIMEOUT, commands_file, f"soak-observation-{index}", 1)
     memory = parse_proc_memory(output) if record["exit_code"] == 0 else {"rss_bytes": None, "pss_bytes": None}
+    if memory["rss_bytes"] is None or memory["pss_bytes"] is None or any(row["exit_code"] != 0 for row in local["clients"]):
+        raise RuntimeError("soak process observation missing or process exited")
     return {"index": index, "captured_utc": utc_now(), "elapsed_seconds": elapsed_seconds, "phase": phase, "local": [{"protocol": row["protocol"], "rss_bytes": parse_ps_rss(row["ps"]), "ps": row["ps"]} for row in local["clients"]], "remote": memory, "raw": {"local": posix(local_path.relative_to(results)), "remote": record["stdout"], "remote_record": posix((directory / f"{index:05d}-remote.json").relative_to(results))}}
 
 
@@ -1050,12 +1149,13 @@ def soak(args):
         raise ValueError("minutes must be > 0 and cooldown must be >= 0")
     if args.bytes < 1 or args.bytes > SOAK_MAX_SAMPLE_BYTES:
         raise ValueError(f"bytes must be in [1, {SOAK_MAX_SAMPLE_BYTES}]")
-    protocols = ("tcp", "quic") if args.protocol == "both" else (args.protocol,)
+    protocols = selected_protocols(args.protocol)
     results = ROOT / "results" / args.run_id
     runtime = ROOT / "runtime" / args.run_id
     if not (results / "metadata" / "trojan-deploy.json").is_file():
         raise FileNotFoundError("trojan-deploy must run before soak")
     commands_file = results / "metadata" / "commands.jsonl"
+    validate_protocol_deploy(args.protocol, load_json(results / "metadata" / "trojan-deploy.json"))
     summary = {"run_id": args.run_id, "started_utc": utc_now(), "minutes": args.minutes, "cooldown_minutes": args.cooldown, "bytes": args.bytes, "protocols": list(protocols), "samples": [], "observations": []}
     bytesource_meta = server_meta = tcp_client = quic_client = None
     stop_sampling = threading.Event()
@@ -1066,7 +1166,7 @@ def soak(args):
         index = 1
         while True:
             try:
-                summary["observations"].append(collect_soak_observation(results, commands_file, [tcp_client, quic_client], server_meta["pid"], index, time.monotonic() - started, phase["value"]))
+                summary["observations"].append(collect_soak_observation(results, commands_file, [client for client in (tcp_client, quic_client) if client is not None], server_meta["pid"], index, time.monotonic() - started, phase["value"]))
             except Exception as error:
                 summary["observations"].append({"index": index, "captured_utc": utc_now(), "elapsed_seconds": time.monotonic() - started, "phase": phase["value"], "error": str(error)})
             index += 1
@@ -1075,8 +1175,11 @@ def soak(args):
     try:
         bytesource_meta = bytesource_start(argparse.Namespace(run_id=args.run_id))
         server_meta = trojan_start(argparse.Namespace(run_id=args.run_id))
-        tcp_client = start_local_client(runtime, "tcp", TROJAN_LOCAL_PORT_TCP, results, commands_file)
-        quic_client = start_local_client(runtime, "quic", TROJAN_LOCAL_PORT_QUIC, results, commands_file)
+        if "tcp" in protocols:
+            tcp_client = start_local_client(runtime, "tcp", TROJAN_LOCAL_PORT_TCP, results, commands_file)
+        if "quic" in protocols:
+            quic_client = start_local_client(runtime, "quic", TROJAN_LOCAL_PORT_QUIC, results, commands_file)
+        started = time.monotonic()
         sampling_thread = threading.Thread(target=sample_resources)
         sampling_thread.start()
         deadline = started + args.minutes * 60
@@ -1260,19 +1363,19 @@ def baseline(args):
     server = None
     remote_log = None
     try:
-        stage_log("[baseline 1/4] 路径与系统快照；约 1 分钟")
+        stage_log("[baseline 1/4] path and system snapshots; about 1 minute")
         items.append(run_item(["ping", "-c", "10", HOST], results / "baseline" / "path", "ping", commands_file, attempt_timeout=STOP_COMMAND_TIMEOUT))
         items.append(run_item(["traceroute", HOST], results / "baseline" / "path", "traceroute", commands_file, attempt_timeout=COMMAND_TIMEOUT))
         items.append(run_item(ssh("date -u +%Y-%m-%dT%H:%M:%SZ; timedatectl show -p NTPSynchronized --value 2>/dev/null || true"), results / "baseline" / "system", "remote-time", commands_file, attempt_timeout=SHORT_COMMAND_TIMEOUT))
         items.append(snapshot(results, commands_file, "before"))
         server, remote_log = start_server(results, commands_file)
-        stage_log("[baseline 2/4] 路径预热；通常少于 1 分钟")
+        stage_log("[baseline 2/4] path warmup; usually under 1 minute")
         for number in range(1, args.warmup + 1):
             command = ["iperf3", "-c", HOST, "-p", str(IPERF_PORT), "-n", "5000000", "--get-server-output", "--json"]
             item = run_item(command, results / "baseline" / "tcp" / "tcp-p1-forward", f"tcp-p1-forward-warmup{number}", commands_file, valid_iperf, LONG_COMMAND_TIMEOUT)
             item.update({"case": "tcp-p1-forward", "protocol": "tcp", "warmup": True})
             items.append(item)
-        stage_log(f"[baseline 3/4] TCP 1/4/8 流双向，各 {args.runs} 轮；约 1–3 分钟")
+        stage_log(f"[baseline 3/4] TCP 1/4/8 streams bidirectional, {args.runs} runs; 1–3 minutes")
         for number in range(1, args.runs + 1):
             for streams in (1, 4, 8):
                 for reverse in (False, True):
@@ -1284,7 +1387,7 @@ def baseline(args):
                     item = run_item(command, results / "baseline" / "tcp" / case, name, commands_file, valid_iperf, LONG_COMMAND_TIMEOUT)
                     item.update({"case": case, "protocol": "tcp", "warmup": False})
                     items.append(item)
-        stage_log(f"[baseline 4/4] UDP 10/25/50 Mbps 双向，各 {args.runs} 轮；约 2 分钟")
+        stage_log(f"[baseline 4/4] UDP 10/25/50 Mbps bidirectional, {args.runs} runs; 2 minutes")
         for number in range(1, args.runs + 1):
             for bitrate in (10, 25, 50):
                 for reverse in (False, True):
@@ -1301,12 +1404,17 @@ def baseline(args):
         if server is not None:
             items.append(stop_server(server, remote_log, results, commands_file))
     summary = summarize([item for item in items if "protocol" in item], results)
+    summary["items"] = items
+    summary["infrastructure_failures"] = [item["name"] for item in items if not item["valid"] and "protocol" not in item]
+    summary["invalid_sample_count"] += len(summary["infrastructure_failures"])
+    write_json(results / "baseline" / "summary.json", summary)
     print(posix(results / "baseline" / "summary.json"))
     if summary["invalid_sample_count"]:
         print(f"invalid samples: {summary['invalid_sample_count']}", file=sys.stderr)
 
 
 def add_runtime_arguments(command):
+    command.add_argument("--allowed-retries", default=0, type=int, choices=(0, 1, 2))
     command.add_argument("--item-timeout", default=ITEM_TIMEOUT, type=float)
     command.add_argument("--retry-delays", default=RETRY_DELAYS, nargs=2, type=float, metavar=("FIRST", "SECOND"))
     command.add_argument("--default-attempt-timeout", default=DEFAULT_ATTEMPT_TIMEOUT, type=float)
@@ -1354,6 +1462,7 @@ def parse_args(argv=None):
     command = subparsers.add_parser("trojan-stop")
     command.add_argument("--run-id", required=True)
     command = subparsers.add_parser("bytesource-start")
+    command.add_argument("--bind", default="127.0.0.1")
     command.add_argument("--run-id", required=True)
     command = subparsers.add_parser("bytesource-stop")
     command.add_argument("--run-id", required=True)
@@ -1376,6 +1485,9 @@ def parse_args(argv=None):
     command.add_argument("--warmup", default=0, type=int)
     command.add_argument("--runs", default=1, type=int)
     command = subparsers.add_parser("cloudflare")
+    command.add_argument("--protocol", required=True, choices=("tcp", "quic"))
+    command.add_argument("--allow-external", action="store_true")
+    command.add_argument("--expected-sha256")
     command.add_argument("--run-id", required=True)
     command.add_argument("--bytes", default=CLOUDFLARE_DEFAULT_BYTES, type=int)
     command.add_argument("--warmup", default=0, type=int)
@@ -1399,16 +1511,18 @@ def parse_args(argv=None):
 
 def estimated_duration(args):
     if args.command == "baseline":
-        return "约 3–5 分钟，网络异常时不超过 10 分钟"
+        return "3–5 minutes, up to 10 minutes on network errors"
     if args.command == "soak":
-        return f"约 {args.minutes + args.cooldown:g} 分钟"
+        return f"{args.minutes + args.cooldown:g} minutes"
     if args.command in ("r2", "cloudflare", "concurrency"):
-        return "约 1–5 分钟"
-    return "通常少于 1 分钟"
+        return "1–5 minutes"
+    return "usually under 1 minute"
 
 
 def apply_runtime_arguments(args):
     global ITEM_TIMEOUT, RETRY_DELAYS, DEFAULT_ATTEMPT_TIMEOUT, RUN_ITEM_ATTEMPT_TIMEOUT, SSH_CONNECT_TIMEOUT, LOCAL_PORT_TIMEOUT, POLL_INTERVAL, REMOTE_START_WAIT, REMOTE_STOP_POLLS, REMOTE_STOP_POLL_INTERVAL, LOCAL_START_STOP_TIMEOUT, LOCAL_STOP_TIMEOUT, LOCAL_KILL_TIMEOUT, LSOF_TIMEOUT, SHORT_COMMAND_TIMEOUT, STOP_COMMAND_TIMEOUT, COMMAND_TIMEOUT, LONG_COMMAND_TIMEOUT, CLOUDFLARE_CONNECT_TIMEOUT, CLOUDFLARE_MAX_TIME, CLOUDFLARE_RETRIES, CLOUDFLARE_RETRY_DELAY, CLOUDFLARE_OUTER_TIMEOUT, SOAK_SAMPLE_INTERVAL, NETEM_WATCHDOG
+    global ALLOWED_RETRIES
+    ALLOWED_RETRIES = args.allowed_retries
     ITEM_TIMEOUT = args.item_timeout
     RETRY_DELAYS = tuple(args.retry_delays)
     DEFAULT_ATTEMPT_TIMEOUT = args.default_attempt_timeout
@@ -1436,39 +1550,68 @@ def apply_runtime_arguments(args):
     NETEM_WATCHDOG = args.netem_watchdog
 
 
+def case_gate(args, action):
+    results = ROOT / "results" / args.run_id
+    if (results / args.command / "summary.json").exists():
+        raise FileExistsError("case already recorded; use a new Run ID")
+    summary = {"case": args.command, "pass": False, "thresholds": {
+        "max_failed_samples": 0, "http_code": 200, "sha256_match": True,
+        "quic_handshake_and_streams_both_roles": getattr(args, "protocol", None) == "quic",
+        "allowed_retries": ALLOWED_RETRIES}, "parameters": vars(args)}
+    try:
+        action(args)
+        paths = {"r2": "r2-summary.json", "concurrency": "concurrency/summary.json",
+                 "soak": "soak/summary.json", "netem": "netem/summary.json",
+                 "baseline": "baseline/summary.json", "cloudflare": "cloudflare/summary.json"}
+        if args.command in paths:
+            data = load_json(results / paths[args.command])
+            samples = data.get("samples", []) + data.get("warmup_samples", [])
+            failed = sum(not item["valid"] for item in samples)
+            failed += sum(item.get("failure_count", 0) for item in data.get("groups", []) if isinstance(item, dict)) if isinstance(data.get("groups"), list) else 0
+            failed = max(failed, data.get("invalid_sample_count", 0)) + data.get("observation_failure_count", 0)
+            if data.get("sample") and not data["sample"]["valid"]:
+                failed += 1
+            if failed or data.get("cleanup_valid") is False:
+                raise RuntimeError(f"case failed: {failed} invalid samples/observations")
+        for path in (results / "metadata").glob("*-stop.json"):
+            cleanup = load_json(path)
+            if cleanup.get("stopped") is False:
+                raise RuntimeError(f"cleanup failed: {path.name}")
+        if args.command in ("r2", "concurrency", "soak", "netem", "cloudflare"):
+            deploy_path = results / "metadata" / "trojan-deploy.json"
+            if deploy_path.exists() and not (results / "metadata" / "trojan-server-stop.json").exists():
+                raise RuntimeError("deployment cleanup evidence missing")
+        if getattr(args, "protocol", None) in ("quic", "both"):
+            client_path = results / "logs" / "client-quic.log"
+            server_path = results / "logs" / "trojan-server.log"
+            proof = verify_quic_logs(client_path.read_text() if client_path.exists() else "",
+                                     server_path.read_text() if server_path.exists() else "")
+            summary["quic_verification"] = proof
+            if not proof["valid"]:
+                raise RuntimeError("QUIC handshake/stream verification failed")
+        summary["pass"] = True
+    except Exception as error:
+        summary["error"] = str(error)
+        raise
+    finally:
+        if args.command in ("r2", "concurrency", "soak", "netem", "cloudflare", "trojan-deploy", "trojan-start") and not summary["pass"]:
+            try:
+                trojan_stop(args)
+            except Exception as error:
+                summary["cleanup_error"] = str(error)
+        target = results / args.command / "summary.json"
+        existing = load_json(target) if target.is_file() else {}
+        write_json(target, {**existing, **summary})
+
+
 def main():
     args = parse_args()
     apply_runtime_arguments(args)
     started = time.monotonic()
-    stage_log(f"[阶段] {args.command} 开始；预计 {estimated_duration(args)}")
-    if args.command == "prepare":
-        prepare(args)
-    elif args.command == "baseline":
-        baseline(args)
-    elif args.command == "trojan-deploy":
-        trojan_deploy(args)
-    elif args.command == "trojan-start":
-        trojan_start(args)
-    elif args.command == "trojan-stop":
-        trojan_stop(args)
-    elif args.command == "bytesource-start":
-        bytesource_start(args)
-    elif args.command == "bytesource-stop":
-        bytesource_stop(args)
-    elif args.command == "trojan-test":
-        trojan_test(args)
-    elif args.command == "r2":
-        r2(args)
-    elif args.command == "concurrency":
-        concurrency(args)
-    elif args.command == "cloudflare":
-        cloudflare(args)
-    elif args.command == "soak":
-        soak(args)
-    elif args.command == "netem":
-        netem(args)
+    stage_log(f"[stage] {args.command} started; expected {estimated_duration(args)}")
+    case_gate(args, globals()[args.command.replace("-", "_")])
     elapsed = time.monotonic() - started
-    stage_log(f"[阶段] {args.command} 完成；耗时 {elapsed:.1f} 秒")
+    stage_log(f"[stage] {args.command} completed; elapsed {elapsed:.1f} seconds")
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ import pathlib
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 
 PATH = pathlib.Path(__file__).with_name("run.py")
@@ -23,11 +24,11 @@ def stage_log(message):
 def setUpModule():
     global STARTED
     STARTED = time.monotonic()
-    stage_log("[阶段] run.py 单元测试开始；通常少于 10 秒")
+    stage_log("[stage] run.py unit tests started; usually under 10 seconds")
 
 
 def tearDownModule():
-    stage_log(f"[阶段] run.py 单元测试完成；耗时 {time.monotonic() - STARTED:.1f} 秒")
+    stage_log(f"[stage] run.py unit tests completed; elapsed {time.monotonic() - STARTED:.1f} seconds")
 
 
 class RunnerTest(unittest.TestCase):
@@ -85,7 +86,7 @@ class BytesourcePayloadTest(unittest.TestCase):
         self.assertEqual(RUNNER.bytesource_sha256(0), hashlib.sha256(b"").hexdigest())
 
     def test_deterministic_first_bytes(self):
-        expected = bytes(((i * 31 + 7) & 0xFF) for i in range(8))
+        expected = hashlib.shake_256(b"trojan-plus-bytesource-v1").digest(8)
         self.assertEqual(RUNNER.bytesource_payload(8), expected)
 
     def test_sha256_matches_python(self):
@@ -102,7 +103,7 @@ class BytesourcePayloadTest(unittest.TestCase):
         size = RUNNER.R2_MAX_SAMPLE_BYTES
         payload = RUNNER.bytesource_payload(size)
         self.assertEqual(len(payload), size)
-        expected_digest = hashlib.sha256(bytes(((i * 31 + 7) & 0xFF) for i in range(size))).hexdigest()
+        expected_digest = hashlib.sha256(hashlib.shake_256(b"trojan-plus-bytesource-v1").digest(size)).hexdigest()
         self.assertEqual(RUNNER.bytesource_sha256(size), expected_digest)
 
 
@@ -142,8 +143,15 @@ class TrojanSampleValidTest(unittest.TestCase):
             output_path = results / "trojan-tests" / "tcp" / f"{size}-1.bin"
             output_path.write_bytes(RUNNER.bytesource_payload(size))
             record = self._make_record(0)
-            output = ""
+            output = "200"
             self.assertTrue(RUNNER.valid_trojan(record, output, output_path, size))
+
+    def test_http_error_rejected_even_with_matching_payload(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = pathlib.Path(temporary) / 'payload'
+            output.write_bytes(RUNNER.bytesource_payload(32))
+            self.assertFalse(RUNNER.valid_trojan(self._make_record(0), '503', output, 32))
+            self.assertTrue(RUNNER.valid_trojan(self._make_record(0), '200', output, 32))
 
     def test_invalid_wrong_exit_code(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -183,7 +191,7 @@ class TrojanSampleValidTest(unittest.TestCase):
             output_path = results / "trojan-tests" / "quic" / f"{size}-1.bin"
             output_path.write_bytes(RUNNER.bytesource_payload(size))
             record = self._make_record(0)
-            summary = RUNNER.summarize_trojan(record, "", output_path, size, 1, "quic")
+            summary = RUNNER.summarize_trojan(record, "200", output_path, size, 1, "quic")
             self.assertTrue(summary["valid"])
             self.assertEqual(summary["expected_sha256"], RUNNER.bytesource_sha256(size))
             self.assertEqual(summary["actual_sha256"], RUNNER.bytesource_sha256(size))
@@ -249,7 +257,7 @@ class AdditionalPureFunctionTest(unittest.TestCase):
         self.assertEqual(RUNNER.parse_proc_memory(output), {"rss_bytes": 125952, "pss_bytes": 46080})
 
     def test_cloudflare_length_validation(self):
-        metrics = {"size_download": 5000000}
+        metrics = {"size_download": 5000000, "http_code": 200}
         self.assertTrue(RUNNER.valid_cloudflare_sample(0, 5000000, 5000000, metrics))
         self.assertFalse(RUNNER.valid_cloudflare_sample(0, 4999999, 5000000, metrics))
         self.assertFalse(RUNNER.valid_cloudflare_sample(0, 5000000, 5000000, None))
@@ -311,7 +319,8 @@ class ProtocolSelectionTest(unittest.TestCase):
 
     def test_deploy_protocol_contract(self):
         self.assertFalse(RUNNER.validate_protocol_deploy("tcp", {"server_disable_tcp": False}))
-        self.assertFalse(RUNNER.validate_protocol_deploy("both", {}))
+        with self.assertRaises(ValueError):
+            RUNNER.validate_protocol_deploy("both", {})
         self.assertTrue(RUNNER.validate_protocol_deploy("quic", {"server_disable_tcp": True}))
         for protocol, disabled in (("tcp", True), ("both", True), ("quic", False)):
             with self.assertRaises(ValueError):
@@ -374,6 +383,89 @@ class RuntimeArgumentsTest(unittest.TestCase):
         self.assertEqual(RUNNER.COMMAND_TIMEOUT, 7)
         self.assertEqual(RUNNER.NETEM_WATCHDOG, 9)
 
+
+class CleanupGateTest(unittest.TestCase):
+    def test_quic_requires_both_handshakes_and_streams(self):
+        client = 'QuicConnection: handshake completed (role=client, peer=x, alpn=h3)\nsend_stream_data_impl enter: stream_id=0 datalen=42'
+        server = 'QuicConnection: handshake completed (role=server, peer=x, alpn=h3)\nQuicProxySession: stream 0 opened'
+        self.assertTrue(RUNNER.verify_quic_logs(client, server)['valid'])
+        for left, right in ((client, ''), ('TCP tunnel established', server), (client.replace('h3', 'h2'), server), (client.split('\n')[0], server)):
+            self.assertFalse(RUNNER.verify_quic_logs(left, right)['valid'])
+
+    def test_stop_removes_deploy_without_server_metadata(self):
+        with tempfile.TemporaryDirectory() as temporary, mock.patch.object(RUNNER, 'ROOT', pathlib.Path(temporary)), mock.patch.object(RUNNER, 'archive_remote_logs'), mock.patch.object(RUNNER, 'stop_remote_named', return_value={'skipped': True}), mock.patch.object(RUNNER, 'execute_attempt', return_value=({'exit_code': 0}, '')) as execute:
+            args = RUNNER.parse_args(['trojan-stop', '--run-id', 'sample'])
+            results = pathlib.Path(temporary) / 'results/sample'
+            RUNNER.write_json(results / 'metadata/trojan-deploy.json', {'remote_dir': '/tmp/trojan-deploy.ABC123'})
+            RUNNER.trojan_stop(args)
+            self.assertIn('rm -rf -- /tmp/trojan-deploy.ABC123', execute.call_args.args[0][-1])
+
+    def test_deploy_failure_always_stops(self):
+        args = RUNNER.parse_args(['trojan-deploy', '--run-id', 'sample'])
+        with mock.patch.object(RUNNER, 'deploy_files', side_effect=RuntimeError('scp failed')), mock.patch.object(RUNNER, 'trojan_stop') as stop:
+            with self.assertRaisesRegex(RuntimeError, 'scp failed'):
+                RUNNER.trojan_deploy(args)
+            stop.assert_called_once_with(args)
+
+    def test_deployed_config_checked_before_server_start(self):
+        with tempfile.TemporaryDirectory() as temporary, mock.patch.object(RUNNER, 'ROOT', pathlib.Path(temporary)), mock.patch.object(RUNNER, 'execute_attempt', return_value=({'exit_code': 0}, '{"quic":{"enabled":false}}')), mock.patch.object(RUNNER, 'start_remote_named') as start:
+            results = pathlib.Path(temporary) / 'results/sample'
+            RUNNER.write_json(results / 'metadata/trojan-deploy.json', {'remote_dir': '/tmp/trojan-deploy.ABC123', 'server_disable_tcp': True})
+            RUNNER.write_json(results / 'metadata/manifest.json', {})
+            with self.assertRaisesRegex(RuntimeError, 'config mismatch'):
+                RUNNER.trojan_start(RUNNER.parse_args(['trojan-start', '--run-id', 'sample']))
+            start.assert_not_called()
+
+    def test_soak_rejects_wrong_deploy(self):
+        with tempfile.TemporaryDirectory() as temporary, mock.patch.object(RUNNER, 'ROOT', pathlib.Path(temporary)), mock.patch.object(RUNNER, 'bytesource_start') as start:
+            args = RUNNER.parse_args(['soak', '--run-id', 'sample', '--protocol', 'quic'])
+            RUNNER.write_json(pathlib.Path(temporary) / 'results/sample/metadata/trojan-deploy.json', {'server_disable_tcp': False})
+            with self.assertRaises(ValueError):
+                RUNNER.soak(args)
+            start.assert_not_called()
+
+    def test_cloudflare_requires_opt_in_and_hash(self):
+        args = RUNNER.parse_args(['cloudflare', '--run-id', 'sample', '--protocol', 'quic'])
+        with self.assertRaisesRegex(ValueError, 'allow-external'):
+            RUNNER.cloudflare(args)
+
+    def test_uploaded_bytesource_matches_local_hash(self):
+        source = RUNNER.BYTESOURCE_SCRIPT.split('port = int(sys.argv[1])')[0]
+        namespace = {}
+        exec(source, namespace)
+        self.assertEqual(hashlib.shake_256(namespace['seed']).digest(65537), RUNNER.bytesource_payload(65537))
+        self.assertIn('payload[sent:sent + 65536]', source)
+        self.assertIn('n > 50000000', source)
+
+    def test_payload_not_periodic(self):
+        data = RUNNER.bytesource_payload(131072)
+        self.assertNotEqual(data[:256], data[256:512])
+        self.assertNotEqual(data[:65536], data[65536:])
+
+    def test_retry_explicit_and_first_failure_retained(self):
+        with mock.patch.object(RUNNER, 'execute_attempt', side_effect=[({'exit_code': 1}, ''), ({'exit_code': 0}, '')]), mock.patch.object(RUNNER, 'write_json'), mock.patch.object(RUNNER, 'ALLOWED_RETRIES', 1), mock.patch.object(RUNNER, 'RETRY_DELAYS', (0, 0)):
+            item = RUNNER.run_item([], pathlib.Path('/unused'), 'sample', pathlib.Path('/unused'))
+        self.assertTrue(item['valid'])
+        self.assertEqual(item['allowed_retries'], 1)
+        self.assertEqual(item['first_failure']['exit_code'], 1)
+        self.assertEqual(len(item['attempts']), 2)
+
+    def test_no_retry_by_default(self):
+        with mock.patch.object(RUNNER, 'execute_attempt', return_value=({'exit_code': 1}, '')) as execute, mock.patch.object(RUNNER, 'write_json'), mock.patch.object(RUNNER, 'ALLOWED_RETRIES', 0):
+            item = RUNNER.run_item([], pathlib.Path('/unused'), 'sample', pathlib.Path('/unused'))
+        self.assertFalse(item['valid'])
+        self.assertEqual(execute.call_count, 1)
+
+    def test_failed_case_writes_gate_and_raises(self):
+        with tempfile.TemporaryDirectory() as temporary, mock.patch.object(RUNNER, 'ROOT', pathlib.Path(temporary)):
+            args = RUNNER.parse_args(['baseline', '--run-id', 'sample'])
+            def fail(args):
+                raise RuntimeError('first failure')
+            with self.assertRaisesRegex(RuntimeError, 'first failure'):
+                RUNNER.case_gate(args, fail)
+            summary = RUNNER.load_json(pathlib.Path(temporary) / 'results/sample/baseline/summary.json')
+            self.assertFalse(summary['pass'])
+            self.assertEqual(summary['thresholds']['max_failed_samples'], 0)
 
 class ConstantsTest(unittest.TestCase):
     def test_r2_max_enforced(self):
