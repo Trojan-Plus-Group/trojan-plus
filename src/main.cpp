@@ -240,6 +240,7 @@ int main_impl(int argc, const char* argv[]) {
         g_service.reset();
         exit(EXIT_SUCCESS);
 #endif
+        return EXIT_SUCCESS;
 
     } catch (const std::exception& e) {
         _log_with_date_time(tp::string("fatal: ") + e.what(), Log::FATAL);
@@ -249,6 +250,7 @@ int main_impl(int argc, const char* argv[]) {
         g_service.reset();
         exit(EXIT_FAILURE);
 #endif
+        return EXIT_FAILURE;
     }
 }
 

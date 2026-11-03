@@ -483,6 +483,14 @@ target_compile_definitions(trojan PRIVATE
     SSL_TXT_TLSV1_2          # Needed by WOLFSSL_ASIO mode
     HAVE_ECC                 # Enable ECC compat macros (SSL_CTX_set1_curves_list)
 )
+# MSVC already treats missing return values (C4716) as errors.
+if(NOT MSVC)
+    include(CheckCXXCompilerFlag)
+    check_cxx_compiler_flag("-Werror=return-type" HAVE_WERROR_RETURN_TYPE)
+    if(HAVE_WERROR_RETURN_TYPE)
+        target_compile_options(trojan PRIVATE -Werror=return-type)
+    endif()
+endif()
 target_link_libraries(trojan wolfssl)
 
 if(ENABLE_QUIC)
