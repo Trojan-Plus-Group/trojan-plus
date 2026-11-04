@@ -25,9 +25,9 @@ Trojan plus project's best running environment is Linux system in NAT mode (migh
 
 * [C++17 supporting](https://en.wikipedia.org/wiki/C%2B%2B17) 
   - GNU gcc 7.0.0+ in linux
-  - or Visual Studio 2017(15.7)+ in Windows
-  - or Clang 5+ (XCode 9+ / macOS 10.13+) in MacOS
-* [CMake](https://cmake.org/) >= 3.20
+  - or Visual Studio 2022 and NASM on PATH in Windows
+  - or Clang with Xcode 14+ on macOS
+* [CMake](https://cmake.org/) >= 3.22
 * [Boost](http://www.boost.org/) >= 1.77.0 (1.85.0+ recommended)
 * [BoringSSL](https://boringssl.googlesource.com/boringssl/) (included as a submodule)
 * [ngtcp2](https://github.com/ngtcp2/ngtcp2) (included as a submodule)

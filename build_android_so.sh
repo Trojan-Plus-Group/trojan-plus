@@ -99,10 +99,14 @@ for arch in "${android_architectures[@]}"; do
           "-DANDROID_NDK=${ANDROID_NDK_HOME}" \
           "-DANDROID_PLATFORM=${ANDROID_API}" \
           -DANDROID_SUPPORT_16KB_PAGE_SIZE=ON \
+          -DANDROID_STL=c++_static \
           "-DANDROID_TOOLCHAIN_PREFIX=${ndk_prebuilt}/bin/llvm-" \
           "-DANDROID_ABI=${arch}"
 
     cmake --build "$build_path" --parallel "$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 2)"
+
+    python3 "${trojan_path}/tests/check_dynamic_dependencies.py" \
+        "${output_path}/libtrojan.so" android --readelf "${ndk_prebuilt}/bin/llvm-readelf"
 
     # Debug build: copy unstripped library to android_lib debug folder
     if [ ${debug_build} = "1" ]; then

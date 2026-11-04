@@ -27,6 +27,7 @@ stages:
         cmake -DDEFAULT_CONFIG=../config.json -DFORCE_TCP_FASTOPEN=ON -DBoost_USE_STATIC_LIBS=ON -DENABLE_MIMALLOC=ON ..
         make -j$(nproc)
         strip -s trojan
+        python3 ../tests/check_dynamic_dependencies.py trojan linux
     - publish: $(System.DefaultWorkingDirectory)/build/trojan
       artifact: LinuxBinary
 
@@ -45,6 +46,7 @@ stages:
         cmake -DBoost_USE_STATIC_LIBS=ON -DDEFAULT_CONFIG=../config.json -DCMAKE_OSX_DEPLOYMENT_TARGET=10.14 -DENABLE_MIMALLOC=ON ..
         make -j$(sysctl -n hw.ncpu)
         strip -SXTx trojan
+        python3 ../tests/check_dynamic_dependencies.py trojan macos
     - publish: $(System.DefaultWorkingDirectory)/build/trojan
       artifact: macOSBinary
 
@@ -88,12 +90,13 @@ stages:
         unzip -q boost_${BOOST_VERSION}.zip
         cd boost_${BOOST_VERSION}
         ./bootstrap.bat
-        ./b2 -j$NUMBER_OF_PROCESSORS --with-system --with-program_options variant=release link=static threading=multi runtime-link=shared address-model=64
+        ./b2 -j$NUMBER_OF_PROCESSORS --with-system --with-program_options variant=release link=static threading=multi runtime-link=static address-model=64
         cd ..
 
         mkdir build && cd build
         cmake -G "Visual Studio 17 2022" -A x64 -DBOOST_ROOT="$(pwd)/../boost_${BOOST_VERSION}" -DBoost_NO_BOOST_CMAKE=ON -DBoost_USE_STATIC_LIBS=ON -DENABLE_MIMALLOC=ON ..
         cmake --build . --config Release --parallel
+        py -3 ../tests/check_dynamic_dependencies.py Release/trojan.exe windows
     - publish: $(System.DefaultWorkingDirectory)/build/Release/trojan.exe
       artifact: WindowsBinary
 
