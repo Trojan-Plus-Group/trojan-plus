@@ -578,25 +578,9 @@ void connect_remote_server_ssl(ThisT this_ptr, tp::string addr, tp::string port,
                   unsigned long err = ERR_get_error();
                   char err_buf[256];
                   ERR_error_string_n(err, err_buf, sizeof(err_buf));
-#ifndef TROJAN_USE_BORINGSSL
-                  WOLFSSL_ALERT_HISTORY alert_hist;
-                  wolfSSL_get_alert_history(ssl, &alert_hist);
-                  // Get detailed wolfSSL error info
-                  char wolf_err_buf[256];
-                  int wolf_err = wolfSSL_get_error(ssl, -1);
-                  wolfSSL_ERR_error_string_n(wolf_err, wolf_err_buf, sizeof(wolf_err_buf));
-                  // Log all errors in the queue
-                  _log_with_endpoint(in_endpoint,
-                    tp::string("SSL handshake failed with ") + format_host_port(addr, port) + " reason: " + error.message().c_str() +
-                    " ssl_err=" + tp::to_string(ssl_err) + " err=" + tp::to_string((int)err) + " err_str=" + err_buf +
-                    " wolf_err=" + tp::to_string(wolf_err) + " wolf_err_str=" + wolf_err_buf +
-                    " last_rx_alert=" + tp::to_string(alert_hist.last_rx.code) + ":" + tp::to_string(alert_hist.last_rx.level) +
-                    " last_tx_alert=" + tp::to_string(alert_hist.last_tx.code) + ":" + tp::to_string(alert_hist.last_tx.level), Log::ERROR);
-#else
                   _log_with_endpoint(in_endpoint,
                     tp::string("SSL handshake failed with ") + format_host_port(addr, port) + " reason: " +
                     error.message().c_str() + " err_str=" + err_buf + " ssl_err=" + tp::to_string(ssl_err), Log::ERROR);
-#endif
                   // Print all errors in the queue
                   unsigned long e;
                   while ((e = ERR_get_error()) != 0) {

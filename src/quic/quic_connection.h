@@ -36,7 +36,7 @@ class QuicProxySession;
 class QuicToHttp3Connect;
 class ReadBufWithGuard;
 
-#include "quic_tls_backend.h"
+#include <openssl/ssl.h>
 
 // One ngtcp2_conn + its per-connection TLS handle.
 // All I/O is driven through the owning QuicEndpoint's UDP socket.
@@ -208,7 +208,7 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     boost::asio::basic_waitable_timer<QuicClock, QuicWaitTraits> m_loss_timer;
 
     ngtcp2_conn* m_conn{nullptr};
-    QuicSsl* m_ssl{nullptr};
+    SSL* m_ssl{nullptr};
     ngtcp2_crypto_conn_ref m_conn_ref{};
 
     // sockaddr storage for local/remote addresses (kept alive for path lifetime).

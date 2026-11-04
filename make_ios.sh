@@ -1,14 +1,18 @@
-#!/bin/sh
+#!/bin/bash
+set -euo pipefail
+
+# BoringSSL requires CMake 3.22; fail before modifying build outputs.
+cmake --version | awk 'NR == 1 { split($3, v, "."); exit !(v[1] > 3 || (v[1] == 3 && v[2] >= 22)) }'
 
 # If no Xcode path provided, use default
-if [ ! -n "$1" ]; then
+if [ ! -n "${1:-}" ]; then
     XCODE_PATH="/Applications/Xcode.app"
     clean_build=1
     echo "No Xcode path provided, using default: ${XCODE_PATH} with clean build (-r)"
 else
-    XCODE_PATH="$1"
+    XCODE_PATH="${1:-}"
     clean_build=0
-    if [ -n "$2" ] && [ "$2" == "-r" ]; then
+    if [ "${2:-}" = "-r" ]; then
         clean_build=1
     fi
 fi
@@ -44,7 +48,7 @@ simulator_architectures=(
 for arch in "${device_architectures[@]}"
 do
     output_path="${trojan_path}/ios_lib/iphoneos/${arch}"
-    build_path="${trojan_path}/ios-build-device-${arch}"
+    build_path="${trojan_path}/ios-build-device-${arch}-boringssl"
     mkdir -p "${build_path}"
     mkdir -p "${output_path}"
 
@@ -74,7 +78,7 @@ done
 for arch in "${simulator_architectures[@]}"
 do
     output_path="${trojan_path}/ios_lib/iphonesimulator/${arch}"
-    build_path="${trojan_path}/ios-build-simulator-${arch}"
+    build_path="${trojan_path}/ios-build-simulator-${arch}-boringssl"
     mkdir -p "${build_path}"
     mkdir -p "${output_path}"
 

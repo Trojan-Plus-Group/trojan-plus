@@ -20,7 +20,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.22)
 
 if(POLICY CMP0167)
   cmake_policy(SET CMP0167 OLD)
@@ -32,9 +32,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 if(MSVC)
-    # 1. Reduce wolfssl warning noise by overriding /Wall with /W3
-    # wolfSSL's CMakeLists.txt uses WARNING_C_FLAGS if defined.
-    set(WARNING_C_FLAGS "/W3" CACHE STRING "Override wolfSSL warnings" FORCE)
     add_compile_options(/W3 /utf-8)
 endif()
 
@@ -239,7 +236,6 @@ set(TROJAN_SOURCE_FILES
     src/session/udpforwardsession.cpp
     src/session/pipelinesession.cpp
     src/ssl/ssldefaults.cpp
-    src/ssl/sslsession.cpp
     src/quic/outbound_transport.cpp
 
     src/tun/lwip_tcp_client.cpp
@@ -251,8 +247,8 @@ set(TROJAN_SOURCE_FILES
     src/tun/udplocalforwarder.cpp
 )
 
-# QUIC transport via ngtcp2 + wolfSSL (default ON)
-option(ENABLE_QUIC "Build QUIC transport via ngtcp2 + wolfSSL" ON)
+# QUIC transport via ngtcp2 + BoringSSL (default ON)
+option(ENABLE_QUIC "Build QUIC transport via ngtcp2 + BoringSSL" ON)
 if(ENABLE_QUIC)
     list(APPEND TROJAN_SOURCE_FILES
         src/quic/quic_tls_ctx.cpp
@@ -296,10 +292,12 @@ elseif(IOS OR (APPLE AND BUILD_LIBRARY))
         XCODE_ATTRIBUTE_ENABLE_BITCODE NO
     )
 
-    add_custom_command(TARGET trojan POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:trojan> "${LIB_OUTPUT_DIR}/libtrojan.a"
-        COMMAND strip -x "${LIB_OUTPUT_DIR}/libtrojan.a"
-        COMMENT "Strip debug symbols from static library")
+    if(NOT IOS)
+        add_custom_command(TARGET trojan POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:trojan> "${LIB_OUTPUT_DIR}/libtrojan.a"
+            COMMAND strip -x "${LIB_OUTPUT_DIR}/libtrojan.a"
+            COMMENT "Strip debug symbols from static library")
+    endif()
 else()
     add_executable(trojan ${TROJAN_SOURCE_FILES})
 endif()
@@ -319,141 +317,33 @@ include_directories(${PROJECT_SOURCE_DIR}/GSL/include)
 # as developer, I am always add this option...
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-set(TLS_BACKEND "wolfssl" CACHE STRING "TLS provider: wolfssl or boringssl")
-set_property(CACHE TLS_BACKEND PROPERTY STRINGS wolfssl boringssl)
-if(NOT TLS_BACKEND MATCHES "^(wolfssl|boringssl)$")
-    message(FATAL_ERROR "Unsupported TLS_BACKEND: ${TLS_BACKEND}")
-endif()
-
-if(TLS_BACKEND STREQUAL "wolfssl")
-# ===== wolfSSL (static library from the wolfssl submodule) =====
-# WOLFSSL_ASIO enables Boost.Asio and the wolfSSL OpenSSL-compatible API
-# (OPENSSL_EXTRA / OPENSSL_ALL). Those are wolfSSL features, not a link to libssl.
-set(WOLFSSL_ASIO "yes" CACHE STRING "" FORCE)
-set(WOLFSSL_TLS13 "yes" CACHE STRING "" FORCE)
-set(WOLFSSL_ALPN "yes" CACHE STRING "" FORCE)
-set(WOLFSSL_SNI "yes" CACHE STRING "" FORCE)
-set(WOLFSSL_SESSION_TICKET "yes" CACHE STRING "" FORCE)
-set(WOLFSSL_HARDEN "yes" CACHE STRING "" FORCE)
-set(WOLFSSL_HARDEN_TLS "128" CACHE STRING "" FORCE)  # TLS protocol-layer hardening (128-bit security)
-set(WOLFSSL_KEYLOG_EXPORT "no" CACHE STRING "" FORCE)  # Disabled by default; enables SSLKEYLOGFILE export which exposes master secrets
-set(WOLFSSL_SINGLE_THREADED "no" CACHE STRING "" FORCE)
-set(WOLFSSL_EXAMPLES "no" CACHE STRING "" FORCE)
-set(WOLFSSL_CRYPT_TESTS "no" CACHE STRING "" FORCE)
-set(WOLFSSL_INSTALL "no" CACHE STRING "" FORCE)
-set(WOLFSSL_CURVE25519 "yes" CACHE STRING "" FORCE)
-set(WOLFSSL_CURVE448 "yes" CACHE STRING "" FORCE)
-set(WOLFSSL_ECC "yes" CACHE STRING "" FORCE)
-# Note: HAVE_AESGCM / HAVE_SUPPORTED_CURVES / HAVE_ECC are C preprocessor macros,
-# not wolfSSL CMake options — define them via target_compile_definitions below.
-
-# Required by ngtcp2_crypto_wolfssl: enables wolfSSL_set_quic_method and the
-# QUIC encryption-level callbacks (header in wolfssl/wolfssl/quic.h).
-# Also enable OPENSSLEXTRA so that wolfSSL_EVP_aes_{128,256}_ecb are compiled
-# in; ngtcp2_crypto_wolfssl's wolfssl.c references those symbols via
-# ngtcp2_crypto_ctx_initial / ngtcp2_crypto_ctx_tls.
-if(ENABLE_QUIC)
-    set(WOLFSSL_QUIC         "yes" CACHE STRING "" FORCE)
-    set(WOLFSSL_OPENSSLEXTRA "yes" CACHE STRING "" FORCE)
-    set(WOLFSSL_AESECB       "yes" CACHE STRING "" FORCE)
-endif()
-
-# Disable ASM for cross-compilation safety
-if(ANDROID OR IOS)
-    set(WOLFSSL_ASM "no" CACHE STRING "" FORCE)
-endif()
-
-# Force wolfSSL to build as static library regardless of parent project setting.
-# Save and restore BUILD_SHARED_LIBS so subsequent add_subdirectory calls
-# (e.g. mimalloc) are not affected by this override.
+# ===== BoringSSL (static libraries from the pinned submodule) =====
 set(BUILD_SHARED_LIBS_SAVED ${BUILD_SHARED_LIBS})
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-set(_GNU_SOURCE ON CACHE BOOL "Enable GNU Source for wolfSSL" FORCE)
-add_subdirectory(wolfssl EXCLUDE_FROM_ALL)
-
-if(CMAKE_C_COMPILER_ID STREQUAL "GNU" AND
-   CMAKE_C_COMPILER_VERSION VERSION_GREATER_EQUAL 14)
-    target_compile_options(wolfssl PRIVATE -Wno-error=maybe-uninitialized)
-endif()
+set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+add_subdirectory(boringssl EXCLUDE_FROM_ALL)
 set(BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS_SAVED} CACHE BOOL "" FORCE)
-
-# wolfSSL 5.9.1 does not expose secure renegotiation as a CMake option (listed as TODO).
-# Enable it only when requested: it adds RFC 5746 renegotiation_info to ServerHello
-# (required for SSL Labs A rating) but increases code size and attack surface.
-# RFC 7627 Extended Master Secret must accompany it; wolfssl's CMake option handles that.
-option(ENABLE_SECURE_RENEGOTIATION "Build with RFC 5746 secure renegotiation support (enables SSL Labs A rating)" OFF)
-if(ENABLE_SECURE_RENEGOTIATION)
-    set(WOLFSSL_EXTENDED_MASTER "yes" CACHE STRING "" FORCE)
-    target_compile_definitions(wolfssl PRIVATE HAVE_SECURE_RENEGOTIATION)
-    message(STATUS "Secure renegotiation (RFC 5746) enabled")
-else()
-    message(STATUS "Secure renegotiation (RFC 5746) disabled (use -DENABLE_SECURE_RENEGOTIATION=ON to enable)")
-endif()
-
-message(STATUS "wolfSSL will be built from source and linked statically")
-else()
-    cmake_minimum_required(VERSION 3.22)
-    set(BUILD_SHARED_LIBS_SAVED ${BUILD_SHARED_LIBS})
-    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-    set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
-    add_subdirectory(boringssl EXCLUDE_FROM_ALL)
-    set(BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS_SAVED} CACHE BOOL "" FORCE)
-    target_link_libraries(trojan ssl crypto)
-    target_include_directories(trojan BEFORE PRIVATE "${CMAKE_SOURCE_DIR}/boringssl/include")
-    target_compile_definitions(trojan PRIVATE BOOST_ASIO_NO_DEPRECATED TROJAN_USE_BORINGSSL)
-endif()
+target_link_libraries(trojan ssl crypto)
+target_include_directories(trojan BEFORE PRIVATE "${CMAKE_SOURCE_DIR}/boringssl/include")
+target_compile_definitions(trojan PRIVATE BOOST_ASIO_NO_DEPRECATED)
 
 # ===== ngtcp2 (QUIC) configuration =====
-# ngtcp2 ships its own CMakeLists.txt; it locates wolfSSL via find_package, which
-# would normally scan the system. We pre-seed the cache with paths into the
-# in-tree wolfSSL submodule and the CMake target name, so the bundled
-# Findwolfssl.cmake module short-circuits to our local build.
 if(ENABLE_QUIC)
-    if(TLS_BACKEND STREQUAL "wolfssl")
-    # wolfSSL is built via add_subdirectory above; ngtcp2's bundled Findwolfssl
-    # uses these vars, and ngtcp2/crypto/wolfssl pulls in <wolfssl/options.h>
-    # which is generated into the build tree, so the include list must contain
-    # both the source dir and the build dir.
-    set(WOLFSSL_INCLUDE_DIR  "${CMAKE_SOURCE_DIR}/wolfssl" CACHE PATH   "" FORCE)
-    set(WOLFSSL_LIBRARY      wolfssl                       CACHE STRING "" FORCE)
-    set(WOLFSSL_LIBRARIES    wolfssl                       CACHE STRING "" FORCE)
-    set(WOLFSSL_INCLUDE_DIRS
-        "${CMAKE_SOURCE_DIR}/wolfssl"
-        "${CMAKE_BINARY_DIR}/wolfssl"
-        CACHE STRING "" FORCE)
-
-    set(ENABLE_LIB_ONLY     ON  CACHE BOOL "" FORCE)
-    set(ENABLE_STATIC_LIB   ON  CACHE BOOL "" FORCE)
-    set(ENABLE_SHARED_LIB   OFF CACHE BOOL "" FORCE)
-    endif()
     set(ENABLE_LIB_ONLY ON CACHE BOOL "" FORCE)
     set(ENABLE_STATIC_LIB ON CACHE BOOL "" FORCE)
     set(ENABLE_SHARED_LIB OFF CACHE BOOL "" FORCE)
-    set(ENABLE_WOLFSSL OFF CACHE BOOL "" FORCE)
-    set(ENABLE_BORINGSSL OFF CACHE BOOL "" FORCE)
-    if(TLS_BACKEND STREQUAL "wolfssl")
-        set(ENABLE_WOLFSSL ON CACHE BOOL "" FORCE)
-    else()
-        set(ENABLE_BORINGSSL ON CACHE BOOL "" FORCE)
-        set(BORINGSSL_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/boringssl/include" CACHE PATH "" FORCE)
-        set(BORINGSSL_LIBRARIES ssl crypto CACHE STRING "" FORCE)
-        # In-tree targets are not available to configure-time try_compile.
-        set(HAVE_BORINGSSL TRUE CACHE INTERNAL "Bundled BoringSSL")
-    endif()
+    set(ENABLE_BORINGSSL ON CACHE BOOL "" FORCE)
+    set(BORINGSSL_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/boringssl/include" CACHE PATH "" FORCE)
+    set(BORINGSSL_LIBRARIES ssl crypto CACHE STRING "" FORCE)
+    # In-tree targets are not available to configure-time try_compile.
+    set(HAVE_BORINGSSL TRUE CACHE INTERNAL "Bundled BoringSSL")
     # ngtcp2 defaults ENABLE_OPENSSL to ON, which calls find_package(OpenSSL).
-    # Force it off so QUIC crypto stays on the in-tree wolfSSL backend.
+    # Force it off so QUIC crypto stays on the in-tree BoringSSL provider.
     set(ENABLE_OPENSSL      OFF CACHE BOOL "" FORCE)
     set(BUILD_TESTING       OFF CACHE BOOL "" FORCE)
 
     # Use the patched copy in the build directory
     add_subdirectory("${NGTCP2_PATCHED_DIR}" "${CMAKE_BINARY_DIR}/ngtcp2" EXCLUDE_FROM_ALL)
-
-    if(TLS_BACKEND STREQUAL "wolfssl")
-        target_include_directories(ngtcp2_crypto_wolfssl_static PRIVATE
-            ${CMAKE_BINARY_DIR}/wolfssl
-            ${CMAKE_SOURCE_DIR}/wolfssl
-        )
-    endif()
 
     target_compile_definitions(trojan PRIVATE ENABLE_QUIC)
     target_include_directories(trojan PRIVATE
@@ -485,42 +375,6 @@ if(ENABLE_QUIC)
     message(STATUS "nghttp3 (HTTP/3) will be built from submodule and linked statically")
 endif()
 
-if(TLS_BACKEND STREQUAL "wolfssl")
-# wolfSSL OpenSSL compat headers: make #include <openssl/ssl.h> resolve to
-# wolfssl/wolfssl/openssl/ssl.h (BEFORE any system OpenSSL headers)
-target_include_directories(trojan BEFORE PRIVATE
-    ${CMAKE_SOURCE_DIR}/wolfssl/wolfssl
-    ${CMAKE_CURRENT_BINARY_DIR}/wolfssl
-)
-
-# Boost.Asio SSL layer needs this to work with wolfSSL.
-# WOLFSSL_CUSTOM_CONFIG suppresses "No configuration detected" warning from settings.h.
-# TFM_TIMING_RESISTANT / ECC_TIMING_RESISTANT / WC_RSA_BLINDING mirror WOLFSSL_HARDEN=yes
-# so that settings.h's harden-check sees them when trojan TUs include wolfSSL headers.
-# (These are defined in options.h generated by wolfSSL's CMake, but we avoid force-including
-# that file because it can interfere with glibc feature-test macros on older Linux toolchains.)
-target_compile_definitions(trojan PRIVATE
-    BOOST_ASIO_NO_DEPRECATED
-    BOOST_ASIO_USE_WOLFSSL
-    OPENSSL_EXTRA
-    OPENSSL_ALL
-    HAVE_EX_DATA
-    WOLFSSL_IGNORE_FILE_WARN
-    WOLFSSL_CUSTOM_CONFIG     # Suppress: "No configuration for wolfSSL detected"
-    TFM_TIMING_RESISTANT      # Mirror WOLFSSL_HARDEN=yes: timing-resistant big-integer ops
-    ECC_TIMING_RESISTANT      # Mirror WOLFSSL_HARDEN=yes: timing-resistant ECC ops
-    WC_RSA_BLINDING           # Mirror WOLFSSL_HARDEN=yes: RSA blinding
-    $<$<BOOL:${ENABLE_SECURE_RENEGOTIATION}>:HAVE_SECURE_RENEGOTIATION>  # RFC 5746 (SSL Labs A, -DENABLE_SECURE_RENEGOTIATION=ON)
-    $<$<BOOL:${ENABLE_SECURE_RENEGOTIATION}>:HAVE_EXTENDED_MASTER>      # RFC 7627, required with secure renegotiation
-    NO_WC_SSIZE_TYPE         # Avoid ssize_t redefinition conflict with lwip
-    OPENSSL_NO_SSL2          # wolfSSL does not support SSLv2
-    OPENSSL_NO_SSL3          # wolfSSL does not support SSLv3
-    OPENSSL_VERSION_NUMBER=0x10100000L  # Boost.Asio needs >= 1.1.0 for modern API paths
-    SSL_TXT_TLSV1_2          # Needed by WOLFSSL_ASIO mode
-    HAVE_ECC                 # Enable ECC compat macros (SSL_CTX_set1_curves_list)
-)
-target_link_libraries(trojan wolfssl)
-endif()
 # MSVC already treats missing return values (C4716) as errors.
 if(NOT MSVC)
     include(CheckCXXCompilerFlag)
@@ -530,7 +384,7 @@ if(NOT MSVC)
     endif()
 endif()
 if(ENABLE_QUIC)
-    target_link_libraries(trojan ngtcp2_static ngtcp2_crypto_${TLS_BACKEND}_static)
+    target_link_libraries(trojan ngtcp2_static ngtcp2_crypto_boringssl_static)
 endif()
 
 # ===== Boost dependency (per-platform) =====
@@ -670,6 +524,26 @@ if(ENABLE_MIMALLOC)
     target_link_libraries(trojan mimalloc-static)
     add_definitions(-DENABLE_MIMALLOC)
     message(STATUS "mimalloc will be built from source (API only) and linked statically")
+endif()
+
+# Static archives do not absorb linked libraries. Package all iOS dependencies
+# into the archive consumed by make_ios.sh and its XCFramework.
+if(IOS)
+    set(IOS_ARCHIVES $<TARGET_FILE:ssl> $<TARGET_FILE:crypto>)
+    if(ENABLE_QUIC)
+        list(APPEND IOS_ARCHIVES $<TARGET_FILE:ngtcp2_static>
+            $<TARGET_FILE:ngtcp2_crypto_boringssl_static> $<TARGET_FILE:nghttp3_static>)
+    endif()
+    if(ENABLE_MIMALLOC)
+        list(APPEND IOS_ARCHIVES $<TARGET_FILE:mimalloc-static>)
+    endif()
+    add_custom_command(TARGET trojan POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${LIB_OUTPUT_DIR}"
+        COMMAND /usr/bin/libtool -static -o "${LIB_OUTPUT_DIR}/libtrojan.a"
+            $<TARGET_FILE:trojan> ${IOS_ARCHIVES} ${IOS_MY_LIBS_LIBRARIES}
+        COMMAND strip -x "${LIB_OUTPUT_DIR}/libtrojan.a"
+        COMMENT "Package iOS static archive with TLS, QUIC and Boost dependencies"
+        VERBATIM)
 endif()
 
 if(WIN32)

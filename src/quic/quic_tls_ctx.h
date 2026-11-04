@@ -14,10 +14,10 @@
 #include "core/config.h"
 #include "mem/memallocator.h"
 
-#include "quic_tls_backend.h"
+#include <openssl/ssl.h>
 
 // Shared per-endpoint TLS context. Constructed once per QuicEndpoint
-// and handed to each QuicConnection so it can create a per-connection QuicSsl*.
+// and handed to each QuicConnection so it can create a per-connection SSL*.
 class QuicTlsCtx {
   public:
     enum class Role { Server, Client };
@@ -29,18 +29,18 @@ class QuicTlsCtx {
     QuicTlsCtx& operator=(const QuicTlsCtx&) = delete;
 
     // Create a new per-connection TLS handle from this context.
-    // Caller owns the returned handle and must call TP_QUIC_TLS(free)() on it.
-    [[nodiscard]] QuicSsl* create_ssl() const;
+    // Caller owns the returned handle and must call SSL_free() on it.
+    [[nodiscard]] SSL* create_ssl() const;
 
     // Reload certificate chain and private key from configuration.
     bool reload_cert(const Config& config);
 
-    [[nodiscard]] QuicSslCtx* native_handle() const { return m_ctx; }
+    [[nodiscard]] SSL_CTX* native_handle() const { return m_ctx; }
     [[nodiscard]] Role role() const { return m_role; }
     [[nodiscard]] const tp::string& alpn_token() const { return m_alpn_token; }
 
   private:
-    QuicSslCtx* m_ctx;
+    SSL_CTX* m_ctx;
     Role m_role;
     tp::string m_alpn_token;
 };

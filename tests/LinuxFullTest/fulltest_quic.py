@@ -1451,7 +1451,9 @@ def _t16_sustained_growth(samples: list[int]) -> float:
 
     Discard three allocator/cache warm-up rounds. Median pairwise slope resists
     isolated RSS spikes and drops without selecting a favorable baseline.
-    RSS is secondary; live counters provide the primary leak verdict.
+    Live counters cover core objects, not BoringSSL's allocator. RSS includes TLS
+    allocations and independently fails sustained growth above the configured limit;
+    it cannot prove absence of small TLS leaks or distinguish allocator caching.
     """
     from statistics import median
     if len(samples) < 7 or any(value <= 0 for value in samples):

@@ -2,7 +2,7 @@
 
 C++17 Trojan-compatible proxy for Linux, macOS, Windows, Android and iOS.
 Run modes: `client` (SOCKS5), `server`, `forward`, `nat` (Linux), `client_tun`.
-QUIC uses ngtcp2 + nghttp3 + wolfSSL; TUN uses embedded lwIP.
+QUIC uses ngtcp2 + nghttp3 + BoringSSL; TUN uses embedded lwIP.
 
 ## Conventions and safety
 
@@ -24,7 +24,7 @@ QUIC uses ngtcp2 + nghttp3 + wolfSSL; TUN uses embedded lwIP.
 - Main directories: `src/core` (config/lifecycle), `src/session` (proxy modes),
   `src/proto` (wire formats), `src/ssl`, `src/quic` (including `h1_upstream`),
   `src/tun` (lwIP/DNS), `src/mem`.
-- Submodules include wolfSSL, ngtcp2, nghttp3, mimalloc, GSL, badvpn and mobile dependencies.
+- Submodules include BoringSSL, ngtcp2, nghttp3, mimalloc, GSL, badvpn and mobile dependencies.
 
 ## Address, IPv6 and DNS invariants
 
