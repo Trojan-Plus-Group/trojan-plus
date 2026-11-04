@@ -55,8 +55,9 @@ deadlines are checked within one second after resume. Other platforms use
         "verify": true,
         "verify_hostname": true,
         "cert": "",
-        "cipher": "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-SHA:ECDHE-RSA-AES256-SHA:DHE-RSA-AES256-SHA:AES256-SHA",
-        "cipher_tls13": "TLS_AES_256_GCM_SHA384:TLS_AES_128_GCM_SHA256:TLS_CHACHA20_POLY1305_SHA256",
+        "fingerprint": "chrome",
+        "cipher": "",
+        "cipher_tls13": "",
         "sni": "",
         "alpn": [
             "h2",
@@ -64,7 +65,7 @@ deadlines are checked within one second after resume. Other platforms use
         ],
         "reuse_session": true,
         "session_ticket": true,
-        "curves": "X25519"
+        "curves": ""
     },
     "tcp": {
         "prefer_ipv4": false,
@@ -89,13 +90,14 @@ deadlines are checked within one second after resume. Other platforms use
     - `verify`: whether to verify `SSL` certificate **STRONGLY RECOMMENDED**
     - `verify_hostname`: whether to verify `SSL` hostname (specified in the `sni` field) **STRONGLY RECOMMENDED**
     - `cert`: if `verify` is set to `true`, the same certificate used by the server or a collection of `CA` certificates could be provided. If you leave this field blank, BoringSSL will try to look for a system `CA` store and will be likely to fail. Certificates can be retrieved with [this simple Python script](https://github.com/trojan-gfw/trojan/blob/master/scripts/getcert.py).
-    - `cipher`: a cipher list to send and use
-    - `cipher_tls13`: a cipher list for TLS 1.3 to use
+    - `fingerprint`: client TLS handshake profile, `chrome` (default) or `none`; any other value is rejected. `chrome` uses Chrome-like TLS handshake defaults. `none` uses plain BoringSSL defaults for debugging. This affects only the TLS handshake, not browser application behavior (HTTP headers, HTTP/2 settings, JavaScript, or other browser features).
+    - `cipher`: a cipher list to send and use; empty by default to preserve the selected fingerprint
+    - `cipher_tls13`: a cipher list for TLS 1.3 to use; empty by default to preserve the selected fingerprint
     - `sni`: the Server Name Indication field in the `SSL` handshake. If left blank, it will be set to `remote_addr`.
     - `alpn`: a list of `ALPN` protocols to send
     - `reuse_session`: controls server session reuse. Explicit client reuse is not implemented; a true value on clients is ignored with a warning.
     - `session_ticket`: whether to use session tickets for session resumption
-    - `curves`: `ECC` curves to send and use
+    - `curves`: `ECC` curves to send and use; empty by default to preserve the selected fingerprint. Nonempty `cipher`, `cipher_tls13`, or `curves` overrides the selected defaults and logs one `WARN` per client config load that the fingerprint differs, even when several lists are set.
 - `tcp`: `TCP` specific configurations
     - `prefer_ipv4`: whether to connect to the IPv4 address when a domain has both IPv6 and IPv4 addresses. The default is `false`, which keeps the resolver's first result.
     - `ipv6_only`: when `local_addr` is IPv6, set `IPV6_V6ONLY` on the TCP listening socket in client, forward, server, and nat modes, and on the UDP listening socket in forward and nat modes. `false` (default) is dual-stack, so an IPv4 client can connect to a listener bound to `::`. `true` accepts IPv6 only. The option is set explicitly and does not follow the kernel `net.ipv6.bindv6only` sysctl.
@@ -129,8 +131,9 @@ PROTIP: If you simply want to redirect a raw TCP connection, you can use `iptabl
         "verify": true,
         "verify_hostname": true,
         "cert": "",
-        "cipher": "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-SHA:ECDHE-RSA-AES256-SHA:DHE-RSA-AES256-SHA:AES256-SHA",
-        "cipher_tls13": "TLS_AES_256_GCM_SHA384:TLS_AES_128_GCM_SHA256:TLS_CHACHA20_POLY1305_SHA256",
+        "fingerprint": "chrome",
+        "cipher": "",
+        "cipher_tls13": "",
         "sni": "",
         "alpn": [
             "h2",
@@ -138,7 +141,7 @@ PROTIP: If you simply want to redirect a raw TCP connection, you can use `iptabl
         ],
         "reuse_session": true,
         "session_ticket": true,
-        "curves": "X25519"
+        "curves": ""
     },
     "tcp": {
         "prefer_ipv4": false,
@@ -180,8 +183,9 @@ Do not redirect the Trojan server's own address, or the NAT process will loop. A
         "verify": true,
         "verify_hostname": true,
         "cert": "",
-        "cipher": "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-SHA:ECDHE-RSA-AES256-SHA:DHE-RSA-AES256-SHA:AES256-SHA",
-        "cipher_tls13": "TLS_AES_256_GCM_SHA384:TLS_AES_128_GCM_SHA256:TLS_CHACHA20_POLY1305_SHA256",
+        "fingerprint": "chrome",
+        "cipher": "",
+        "cipher_tls13": "",
         "sni": "",
         "alpn": [
             "h2",
@@ -189,7 +193,7 @@ Do not redirect the Trojan server's own address, or the NAT process will loop. A
         ],
         "reuse_session": true,
         "session_ticket": true,
-        "curves": "X25519"
+        "curves": ""
     },
     "tcp": {
         "ipv6_only": false,
@@ -248,7 +252,7 @@ IPv4 keeps the same shape with `iptables`, `ip rule`, and `ip route add local 0.
         "cert": "/path/to/certificate.crt",
         "key": "/path/to/private.key",
         "key_password": "",
-        "cipher": "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384",
+        "cipher": "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305",
         "cipher_tls13": "TLS_AES_128_GCM_SHA256:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_256_GCM_SHA384",
         "prefer_server_cipher": true,
         "alpn": [
@@ -261,7 +265,7 @@ IPv4 keeps the same shape with `iptables`, `ip rule`, and `ip route add local 0.
         "session_ticket": false,
         "session_timeout": 600,
         "plain_http_response": "",
-        "curves": "",
+        "curves": "X25519:P-256:P-384",
         "dhparam": ""
     },
     "tcp": {
