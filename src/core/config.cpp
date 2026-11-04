@@ -21,9 +21,7 @@
  */
 
 #include "config.h"
-#ifdef TROJAN_USE_BORINGSSL
 #include "ssl/boringssl_compat.h"
-#endif
 #include <boost/property_tree/json_parser.hpp>
 #include <cstdlib>
 #include <gsl/gsl>
@@ -43,7 +41,6 @@
 #include "core/utils.h"
 #include "session/session.h"
 #include "ssl/ssldefaults.h"
-#include "ssl/sslsession.h"
 
 using namespace boost::property_tree;
 using namespace boost::asio::ssl;
@@ -483,7 +480,9 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, tp::str
     SSL_CTX_set_options(native_context, options);
 
     if (!ssl.curves.empty()) {
-        SSL_CTX_set1_curves_list(native_context, ssl.curves.c_str());
+        if (SSL_CTX_set1_curves_list(native_context, ssl.curves.c_str()) != 1) {
+            throw std::invalid_argument("Invalid TLS curve list");
+        }
     }
     if (run_type == Config::SERVER) {
         ssl_context.use_certificate_chain_file(ssl.cert.c_str());
@@ -526,18 +525,9 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, tp::str
             }
             plain_http_response = tp::string(std::istreambuf_iterator<char>(ifs), std::istreambuf_iterator<char>());
         }
-#ifdef TROJAN_USE_BORINGSSL
         if (!ssl.dhparam.empty()) {
             throw std::invalid_argument("ssl.dhparam is unsupported by BoringSSL (no FFDHE)");
         }
-#else
-        if (ssl.dhparam.empty()) {
-            ssl_context.use_tmp_dh(
-              boost::asio::const_buffer((const void*)SSLDefaults::g_dh2048_sz, SSLDefaults::g_dh2048_sz_size));
-        } else {
-            ssl_context.use_tmp_dh_file(ssl.dhparam.c_str());
-        }
-#endif
     } else {
         if (ssl.sni.empty()) {
             ssl.sni = remote_addr;
@@ -545,8 +535,11 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, tp::str
         if (ssl.verify) {
             ssl_context.set_verify_mode(verify_peer);
             if (ssl.cert.empty()) {
+#if !defined(_WIN32) && !(defined(__APPLE__) && !TARGET_OS_IPHONE)
                 ssl_context.set_default_verify_paths();
+#endif
 #ifdef _WIN32
+                size_t loaded_roots = 0;
                 HCERTSTORE h_store = CertOpenSystemStore(0, _T("ROOT"));
                 if (h_store) {
                     X509_STORE* store        = SSL_CTX_get_cert_store(native_context);
@@ -555,17 +548,22 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, tp::str
                         const unsigned char* encoded_cert = p_context->pbCertEncoded;
                         X509* x509                        = d2i_X509(nullptr, &encoded_cert, p_context->cbCertEncoded);
                         if (x509) {
-                            X509_STORE_add_cert(store, x509);
+                            if (X509_STORE_add_cert(store, x509) == 1) {
+                                ++loaded_roots;
+                            }
                             X509_free(x509);
                         }
                     }
                     CertCloseStore(h_store, 0);
                 }
+                _log_with_date_time("Windows native trust roots loaded: " + tp::to_string(loaded_roots),
+                                    loaded_roots ? Log::INFO : Log::WARN);
 #endif // _WIN32
 #if defined(__APPLE__) && !TARGET_OS_IPHONE
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 
+                size_t loaded_roots = 0;
                 SecKeychainRef systemRoots = nullptr;
                 auto status =
                   SecKeychainOpen("/System/Library/Keychains/SystemRootCertificates.keychain", &systemRoots);
@@ -604,16 +602,14 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, tp::str
 
                                 if (status == noErr && certData != nullptr) {
                                     /*required because d2i_X509 is modifying pointer */
-                                    auto* ptr  = static_cast<unsigned char*>(certData);
-                                    auto* cert = d2i_X509(nullptr, (const unsigned char**)&ptr, certLength);
+                                    const auto* ptr = static_cast<const unsigned char*>(certData);
+                                    auto* cert      = d2i_X509(nullptr, &ptr, certLength);
                                     if (cert == nullptr) {
                                         SecKeychainItemFreeAttributesAndData(nullptr, certData);
                                         continue;
                                     }
-                                    if (X509_STORE_add_cert(store, cert) == 0) {
-                                        _log_with_date_time(
-                                          " X509_STORE_add_cert add cert failed, cert length: " + tp::to_string(certLength),
-                                          Log::WARN);
+                                    if (X509_STORE_add_cert(store, cert) == 1) {
+                                        ++loaded_roots;
                                     }
                                     X509_free(cert);
                                     SecKeychainItemFreeAttributesAndData(nullptr, certData);
@@ -627,6 +623,8 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, tp::str
                     }
                     CFRelease(systemRoots);
                 }
+                _log_with_date_time("macOS native trust roots loaded: " + tp::to_string(loaded_roots),
+                                    loaded_roots ? Log::INFO : Log::WARN);
 #pragma clang diagnostic pop
 #endif // __APPLE__ && !TARGET_OS_IPHONE
             } else {
@@ -651,11 +649,7 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, tp::str
               native_context, (unsigned char*)(ssl.alpn.c_str()), (unsigned int)ssl.alpn.length());
         }
         if (ssl.reuse_session) {
-            // ponytail: match wolfSSL client behavior; enable reuse only with a bounded, per-context/peer cache.
-#if !defined(BOOST_ASIO_USE_WOLFSSL) && !defined(TROJAN_USE_BORINGSSL)
-            SSL_CTX_set_session_cache_mode(native_context, SSL_SESS_CACHE_CLIENT);
-            SSLSession::set_callback(native_context);
-#endif
+            // ponytail: explicit client reuse needs a bounded, per-context/peer cache.
             if (!ssl.session_ticket) {
                 SSL_CTX_set_options(native_context, SSL_OP_NO_TICKET);
             }
@@ -665,17 +659,13 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, tp::str
     }
 
     if (!ssl.cipher.empty()) {
-        SSL_CTX_set_cipher_list(native_context, ssl.cipher.c_str());
+        if (SSL_CTX_set_cipher_list(native_context, ssl.cipher.c_str()) != 1) {
+            throw std::invalid_argument("Invalid TLS cipher list");
+        }
     }
 
     if (!ssl.cipher_tls13.empty()) {
-#if defined(TROJAN_USE_BORINGSSL)
         configure_boringssl_tls13(native_context, ssl.cipher_tls13);
-#elif defined(ENABLE_TLS13_CIPHERSUITES)
-        SSL_CTX_set_ciphersuites(native_context, ssl.cipher_tls13.c_str());
-#else  // ENABLE_TLS13_CIPHERSUITES
-        _log_with_date_time("TLS1.3 ciphersuites are not supported", Log::WARN);
-#endif // ENABLE_TLS13_CIPHERSUITES
     }
 
     if (Log::keylog != nullptr) {
@@ -698,14 +688,6 @@ void Config::prepare_ssl_reuse(SSLSocket& socket) const {
     if (!ssl.sni.empty()) {
         SSL_set_tlsext_host_name(ssl_handle, ssl.sni.c_str());
     }
-#if !defined(BOOST_ASIO_USE_WOLFSSL) && !defined(TROJAN_USE_BORINGSSL)
-    if (ssl.reuse_session) {
-        auto* session = SSLSession::get_session();
-        if (session != nullptr) {
-            SSL_set_session(ssl_handle, session);
-        }
-    }
-#endif
     _unguard;
 }
 

@@ -50,7 +50,7 @@ The IPv6 content set is 2 files of 1500 bytes. The IPv4 `-g -n -f` run is the st
 
 ## Result matrix
 
-Host: IPv6 loopback up, `net.ipv6.bindv6only=0`. Binary built from this tree with the default CMake options (QUIC and mimalloc on) using gcc, because this VM's default `c++` is Clang 18 and wolfssl's `-s` flag fails under `-Werror`.
+Host: IPv6 loopback up, `net.ipv6.bindv6only=0`. Binary built from this tree with the default CMake options (QUIC and mimalloc on) using gcc, for the original baseline run (historical compiler workaround).
 
 | Case | IPv4 | IPv6 |
 | :--- | :--- | :--- |

@@ -6,15 +6,15 @@ We'll only cover the build process on Linux since we will be providing Windows a
 
 Install these dependencies before you build:
 
-- [CMake](https://cmake.org/) >= 3.20
-- [Visual Studio](https://visualstudio.microsoft.com/) >= 2019 (only for Windows)
+- [CMake](https://cmake.org/) >= 3.22
+- [Visual Studio](https://visualstudio.microsoft.com/) 2022 and [NASM](https://www.nasm.us/) on PATH (Windows x86/x64 assembly)
 - [XCode](https://developer.apple.com/xcode/) 14+ (only for XCode)
 - [Boost](http://www.boost.org/) >= 1.77.0 (1.85.0+ recommended for stable async_wait support)
-- [wolfSSL](https://www.wolfssl.com/) 5.9.1, built from the `wolfssl` submodule and linked statically
+- [BoringSSL](https://boringssl.googlesource.com/boringssl/), built from the pinned `boringssl` submodule and linked statically
 
-`TLS_BACKEND=wolfssl` is the default. Experimental `-DTLS_BACKEND=boringssl` builds static libraries from the pinned `boringssl` submodule and selects ngtcp2's BoringSSL adapter. Neither backend uses system OpenSSL; `libssl-dev` is not required. Use separate build directories for each backend. BoringSSL requires CMake >= 3.22, C++17, and VS2022 plus NASM for Windows x86/x64 assembly.
+BoringSSL is the sole TLS provider, including ngtcp2's QUIC crypto adapter. System OpenSSL and `libssl-dev` are not required.
 
-BoringSSL differences: no FFDHE (default DH parameters are ignored; explicit `ssl.dhparam` is unsupported). `ssl.cipher` configures TLS <= 1.2; `ssl.cipher_tls13` maps the three standard AES-GCM/ChaCha20 TLS 1.3 names to the pinned library's `SSL_CTX_set1_tls13_ciphers` API. Unknown names and duplicates are errors. Unlike older BoringSSL releases, this pin supports configuring TLS 1.3 ciphers. Client explicit session reuse remains disabled, matching the wolfSSL backend; server cache, timeout and tickets remain supported. A future client cache must be bounded and isolated by context/peer/security policy.
+Breaking change: FFDHE is unavailable. Default DH parameters are ignored; an explicit nonempty `ssl.dhparam` is rejected. Remove it from existing configs. `ssl.cipher` configures TLS <= 1.2; `ssl.cipher_tls13` maps the three standard AES-GCM/ChaCha20 TLS 1.3 names to the pinned library's `SSL_CTX_set1_tls13_ciphers` API. Unknown names and duplicates are errors. Unlike older BoringSSL releases, this pin supports configuring TLS 1.3 ciphers. Explicit client session reuse is disabled; server cache, timeout and tickets remain supported. A future client cache must be bounded and isolated by context/peer/security policy.
 
 For Debian users, run `sudo apt -y install build-essential cmake libboost-system-dev libboost-program-options-dev` to install all the necessary dependencies.
 
@@ -54,7 +54,7 @@ sudo make install
 
 to build, test, and install trojan. If everything goes well you'll be able to use trojan.
 
-The `cmake ..` command can be extended with the following options. `-DTLS_BACKEND=wolfssl|boringssl` selects the bundled static TLS provider.
+The `cmake ..` command can be extended with the following options.
 
 - `-DDEFAULT_CONFIG=/path/to/default/config.json`: the default path trojan will look for config (defaults to `${CMAKE_INSTALL_FULL_SYSCONFDIR}/trojan/config.json`).
 - `ENABLE_MIMALLOC`
@@ -67,13 +67,13 @@ The `cmake ..` command can be extended with the following options. `-DTLS_BACKEN
     - `-DENABLE_REUSE_PORT=ON`: build with `SO_REUSEPORT` support (default).
     - `-DENABLE_REUSE_PORT=OFF`: build without `SO_REUSEPORT` support.
 - `ENABLE_QUIC` (Experimental)
-    - `-DENABLE_QUIC=ON`: build QUIC/HTTP3 from the `wolfssl`, `ngtcp2`, and `nghttp3` submodules (default).
+    - `-DENABLE_QUIC=ON`: build QUIC/HTTP3 from the `boringssl`, `ngtcp2`, and `nghttp3` submodules (default).
     - `-DENABLE_QUIC=OFF`: build without QUIC support.
 - `ENABLE_SSL_KEYLOG` (DEBUG ONLY; exposes TLS master secrets)
-    - `-DENABLE_SSL_KEYLOG=ON`: build with SSL KeyLog support. wolfSSL is still built with `WOLFSSL_KEYLOG_EXPORT=no` (forced). While `ENABLE_QUIC` is on, the KeyLog callback is not installed.
+    - `-DENABLE_SSL_KEYLOG=ON`: build with SSL KeyLog support. While `ENABLE_QUIC` is on, the KeyLog callback is not installed.
     - `-DENABLE_SSL_KEYLOG=OFF`: build without SSL KeyLog support (default). `./trojan --version` then reports `[Disabled] SSL KeyLog Support`.
 - `ENABLE_TLS13_CIPHERSUITES`
-    - `-DENABLE_TLS13_CIPHERSUITES=ON`: build with TLS1.3 ciphersuites support (default). wolfSSL TLS 1.3 itself is always compiled in (`WOLFSSL_TLS13=yes`).
+    - `-DENABLE_TLS13_CIPHERSUITES=ON`: build with TLS 1.3 ciphersuite configuration support (default). BoringSSL TLS 1.3 itself is always compiled in.
     - `-DENABLE_TLS13_CIPHERSUITES=OFF`: build without TLS1.3 ciphersuites support.
 - `FORCE_TCP_FASTOPEN`
     - `-DFORCE_TCP_FASTOPEN=ON`: force build with `TCP_FASTOPEN` support.
@@ -94,7 +94,7 @@ To build the Android shared library (.so), you need the Android NDK.
 
 ### Build
 
-1. Ensure you have the precompiled Android libraries in the `trojan-plus-android-libs` directory. CMake links Boost from there (`libboost_system` and `libboost_program_options`). TLS is the `wolfssl` submodule, built and linked statically.
+1. Ensure you have the precompiled Android libraries in the `trojan-plus-android-libs` directory. CMake links Boost from there (`libboost_system` and `libboost_program_options`). TLS is the `boringssl` submodule, built and linked statically.
 
 2. Run the build script:
 
@@ -114,8 +114,8 @@ To build the iOS static library (.a) and XCFramework for use in iOS applications
 ### Dependencies
 
 - Xcode (tested with Xcode 17.0+)
-- CMake >= 3.20
-- Pre-built Boost 1.85.0 in the `trojan-plus-ios-libs` submodule (`libboost_system` and `libboost_program_options`). TLS is the `wolfssl` submodule, built by CMake.
+- CMake >= 3.22
+- Pre-built Boost 1.85.0 in the `trojan-plus-ios-libs` submodule (`libboost_system` and `libboost_program_options`). TLS is the `boringssl` submodule, built by CMake.
 
 ### Build
 
@@ -137,7 +137,15 @@ cd ..
 This will build for all iOS architectures (iphoneos arm64, iphonesimulator arm64/x86_64) and create an XCFramework at `ios_lib/trojan.xcframework`.
 
 Options:
-- Add `-r` for clean build
+- Add `-r` for clean build.
+
+The script checks CMake >= 3.22 before building. BoringSSL-specific build directories
+avoid stale caches from previous providers. Do not run builds concurrently against
+shared `ios_lib` outputs. CMake merges BoringSSL `ssl`/`crypto`, enabled QUIC/mimalloc,
+and Boost archives into each packaged `libtrojan.a`; static linking alone does not
+embed dependencies. Consumers still link Apple Security/CoreFoundation frameworks
+and the C++ runtime. iOS does not use the desktop Keychain root-import path; configure
+`ssl.cert` with an application-provided CA bundle when system default paths are unavailable.
 
 ## macOS Build
 
@@ -146,8 +154,8 @@ To build the macOS static library (.a) and XCFramework for use in macOS applicat
 ### Dependencies
 
 - Xcode (tested with Xcode 17.0+)
-- CMake >= 3.20
-- Boost via Homebrew. TLS is the `wolfssl` submodule, built by CMake:
+- CMake >= 3.22
+- Boost via Homebrew. TLS is the `boringssl` submodule, built by CMake:
 
 ```bash
 brew install boost
@@ -196,6 +204,25 @@ This script will:
 2.  Configure CMake with `-DENABLE_MIMALLOC=ON`.
 3.  Compile the project.
 4.  Run the full Python integration test suite (excluding DNS tests).
+
+### BoringSSL CI and native trust roots
+
+Azure's existing Build and Test jobs use BoringSSL on Linux, macOS, and Windows;
+release artifact names remain unchanged. Jobs check CMake >= 3.22
+(installing/upgrading where needed).
+Windows installs NASM, adds it to subsequent steps' PATH, and uses VS2022 x64.
+Linux follows the IPv4/DNS, IPv6/NAT, TUN and QUIC suites; macOS and Windows follow
+their existing IPv4/DNS and QUIC suites. This is not iOS runtime coverage.
+
+With `ssl.verify=true` and an empty `ssl.cert`, Windows imports certificates from
+its native `ROOT` store; desktop macOS searches the current Keychain list plus
+`/System/Library/Keychains/SystemRootCertificates.keychain`. These paths do not
+require OpenSSL-style default CA files. Logs report `Windows native trust roots
+loaded: N` or `macOS native trust roots loaded: N`, counting only successful
+`X509_STORE_add_cert` calls; zero emits a warning. This confirms store import,
+not hostname verification or successful peer validation. Keychain certificates
+are imported as before; native per-certificate trust/distrust policies are not
+translated into TLS-library policy. Explicit `ssl.cert` bypasses native import.
 
 ### CI IPv6 coverage
 

@@ -186,6 +186,19 @@ def main():
                         assert sock.session_reused, "ticket not resumed"
                 check("TLS1.2 server ticket issuance and reuse", reuse)
 
+                def reuse_tls13():
+                    ctx = context(ssl.TLSVersion.TLSv1_3)
+                    with tls(ctx, number) as sock:
+                        assert not sock.session_reused
+                        # TLS1.3 tickets arrive after the handshake; relay reads them too.
+                        relay(sock, backend)
+                        session = sock.session
+                        assert session.has_ticket, "TLS1.3 post-handshake ticket missing"
+                    with tls(ctx, number, session) as sock:
+                        assert sock.session_reused, "TLS1.3 ticket not resumed"
+                        relay(sock, backend)
+                check("TLS1.3 server post-handshake ticket issuance and reuse", reuse_tls13)
+
                 def client_verify(trust, hostname, success):
                     config = {"run_type": "forward", "local_addr": "127.0.0.1",
                               "local_port": port(), "remote_addr": "127.0.0.1",
@@ -214,6 +227,72 @@ def main():
                                check=True, capture_output=True, timeout=10)
                 check("client untrusted CA failure", lambda: client_verify(other_cert, "yuchting", False))
 
+            def client_alpn():
+                ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+                ctx.load_cert_chain(str(FIXTURES / "server.crt"), str(encrypted),
+                                    "tcp-check-only")
+                ctx.set_alpn_protocols(["http/1.1", "h2"])
+                with listener() as upstream:
+                    config = {"run_type": "forward", "local_addr": "127.0.0.1",
+                              "local_port": port(), "remote_addr": "127.0.0.1",
+                              "remote_port": upstream.getsockname()[1],
+                              "target_addr": "127.0.0.1", "target_port": 80,
+                              "password": base["password"], "log_level": 0,
+                              "ssl": {"verify": True, "verify_hostname": True,
+                                      "cert": str(FIXTURES / "server.crt"),
+                                      "sni": "yuchting", "alpn": ["h2"]}}
+                    with running(tmp, config) as (client_port, _):
+                        with connect(client_port) as client:
+                            client.sendall(HTTP)
+                            deadline = time.monotonic() + TIMEOUT
+                            while True:
+                                assert time.monotonic() < deadline, "client TLS connection missing"
+                                raw, _ = upstream.accept()
+                                with raw:
+                                    raw.settimeout(TIMEOUT)
+                                    try:
+                                        peer = ctx.wrap_socket(raw, server_side=True)
+                                    except (ssl.SSLError, ConnectionResetError):
+                                        continue  # Readiness connection may close during handshake.
+                                    with peer:
+                                        request = b""
+                                        while not request.endswith(HTTP):
+                                            remaining = deadline - time.monotonic()
+                                            assert remaining > 0, "client payload timeout"
+                                            peer.settimeout(remaining)
+                                            try:
+                                                chunk = peer.recv(4096)
+                                            except ConnectionResetError:
+                                                break
+                                            if not chunk:
+                                                break
+                                            request += chunk
+                                            assert len(request) < 65536, "unexpected client payload"
+                                        if not request.endswith(HTTP):
+                                            continue  # Ignore forward listener readiness connection.
+                                        assert peer.selected_alpn_protocol() == "h2", (
+                                            peer.selected_alpn_protocol())
+                                        peer.sendall(RESPONSE)
+                                        break
+                            assert receive(client) == RESPONSE
+            check("client ALPN wire selection by stdlib TLS server", client_alpn)
+
+            def invalid_policy(field, diagnostic):
+                config = copy.deepcopy(base)
+                config["local_port"] = port()
+                config["ssl"][field] = "not-a-valid-tls-policy"
+                path = tmp / ("invalid-" + field + ".json")
+                path.write_text(json.dumps(config))
+                result = subprocess.run([str(BINARY), "-c", str(path)],
+                                        capture_output=True, text=True, timeout=TIMEOUT)
+                output = result.stdout + result.stderr
+                assert result.returncode != 0, "invalid " + field + " accepted"
+                assert diagnostic in output, output
+            check("invalid TLS1.2 cipher startup diagnostic", lambda: invalid_policy(
+                "cipher", "Invalid TLS cipher list"))
+            check("invalid curve startup diagnostic", lambda: invalid_policy(
+                "curves", "Invalid TLS curve list"))
+
             disabled = copy.deepcopy(base)
             disabled["local_port"] = port()
             disabled["ssl"].update(reuse_session=False, session_ticket=False)
@@ -239,8 +318,7 @@ def main():
                         actual = receive(sock)
                         assert actual == RESPONSE, "configured plain response: " + repr(actual)
                 check("plain HTTP configured response", plain_response)
-    print("GAPS: TLS1.3 resumption; client-side resumption; session-ID-only cache; "
-          "client ALPN wire selection; invalid cipher/curve configuration diagnostics", flush=True)
+    print("GAPS: client-side resumption; session-ID-only cache", flush=True)
     if failures:
         raise SystemExit("Failed: " + ", ".join(failures))
 

@@ -29,7 +29,6 @@
 #include "core/utils.h"
 #include "proto/trojanrequest.h"
 #include "proto/udppacket.h"
-#include "ssl/sslsession.h"
 #include "mem/memallocator.h"
 
 using namespace boost::asio::ip;

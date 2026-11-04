@@ -20,6 +20,9 @@ stages:
     - script: |
         set -euo pipefail
         set -v
+        sudo apt-get update
+        sudo apt-get install -y cmake
+        cmake --version | python3 -c 'import re,sys; v=tuple(map(int,re.search(r"(\d+)\.(\d+)",sys.stdin.read()).groups())); assert v >= (3,22), "BoringSSL requires CMake >= 3.22"'
         mkdir build && cd build
         cmake -DDEFAULT_CONFIG=../config.json -DFORCE_TCP_FASTOPEN=ON -DBoost_USE_STATIC_LIBS=ON -DENABLE_MIMALLOC=ON ..
         make -j$(nproc)
@@ -36,7 +39,8 @@ stages:
     - script: |
         set -euo pipefail
         set -v
-        brew install boost
+        brew install boost cmake
+        cmake --version | python3 -c 'import re,sys; v=tuple(map(int,re.search(r"(\d+)\.(\d+)",sys.stdin.read()).groups())); assert v >= (3,22), "BoringSSL requires CMake >= 3.22"'
         mkdir build && cd build
         cmake -DBoost_USE_STATIC_LIBS=ON -DDEFAULT_CONFIG=../config.json -DCMAKE_OSX_DEPLOYMENT_TARGET=10.14 -DENABLE_MIMALLOC=ON ..
         make -j$(sysctl -n hw.ncpu)
@@ -50,10 +54,25 @@ stages:
     steps:
     - checkout: self
       submodules: recursive
+    - powershell: |
+        $ErrorActionPreference = 'Stop'
+        choco install nasm --yes --no-progress
+        if ($LASTEXITCODE -ne 0) { throw 'NASM installation failed' }
+        $nasmPath = 'C:\Program Files\NASM'
+        if (!(Test-Path "$nasmPath\nasm.exe")) { throw 'NASM executable not found' }
+        Write-Host "##vso[task.prependpath]$nasmPath"
+        $version = [version]((cmake --version | Select-Object -First 1) -replace '^cmake version ', '')
+        if ($version -lt [version]'3.22') {
+          choco upgrade cmake --yes --no-progress --installargs 'ADD_CMAKE_TO_PATH=System'
+          if ($LASTEXITCODE -ne 0) { throw 'CMake upgrade failed' }
+          Write-Host '##vso[task.prependpath]C:\Program Files\CMake\bin'
+        }
     - bash: |
         set -euo pipefail
         set -v
 
+        cmake --version | py -3 -c 'import re,sys; v=tuple(map(int,re.search(r"(\d+)\.(\d+)",sys.stdin.read()).groups())); assert v >= (3,22), "BoringSSL requires CMake >= 3.22"'
+        nasm -v
         BOOST_VERSION_DOT=1.87.0
         BOOST_VERSION=1_87_0
         
@@ -65,12 +84,13 @@ stages:
         cd ..
 
         mkdir build && cd build
-        cmake -DBOOST_ROOT="$(pwd)/../boost_${BOOST_VERSION}" -DBoost_NO_BOOST_CMAKE=ON -DBoost_USE_STATIC_LIBS=ON -DENABLE_MIMALLOC=ON ..
+        cmake -G "Visual Studio 17 2022" -A x64 -DBOOST_ROOT="$(pwd)/../boost_${BOOST_VERSION}" -DBoost_NO_BOOST_CMAKE=ON -DBoost_USE_STATIC_LIBS=ON -DENABLE_MIMALLOC=ON ..
         cmake --build . --config Release --parallel
     - publish: $(System.DefaultWorkingDirectory)/build/Release/trojan.exe
       artifact: WindowsBinary
 
 - stage: Test
+  dependsOn: Build
   jobs:
   - job: Linux
     pool:

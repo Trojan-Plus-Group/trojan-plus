@@ -9,7 +9,7 @@ In this page, we will look at the config file of trojan. Trojan uses [`JSON`](ht
 Top-level `log_live_counters` defaults to `false`. When enabled, an event-loop
 timer logs `[mem] live objects=... bytes=... sessions=... quic_connections=...
 quic_proxy_sessions=...` at INFO every second on Linux, macOS and Windows.
-Object/byte totals cover the tp allocator (including registered wolfSSL hooks),
+Object/byte totals cover the tp allocator, excluding BoringSSL allocations,
 not every allocation made by third-party libraries. QUIC counts are zero when
 QUIC is compiled out. No timer is created when disabled. T16 enables this only
 in its temporary configs to check fresh post-quiescence snapshots.
@@ -88,7 +88,7 @@ deadlines are checked within one second after resume. Other platforms use
 - `ssl`: `SSL` specific configurations
     - `verify`: whether to verify `SSL` certificate **STRONGLY RECOMMENDED**
     - `verify_hostname`: whether to verify `SSL` hostname (specified in the `sni` field) **STRONGLY RECOMMENDED**
-    - `cert`: if `verify` is set to `true`, the same certificate used by the server or a collection of `CA` certificates could be provided. If you leave this field blank, wolfSSL will try to look for a system `CA` store and will be likely to fail. Certificates can be retrieved with [this simple Python script](https://github.com/trojan-gfw/trojan/blob/master/scripts/getcert.py).
+    - `cert`: if `verify` is set to `true`, the same certificate used by the server or a collection of `CA` certificates could be provided. If you leave this field blank, BoringSSL will try to look for a system `CA` store and will be likely to fail. Certificates can be retrieved with [this simple Python script](https://github.com/trojan-gfw/trojan/blob/master/scripts/getcert.py).
     - `cipher`: a cipher list to send and use
     - `cipher_tls13`: a cipher list for TLS 1.3 to use
     - `sni`: the Server Name Indication field in the `SSL` handshake. If left blank, it will be set to `remote_addr`.
@@ -297,7 +297,7 @@ IPv4 keeps the same shape with `iptables`, `ip rule`, and `ip route add local 0.
     - `session_timeout`: if `reuse_session` is set to `true`, specify `SSL` session timeout
     - `plain_http_response`: respond to plain http request with this file (raw TCP)
     - `curves`: `ECC` curves to use
-    - `dhparam`: if left blank, default (RFC 3526) dhparam will be used, otherwise the specified dhparam file will be used
+    - `dhparam`: must be empty; nonempty values are rejected because BoringSSL does not support FFDHE. ECDHE uses `curves`.
 - `tcp`: `TCP` specific configurations
     - `prefer_ipv4`: whether to connect to the IPv4 address when a domain has both IPv6 and IPv4 addresses. The default is `false`, which keeps the resolver's first result, including for TCP outbound connections and UDP associate destinations. Set it to `true` to pick an IPv4 address when one exists.
     - `ipv6_only`: when `local_addr` is IPv6, set `IPV6_V6ONLY` on the TCP listening socket in client, forward, server, and nat modes, and on the UDP listening socket in forward and nat modes. `false` (default) is dual-stack. `true` accepts IPv6 only. The option is set explicitly and does not follow the kernel `net.ipv6.bindv6only` sysctl.
