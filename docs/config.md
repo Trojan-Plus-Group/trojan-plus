@@ -93,7 +93,7 @@ deadlines are checked within one second after resume. Other platforms use
     - `cipher_tls13`: a cipher list for TLS 1.3 to use
     - `sni`: the Server Name Indication field in the `SSL` handshake. If left blank, it will be set to `remote_addr`.
     - `alpn`: a list of `ALPN` protocols to send
-    - `reuse_session`: whether to reuse `SSL` session
+    - `reuse_session`: controls server session reuse. Explicit client reuse is not implemented; a true value on clients is ignored with a warning.
     - `session_ticket`: whether to use session tickets for session resumption
     - `curves`: `ECC` curves to send and use
 - `tcp`: `TCP` specific configurations
@@ -292,7 +292,7 @@ IPv4 keeps the same shape with `iptables`, `ip rule`, and `ip route add local 0.
     - `prefer_server_cipher`: whether to prefer server cipher list in a connection
     - `alpn`: a list of `ALPN` protocols to reply
     - `alpn_port_override`: overrides the remote port to the specified value if an `ALPN` is matched. Useful for running NGINX with HTTP/1.1 and HTTP/2 Cleartext on different ports.
-    - `reuse_session`: whether to reuse `SSL` session
+    - `reuse_session`: controls server session reuse. Explicit client reuse is not implemented; a true value on clients is ignored with a warning.
     - `session_ticket`: whether to use session tickets for session resumption
     - `session_timeout`: if `reuse_session` is set to `true`, specify `SSL` session timeout
     - `plain_http_response`: respond to plain http request with this file (raw TCP)
