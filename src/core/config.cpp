@@ -174,7 +174,9 @@ void Config::populate(const ptree& tree) {
     ssl.ssl_shutdown_wait_time = tree.get("ssl.ssl_shutdown_wait_time", default_ssl_shutdown_wait_time);
     ssl.plain_http_response    = tree.get("ssl.plain_http_response", std::string()).c_str();
     ssl.curves                 = tree.get("ssl.curves", std::string()).c_str();
-    ssl.dhparam                = tree.get("ssl.dhparam", std::string()).c_str();
+    if (!tree.get("ssl.dhparam", std::string()).empty()) {
+        _log_with_date_time("ssl.dhparam is ignored: FFDHE is not supported", Log::WARN);
+    }
 
     tcp.prefer_ipv4      = tree.get("tcp.prefer_ipv4", false);
     tcp.ipv6_only        = tree.get("tcp.ipv6_only", false);
@@ -525,9 +527,6 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, tp::str
             }
             plain_http_response = tp::string(std::istreambuf_iterator<char>(ifs), std::istreambuf_iterator<char>());
         }
-        if (!ssl.dhparam.empty()) {
-            throw std::invalid_argument("ssl.dhparam is unsupported by BoringSSL (no FFDHE)");
-        }
     } else {
         if (ssl.sni.empty()) {
             ssl.sni = remote_addr;
@@ -650,6 +649,7 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, tp::str
         }
         if (ssl.reuse_session) {
             // ponytail: explicit client reuse needs a bounded, per-context/peer cache.
+            _log_with_date_time("ssl.reuse_session is ignored for clients: session reuse is not implemented", Log::WARN);
             if (!ssl.session_ticket) {
                 SSL_CTX_set_options(native_context, SSL_OP_NO_TICKET);
             }
