@@ -219,7 +219,7 @@ void QuicServerEndpoint::on_packet(const uint8_t* data, std::size_t len,
 
     ngtcp2_cid sv_scid{};
     if (!conn->init_server(data, len, local_endpoint(), src, &dcid_c,
-                           vc.scidlen > 0 ? &scid_c : nullptr, vc.version, &sv_scid)) {
+                           &scid_c, vc.version, &sv_scid)) {
         return;
     }
 

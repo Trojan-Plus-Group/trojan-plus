@@ -62,6 +62,7 @@ set(NGTCP2_PATCHED_DIR "${CMAKE_BINARY_DIR}/ngtcp2_patched")
 message(STATUS "Ensuring patched copy of ngtcp2 in ${NGTCP2_PATCHED_DIR}")
 file(COPY "${NGTCP2_SRC_DIR}/" DESTINATION "${NGTCP2_PATCHED_DIR}")
 include("${CMAKE_SOURCE_DIR}/src/quic/ngtcp2_recovery.cmake")
+include("${CMAKE_SOURCE_DIR}/src/quic/ngtcp2_fingerprint.cmake")
 
 if(MSVC)
     # Patch ngtcp2_macro.h in the copy: Replace _Generic with ternary for MSVC
