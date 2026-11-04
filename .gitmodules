@@ -20,3 +20,6 @@
 [submodule "nghttp3"]
 	path = nghttp3
 	url = https://github.com/Trojan-Plus-Group/nghttp3.git
+[submodule "boringssl"]
+	path = boringssl
+	url = https://github.com/Trojan-Plus-Group/boringssl

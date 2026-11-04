@@ -14,11 +14,10 @@
 #include "core/config.h"
 #include "mem/memallocator.h"
 
-struct WOLFSSL_CTX;
-struct WOLFSSL;
+#include "quic_tls_backend.h"
 
-// Shared per-endpoint wolfSSL context. Constructed once per QuicEndpoint
-// and handed to each QuicConnection so it can create a per-connection WOLFSSL*.
+// Shared per-endpoint TLS context. Constructed once per QuicEndpoint
+// and handed to each QuicConnection so it can create a per-connection QuicSsl*.
 class QuicTlsCtx {
   public:
     enum class Role { Server, Client };
@@ -29,19 +28,19 @@ class QuicTlsCtx {
     QuicTlsCtx(const QuicTlsCtx&)            = delete;
     QuicTlsCtx& operator=(const QuicTlsCtx&) = delete;
 
-    // Create a new per-connection WOLFSSL handle from this context.
-    // Caller owns the returned handle and must call wolfSSL_free() on it.
-    [[nodiscard]] WOLFSSL* create_ssl() const;
+    // Create a new per-connection TLS handle from this context.
+    // Caller owns the returned handle and must call TP_QUIC_TLS(free)() on it.
+    [[nodiscard]] QuicSsl* create_ssl() const;
 
     // Reload certificate chain and private key from configuration.
     bool reload_cert(const Config& config);
 
-    [[nodiscard]] WOLFSSL_CTX* native_handle() const { return m_ctx; }
+    [[nodiscard]] QuicSslCtx* native_handle() const { return m_ctx; }
     [[nodiscard]] Role role() const { return m_role; }
     [[nodiscard]] const tp::string& alpn_token() const { return m_alpn_token; }
 
   private:
-    WOLFSSL_CTX* m_ctx;
+    QuicSslCtx* m_ctx;
     Role m_role;
     tp::string m_alpn_token;
 };

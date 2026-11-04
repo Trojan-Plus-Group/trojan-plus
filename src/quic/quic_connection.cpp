@@ -53,12 +53,16 @@ static const ngtcp2_mem tj_ngtcp2_mem = {
 #include "h1_upstream/quic_session_upstream.h"
 #include "core/config.h"
 
+#ifdef TROJAN_USE_BORINGSSL
+#include <ngtcp2/ngtcp2_crypto_boringssl.h>
+#else
 #include <ngtcp2/ngtcp2_crypto_wolfssl.h>
+#include <wolfssl/options.h>
+#include <wolfssl/error-ssl.h>
+#endif
 #include <ngtcp2/ngtcp2_crypto.h>
 
-#include <wolfssl/options.h>
-#include <wolfssl/ssl.h>
-#include <wolfssl/error-ssl.h>
+#include "quic_tls_backend.h"
 
 #include "core/log.h"
 #include "quic_endpoint.h"
@@ -109,8 +113,13 @@ int QuicConnection::cb_recv_crypto_data(ngtcp2_conn* conn, ngtcp2_encryption_lev
     int rv = ngtcp2_crypto_recv_crypto_data_cb(conn, level, offset, data, datalen, nullptr);
     if (rv != 0) {
         auto* self = static_cast<QuicConnection*>(user_data);
+#ifdef TROJAN_USE_BORINGSSL
+        long error = SSL_get_verify_result(self->m_ssl);
+        if (error == X509_V_ERR_HOSTNAME_MISMATCH || error == X509_V_ERR_IP_ADDRESS_MISMATCH) {
+#else
         int error = wolfSSL_get_error(self->m_ssl, -1);
         if (error == DOMAIN_NAME_MISMATCH || error == IPADDR_MISMATCH) {
+#endif
             _log_with_date_time("QUIC: certificate hostname verification failed (hostname/IP SAN mismatch)",
                                 Log::ERROR);
         }
@@ -243,14 +252,14 @@ int QuicConnection::cb_extend_max_stream_data(ngtcp2_conn* /*conn*/, int64_t str
 }
 
 void QuicConnection::cb_rand(uint8_t* dest, size_t destlen, const ngtcp2_rand_ctx* /*ctx*/) {
-    wolfSSL_RAND_bytes(dest, static_cast<int>(destlen));
+    quic_random_bytes(dest, static_cast<int>(destlen));
 }
 
 int QuicConnection::cb_get_new_connection_id(ngtcp2_conn* /*conn*/, ngtcp2_cid* cid,
                                              ngtcp2_stateless_reset_token* token,
                                              size_t cidlen, void* user_data) {
     cid->datalen = cidlen;
-    wolfSSL_RAND_bytes(cid->data, static_cast<int>(cidlen));
+    quic_random_bytes(cid->data, static_cast<int>(cidlen));
 
     auto* self = static_cast<QuicConnection*>(user_data);
 
@@ -263,7 +272,7 @@ int QuicConnection::cb_get_new_connection_id(ngtcp2_conn* /*conn*/, ngtcp2_cid* 
             reinterpret_cast<uint8_t*>(token),
             secret, kStatelessResetSecretLen, cid) != 0) {
         // Fallback to random on unexpected failure (should never happen).
-        wolfSSL_RAND_bytes(reinterpret_cast<uint8_t*>(token),
+        quic_random_bytes(reinterpret_cast<uint8_t*>(token),
                            NGTCP2_STATELESS_RESET_TOKENLEN);
     }
 
@@ -331,7 +340,7 @@ QuicConnection::~QuicConnection() {
         ngtcp2_conn_del(m_conn);
     }
     if (m_ssl) {
-        wolfSSL_free(m_ssl);
+        TP_QUIC_TLS(free)(m_ssl);
     }
     s_live_count.fetch_sub(1, std::memory_order_relaxed);
 }
@@ -368,7 +377,7 @@ bool QuicConnection::init_server(const uint8_t* data, std::size_t datalen,
     // Wire up conn_ref so wolfSSL crypto callbacks can reach our ngtcp2_conn.
     m_conn_ref.get_conn  = &QuicConnection::get_conn_cb;
     m_conn_ref.user_data = this;
-    wolfSSL_set_app_data(m_ssl, &m_conn_ref);
+    TP_QUIC_TLS(set_app_data)(m_ssl, &m_conn_ref);
 
     ngtcp2_callbacks callbacks;
     std::memset(&callbacks, 0, sizeof(callbacks));
@@ -415,7 +424,7 @@ bool QuicConnection::init_server(const uint8_t* data, std::size_t datalen,
     // Choose a new SCID for the server.
     ngtcp2_cid sv_scid;
     sv_scid.datalen = kServerScidLen;
-    wolfSSL_RAND_bytes(sv_scid.data, static_cast<int>(kServerScidLen));
+    quic_random_bytes(sv_scid.data, static_cast<int>(kServerScidLen));
     params.stateless_reset_token_present =
         ngtcp2_crypto_generate_stateless_reset_token(params.stateless_reset_token,
             m_endpoint.stateless_reset_secret(), kStatelessResetSecretLen, &sv_scid) == 0;
@@ -429,7 +438,7 @@ bool QuicConnection::init_server(const uint8_t* data, std::size_t datalen,
         _log_with_date_time(
             "QuicConnection::init_server: ngtcp2_conn_server_new: " + tp::string(ngtcp2_strerror(rv)),
             Log::ERROR);
-        wolfSSL_free(m_ssl);
+        TP_QUIC_TLS(free)(m_ssl);
         m_ssl = nullptr;
         return false;
     }
@@ -470,7 +479,7 @@ bool QuicConnection::init_client(const boost::asio::ip::udp::endpoint& local_ep,
 
     m_conn_ref.get_conn  = &QuicConnection::get_conn_cb;
     m_conn_ref.user_data = this;
-    wolfSSL_set_app_data(m_ssl, &m_conn_ref);
+    TP_QUIC_TLS(set_app_data)(m_ssl, &m_conn_ref);
 
     const auto& ssl_cfg = m_endpoint.config().get_ssl();
     const auto& expected_host = !ssl_cfg.sni.empty() ? ssl_cfg.sni : m_endpoint.config().get_remote_addr();
@@ -478,16 +487,26 @@ bool QuicConnection::init_client(const boost::asio::ip::udp::endpoint& local_ep,
     if (ssl_cfg.verify && ssl_cfg.verify_hostname) {
         boost::system::error_code ec;
         boost::asio::ip::make_address(expected_host.c_str(), ec);
+#ifdef TROJAN_USE_BORINGSSL
+        auto* param = SSL_get0_param(m_ssl);
+        int rc = ec ? X509_VERIFY_PARAM_set1_host(param, expected_host.c_str(), expected_host.size())
+                    : X509_VERIFY_PARAM_set1_ip_asc(param, expected_host.c_str());
+#else
         int rc = ec ? wolfSSL_check_domain_name(m_ssl, expected_host.c_str())
                     : wolfSSL_check_ip_address(m_ssl, expected_host.c_str());
-        if (expected_host.empty() || rc != WOLFSSL_SUCCESS) {
+#endif
+        if (expected_host.empty() || rc != 1) {
             _log_with_date_time("QUIC: failed to configure certificate hostname verification", Log::ERROR);
             return false;
         }
     }
     if (!expected_host.empty()) {
+#ifdef TROJAN_USE_BORINGSSL
+        if (SSL_set_tlsext_host_name(m_ssl, expected_host.c_str()) != 1) {
+#else
         if (wolfSSL_UseSNI(m_ssl, WOLFSSL_SNI_HOST_NAME, expected_host.c_str(),
-                          static_cast<uint16_t>(expected_host.size())) != WOLFSSL_SUCCESS) {
+                          static_cast<uint16_t>(expected_host.size())) != 1) {
+#endif
             _log_with_date_time("QUIC: failed to configure SNI", Log::ERROR);
             return false;
         }
@@ -540,9 +559,9 @@ bool QuicConnection::init_client(const boost::asio::ip::udp::endpoint& local_ep,
 
     ngtcp2_cid dcid, scid;
     dcid.datalen = 18;
-    wolfSSL_RAND_bytes(dcid.data, 18);
+    quic_random_bytes(dcid.data, 18);
     scid.datalen = 17;
-    wolfSSL_RAND_bytes(scid.data, 17);
+    quic_random_bytes(scid.data, 17);
 
     auto path = make_path(local_ep, remote_ep);
 
@@ -552,7 +571,7 @@ bool QuicConnection::init_client(const boost::asio::ip::udp::endpoint& local_ep,
         _log_with_date_time(
             "QuicConnection::init_client: ngtcp2_conn_client_new: " + tp::string(ngtcp2_strerror(rv)),
             Log::ERROR);
-        wolfSSL_free(m_ssl);
+        TP_QUIC_TLS(free)(m_ssl);
         m_ssl = nullptr;
         return false;
     }
@@ -1519,7 +1538,7 @@ void QuicConnection::on_handshake_completed_impl() {
     m_handshake_done = true;
     const unsigned char* alpn = nullptr;
     unsigned int alpnlen = 0;
-    wolfSSL_get0_alpn_selected(m_ssl, &alpn, &alpnlen);
+    TP_QUIC_TLS(get0_alpn_selected)(m_ssl, &alpn, &alpnlen);
     tp::string alpn_str = alpn ? tp::string(reinterpret_cast<const char*>(alpn), alpnlen) : "none";
 
     _log_with_date_time("QuicConnection: handshake completed (role=" +

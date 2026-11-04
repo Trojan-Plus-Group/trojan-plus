@@ -112,8 +112,6 @@ if(MSVC)
     else()
         set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /MP")
     endif()
-else()
-    add_definitions(-Wall -Wextra)
 endif()
 
 if(ANDROID)
@@ -242,6 +240,7 @@ set(TROJAN_SOURCE_FILES
     src/session/pipelinesession.cpp
     src/ssl/ssldefaults.cpp
     src/ssl/sslsession.cpp
+    src/quic/outbound_transport.cpp
 
     src/tun/lwip_tcp_client.cpp
     src/tun/tundev.cpp
@@ -265,7 +264,6 @@ if(ENABLE_QUIC)
         src/quic/h1_upstream/quic_session_upstream.cpp
         src/quic/h1_upstream/quic_http1_upstream_conn.cpp
         src/quic/h1_upstream/quic_to_http3_connect.cpp
-        src/quic/outbound_transport.cpp
     )
 endif()
 
@@ -306,6 +304,10 @@ else()
     add_executable(trojan ${TROJAN_SOURCE_FILES})
 endif()
 
+if(NOT MSVC)
+    target_compile_options(trojan PRIVATE -Wall -Wextra)
+endif()
+
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 target_link_libraries(trojan ${CMAKE_THREAD_LIBS_INIT})
@@ -317,8 +319,14 @@ include_directories(${PROJECT_SOURCE_DIR}/GSL/include)
 # as developer, I am always add this option...
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+set(TLS_BACKEND "wolfssl" CACHE STRING "TLS provider: wolfssl or boringssl")
+set_property(CACHE TLS_BACKEND PROPERTY STRINGS wolfssl boringssl)
+if(NOT TLS_BACKEND MATCHES "^(wolfssl|boringssl)$")
+    message(FATAL_ERROR "Unsupported TLS_BACKEND: ${TLS_BACKEND}")
+endif()
+
+if(TLS_BACKEND STREQUAL "wolfssl")
 # ===== wolfSSL (static library from the wolfssl submodule) =====
-# There is no system SSL library and no backend switch.
 # WOLFSSL_ASIO enables Boost.Asio and the wolfSSL OpenSSL-compatible API
 # (OPENSSL_EXTRA / OPENSSL_ALL). Those are wolfSSL features, not a link to libssl.
 set(WOLFSSL_ASIO "yes" CACHE STRING "" FORCE)
@@ -383,6 +391,17 @@ else()
 endif()
 
 message(STATUS "wolfSSL will be built from source and linked statically")
+else()
+    cmake_minimum_required(VERSION 3.22)
+    set(BUILD_SHARED_LIBS_SAVED ${BUILD_SHARED_LIBS})
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+    add_subdirectory(boringssl EXCLUDE_FROM_ALL)
+    set(BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS_SAVED} CACHE BOOL "" FORCE)
+    target_link_libraries(trojan ssl crypto)
+    target_include_directories(trojan BEFORE PRIVATE "${CMAKE_SOURCE_DIR}/boringssl/include")
+    target_compile_definitions(trojan PRIVATE BOOST_ASIO_NO_DEPRECATED TROJAN_USE_BORINGSSL)
+endif()
 
 # ===== ngtcp2 (QUIC) configuration =====
 # ngtcp2 ships its own CMakeLists.txt; it locates wolfSSL via find_package, which
@@ -390,6 +409,7 @@ message(STATUS "wolfSSL will be built from source and linked statically")
 # in-tree wolfSSL submodule and the CMake target name, so the bundled
 # Findwolfssl.cmake module short-circuits to our local build.
 if(ENABLE_QUIC)
+    if(TLS_BACKEND STREQUAL "wolfssl")
     # wolfSSL is built via add_subdirectory above; ngtcp2's bundled Findwolfssl
     # uses these vars, and ngtcp2/crypto/wolfssl pulls in <wolfssl/options.h>
     # which is generated into the build tree, so the include list must contain
@@ -405,7 +425,21 @@ if(ENABLE_QUIC)
     set(ENABLE_LIB_ONLY     ON  CACHE BOOL "" FORCE)
     set(ENABLE_STATIC_LIB   ON  CACHE BOOL "" FORCE)
     set(ENABLE_SHARED_LIB   OFF CACHE BOOL "" FORCE)
-    set(ENABLE_WOLFSSL      ON  CACHE BOOL "" FORCE)
+    endif()
+    set(ENABLE_LIB_ONLY ON CACHE BOOL "" FORCE)
+    set(ENABLE_STATIC_LIB ON CACHE BOOL "" FORCE)
+    set(ENABLE_SHARED_LIB OFF CACHE BOOL "" FORCE)
+    set(ENABLE_WOLFSSL OFF CACHE BOOL "" FORCE)
+    set(ENABLE_BORINGSSL OFF CACHE BOOL "" FORCE)
+    if(TLS_BACKEND STREQUAL "wolfssl")
+        set(ENABLE_WOLFSSL ON CACHE BOOL "" FORCE)
+    else()
+        set(ENABLE_BORINGSSL ON CACHE BOOL "" FORCE)
+        set(BORINGSSL_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/boringssl/include" CACHE PATH "" FORCE)
+        set(BORINGSSL_LIBRARIES ssl crypto CACHE STRING "" FORCE)
+        # In-tree targets are not available to configure-time try_compile.
+        set(HAVE_BORINGSSL TRUE CACHE INTERNAL "Bundled BoringSSL")
+    endif()
     # ngtcp2 defaults ENABLE_OPENSSL to ON, which calls find_package(OpenSSL).
     # Force it off so QUIC crypto stays on the in-tree wolfSSL backend.
     set(ENABLE_OPENSSL      OFF CACHE BOOL "" FORCE)
@@ -414,11 +448,12 @@ if(ENABLE_QUIC)
     # Use the patched copy in the build directory
     add_subdirectory("${NGTCP2_PATCHED_DIR}" "${CMAKE_BINARY_DIR}/ngtcp2" EXCLUDE_FROM_ALL)
 
-    # Patch the include search path on the static crypto target.
-    target_include_directories(ngtcp2_crypto_wolfssl_static PRIVATE
-        ${CMAKE_BINARY_DIR}/wolfssl
-        ${CMAKE_SOURCE_DIR}/wolfssl
-    )
+    if(TLS_BACKEND STREQUAL "wolfssl")
+        target_include_directories(ngtcp2_crypto_wolfssl_static PRIVATE
+            ${CMAKE_BINARY_DIR}/wolfssl
+            ${CMAKE_SOURCE_DIR}/wolfssl
+        )
+    endif()
 
     target_compile_definitions(trojan PRIVATE ENABLE_QUIC)
     target_include_directories(trojan PRIVATE
@@ -450,6 +485,7 @@ if(ENABLE_QUIC)
     message(STATUS "nghttp3 (HTTP/3) will be built from submodule and linked statically")
 endif()
 
+if(TLS_BACKEND STREQUAL "wolfssl")
 # wolfSSL OpenSSL compat headers: make #include <openssl/ssl.h> resolve to
 # wolfssl/wolfssl/openssl/ssl.h (BEFORE any system OpenSSL headers)
 target_include_directories(trojan BEFORE PRIVATE
@@ -483,6 +519,8 @@ target_compile_definitions(trojan PRIVATE
     SSL_TXT_TLSV1_2          # Needed by WOLFSSL_ASIO mode
     HAVE_ECC                 # Enable ECC compat macros (SSL_CTX_set1_curves_list)
 )
+target_link_libraries(trojan wolfssl)
+endif()
 # MSVC already treats missing return values (C4716) as errors.
 if(NOT MSVC)
     include(CheckCXXCompilerFlag)
@@ -491,10 +529,8 @@ if(NOT MSVC)
         target_compile_options(trojan PRIVATE -Werror=return-type)
     endif()
 endif()
-target_link_libraries(trojan wolfssl)
-
 if(ENABLE_QUIC)
-    target_link_libraries(trojan ngtcp2_static ngtcp2_crypto_wolfssl_static)
+    target_link_libraries(trojan ngtcp2_static ngtcp2_crypto_${TLS_BACKEND}_static)
 endif()
 
 # ===== Boost dependency (per-platform) =====
