@@ -158,8 +158,10 @@ def main():
         samples = [capture_one(binary, output, quic, index, shlex.split(args.dumpcap)) for index in range(3)]
         assert len({tuple(order) for order, _ in samples}) > 1, "extension order did not vary"
         if not quic:
-            # Two GREASE choices across three connections are possible; collision chance 1/256.
-            assert len({tuple(ids) for _, ids in samples}) > 1, "TCP GREASE cipher did not vary"
+            # Use all independent GREASE fields; avoid rejecting valid cipher-only collisions.
+            grease_samples = {tuple([value for value in order if grease(value)] + ids)
+                              for order, ids in samples}
+            assert len(grease_samples) > 1, "TCP GREASE values did not vary"
         print("PASS " + ("QUIC" if quic else "TCP") + " three core ClientHellos", flush=True)
 
 
