@@ -81,7 +81,8 @@ void ServerSession::start() {
         in_socket->async_handshake(stream_base::server, tp::bind_mem_alloc([this, self](const boost::system::error_code error) {
             if (error) {
                 _log_with_endpoint(get_in_endpoint(), tp::string("SSL handshake failed: ") + error.message().c_str(), Log::ERROR);
-                if (error.message() == "http request" && plain_http_response.empty()) {
+                if (error.category() == boost::asio::error::get_ssl_category() &&
+                    ERR_GET_REASON(error.value()) == SSL_R_HTTP_REQUEST && !plain_http_response.empty()) {
                     get_stat().inc_recv_len(plain_http_response.length());
                     boost::asio::async_write(accept_socket(), boost::asio::buffer(plain_http_response),
                       tp::bind_mem_alloc([this, self](const boost::system::error_code, size_t) {

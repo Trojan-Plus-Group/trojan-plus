@@ -12,7 +12,9 @@ Install these dependencies before you build:
 - [Boost](http://www.boost.org/) >= 1.77.0 (1.85.0+ recommended for stable async_wait support)
 - [wolfSSL](https://www.wolfssl.com/) 5.9.1, built from the `wolfssl` submodule and linked statically
 
-TLS is always that bundled wolfSSL. There is no system SSL package and no CMake option that selects one. `libssl-dev` is not required. QUIC (on by default) builds ngtcp2 with its wolfSSL backend; ngtcp2's own `ENABLE_OPENSSL` defaults to `ON`, and this project forces it `OFF`, so a configure log that reports OpenSSL as false is expected.
+`TLS_BACKEND=wolfssl` is the default. Experimental `-DTLS_BACKEND=boringssl` builds static libraries from the pinned `boringssl` submodule and selects ngtcp2's BoringSSL adapter. Neither backend uses system OpenSSL; `libssl-dev` is not required. Use separate build directories for each backend. BoringSSL requires CMake >= 3.22, C++17, and VS2022 plus NASM for Windows x86/x64 assembly.
+
+BoringSSL differences: no FFDHE (default DH parameters are ignored; explicit `ssl.dhparam` is unsupported). `ssl.cipher` configures TLS <= 1.2; `ssl.cipher_tls13` maps the three standard AES-GCM/ChaCha20 TLS 1.3 names to the pinned library's `SSL_CTX_set1_tls13_ciphers` API. Unknown names and duplicates are errors. Unlike older BoringSSL releases, this pin supports configuring TLS 1.3 ciphers. Client explicit session reuse remains disabled, matching the wolfSSL backend; server cache, timeout and tickets remain supported. A future client cache must be bounded and isolated by context/peer/security policy.
 
 For Debian users, run `sudo apt -y install build-essential cmake libboost-system-dev libboost-program-options-dev` to install all the necessary dependencies.
 
@@ -52,7 +54,7 @@ sudo make install
 
 to build, test, and install trojan. If everything goes well you'll be able to use trojan.
 
-The `cmake ..` command can be extended with the following options. None of them selects an SSL library; wolfSSL from the submodule is always linked statically.
+The `cmake ..` command can be extended with the following options. `-DTLS_BACKEND=wolfssl|boringssl` selects the bundled static TLS provider.
 
 - `-DDEFAULT_CONFIG=/path/to/default/config.json`: the default path trojan will look for config (defaults to `${CMAKE_INSTALL_FULL_SYSCONFDIR}/trojan/config.json`).
 - `ENABLE_MIMALLOC`
