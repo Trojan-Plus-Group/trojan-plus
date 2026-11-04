@@ -165,6 +165,13 @@ int main(int argc, char **argv) {
         return 0;
     }
     require(argc == 3, "usage: check_chrome_profile CERTIFICATE PRIVATE_KEY | --host HOST --ca CA_FILE");
+    // Trust-boundary decoder bounds and full-input consumption.
+    CRYPTO_BUFFER *decoded = nullptr;
+    const uint8_t malformed[] = {0xff};
+    require(tp::decompress_chrome_certificate(nullptr, &decoded, 0, malformed, 1) == 0 &&
+            tp::decompress_chrome_certificate(nullptr, &decoded, 16 * 1024 * 1024 + 1, malformed, 1) == 0 &&
+            tp::decompress_chrome_certificate(nullptr, nullptr, 1, malformed, 1) == 0,
+            "invalid decoder bounds rejected");
     handshake(argv[1], argv[2], Encoding::Valid);
     std::puts("PASS real TLS 1.3 Brotli compressed certificate; verified certificate and payload");
     handshake(argv[1], argv[2], Encoding::Invalid);
