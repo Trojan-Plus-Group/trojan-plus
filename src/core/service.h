@@ -43,6 +43,7 @@
 #include "quic/quic_tls_ctx.h"
 #endif
 
+class QuicClientEndpoint;
 class TUNDev;
 class DNSServer;
 class Pipeline;

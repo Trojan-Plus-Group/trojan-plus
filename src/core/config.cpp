@@ -21,6 +21,9 @@
  */
 
 #include "config.h"
+#ifdef TROJAN_USE_BORINGSSL
+#include "ssl/boringssl_compat.h"
+#endif
 #include <boost/property_tree/json_parser.hpp>
 #include <cstdlib>
 #include <gsl/gsl>
@@ -659,7 +662,9 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, tp::str
     }
 
     if (!ssl.cipher_tls13.empty()) {
-#ifdef ENABLE_TLS13_CIPHERSUITES
+#if defined(TROJAN_USE_BORINGSSL)
+        configure_boringssl_tls13(native_context, ssl.cipher_tls13);
+#elif defined(ENABLE_TLS13_CIPHERSUITES)
         SSL_CTX_set_ciphersuites(native_context, ssl.cipher_tls13.c_str());
 #else  // ENABLE_TLS13_CIPHERSUITES
         _log_with_date_time("TLS1.3 ciphersuites are not supported", Log::WARN);

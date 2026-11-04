@@ -25,14 +25,16 @@
 #include <boost/version.hpp>
 #include <cstdlib>
 #include <iostream>
+#ifndef TROJAN_USE_BORINGSSL
 #include <wolfssl/version.h>
+#endif
 #include <openssl/opensslv.h>
 
 #include "core/service.h"
 #include "core/version.h"
 #include "mem/memallocator.h"
 
-#ifdef ENABLE_QUIC
+#if defined(ENABLE_QUIC) && !defined(TROJAN_USE_BORINGSSL)
 #include <wolfssl/options.h>
 #include <wolfssl/ssl.h>
 
@@ -116,7 +118,7 @@ void crash_handler(int sig) {
 static std::shared_ptr<Service> g_service;
 
 int main_impl(int argc, const char* argv[]) {
-#ifdef ENABLE_QUIC
+#if defined(ENABLE_QUIC) && !defined(TROJAN_USE_BORINGSSL)
     wolfSSL_SetAllocators(tj_wolfssl_malloc, tj_wolfssl_free, tj_wolfssl_realloc);
 #endif
 #if !defined(_WIN32) && !defined(__ANDROID__)
@@ -181,12 +183,16 @@ int main_impl(int argc, const char* argv[]) {
             Log::log("[Disabled] TCP Port Reuse Support", Log::FATAL);
 #endif // ENABLE_REUSE_PORT
 #ifdef ENABLE_QUIC
-            Log::log(" [Enabled] QUIC Support (ngtcp2 + wolfSSL)", Log::FATAL);
+            Log::log(" [Enabled] QUIC Support (ngtcp2)", Log::FATAL);
 #else  // ENABLE_QUIC
-            Log::log("[Disabled] QUIC Support (ngtcp2 + wolfSSL)", Log::FATAL);
+            Log::log("[Disabled] QUIC Support (ngtcp2)", Log::FATAL);
 #endif // ENABLE_QUIC
             Log::log("SSL Library Information", Log::FATAL);
+#ifdef TROJAN_USE_BORINGSSL
+            Log::log("\tVersion: BoringSSL", Log::FATAL);
+#else
             Log::log(tp::string("\tVersion: wolfSSL ") + LIBWOLFSSL_VERSION_STRING, Log::FATAL);
+#endif
             exit(EXIT_SUCCESS);
         }
         if (vm.count("log")) {

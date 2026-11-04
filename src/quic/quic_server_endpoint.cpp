@@ -17,8 +17,7 @@
 #include <boost/asio/ip/address.hpp>
 #include <ngtcp2/ngtcp2.h>
 #include <ngtcp2/ngtcp2_crypto.h>
-#include <wolfssl/options.h>
-#include <wolfssl/ssl.h>
+#include "quic_tls_backend.h"
 
 #include "core/config.h"
 #include "core/log.h"
@@ -91,7 +90,7 @@ void QuicServerEndpoint::send_stateless_reset(const uint8_t* dcid, std::size_t d
     // Random padding bytes preceding the token (RFC 9000 minimum is 5).
     constexpr std::size_t kRandLen = NGTCP2_MIN_STATELESS_RESET_RANDLEN + 16;
     uint8_t rand_bytes[kRandLen];
-    wolfSSL_RAND_bytes(rand_bytes, static_cast<int>(kRandLen));
+    quic_random_bytes(rand_bytes, static_cast<int>(kRandLen));
 
     uint8_t buf[NGTCP2_MAX_UDP_PAYLOAD_SIZE];
     auto nwrite = ngtcp2_pkt_write_stateless_reset2(buf, sizeof(buf), &token,
