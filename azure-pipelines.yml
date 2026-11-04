@@ -58,15 +58,23 @@ stages:
         $ErrorActionPreference = 'Stop'
         choco install nasm --yes --no-progress
         if ($LASTEXITCODE -ne 0) { throw 'NASM installation failed' }
-        $nasmPath = 'C:\Program Files\NASM'
-        if (!(Test-Path "$nasmPath\nasm.exe")) { throw 'NASM executable not found' }
+        $nasm = Get-Command nasm.exe -ErrorAction SilentlyContinue
+        if (!$nasm) {
+          $nasm = Get-ChildItem -Path 'C:\Program Files\NASM', "$env:ChocolateyInstall\lib\nasm*" -Filter nasm.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        }
+        if (!$nasm) { throw 'NASM executable not found' }
+        $nasmPath = Split-Path $(if ($nasm.Path) { $nasm.Path } else { $nasm.FullName })
         Write-Host "##vso[task.prependpath]$nasmPath"
-        $version = [version]((cmake --version | Select-Object -First 1) -replace '^cmake version ', '')
+        $cmakeOut = & cmake --version
+        if ($LASTEXITCODE -ne 0) { throw 'CMake version check failed' }
+        $first = $cmakeOut[0]
+        $version = [version]($first -replace '^cmake version ', '')
         if ($version -lt [version]'3.22') {
           choco upgrade cmake --yes --no-progress --installargs 'ADD_CMAKE_TO_PATH=System'
           if ($LASTEXITCODE -ne 0) { throw 'CMake upgrade failed' }
           Write-Host '##vso[task.prependpath]C:\Program Files\CMake\bin'
         }
+        exit 0
     - bash: |
         set -euo pipefail
         set -v
