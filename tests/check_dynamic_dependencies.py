@@ -114,7 +114,7 @@ def allowed(name, platform):
     return name in {
         "kernel32.dll", "kernelbase.dll", "ntdll.dll", "advapi32.dll",
         "bcrypt.dll", "bcryptprimitives.dll", "crypt32.dll", "cryptbase.dll",
-        "ws2_32.dll", "mswsock.dll", "iphlpapi.dll", "dnsapi.dll",
+        "ws2_32.dll", "wsock32.dll", "mswsock.dll", "iphlpapi.dll", "dnsapi.dll",
         "secur32.dll", "sspicli.dll", "user32.dll", "shell32.dll",
         "ole32.dll", "oleaut32.dll", "rpcrt4.dll", "shlwapi.dll",
         "gdi32.dll", "userenv.dll", "version.dll", "winmm.dll",
