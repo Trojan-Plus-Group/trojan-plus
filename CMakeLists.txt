@@ -342,7 +342,11 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # ===== BoringSSL (static libraries from the pinned submodule) =====
 set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
 add_subdirectory(boringssl EXCLUDE_FROM_ALL)
-target_link_libraries(trojan ssl crypto)
+set(BROTLI_BUILD_TOOLS OFF CACHE BOOL "Build Brotli tools" FORCE)
+set(BROTLI_DISABLE_TESTS ON CACHE BOOL "Disable Brotli tests" FORCE)
+add_subdirectory(brotli EXCLUDE_FROM_ALL)
+target_sources(trojan PRIVATE src/ssl/chrome_profile.cpp)
+target_link_libraries(trojan ssl crypto brotlidec)
 target_include_directories(trojan BEFORE PRIVATE "${CMAKE_SOURCE_DIR}/boringssl/include")
 target_compile_definitions(trojan PRIVATE BOOST_ASIO_NO_DEPRECATED)
 
@@ -494,7 +498,7 @@ else()
 endif()
 
 # Reject shared imports even when a package ignores the static selection hint.
-foreach(dependency ssl crypto ngtcp2_static ngtcp2_crypto_boringssl_static nghttp3_static Boost::program_options)
+foreach(dependency ssl crypto brotlidec brotlicommon ngtcp2_static ngtcp2_crypto_boringssl_static nghttp3_static Boost::program_options)
     if(TARGET ${dependency})
         get_target_property(dependency_type ${dependency} TYPE)
         if(NOT dependency_type MATCHES "^(STATIC_LIBRARY|UNKNOWN_LIBRARY)$")
@@ -567,7 +571,8 @@ endif()
 # Static archives do not absorb linked libraries. Package all iOS dependencies
 # into the archive consumed by make_ios.sh and its XCFramework.
 if(IOS)
-    set(IOS_ARCHIVES $<TARGET_FILE:ssl> $<TARGET_FILE:crypto>)
+    set(IOS_ARCHIVES $<TARGET_FILE:ssl> $<TARGET_FILE:crypto>
+        $<TARGET_FILE:brotlidec> $<TARGET_FILE:brotlicommon>)
     if(ENABLE_QUIC)
         list(APPEND IOS_ARCHIVES $<TARGET_FILE:ngtcp2_static>
             $<TARGET_FILE:ngtcp2_crypto_boringssl_static> $<TARGET_FILE:nghttp3_static>)
