@@ -20,3 +20,6 @@
 [submodule "boringssl"]
 	path = boringssl
 	url = https://github.com/Trojan-Plus-Group/boringssl
+[submodule "brotli"]
+	path = brotli
+	url = https://github.com/Trojan-Plus-Group/brotli
