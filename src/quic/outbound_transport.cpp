@@ -25,7 +25,9 @@
 #include "core/config.h"
 #include "core/log.h"
 #include "mem/memallocator.h"
+#ifdef ENABLE_QUIC
 #include "quic_client_endpoint.h"
+#endif
 
 // ─────────────────────────────────────────────────────────────
 // TlsOutboundTransport – wraps boost::asio::ssl::stream<tcp::socket>
@@ -166,6 +168,7 @@ class TlsOutboundTransport
 // QuicStreamTransport – wraps a single QUIC bidi stream
 // ─────────────────────────────────────────────────────────────
 
+#ifdef ENABLE_QUIC
 class QuicStreamTransport : public OutboundTransport,
                           public std::enable_shared_from_this<QuicStreamTransport> {
   public:
@@ -348,6 +351,7 @@ class QuicStreamTransport : public OutboundTransport,
 };
 
 // ─────────────────────────────────────────────────────────────
+#endif // ENABLE_QUIC
 // Factory
 // ─────────────────────────────────────────────────────────────
 

@@ -526,12 +526,18 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, tp::str
             }
             plain_http_response = tp::string(std::istreambuf_iterator<char>(ifs), std::istreambuf_iterator<char>());
         }
+#ifdef TROJAN_USE_BORINGSSL
+        if (!ssl.dhparam.empty()) {
+            throw std::invalid_argument("ssl.dhparam is unsupported by BoringSSL (no FFDHE)");
+        }
+#else
         if (ssl.dhparam.empty()) {
             ssl_context.use_tmp_dh(
               boost::asio::const_buffer((const void*)SSLDefaults::g_dh2048_sz, SSLDefaults::g_dh2048_sz_size));
         } else {
             ssl_context.use_tmp_dh_file(ssl.dhparam.c_str());
         }
+#endif
     } else {
         if (ssl.sni.empty()) {
             ssl.sni = remote_addr;
@@ -645,7 +651,8 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, tp::str
               native_context, (unsigned char*)(ssl.alpn.c_str()), (unsigned int)ssl.alpn.length());
         }
         if (ssl.reuse_session) {
-#ifndef BOOST_ASIO_USE_WOLFSSL
+            // ponytail: match wolfSSL client behavior; enable reuse only with a bounded, per-context/peer cache.
+#if !defined(BOOST_ASIO_USE_WOLFSSL) && !defined(TROJAN_USE_BORINGSSL)
             SSL_CTX_set_session_cache_mode(native_context, SSL_SESS_CACHE_CLIENT);
             SSLSession::set_callback(native_context);
 #endif
@@ -691,7 +698,7 @@ void Config::prepare_ssl_reuse(SSLSocket& socket) const {
     if (!ssl.sni.empty()) {
         SSL_set_tlsext_host_name(ssl_handle, ssl.sni.c_str());
     }
-#ifndef BOOST_ASIO_USE_WOLFSSL
+#if !defined(BOOST_ASIO_USE_WOLFSSL) && !defined(TROJAN_USE_BORINGSSL)
     if (ssl.reuse_session) {
         auto* session = SSLSession::get_session();
         if (session != nullptr) {
