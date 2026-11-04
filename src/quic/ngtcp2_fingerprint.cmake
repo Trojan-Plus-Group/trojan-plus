@@ -95,5 +95,30 @@ if(_pos EQUAL -1)
     message(FATAL_ERROR "ngtcp2 fingerprint patch: local encoder changed")
 endif()
 string(REPLACE "${_old}" "${_new}" _text "${_text}")
+set(_old_layout [=[  datacnt = ngtcp2_pkt_append_ping_and_padding(data, datacnt, &conn->pcg,
+                                               total_crypto_overhead);]=])
+set(_new_layout [=[  if (!conn->server && conn->local.transport_params.tp_chrome_fingerprint) {
+    /* Spend the existing padding budget on short interleaved PING/PADDING.
+       Frame accounting and CRYPTO retransmission stay with the native writer. */
+    while (total_crypto_overhead && datacnt < NGTCP2_MAX_STREAM_DATACNT) {
+      size_t n = 1 + ngtcp2_pcg32_rand_n(&conn->pcg, 3);
+      if (ngtcp2_pcg32_rand_n(&conn->pcg, 3) != 0) {
+        data[datacnt++] = (ngtcp2_vec){.base = NULL, .len = 0};
+        --total_crypto_overhead;
+      } else {
+        n = ngtcp2_min(n, total_crypto_overhead);
+        data[datacnt++] = (ngtcp2_vec){.base = NULL, .len = n};
+        total_crypto_overhead -= n;
+      }
+    }
+  } else {
+    datacnt = ngtcp2_pkt_append_ping_and_padding(data, datacnt, &conn->pcg,
+                                                 total_crypto_overhead);
+  }]=])
+string(FIND "${_text}" "${_old_layout}" _pos)
+if(_pos EQUAL -1)
+    message(FATAL_ERROR "ngtcp2 fingerprint patch: Initial layout changed")
+endif()
+string(REPLACE "${_old_layout}" "${_new_layout}" _text "${_text}")
 file(WRITE "${_source}" "${_text}")
 unset(_text)
