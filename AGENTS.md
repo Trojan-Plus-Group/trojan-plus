@@ -44,7 +44,11 @@ QUIC uses ngtcp2 + nghttp3 + BoringSSL; TUN uses embedded lwIP.
 
 ## Build
 
-Requires C++17, CMake >=3.20, Boost >=1.77 (`program_options`), initialized submodules.
+Requires C++17, CMake >=3.22, Boost >=1.77 (`program_options`), initialized submodules.
+BoringSSL is the sole TLS provider; system OpenSSL development packages are not needed.
+Linux keeps glibc/system libraries dynamic and other dependencies plus C++/compiler
+runtimes static. Apple/Android permit only platform system dynamic dependencies.
+Mimalloc is API-only for tp allocations, not a process-wide allocator override.
 
 ```bash
 git submodule update --init --recursive

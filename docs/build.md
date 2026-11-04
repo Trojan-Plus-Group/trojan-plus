@@ -14,7 +14,18 @@ Install these dependencies before you build:
 
 BoringSSL is the sole TLS provider, including ngtcp2's QUIC crypto adapter. System OpenSSL and `libssl-dev` are not required.
 
-Breaking change: FFDHE is unavailable. DH parameters are ignored; an explicit nonempty `ssl.dhparam` logs `ssl.dhparam is ignored: FFDHE is not supported` once at config startup. Existing configs continue to start. `ssl.cipher` configures TLS <= 1.2; `ssl.cipher_tls13` maps the three standard AES-GCM/ChaCha20 TLS 1.3 names to the pinned library's `SSL_CTX_set1_tls13_ciphers` API. Unknown names and duplicates are errors. Unlike older BoringSSL releases, this pin supports configuring TLS 1.3 ciphers. Explicit client session reuse is disabled; `ssl.reuse_session=true` on clients logs a warning and is ignored. Server cache, timeout and tickets remain supported. Invalid cipher/curve lists now fail startup; older builds could open a listener despite invalid lists. A future client cache must be bounded and isolated by context/peer/security policy.
+TLS behavior:
+
+- FFDHE is unavailable. Nonempty `ssl.dhparam` is ignored with one startup warning: `ssl.dhparam is ignored: FFDHE is not supported`. Use `ssl.curves` for ECDHE.
+- `ssl.cipher` configures TLS <= 1.2. `ssl.cipher_tls13` accepts the three standard AES-GCM/ChaCha20 TLS 1.3 names; unknown names and duplicates fail startup. Invalid cipher/curve lists also fail startup.
+- Explicit client session reuse is disabled: `ssl.reuse_session=true` on clients warns and is ignored. Server cache, timeout and tickets remain supported.
+
+Link policy:
+
+- Linux keeps glibc and its system libraries dynamic; Boost, BoringSSL, QUIC, mimalloc and the C++/compiler runtimes link statically. Fully static glibc binaries are not supported because getaddrinfo/NSS needs the system runtime.
+- Windows uses static MSVC CRT and Boost built with `runtime-link=static`. Android keeps `libtrojan.so` shared but uses `ANDROID_STL=c++_static`; iOS exports static archives.
+- Apple and Android allow only platform system libraries/frameworks as dynamic dependencies. Third-party dependencies link statically; use static Boost archives, not shared packages.
+- Mimalloc uses its explicit API for tp allocations only. It does not override process-wide allocation or BoringSSL allocation.
 
 For Debian users, run `sudo apt -y install build-essential cmake libboost-system-dev libboost-program-options-dev` to install all the necessary dependencies.
 
@@ -58,7 +69,7 @@ The `cmake ..` command can be extended with the following options.
 
 - `-DDEFAULT_CONFIG=/path/to/default/config.json`: the default path trojan will look for config (defaults to `${CMAKE_INSTALL_FULL_SYSCONFDIR}/trojan/config.json`).
 - `ENABLE_MIMALLOC`
-    - `-DENABLE_MIMALLOC=ON`: build with mimalloc support for improved performance (default if found).
+    - `-DENABLE_MIMALLOC=ON`: build the `mimalloc` submodule as a static, API-only allocator for tp allocations (default).
     - `-DENABLE_MIMALLOC=OFF`: build without mimalloc support.
 - `ENABLE_NAT` (Only on Linux)
     - `-DENABLE_NAT=ON`: build with NAT support (default).
@@ -72,9 +83,6 @@ The `cmake ..` command can be extended with the following options.
 - `ENABLE_SSL_KEYLOG` (DEBUG ONLY; exposes TLS master secrets)
     - `-DENABLE_SSL_KEYLOG=ON`: build with SSL KeyLog support. While `ENABLE_QUIC` is on, the KeyLog callback is not installed.
     - `-DENABLE_SSL_KEYLOG=OFF`: build without SSL KeyLog support (default). `./trojan --version` then reports `[Disabled] SSL KeyLog Support`.
-- `ENABLE_TLS13_CIPHERSUITES`
-    - `-DENABLE_TLS13_CIPHERSUITES=ON`: build with TLS 1.3 ciphersuite configuration support (default). BoringSSL TLS 1.3 itself is always compiled in.
-    - `-DENABLE_TLS13_CIPHERSUITES=OFF`: build without TLS1.3 ciphersuites support.
 - `FORCE_TCP_FASTOPEN`
     - `-DFORCE_TCP_FASTOPEN=ON`: force build with `TCP_FASTOPEN` support.
     - `-DFORCE_TCP_FASTOPEN=OFF`: build with `TCP_FASTOPEN` support based on system capabilities (default).
@@ -176,7 +184,7 @@ Options:
 
 ## Docker Build Environment
 
-To ensure a consistent build environment and run tests easily, you can use the provided Docker scripts. These scripts use a Debian trixie image with all necessary dependencies pre-installed (including mimalloc).
+The Docker scripts use a Debian trixie build image. BoringSSL, QUIC libraries and optional mimalloc build from pinned submodules; no system TLS development package is needed.
 
 ### 1. Build the Docker Image
 First, build the local Docker image (`trojan-builder`):

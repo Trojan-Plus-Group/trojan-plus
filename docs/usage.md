@@ -11,7 +11,7 @@ options:
   -v [ --version ]       print version and build info
 ```
 
-SSL KeyLog is compiled only with `-DENABLE_SSL_KEYLOG=ON`. The default build leaves it off, and `./trojan --version` reports `[Disabled] SSL KeyLog Support`.
+SSL KeyLog is compiled only with `-DENABLE_SSL_KEYLOG=ON`; its callback is installed only when `ENABLE_QUIC=OFF`. The default build leaves it off, and `./trojan --version` reports `[Disabled] SSL KeyLog Support`. Key logs expose TLS secrets; enable them only for debugging.
 
 The default value for CONFIG is where the default config is installed on Linux and other UNIX-like systems and `config.json` on Windows.
 

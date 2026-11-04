@@ -146,11 +146,7 @@ int main_impl(int argc, const char* argv[]) {
 #else  // ENABLE_NAT
             Log::log("[Disabled] NAT Support", Log::FATAL);
 #endif // ENABLE_NAT
-#ifdef ENABLE_TLS13_CIPHERSUITES
             Log::log(" [Enabled] TLS1.3 Ciphersuites Support", Log::FATAL);
-#else  // ENABLE_TLS13_CIPHERSUITES
-            Log::log("[Disabled] TLS1.3 Ciphersuites Support", Log::FATAL);
-#endif // ENABLE_TLS13_CIPHERSUITES
 #ifdef ENABLE_REUSE_PORT
             Log::log(" [Enabled] TCP Port Reuse Support", Log::FATAL);
 #else  // ENABLE_REUSE_PORT
