@@ -307,7 +307,7 @@ QuicConnection::QuicConnection(QuicEndpoint& endpoint, std::shared_ptr<QuicTlsCt
       m_tls_ctx(std::move(tls_ctx)),
       m_peer(peer),
       m_loss_timer(endpoint.io_context()),
-      m_write_buf(NGTCP2_MAX_UDP_PAYLOAD_SIZE),
+      m_write_buf(std::max<std::size_t>(NGTCP2_MAX_UDP_PAYLOAD_SIZE, 1250)),
       m_in_read_pkt(false),
       m_in_pump_write(false) {
     _log_with_date_time("QuicConnection: QuicConnection constructed for peer " + 
@@ -537,11 +537,37 @@ bool QuicConnection::init_client(const boost::asio::ip::udp::endpoint& local_ep,
     params.max_idle_timeout = static_cast<ngtcp2_duration>(
         m_endpoint.config().get_quic().max_idle_timeout_ms) * 1'000'000ULL;
 
+    const bool chrome = ssl_cfg.fingerprint == "chrome";
+    uint32_t versions[] = {NGTCP2_PROTO_VER_V1, 0};
+    if (chrome) {
+        uint32_t random_version;
+        if (RAND_bytes(reinterpret_cast<uint8_t*>(&random_version), sizeof(random_version)) != 1) {
+            return false;
+        }
+        versions[1] = (random_version & 0xf0f0f0f0U) | 0x0a0a0a0aU;
+        settings.available_versions = versions;
+        settings.available_versionslen = 2;
+        settings.max_tx_udp_payload_size = 1250;
+        settings.no_tx_udp_payload_size_shaping = 1;
+        params.tp_chrome_fingerprint = 1;
+        params.initial_max_data = 15 * 1024 * 1024;
+        params.initial_max_stream_data_bidi_local = 6 * 1024 * 1024;
+        params.initial_max_stream_data_bidi_remote = 6 * 1024 * 1024;
+        params.initial_max_stream_data_uni = 6 * 1024 * 1024;
+        params.initial_max_streams_bidi = 100;
+        params.initial_max_streams_uni = 103;
+        params.max_idle_timeout = 30 * NGTCP2_SECONDS;
+        params.max_udp_payload_size = 1472;
+        params.max_datagram_frame_size = 65536;
+    }
+
     ngtcp2_cid dcid, scid;
-    dcid.datalen = 18;
-    RAND_bytes(dcid.data, 18);
-    scid.datalen = 17;
-    RAND_bytes(scid.data, 17);
+    dcid.datalen = chrome ? 8 : 18;
+    scid.datalen = chrome ? 0 : 17;
+    if (RAND_bytes(dcid.data, static_cast<int>(dcid.datalen)) != 1 ||
+        RAND_bytes(scid.data, static_cast<int>(scid.datalen)) != 1) {
+        return false;
+    }
 
     auto path = make_path(local_ep, remote_ep);
 
