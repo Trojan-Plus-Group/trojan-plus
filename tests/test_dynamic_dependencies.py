@@ -66,8 +66,8 @@ def main():
             ("/usr/lib/libSystem.B.dylib", "/System/Library/Frameworks/Security.framework/Versions/A/Security"),
             ("@rpath/libc++.dylib", "/usr/local/lib/libfoo.dylib", "/usr/lib/../local/lib/libfoo.dylib", "/System/Library/../../tmp/libfoo.dylib", "/usr/library/libfoo.dylib", "")),
         "windows": (
-            ("KERNEL32.dll", "WS2_32.DLL", "api-ms-win-core-synch-l1-2-0.dll", "ext-ms-win-ntuser-window-l1-1-0.dll"),
-            ("ucrtbase.dll", "msvcrt.dll", "vcruntime140.dll", "msvcp140.dll", "api-ms-win-crt-runtime-l1-1-0.dll", "ext-ms-win-crt-runtime-l1-1-0.dll", "C:\\Windows\\System32\\kernel32.dll", "")),
+            ("KERNEL32.dll", "WS2_32.DLL", "WSOCK32.dll", "wsock32.DLL", "MSWSOCK.dll", "USER32.dll", "BCRYPT.dll", "IPHLPAPI.dll", "SECUR32.dll", "NTDLL.dll", "ADVAPI32.dll", "CRYPT32.dll", "api-ms-win-core-synch-l1-2-0.dll", "ext-ms-win-ntuser-window-l1-1-0.dll"),
+            ("ucrtbase.dll", "UCRTBASE.dll", "msvcrt.dll", "vcruntime140.dll", "VCRUNTIME140_1.dll", "msvcp140.dll", "MSVCP140_ATOMIC_WAIT.dll", "libssl.dll", "boost_program_options.dll", "api-ms-win-crt-runtime-l1-1-0.dll", "ext-ms-win-crt-runtime-l1-1-0.dll", "C:\\Windows\\System32\\kernel32.dll", "")),
     }
     for platform, (accepted, rejected) in cases.items():
         for name in accepted:
@@ -80,7 +80,10 @@ def main():
         binary = pathlib.Path(temporary) / "fixture.exe"
         for pe32, delay_va in ((False, False), (True, False), (True, True)):
             for normal, delayed, rejected in (
-                ("KERNEL32.dll", "WS2_32.dll", None),
+                ("KERNEL32.dll", "WSOCK32.dll", None),
+                ("wsock32.DLL", "MSWSOCK.dll", None),
+                ("MSVCP140.dll", "WSOCK32.dll", "MSVCP140.dll"),
+                ("KERNEL32.dll", "libssl.dll", "libssl.dll"),
                 ("vcruntime140.dll", "WS2_32.dll", "vcruntime140.dll"),
                 ("KERNEL32.dll", "api-ms-win-crt-runtime-l1-1-0.dll", "api-ms-win-crt-runtime-l1-1-0.dll"),
             ):
