@@ -297,7 +297,7 @@ IPv4 keeps the same shape with `iptables`, `ip rule`, and `ip route add local 0.
     - `session_timeout`: if `reuse_session` is set to `true`, specify `SSL` session timeout
     - `plain_http_response`: respond to plain http request with this file (raw TCP)
     - `curves`: `ECC` curves to use
-    - `dhparam`: must be empty; nonempty values are rejected because BoringSSL does not support FFDHE. ECDHE uses `curves`.
+    - `dhparam`: ignored. A nonempty value logs one warning at config startup: `ssl.dhparam is ignored: FFDHE is not supported`. ECDHE uses `curves`.
 - `tcp`: `TCP` specific configurations
     - `prefer_ipv4`: whether to connect to the IPv4 address when a domain has both IPv6 and IPv4 addresses. The default is `false`, which keeps the resolver's first result, including for TCP outbound connections and UDP associate destinations. Set it to `true` to pick an IPv4 address when one exists.
     - `ipv6_only`: when `local_addr` is IPv6, set `IPV6_V6ONLY` on the TCP listening socket in client, forward, server, and nat modes, and on the UDP listening socket in forward and nat modes. `false` (default) is dual-stack. `true` accepts IPv6 only. The option is set explicitly and does not follow the kernel `net.ipv6.bindv6only` sysctl.

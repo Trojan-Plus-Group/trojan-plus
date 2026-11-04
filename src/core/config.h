@@ -72,7 +72,6 @@ class Config {
         int ssl_shutdown_wait_time;
         tp::string plain_http_response;
         tp::string curves;
-        tp::string dhparam;
     };
     using TCPConfig = struct {
         bool prefer_ipv4;

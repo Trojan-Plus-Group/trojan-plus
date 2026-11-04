@@ -293,6 +293,44 @@ def main():
             check("invalid curve startup diagnostic", lambda: invalid_policy(
                 "curves", "Invalid TLS curve list"))
 
+            def client_defaults():
+                # Exact public HostModel.cs ConfigTemplate SSL block; placeholders resolved locally.
+                app_ssl = {
+                    "verify": True, "verify_hostname": True, "cert": "",
+                    "cipher": "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305",
+                    "cipher_tls13": "TLS_AES_256_GCM_SHA384:TLS_AES_128_GCM_SHA256:TLS_CHACHA20_POLY1305_SHA256",
+                    "sni": "localhost", "alpn": ["h2", "http/1.1"],
+                    "reuse_session": True, "ssl_shutdown_wait_time": 3,
+                    "session_ticket": True, "curves": "X25519:P-256:P-384"}
+                blocks = [app_ssl]
+                for example in sorted((ROOT / "examples").glob("*.json-example")):
+                    value = json.loads(example.read_text())
+                    if "ssl" in value:
+                        block = value["ssl"].copy()
+                        # File paths belong to the user's deployment, not TLS defaults.
+                        block["cert"] = ""
+                        blocks.append(block)
+                for block in blocks:
+                    config = {"run_type": "client", "local_addr": "127.0.0.1",
+                              "local_port": port(), "remote_addr": "127.0.0.1",
+                              "remote_port": 443, "password": ["local-test-only"],
+                              "log_level": 0, "ssl": block}
+                    with running(tmp, config):
+                        pass
+            check("exact app SSL template and shipped example TLS defaults start", client_defaults)
+
+            def ignored_dhparam():
+                config = copy.deepcopy(base)
+                config["local_port"] = port()
+                config["ssl"]["dhparam"] = "/nonexistent/ignored-dh.pem"
+                with running(tmp, config) as (number, log):
+                    with tls(context(), number):
+                        pass
+                    log.seek(0)
+                    warning = "ssl.dhparam is ignored: FFDHE is not supported"
+                    assert log.read().count(warning) == 1, "DH warning must occur exactly once"
+            check("DH parameter ignored with one warning and successful handshake", ignored_dhparam)
+
             disabled = copy.deepcopy(base)
             disabled["local_port"] = port()
             disabled["ssl"].update(reuse_session=False, session_ticket=False)
