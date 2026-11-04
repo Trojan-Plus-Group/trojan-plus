@@ -32,7 +32,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 if(MSVC)
-    add_compile_options(/W3 /utf-8)
+    add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:/W3>" "$<$<COMPILE_LANGUAGE:C,CXX>:/utf-8>")
 endif()
 
 ## 2. Fix ngtcp2 _Generic issue without touching the original source.
@@ -103,7 +103,11 @@ if(CMAKE_BUILD_TYPE STREQUAL Release
 endif()
 
 if(MSVC)
-    add_definitions(-D_CRT_SECURE_NO_WARNINGS -D_WIN32_WINNT=0x0601 -DTROJAN_EXPORTS)
+    add_compile_definitions(
+        "$<$<COMPILE_LANGUAGE:C,CXX>:_CRT_SECURE_NO_WARNINGS>"
+        "$<$<COMPILE_LANGUAGE:C,CXX>:_WIN32_WINNT=0x0601>"
+        "$<$<COMPILE_LANGUAGE:C,CXX>:TROJAN_EXPORTS>"
+    )
     if(CMAKE_BUILD_TYPE STREQUAL Release)
         set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /MP")
     else()
