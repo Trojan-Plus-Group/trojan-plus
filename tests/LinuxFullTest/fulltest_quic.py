@@ -25,6 +25,9 @@ Test cases:
   T25: outage_server_forgot_client   - proxy recovers within bound after server forgets connection while client idle
   T26: healthy_idle_streams          - healthy idle streams survive fresh requests without connection recovery
   T27: healthy_paused_bulk_stream    - paused bulk response survives fresh requests without connection recovery
+  T29: enabled_sni_verified_name     - verified hostname succeeds with expected wire SNI
+  T30: wrong_hostname_rejected       - hostname verification rejects wrong names
+  T31: chain_only_wrong_hostname     - chain-only verification accepts wrong names
 """
 
 import atexit
@@ -3280,6 +3283,183 @@ def test_healthy_paused_bulk_stream(binary_path):
         cleanup_temp_configs(srv_cfg, cli_cfg)
 
 
+def _initial_server_name(datagrams):
+    """Decrypt captured client Initials and reassemble a complete ClientHello."""
+    from aioquic.buffer import Buffer
+    from aioquic.quic.crypto import CryptoPair
+    from aioquic.quic.packet import QuicPacketType, pull_ack_frame, pull_quic_header
+    from aioquic.tls import pull_client_hello
+
+    streams = {}
+    for datagram in datagrams:
+        buf = Buffer(data=datagram)
+        while not buf.eof():
+            start = buf.tell()
+            header = pull_quic_header(buf, host_cid_length=0)
+            end = start + header.packet_length
+            encrypted_offset = buf.tell() - start
+            buf.seek(end)
+            if header.packet_type != QuicPacketType.INITIAL:
+                continue
+            key = (header.version, header.destination_cid)
+            if key not in streams:
+                crypto = CryptoPair()
+                crypto.setup_initial(header.destination_cid, is_client=False, version=header.version)
+                streams[key] = (crypto, {}, 0)
+            crypto, fragments, expected = streams[key]
+            _, payload, number = crypto.decrypt_packet(
+                datagram[start:end], encrypted_offset, expected)
+            streams[key] = (crypto, fragments, max(expected, number + 1))
+            frames = Buffer(data=payload)
+            while not frames.eof():
+                frame_type = frames.pull_uint_var()
+                if frame_type in (0, 1):  # PADDING, PING
+                    continue
+                if frame_type in (2, 3):  # ACK, ACK_ECN
+                    pull_ack_frame(frames)
+                    if frame_type == 3:
+                        for _ in range(3):
+                            frames.pull_uint_var()
+                elif frame_type == 6:  # CRYPTO
+                    offset = frames.pull_uint_var()
+                    data = frames.pull_bytes(frames.pull_uint_var())
+                    for index, value in enumerate(data, offset):
+                        if index in fragments and fragments[index] != value:
+                            raise AssertionError("conflicting Initial CRYPTO retransmission")
+                        fragments[index] = value
+                else:
+                    raise AssertionError(f"unexpected client Initial frame {frame_type}")
+                if all(index in fragments for index in range(4)):
+                    size = 4 + int.from_bytes(bytes(fragments[i] for i in range(1, 4)), "big")
+                    if all(index in fragments for index in range(size)):
+                        hello = bytes(fragments[i] for i in range(size))
+                        return pull_client_hello(Buffer(data=hello)).server_name
+    raise AssertionError("no complete wire ClientHello captured")
+
+
+class _InitialCaptureRelay(UdpRelay):
+    """Existing relay with bounded client-datagram capture, no traffic changes."""
+
+    def __init__(self):
+        self.datagrams = []
+        super().__init__(0, "127.0.0.1", QUIC_SERVER_PORT)
+
+    def _run(self):
+        relay = self
+        original = self.ls
+
+        class CaptureSocket:
+            def __getattr__(self, name):
+                return getattr(original, name)
+
+            def recvfrom(self, size):
+                data, addr = original.recvfrom(size)
+                if len(relay.datagrams) < 256:
+                    relay.datagrams.append(data)
+                return data, addr
+
+        self.ls = CaptureSocket()
+        super()._run()
+
+
+def _test_sni_verification(binary_path, tag, verify_hostname, hostname):
+    """Use trusted fixture certificate; force QUIC and disable session resumption."""
+    server = client = relay = None
+    srv_cfg = cli_cfg = None
+    import tempfile
+    import subprocess
+    cert_dir = tempfile.TemporaryDirectory(prefix="quic-sni-")
+    dump = False
+    print_time_log(f"[{tag}] verify_hostname={verify_hostname}, name={hostname}")
+    try:
+        # Missing wire decoder must fail, never silently skip required coverage.
+        from aioquic.quic.crypto import CryptoPair
+
+        cert = os.path.join(cert_dir.name, "server.crt")
+        key = os.path.join(cert_dir.name, "server.key")
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+                        "-keyout", key, "-out", cert, "-days", "2",
+                        "-subj", "/CN=trojan.test", "-addext", "subjectAltName=DNS:trojan.test"],
+                       check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        quic = {"enabled": True, "debug_disable_tcp": True,
+                "retry_connect_timeout_ms": 0}
+        srv_cfg = patch_quic_config_with_suffix("quic_server_config.json", f".{tag}.srv.tmp.json", {
+            "remote_port": HTTP_TARGET_PORT, "quic": quic,
+            "ssl": {"cert": cert, "key": key},
+        })
+        server, srv_log = start_trojan(binary_path, srv_cfg)
+        if not server or server.poll() is not None:
+            raise AssertionError("server startup failed")
+        relay = _InitialCaptureRelay()
+        cli_cfg = patch_quic_config_with_suffix("quic_client_config.json", f".{tag}.cli.tmp.json", {
+            "remote_port": relay.listen_port, "quic": quic,
+            "ssl": {"verify": True, "verify_hostname": verify_hostname,
+                    "cert": cert, "sni": hostname,
+                    "reuse_session": False,
+                    "session_ticket": False},
+        })
+        client, cli_log = start_trojan(binary_path, cli_cfg)
+        if not client:
+            raise AssertionError("client startup failed")
+        should_succeed = not verify_hostname or hostname == "trojan.test"
+        deadline = time.monotonic() + 12
+        completed = False
+        rejected = False
+        while time.monotonic() < deadline:
+            with open(cli_log, errors="replace") as log:
+                text = log.read()
+            completed = "QuicConnection: handshake completed" in text
+            rejected = bool(re.search(r"ngtcp2_conn_read_pkt:.*(?:ERR_CRYPTO|crypto)", text, re.I))
+            if completed or rejected or client.poll() is not None:
+                break
+            threading.Event().wait(0.05)
+        # Decode before asserting handshake outcome: no log-only SNI assertions.
+        wire_name = _initial_server_name(list(relay.datagrams))
+        if wire_name != hostname:
+            raise AssertionError(f"wire SNI {wire_name!r}, expected {hostname!r}")
+        if should_succeed:
+            if not completed or client.poll() is not None:
+                raise AssertionError("verified QUIC handshake did not succeed")
+            if not wait_for_log(srv_log, r"QuicConnection: handshake completed", timeout=5):
+                raise AssertionError("server handshake did not complete")
+            url = f"http://127.0.0.1:{HTTP_TARGET_PORT}/"
+            if http_get_via_socks5(url, QUIC_CLIENT_PROXY_PORT, timeout=10) != urllib.request.urlopen(url, timeout=10).read():
+                raise AssertionError("proxied response differs from local target")
+        else:
+            if completed:
+                raise AssertionError("wrong hostname accepted with verify_hostname=true")
+            if not rejected:
+                raise AssertionError("no explicit TLS crypto rejection; timeout/exit is not proof")
+        print_time_log(f"[{tag}] SNI/verification case PASSED")
+        return True
+    except Exception:
+        traceback.print_exc()
+        dump = True
+        return False
+    finally:
+        close_process(client, dump)
+        close_process(server, dump)
+        if relay is not None:
+            relay.stop()
+        cleanup_temp_configs(srv_cfg, cli_cfg)
+        cert_dir.cleanup()
+
+
+def test_enabled_sni_verified_name(binary_path):
+    """T29: SNI carries the verified fixture hostname on wire."""
+    return _test_sni_verification(binary_path, "T29", True, "trojan.test")
+
+
+def test_wrong_hostname_rejected(binary_path):
+    """T30: Wrong certificate hostname must fail verification."""
+    return _test_sni_verification(binary_path, "T30", True, "wrong.invalid")
+
+
+def test_chain_only_wrong_hostname(binary_path):
+    """T31: Chain verification alone must not enforce certificate hostname."""
+    return _test_sni_verification(binary_path, "T31", False, "wrong.invalid")
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -3311,6 +3491,9 @@ ALL_TESTS = [
     ("T25", test_outage_server_forgot_client),
     ("T26", test_healthy_idle_streams),
     ("T27", test_healthy_paused_bulk_stream),
+    ("T29", test_enabled_sni_verified_name),
+    ("T30", test_wrong_hostname_rejected),
+    ("T31", test_chain_only_wrong_hostname),
 ]
 
 def main(binary_path, test_tag='all'):

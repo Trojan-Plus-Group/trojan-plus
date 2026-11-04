@@ -58,6 +58,7 @@ static const ngtcp2_mem tj_ngtcp2_mem = {
 
 #include <wolfssl/options.h>
 #include <wolfssl/ssl.h>
+#include <wolfssl/error-ssl.h>
 
 #include "core/log.h"
 #include "quic_endpoint.h"
@@ -104,8 +105,17 @@ int QuicConnection::cb_recv_client_initial(ngtcp2_conn* conn, const ngtcp2_cid* 
 
 int QuicConnection::cb_recv_crypto_data(ngtcp2_conn* conn, ngtcp2_encryption_level level,
                                         uint64_t offset, const uint8_t* data, size_t datalen,
-                                        void* /*user_data*/) {
-    return ngtcp2_crypto_recv_crypto_data_cb(conn, level, offset, data, datalen, nullptr);
+                                        void* user_data) {
+    int rv = ngtcp2_crypto_recv_crypto_data_cb(conn, level, offset, data, datalen, nullptr);
+    if (rv != 0) {
+        auto* self = static_cast<QuicConnection*>(user_data);
+        int error = wolfSSL_get_error(self->m_ssl, -1);
+        if (error == DOMAIN_NAME_MISMATCH || error == IPADDR_MISMATCH) {
+            _log_with_date_time("QUIC: certificate hostname verification failed (hostname/IP SAN mismatch)",
+                                Log::ERROR);
+        }
+    }
+    return rv;
 }
 
 int QuicConnection::cb_handshake_completed(ngtcp2_conn* /*conn*/, void* user_data) {
@@ -462,12 +472,25 @@ bool QuicConnection::init_client(const boost::asio::ip::udp::endpoint& local_ep,
     m_conn_ref.user_data = this;
     wolfSSL_set_app_data(m_ssl, &m_conn_ref);
 
-    // Set SNI.
     const auto& ssl_cfg = m_endpoint.config().get_ssl();
-    const auto& sni     = !ssl_cfg.sni.empty() ? ssl_cfg.sni : m_endpoint.config().get_remote_addr();
-    if (!sni.empty()) {
-        wolfSSL_UseSNI(m_ssl, WOLFSSL_SNI_HOST_NAME, sni.c_str(),
-                       static_cast<uint16_t>(sni.size()));
+    const auto& expected_host = !ssl_cfg.sni.empty() ? ssl_cfg.sni : m_endpoint.config().get_remote_addr();
+    // Verify certificate identity independently of SNI configuration.
+    if (ssl_cfg.verify && ssl_cfg.verify_hostname) {
+        boost::system::error_code ec;
+        boost::asio::ip::make_address(expected_host.c_str(), ec);
+        int rc = ec ? wolfSSL_check_domain_name(m_ssl, expected_host.c_str())
+                    : wolfSSL_check_ip_address(m_ssl, expected_host.c_str());
+        if (expected_host.empty() || rc != WOLFSSL_SUCCESS) {
+            _log_with_date_time("QUIC: failed to configure certificate hostname verification", Log::ERROR);
+            return false;
+        }
+    }
+    if (!expected_host.empty()) {
+        if (wolfSSL_UseSNI(m_ssl, WOLFSSL_SNI_HOST_NAME, expected_host.c_str(),
+                          static_cast<uint16_t>(expected_host.size())) != WOLFSSL_SUCCESS) {
+            _log_with_date_time("QUIC: failed to configure SNI", Log::ERROR);
+            return false;
+        }
     }
 
     ngtcp2_callbacks callbacks;

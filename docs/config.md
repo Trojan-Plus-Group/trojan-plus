@@ -14,6 +14,13 @@ not every allocation made by third-party libraries. QUIC counts are zero when
 QUIC is compiled out. No timer is created when disabled. T16 enables this only
 in its temporary configs to check fresh post-quiescence snapshots.
 
+## QUIC certificate identity
+
+With `ssl.verify` and `ssl.verify_hostname` enabled, QUIC verifies the certificate
+against `ssl.sni`, or `remote_addr` when `ssl.sni` is empty. An IP literal must match an IP SAN. A name mismatch fails the handshake.
+Setting `ssl.verify_hostname` to `false` keeps CA chain verification only;
+setting `ssl.verify` to `false` disables certificate verification entirely.
+
 ## QUIC retry and timing
 
 `quic.retry_connect_timeout_ms` defaults to `1000` milliseconds when omitted.
