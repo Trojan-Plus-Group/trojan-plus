@@ -2533,16 +2533,16 @@ def test_handshake_blackhole_recovery(binary_path):
         if not client:
             dump = True
             return False
-        time.sleep(1)
+        # Keep the UDP sink bound until timeout: an early server could accept a
+        # retransmitted Initial and complete the first attempt at its deadline.
+        if not wait_for_log(cli_log, r"QuicClientEndpoint: handshake timeout", timeout=8):
+            print_time_log("[T22] FAIL: black-holed handshake did not time out")
+            dump = True
+            return False
         blackhole.close()
         blackhole = None
         server, srv_log = start_trojan(binary_path, srv_cfg)
         if not server:
-            dump = True
-            return False
-
-        if not wait_for_log(cli_log, r"QuicClientEndpoint: handshake timeout", timeout=6):
-            print_time_log("[T22] FAIL: black-holed handshake did not time out")
             dump = True
             return False
         if not wait_for_log(cli_log, r"QuicConnection: handshake completed", timeout=10):
