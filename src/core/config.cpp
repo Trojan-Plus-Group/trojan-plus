@@ -22,6 +22,7 @@
 
 #include "config.h"
 #include "ssl/boringssl_compat.h"
+#include "ssl/chrome_profile.h"
 #include <boost/property_tree/json_parser.hpp>
 #include <cstdlib>
 #include <gsl/gsl>
@@ -150,6 +151,10 @@ void Config::populate(const ptree& tree) {
     ssl.cert                 = tree.get("ssl.cert", std::string()).c_str();
     ssl.key                  = tree.get("ssl.key", std::string()).c_str();
     ssl.key_password         = tree.get("ssl.key_password", std::string()).c_str();
+    ssl.fingerprint = tree.get("ssl.fingerprint", std::string("chrome")).c_str();
+    if (ssl.fingerprint != "chrome" && ssl.fingerprint != "none") {
+        throw std::runtime_error("ssl.fingerprint must be chrome or none");
+    }
     ssl.cipher               = tree.get("ssl.cipher", std::string()).c_str();
     ssl.cipher_tls13         = tree.get("ssl.cipher_tls13", std::string()).c_str();
     ssl.prefer_server_cipher = tree.get("ssl.prefer_server_cipher", true);
@@ -174,6 +179,10 @@ void Config::populate(const ptree& tree) {
     ssl.ssl_shutdown_wait_time = tree.get("ssl.ssl_shutdown_wait_time", default_ssl_shutdown_wait_time);
     ssl.plain_http_response    = tree.get("ssl.plain_http_response", std::string()).c_str();
     ssl.curves                 = tree.get("ssl.curves", std::string()).c_str();
+    if (!is_server && (!ssl.cipher.empty() || !ssl.cipher_tls13.empty() || !ssl.curves.empty())) {
+        _log_with_date_time("Nonempty ssl.cipher, ssl.cipher_tls13 or ssl.curves overrides TLS defaults; fingerprint differs",
+                            Log::WARN);
+    }
     if (!tree.get("ssl.dhparam", std::string()).empty()) {
         _log_with_date_time("ssl.dhparam is ignored: FFDHE is not supported", Log::WARN);
     }
@@ -647,13 +656,17 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, tp::str
             SSL_CTX_set_alpn_protos(
               native_context, (unsigned char*)(ssl.alpn.c_str()), (unsigned int)ssl.alpn.length());
         }
+        if (ssl.fingerprint == "chrome") {
+            tp::configure_chrome_context(native_context, tp::ChromeTransport::Tcp, ssl.cipher, ssl.cipher_tls13,
+                                         ssl.curves);
+        }
         if (ssl.reuse_session) {
             // ponytail: explicit client reuse needs a bounded, per-context/peer cache.
             _log_with_date_time("ssl.reuse_session is ignored for clients: session reuse is not implemented", Log::WARN);
-            if (!ssl.session_ticket) {
+            if (!ssl.session_ticket && ssl.fingerprint != "chrome") {
                 SSL_CTX_set_options(native_context, SSL_OP_NO_TICKET);
             }
-        } else {
+        } else if (ssl.fingerprint != "chrome") {
             SSL_CTX_set_options(native_context, SSL_OP_NO_TICKET);
         }
     }
@@ -664,8 +677,9 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, tp::str
         }
     }
 
-    if (!ssl.cipher_tls13.empty()) {
-        configure_boringssl_tls13(native_context, ssl.cipher_tls13);
+    if (!ssl.cipher_tls13.empty() || run_type == Config::SERVER) {
+        configure_boringssl_tls13(native_context, ssl.cipher_tls13.empty() ?
+          tp::string("TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256") : ssl.cipher_tls13);
     }
 
     if (Log::keylog != nullptr) {
@@ -685,6 +699,9 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, tp::str
 void Config::prepare_ssl_reuse(SSLSocket& socket) const {
     _guard;
     auto* ssl_handle = socket.native_handle();
+    if (run_type != Config::SERVER && ssl.fingerprint == "chrome") {
+        tp::configure_chrome_ssl(ssl_handle, tp::ChromeTransport::Tcp, ssl.curves);
+    }
     if (!ssl.sni.empty()) {
         SSL_set_tlsext_host_name(ssl_handle, ssl.sni.c_str());
     }

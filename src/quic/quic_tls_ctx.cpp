@@ -14,6 +14,7 @@
 
 #include <ngtcp2/ngtcp2_crypto_boringssl.h>
 #include "ssl/boringssl_compat.h"
+#include "ssl/chrome_profile.h"
 
 #include "core/log.h"
 
@@ -49,7 +50,9 @@ static int alpn_select_cb(SSL* /*ssl*/, const unsigned char** out, unsigned char
 }
 
 QuicTlsCtx::QuicTlsCtx(const Config& config, Role role)
-    : m_ctx(nullptr), m_role(role), m_alpn_token(config.get_quic().alpn_token) {
+    : m_ctx(nullptr), m_role(role),
+      m_alpn_token(role == Role::Client && config.get_ssl().fingerprint == "chrome" ? tp::string("h3") : config.get_quic().alpn_token),
+      m_chrome(role == Role::Client && config.get_ssl().fingerprint == "chrome"), m_curves(config.get_ssl().curves) {
 
     m_ctx = SSL_CTX_new(TLS_method());
 
@@ -58,45 +61,45 @@ QuicTlsCtx::QuicTlsCtx(const Config& config, Role role)
         return;
     }
 
+    // Constructor exceptions must not leak the raw context.
+    bssl::UniquePtr<SSL_CTX> context_guard(m_ctx);
     int rc = 0;
     rc = role == Role::Server ? ngtcp2_crypto_boringssl_configure_server_context(m_ctx)
                               : ngtcp2_crypto_boringssl_configure_client_context(m_ctx);
     if (rc != 0) {
         _log_with_date_time("QuicTlsCtx: ngtcp2 TLS context configuration failed", Log::FATAL);
-        SSL_CTX_free(m_ctx);
         m_ctx = nullptr;
         return;
     }
 
     // Load certificates and keys.
     if (!reload_cert(config)) {
-        SSL_CTX_free(m_ctx);
         m_ctx = nullptr;
         return;
     }
 
     const auto& ssl_cfg = config.get_ssl();
 
-    // Cipher suites (TLS 1.3 names).
-    try {
-        configure_boringssl_tls13(m_ctx, ssl_cfg.cipher_tls13);
-    } catch (...) {
-        SSL_CTX_free(m_ctx);
-        m_ctx = nullptr;
-        throw;
-    }
-
-    // Elliptic curves.
-    if (!ssl_cfg.curves.empty() && SSL_CTX_set1_groups_list(m_ctx, ssl_cfg.curves.c_str()) != 1) {
-        SSL_CTX_free(m_ctx);
-        m_ctx = nullptr;
-        throw std::invalid_argument("Invalid TLS curve list");
+    if (m_chrome) {
+        tp::configure_chrome_context(m_ctx, tp::ChromeTransport::Quic, ssl_cfg.cipher,
+                                     ssl_cfg.cipher_tls13, ssl_cfg.curves);
+        m_alpn_token = "h3";
+    } else {
+        configure_boringssl_tls13(m_ctx, ssl_cfg.cipher_tls13.empty() && role == Role::Server ?
+          tp::string("TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256") : ssl_cfg.cipher_tls13);
+        if (!ssl_cfg.cipher.empty() && SSL_CTX_set_cipher_list(m_ctx, ssl_cfg.cipher.c_str()) != 1) {
+            throw std::invalid_argument("Invalid TLS cipher list");
+        }
+        if (!ssl_cfg.curves.empty() && SSL_CTX_set1_groups_list(m_ctx, ssl_cfg.curves.c_str()) != 1) {
+            throw std::invalid_argument("Invalid TLS curve list");
+        }
     }
 
     _log_with_date_time("QuicTlsCtx: initialized (role=" +
                             tp::string(role == Role::Server ? "server" : "client") +
                             ", alpn=" + m_alpn_token + ")",
                         Log::INFO);
+    context_guard.release();
 }
 
 QuicTlsCtx::~QuicTlsCtx() {
@@ -177,6 +180,10 @@ SSL* QuicTlsCtx::create_ssl() const {
         _log_with_date_time("QuicTlsCtx::create_ssl: TLS handle allocation failed", Log::ERROR);
         return nullptr;
     }
+    bssl::UniquePtr<SSL> ssl_guard(ssl);
+    if (m_chrome && m_role == Role::Client) {
+        tp::configure_chrome_ssl(ssl, tp::ChromeTransport::Quic, m_curves);
+    }
     // QUIC v1 transport parameters use extension 0x39.
     SSL_set_quic_use_legacy_codepoint(ssl, 0);
 
@@ -185,5 +192,5 @@ SSL* QuicTlsCtx::create_ssl() const {
     } else {
         SSL_set_connect_state(ssl);
     }
-    return ssl;
+    return ssl_guard.release();
 }

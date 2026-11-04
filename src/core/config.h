@@ -60,6 +60,7 @@ class Config {
         tp::string cert;
         tp::string key;
         tp::string key_password;
+        tp::string fingerprint = "chrome";
         tp::string cipher;
         tp::string cipher_tls13;
         bool prefer_server_cipher;

@@ -43,6 +43,8 @@ class QuicTlsCtx {
     SSL_CTX* m_ctx;
     Role m_role;
     tp::string m_alpn_token;
+    bool m_chrome = false;
+    tp::string m_curves;
 };
 
 #endif // _QUIC_TLS_CTX_H_
