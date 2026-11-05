@@ -18,40 +18,41 @@
 
 #include "core/log.h"
 
-// Server ALPN select callback. We never reject: prefer the configured token
-// (default "h3"), fall back to whatever the client offers first, so trojan
-// traffic is indistinguishable from standard HTTP/3 at the TLS layer.
+// RFC 9001 requires a shared ALPN: reject unrelated protocols like nginx.
+// Keep the configured token for older/custom clients, plus standard HTTP/3.
 static int alpn_select_cb(SSL* /*ssl*/, const unsigned char** out, unsigned char* outlen,
                           const unsigned char* in, unsigned int inlen, void* arg) {
     const auto* want     = static_cast<const char*>(arg);
     auto        want_len = static_cast<unsigned char>(strlen(want));
 
     // Walk client-offered list (wire format: <1-byte-len><bytes>...).
+    const unsigned char* preferred = nullptr;
+    const unsigned char* h3 = nullptr;
     unsigned int i = 0;
     while (i < inlen) {
         unsigned char n = in[i];
         if (n == 0 || n > inlen - i - 1) {
             return SSL_TLSEXT_ERR_ALERT_FATAL;
         }
-        if (n == want_len && i + 1 + n <= inlen && memcmp(in + i + 1, want, want_len) == 0) {
-            *out    = in + i + 1;
-            *outlen = n;
-            return SSL_TLSEXT_ERR_OK;
+        if (n == want_len && memcmp(in + i + 1, want, want_len) == 0) {
+            preferred = in + i + 1;
+        }
+        if (n == 2 && memcmp(in + i + 1, "h3", 2) == 0) {
+            h3 = in + i + 1;
         }
         i += 1u + n;
     }
-    // Preferred ALPN not offered – accept the first offered one (never reject).
-    if (inlen > 0 && in[0] > 0) {
-        *out    = in + 1;
-        *outlen = in[0];
+    if (preferred || h3) {
+        *out = preferred ? preferred : h3;
+        *outlen = preferred ? want_len : 2;
         return SSL_TLSEXT_ERR_OK;
     }
-    return SSL_TLSEXT_ERR_NOACK;
+    return SSL_TLSEXT_ERR_ALERT_FATAL;
 }
 
 QuicTlsCtx::QuicTlsCtx(const Config& config, Role role)
     : m_ctx(nullptr), m_role(role),
-      m_alpn_token(role == Role::Client && config.get_ssl().fingerprint == "chrome" ? tp::string("h3") : config.get_quic().alpn_token),
+      m_alpn_token(config.get_quic().alpn_token),
       m_chrome(role == Role::Client && config.get_ssl().fingerprint == "chrome"), m_curves(config.get_ssl().curves) {
 
     m_ctx = SSL_CTX_new(TLS_method());
@@ -72,18 +73,11 @@ QuicTlsCtx::QuicTlsCtx(const Config& config, Role role)
         return;
     }
 
-    // Load certificates and keys.
-    if (!reload_cert(config)) {
-        m_ctx = nullptr;
-        return;
-    }
-
     const auto& ssl_cfg = config.get_ssl();
 
     if (m_chrome) {
         tp::configure_chrome_context(m_ctx, tp::ChromeTransport::Quic, ssl_cfg.cipher,
                                      ssl_cfg.cipher_tls13, ssl_cfg.curves);
-        m_alpn_token = "h3";
     } else {
         configure_boringssl_tls13(m_ctx, ssl_cfg.cipher_tls13.empty() && role == Role::Server ?
           tp::string("TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256") : ssl_cfg.cipher_tls13);
@@ -93,6 +87,12 @@ QuicTlsCtx::QuicTlsCtx(const Config& config, Role role)
         if (!ssl_cfg.curves.empty() && SSL_CTX_set1_groups_list(m_ctx, ssl_cfg.curves.c_str()) != 1) {
             throw std::invalid_argument("Invalid TLS curve list");
         }
+    }
+
+    // Apply ALPN after the Chrome profile, which otherwise replaces it with h3.
+    if (!reload_cert(config)) {
+        m_ctx = nullptr;
+        return;
     }
 
     _log_with_date_time("QuicTlsCtx: initialized (role=" +
@@ -134,7 +134,7 @@ bool QuicTlsCtx::reload_cert(const Config& config) {
             _log_with_date_time("QuicTlsCtx: server certificate and key loaded", Log::INFO);
         }
         
-        // ALPN select callback – never rejects, prefers our configured token.
+        // Reject unsupported ALPNs; prefer our configured token over h3.
         // m_alpn_token is kept alive as long as QuicTlsCtx exists.
         SSL_CTX_set_alpn_select_cb(m_ctx, alpn_select_cb,
                                    const_cast<char*>(m_alpn_token.c_str()));
