@@ -265,6 +265,8 @@ IPv4 keeps the same shape with `iptables`, `ip rule`, and `ip route add local 0.
         "session_ticket": false,
         "session_timeout": 600,
         "plain_http_response": "",
+        "plain_http_server": "nginx",
+        "handshake_timeout": 60,
         "curves": "X25519:P-256:P-384",
         "dhparam": ""
     },
@@ -299,7 +301,9 @@ IPv4 keeps the same shape with `iptables`, `ip rule`, and `ip route add local 0.
     - `reuse_session`: controls server session reuse. Explicit client reuse is not implemented; a true value on clients is ignored with a warning.
     - `session_ticket`: whether to use session tickets for session resumption
     - `session_timeout`: if `reuse_session` is set to `true`, specify `SSL` session timeout
-    - `plain_http_response`: respond to plain http request with this file (raw TCP)
+    - `plain_http_response`: raw TCP response file for plain HTTP requests sent to the TLS port. Empty (default) uses the built-in nginx-style `400 Bad Request` response, including the "The plain HTTP request was sent to HTTPS port" HTML page, current GMT `Date`, `Content-Type: text/html`, computed `Content-Length`, and `Connection: close`. A nonempty file overrides the entire response.
+    - `plain_http_server`: built-in response `Server` header and HTML footer identity; defaults to `nginx`. Empty string omits both. Control characters are rejected; HTML text is escaped. Set this to match the fallback web server's identity.
+    - `handshake_timeout`: maximum TLS handshake duration in seconds for TCP server and QUIC server; defaults to `60`; `0` disables the timeout.
     - `curves`: `ECC` curves to use
     - `dhparam`: ignored. A nonempty value logs one warning at config startup: `ssl.dhparam is ignored: FFDHE is not supported`. ECDHE uses `curves`.
 - `tcp`: `TCP` specific configurations

@@ -20,7 +20,9 @@
 #ifndef _PIPELINEESSION_H_
 #define _PIPELINEESSION_H_
 
+#include <array>
 #include <boost/asio/ssl.hpp>
+#include <boost/asio/steady_timer.hpp>
 #include <list>
 #include <string_view>
 #include "mem/memallocator.h"
@@ -40,10 +42,13 @@ class PipelineSession : public SocketSession {
     enum Status { HANDSHAKE, STREAMING, DESTROY } status;
 
     const tp::string& plain_http_response;
+    const tp::string& plain_http_server;
 
     SessionsList sessions;
     std::shared_ptr<SSLSocket> live_socket;
     boost::asio::steady_timer gc_timer;
+    boost::asio::steady_timer handshake_timer;
+    std::array<unsigned char, 5> handshake_prefix{};
     SendDataCache sending_data_cache;
     boost::asio::ssl::context& ssl_context;
 
@@ -65,7 +70,7 @@ class PipelineSession : public SocketSession {
 
   public:
     PipelineSession(Service* _service, const Config& config, boost::asio::ssl::context& ssl_context,
-      const tp::string& plain_http_response);
+      const tp::string& plain_http_response, const tp::string& plain_http_server);
 
     void destroy(bool pipeline_call = false) final;
 

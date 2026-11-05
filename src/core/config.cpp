@@ -178,6 +178,17 @@ void Config::populate(const ptree& tree) {
     ssl.session_timeout        = tree.get("ssl.session_timeout", default_ssl_session_timeout);
     ssl.ssl_shutdown_wait_time = tree.get("ssl.ssl_shutdown_wait_time", default_ssl_shutdown_wait_time);
     ssl.plain_http_response    = tree.get("ssl.plain_http_response", std::string()).c_str();
+    ssl.plain_http_server      = tree.get("ssl.plain_http_server", std::string("nginx")).c_str();
+    const auto handshake_timeout = tree.get<int64_t>("ssl.handshake_timeout", 60);
+    if (handshake_timeout < 0 || handshake_timeout > UINT32_MAX) {
+        throw std::invalid_argument("ssl.handshake_timeout must be between 0 and 4294967295 seconds");
+    }
+    ssl.handshake_timeout = static_cast<uint32_t>(handshake_timeout);
+    for (unsigned char c : ssl.plain_http_server) {
+        if (c < 32 || c == 127) {
+            throw std::invalid_argument("ssl.plain_http_server must not contain control characters");
+        }
+    }
     ssl.curves                 = tree.get("ssl.curves", std::string()).c_str();
     if (!is_server && (!ssl.cipher.empty() || !ssl.cipher_tls13.empty() || !ssl.curves.empty())) {
         _log_with_date_time("Nonempty ssl.cipher, ssl.cipher_tls13 or ssl.curves overrides TLS defaults; fingerprint differs",
@@ -512,7 +523,7 @@ void Config::prepare_ssl_context(boost::asio::ssl::context& ssl_context, tp::str
                   if (SSL_select_next_proto((unsigned char**)out, outlen,
                         (unsigned char*)(((Config*)config)->ssl.alpn.c_str()),
                         (unsigned int)((Config*)config)->ssl.alpn.length(), in, inlen) != OPENSSL_NPN_NEGOTIATED) {
-                      return SSL_TLSEXT_ERR_NOACK;
+                      return SSL_TLSEXT_ERR_ALERT_FATAL;
                   }
                   return SSL_TLSEXT_ERR_OK;
                   _unguard;

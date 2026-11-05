@@ -21,6 +21,7 @@
  */
 
 #include "pipelinesession.h"
+#include "tcp_handshake.h"
 
 #include <boost/asio/ssl.hpp>
 
@@ -34,11 +35,13 @@ using namespace boost::asio::ip;
 using namespace boost::asio::ssl;
 
 PipelineSession::PipelineSession(Service* _service, const Config& config, boost::asio::ssl::context& ssl_context,
-  const tp::string& plain_http_response)
+  const tp::string& plain_http_response, const tp::string& plain_http_server)
     : SocketSession(_service, config),
       status(HANDSHAKE),
       plain_http_response(plain_http_response),
+      plain_http_server(plain_http_server),
       gc_timer(_service->get_io_context()),
+      handshake_timer(_service->get_io_context()),
       ssl_context(ssl_context) {
 
     set_session_name("PipelineSession");
@@ -66,7 +69,6 @@ tcp::socket& PipelineSession::accept_socket() { return (tcp::socket&)live_socket
 
 void PipelineSession::start() {
     boost::system::error_code ec;
-    timer_async_wait();
     set_in_endpoint(live_socket->next_layer().remote_endpoint(ec));
     if (ec) {
         output_debug_info_ec(ec);
@@ -74,23 +76,49 @@ void PipelineSession::start() {
         return;
     }
     auto self = shared_from_this();
-    live_socket->async_handshake(stream_base::server, tp::bind_mem_alloc([this, self](const boost::system::error_code error) {
-        if (error) {
-            _log_with_endpoint(get_in_endpoint(), tp::string("SSL handshake failed: ") + error.message().c_str(), Log::ERROR);
-            if (error.message() == "http request" && plain_http_response.empty()) {
-                boost::asio::async_write(accept_socket(), boost::asio::buffer(plain_http_response),
-                  tp::bind_mem_alloc([this, self](const boost::system::error_code ec, size_t) {
-                      output_debug_info_ec(ec);
-                      destroy();
-                  }));
-                return;
+    const auto timeout = get_config().get_ssl().handshake_timeout;
+    if (timeout) {
+        handshake_timer.expires_after(std::chrono::seconds(timeout));
+        handshake_timer.async_wait(tp::bind_mem_alloc([this, self](const boost::system::error_code& timer_ec) {
+            if (!timer_ec && status == HANDSHAKE) {
+                _log_with_endpoint(get_in_endpoint(), "TLS handshake timeout", Log::WARN);
+                boost::system::error_code close_ec;
+                accept_socket().shutdown(tcp::socket::shutdown_both, close_ec);
+                accept_socket().close(close_ec);
+                destroy();
             }
-            output_debug_info();
-            destroy();
-            return;
-        }
-        in_async_read();
-    }));
+        }));
+    }
+    auto* socket = &accept_socket();
+    boost::asio::async_read(*socket, boost::asio::buffer(handshake_prefix),
+      tp::bind_mem_alloc([this, self, socket](const boost::system::error_code read_ec, size_t length) {
+          if (read_ec) { destroy(); return; }
+          if (!is_tls_record_start(handshake_prefix.data(), length)) {
+              if (!is_plain_http_start(handshake_prefix.data(), length)) {
+                  boost::system::error_code close_ec;
+                  socket->shutdown(tcp::socket::shutdown_both, close_ec);
+                  socket->close(close_ec);
+                  destroy();
+                  return;
+              }
+              auto response = TP_MAKE_SHARED(tp::string, make_plain_http_response(plain_http_response, plain_http_server));
+              if (response->empty()) { destroy(); return; }
+              boost::asio::async_write(*socket, boost::asio::buffer(*response),
+                tp::bind_mem_alloc([this, self, response](const boost::system::error_code, size_t) { destroy(); }));
+              return;
+          }
+          live_socket->async_handshake(stream_base::server, boost::asio::buffer(handshake_prefix),
+                 tp::bind_mem_alloc([this, self](const boost::system::error_code error, size_t) {
+              handshake_timer.cancel();
+              if (error) {
+                  _log_with_endpoint(get_in_endpoint(), tp::string("SSL handshake failed: ") + error.message().c_str(), Log::ERROR);
+                  output_debug_info();
+                  destroy();
+                  return;
+              }
+              in_async_read();
+          }));
+      }));
 }
 
 void PipelineSession::in_async_read() {
@@ -110,7 +138,7 @@ void PipelineSession::in_async_read() {
 }
 void PipelineSession::move_socket_to_serversession(const std::string_view& data) {
     _log_with_endpoint(get_in_endpoint(), "PipelineSession error password, std::move data to ServerSession", Log::WARN);
-    auto session = TP_MAKE_SHARED(ServerSession, get_service(), get_config(), live_socket, plain_http_response);
+    auto session = TP_MAKE_SHARED(ServerSession, get_service(), get_config(), live_socket, plain_http_response, plain_http_server);
     session->in_recv(data);
     live_socket.reset();
     destroy();
@@ -134,7 +162,8 @@ void PipelineSession::in_recv(const std::string_view&) {
                     move_socket_to_serversession(data);
                     return;
                 }
-                in_async_read();
+                timer_async_wait();
+               in_async_read();
             } else {
                 move_socket_to_serversession(data);
             }
@@ -220,7 +249,7 @@ void PipelineSession::process_streaming_data() {
             });
 
             auto session =
-              TP_MAKE_SHARED(ServerSession, get_service(), get_config(), ssl_context, plain_http_response);
+              TP_MAKE_SHARED(ServerSession, get_service(), get_config(), ssl_context, plain_http_response, plain_http_server);
             session->set_pipeline_session(shared_from_this());
             session->get_pipeline_component().set_session_id(req.session_id);
             session->get_pipeline_component().set_use_pipeline();
@@ -332,6 +361,7 @@ void PipelineSession::destroy(bool /*pipeline_call = false*/) {
     }
     status = DESTROY;
     gc_timer.cancel();
+    handshake_timer.cancel();
 
     _log_with_endpoint(
       get_in_endpoint(), "PipelineSession remove all sessions: " + tp::to_string(sessions.size()), Log::INFO);

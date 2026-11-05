@@ -56,6 +56,7 @@ class Service {
     boost::asio::ip::tcp::acceptor socket_acceptor;
     boost::asio::ssl::context ssl_context;
     tp::string plain_http_response;
+    tp::string plain_http_server;
     boost::asio::ip::udp::socket udp_socket;
     tp::list<std::weak_ptr<UDPForwardSession>> udp_sessions;
     ReadBufWithGuard udp_read_buf;
