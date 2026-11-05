@@ -10,6 +10,7 @@
 
 #include "quic_server_endpoint.h"
 
+#include <algorithm>
 #include <cstring>
 #include <iomanip>
 #include <sstream>
@@ -67,7 +68,7 @@ tp::string QuicServerEndpoint::dcid_key(const uint8_t* dcid, std::size_t dcidlen
     return oss.str();
 }
 
-void QuicServerEndpoint::send_stateless_reset(const uint8_t* dcid, std::size_t dcidlen,
+void QuicServerEndpoint::send_stateless_reset(const uint8_t* dcid, std::size_t dcidlen, std::size_t packetlen,
                                               const boost::asio::ip::udp::endpoint& dest) {
     // Derive a deterministic Stateless Reset token using HKDF from the
     // per-process endpoint secret and the received DCID.  This is identical to
@@ -88,13 +89,15 @@ void QuicServerEndpoint::send_stateless_reset(const uint8_t* dcid, std::size_t d
     }
 
     // Random padding bytes preceding the token (RFC 9000 minimum is 5).
-    constexpr std::size_t kRandLen = NGTCP2_MIN_STATELESS_RESET_RANDLEN + 16;
-    uint8_t rand_bytes[kRandLen];
-    RAND_bytes(rand_bytes, static_cast<int>(kRandLen));
+    uint8_t rand_bytes[NGTCP2_MIN_STATELESS_RESET_RANDLEN + 16];
+    const auto randlen = std::min(sizeof(rand_bytes), packetlen - NGTCP2_STATELESS_RESET_TOKENLEN - 1);
+    if (RAND_bytes(rand_bytes, static_cast<int>(randlen)) != 1) {
+        return;
+    }
 
     uint8_t buf[NGTCP2_MAX_UDP_PAYLOAD_SIZE];
     auto nwrite = ngtcp2_pkt_write_stateless_reset2(buf, sizeof(buf), &token,
-                                                    rand_bytes, kRandLen);
+                                                    rand_bytes, randlen);
     if (nwrite < 0) {
         _log_with_date_time(
             "QuicServerEndpoint: ngtcp2_pkt_write_stateless_reset2 failed: " +
@@ -121,6 +124,25 @@ void QuicServerEndpoint::on_packet(const uint8_t* data, std::size_t len,
     ngtcp2_version_cid vc{};
     // Use the expected server SCID length for the short-header DCID length hint.
     int rv = ngtcp2_pkt_decode_version_cid(&vc, data, len, QuicConnection::kServerScidLen);
+    if (rv == NGTCP2_ERR_VERSION_NEGOTIATION) {
+        // Only answer Initial-shaped datagrams large enough to avoid amplification.
+        if (len < 1200 || (data[0] & 0xf0) != 0xc0) {
+            return;
+        }
+        uint8_t random;
+        if (RAND_bytes(&random, 1) != 1) {
+            return;
+        }
+        const uint32_t versions[] = {NGTCP2_PROTO_VER_V1};
+        uint8_t buf[1200];
+        auto nwrite = ngtcp2_pkt_write_version_negotiation(
+            buf, sizeof(buf), random, vc.scid, vc.scidlen, vc.dcid, vc.dcidlen,
+            versions, 1);
+        if (nwrite > 0) {
+            send_packet(src, buf, static_cast<std::size_t>(nwrite));
+        }
+        return;
+    }
     if (rv < 0) {
         return;
     }
@@ -134,14 +156,22 @@ void QuicServerEndpoint::on_packet(const uint8_t* data, std::size_t len,
         return;
     }
 
-    // vc.version == 0 means Short Header (1-RTT) packet – this is a post-handshake
-    // packet for an unknown connection.  Send a Stateless Reset per RFC 9000 §10.3.
-    if (vc.version == 0) {
+    // A version-zero long header is Version Negotiation, not a stale 1-RTT packet.
+    if (!(data[0] & 0x80)) {
+        if (!(data[0] & 0x40) || vc.dcidlen != QuicConnection::kServerScidLen ||
+            len <= NGTCP2_MIN_STATELESS_RESET_RANDLEN + NGTCP2_STATELESS_RESET_TOKENLEN) {
+            return;
+        }
         _log_with_date_time(
             "QuicServerEndpoint: Short Header packet for unknown CID " + key +
                 ", sending Stateless Reset",
             Log::INFO);
-        send_stateless_reset(vc.dcid, vc.dcidlen, src);
+        send_stateless_reset(vc.dcid, vc.dcidlen, len, src);
+        return;
+    }
+
+    // Reject non-Initial and malformed long headers before allocating connection state.
+    if (ngtcp2_accept(nullptr, data, len) != 0) {
         return;
     }
 
@@ -154,11 +184,6 @@ void QuicServerEndpoint::on_packet(const uint8_t* data, std::size_t len,
         } else {
             ++iter;
         }
-    }
-
-    // New connection – must be an Initial packet.
-    if (rv == NGTCP2_ERR_REQUIRED_TRANSPORT_PARAM) {
-        return;
     }
 
     auto self = shared_from_this();

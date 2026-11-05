@@ -36,7 +36,7 @@ class QuicServerEndpoint : public QuicEndpoint {
 
     // Send a Stateless Reset packet to |dest| for the given DCID.
     // Used when a Short Header packet arrives for an unknown connection.
-    void send_stateless_reset(const uint8_t* dcid, std::size_t dcidlen,
+    void send_stateless_reset(const uint8_t* dcid, std::size_t dcidlen, std::size_t packetlen,
                               const boost::asio::ip::udp::endpoint& dest);
 
     tp::vector<tp::string> m_pumping_conn;

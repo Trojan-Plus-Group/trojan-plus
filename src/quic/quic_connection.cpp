@@ -394,6 +394,10 @@ bool QuicConnection::init_server(const uint8_t* data, std::size_t datalen,
     ngtcp2_settings_default(&settings);
     settings.cc_algo = NGTCP2_CC_ALGO_BBR;
     settings.initial_ts = now_nanos();
+    const auto handshake_timeout = m_endpoint.config().get_ssl().handshake_timeout;
+    settings.handshake_timeout = handshake_timeout
+        ? static_cast<ngtcp2_duration>(handshake_timeout) * NGTCP2_SECONDS
+        : UINT64_MAX;
 
     ngtcp2_transport_params params;
     ngtcp2_transport_params_default(&params);
@@ -447,6 +451,19 @@ bool QuicConnection::init_server(const uint8_t* data, std::size_t datalen,
         _log_with_date_time(
             "QuicConnection::init_server: initial ngtcp2_conn_read_pkt: " + tp::string(ngtcp2_strerror(rv)),
             Log::WARN);
+        if (rv == NGTCP2_ERR_CRYPTO) {
+            // Initial TLS failures must reach the peer as QUIC crypto alerts, not silent drops.
+            ngtcp2_ccerr ccerr;
+            ngtcp2_ccerr_set_tls_alert(&ccerr, ngtcp2_conn_get_tls_alert(m_conn), nullptr, 0);
+            ngtcp2_path_storage ps;
+            ngtcp2_path_storage_zero(&ps);
+            ngtcp2_pkt_info pi{};
+            const auto written = ngtcp2_conn_write_connection_close(m_conn, &ps.path, &pi,
+              m_write_buf.data(), m_write_buf.size(), &ccerr, now_nanos());
+            if (written > 0) {
+                m_endpoint.send_packet(m_peer, m_write_buf.data(), static_cast<std::size_t>(written));
+            }
+        }
         return false;
     }
 
@@ -1615,7 +1632,7 @@ void QuicConnection::reschedule_loss_timer() {
             _log_with_date_time(
                 "QuicConnection: ngtcp2_conn_handle_expiry: " + tp::string(ngtcp2_strerror(rv)),
                 Log::WARN);
-            if (rv == NGTCP2_ERR_IDLE_CLOSE || rv == NGTCP2_ERR_DROP_CONN) {
+            if (rv == NGTCP2_ERR_IDLE_CLOSE || rv == NGTCP2_ERR_DROP_CONN || rv == NGTCP2_ERR_HANDSHAKE_TIMEOUT) {
                 close();
                 return;
             }
