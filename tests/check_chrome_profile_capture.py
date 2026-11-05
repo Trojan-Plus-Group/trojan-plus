@@ -75,9 +75,10 @@ def inspect(capture, port, quic):
     assert any(map(grease, cipher_ids)) == (not quic), cipher_ids
     if quic:
         packets = fields(capture, "quic.long.packet_type == 0 && udp.dstport == %d" % port,
-                         ["quic.dcil", "quic.scil", "udp.length"], port, True)
+                         ["quic.dcil", "quic.scil", "udp.length", "quic.packet_number"], port, True)
         assert packets, "No QUIC Initial"
-        for dcid, scid, length in packets:
+        assert integers(packets[0][3]) == [1], "First client Initial packet number: " + packets[0][3]
+        for dcid, scid, length, _ in packets:
             assert set(integers(dcid)) == {8}, dcid
             assert set(integers(scid)) == {0}, scid
             assert int(length) == 1258, length  # Eight-byte UDP header; payload is 1250.
@@ -114,7 +115,7 @@ def capture_one(binary, output, quic, index, capture_command):
                 for line in capture.stderr:
                     capture_log.write(line)
                     capture_log.flush()
-                    if "Capturing on" in line:
+                    if line.startswith("File:"):
                         ready.put(True)
                 ready.put(False)
 
@@ -149,10 +150,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument("--dumpcap", default="dumpcap", help="Capture command, e.g. 'sudo -n dumpcap'")
+    parser.add_argument("--output-dir", type=Path, default=Path("/tmp/opencode"),
+                        help="Parent directory for retained capture artifacts")
     args = parser.parse_args()
     binary = args.binary.resolve()
     assert binary.is_file(), binary
-    output = Path(tempfile.mkdtemp(prefix="chrome-capture-", dir="/tmp/opencode"))
+    output = Path(tempfile.mkdtemp(prefix="chrome-capture-", dir=args.output_dir))
     print("Evidence: " + str(output), flush=True)
     for quic in (False, True):
         samples = [capture_one(binary, output, quic, index, shlex.split(args.dumpcap)) for index in range(3)]
