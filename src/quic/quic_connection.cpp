@@ -540,6 +540,8 @@ bool QuicConnection::init_client(const boost::asio::ip::udp::endpoint& local_ep,
     const bool chrome = ssl_cfg.fingerprint == "chrome";
     uint32_t versions[] = {NGTCP2_PROTO_VER_V1, 0};
     if (chrome) {
+        // Start at 1 for Chrome wire parity: observers can decrypt Initial packets.
+        settings.initial_pkt_num = 1;
         uint32_t random_version;
         if (RAND_bytes(reinterpret_cast<uint8_t*>(&random_version), sizeof(random_version)) != 1) {
             return false;
