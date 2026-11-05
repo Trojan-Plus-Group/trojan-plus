@@ -1538,7 +1538,9 @@ void QuicConnection::close(uint64_t app_error_code) {
         ngtcp2_path_storage_zero(&ps);
         ngtcp2_pkt_info pi{};
         ngtcp2_ccerr    ccerr;
-        if (app_error_code == 0) {
+        if (app_error_code == 0 && ngtcp2_conn_get_tls_alert(m_conn)) {
+            ngtcp2_ccerr_set_tls_alert(&ccerr, ngtcp2_conn_get_tls_alert(m_conn), nullptr, 0);
+        } else if (app_error_code == 0) {
             ngtcp2_ccerr_default(&ccerr);
         } else {
             ccerr.type       = NGTCP2_CCERR_TYPE_APPLICATION;

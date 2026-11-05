@@ -133,6 +133,38 @@ def main():
                 threading.Event().wait(0.02)
             raise AssertionError(f"2-second server handshake deadline did not close connection; evidence: {work}")
 
+    def fragmented_alpn_rejection():
+        from aioquic.quic.events import ConnectionTerminated
+
+        cfg = QuicConfiguration(is_client=True, alpn_protocols=["unrelated"] + ["x" * 255] * 16,
+                                server_name="localhost", max_datagram_size=1200)
+        cfg.verify_mode = 0
+        client = QuicConnection(configuration=cfg)
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
+            udp.bind(("127.0.0.1", 0))
+            udp.settimeout(0.1)
+            address = ("127.0.0.1", port)
+            started = time.monotonic()
+            client.connect(address, now=started)
+            packets = client.datagrams_to_send(now=started)
+            assert len(packets) > 1, "ClientHello did not fragment"
+            for data, _ in packets:
+                udp.sendto(data, address)
+            while time.monotonic() - started < 4:
+                try:
+                    data, source = udp.recvfrom(65535)
+                except socket.timeout:
+                    timer = client.get_timer()
+                    if timer is not None and timer <= time.monotonic():
+                        client.handle_timer(now=time.monotonic())
+                else:
+                    client.receive_datagram(data, source, now=time.monotonic())
+                while (event := client.next_event()) is not None:
+                    if isinstance(event, ConnectionTerminated):
+                        assert event.error_code == 0x178, f"wrong TLS ALPN alert: {event.error_code:#x}"
+                        return
+            raise AssertionError(f"fragmented ALPN rejection missing; evidence: {work}")
+
     def own_client():
         client_config = json.loads((fixture / "quic_client_config.json").read_text())
         with socket.socket() as listener:
@@ -174,6 +206,7 @@ def main():
     proc = start()
     try:
         handshake_deadline(proc)
+        fragmented_alpn_rejection()
         own_client()
         for packet in (b"\x20" + b"random UDP" * 10, b"\x00" * 100, b"\x40" * 19):
             assert exchange(packet) is None, "random/undersized packet triggered reset"
