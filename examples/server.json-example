@@ -26,6 +26,8 @@
         "session_ticket": false,
         "session_timeout": 600,
         "plain_http_response": "",
+        "plain_http_server": "nginx",
+        "handshake_timeout": 60,
         "curves": "X25519:P-256:P-384",
         "dhparam": ""
     },

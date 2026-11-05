@@ -24,7 +24,9 @@
 #define _SERVERSESSION_H_
 #include "mem/memallocator.h"
 
+#include <array>
 #include <boost/asio/ssl.hpp>
+#include <boost/asio/steady_timer.hpp>
 #include <string_view>
 
 #include "core/pipeline.h"
@@ -53,6 +55,9 @@ class ServerSession : public SocketSession {
     boost::asio::ip::udp::endpoint udp_associate_endpoint;
 
     const tp::string& plain_http_response;
+    const tp::string& plain_http_server;
+    boost::asio::steady_timer handshake_timer;
+    std::array<unsigned char, 5> handshake_prefix{};
 
     using PipelineSessionRef = std::weak_ptr<Session>;
     PipelineSessionRef pipeline_session;
@@ -74,10 +79,10 @@ class ServerSession : public SocketSession {
 
   public:
     ServerSession(Service* _service, const Config& config, boost::asio::ssl::context& ssl_context,
-      const tp::string& plain_http_response);
+      const tp::string& plain_http_response, const tp::string& plain_http_server);
 
     ServerSession(Service* _service, const Config& config, std::shared_ptr<SSLSocket> socket,
-      const tp::string& plain_http_response);
+      const tp::string& plain_http_response, const tp::string& plain_http_server);
 
     boost::asio::ip::tcp::socket& accept_socket() override;
     void start() override;

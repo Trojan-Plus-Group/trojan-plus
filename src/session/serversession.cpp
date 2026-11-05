@@ -21,6 +21,7 @@
  */
 
 #include "serversession.h"
+#include "tcp_handshake.h"
 
 #include "core/service.h"
 #include "core/utils.h"
@@ -32,13 +33,15 @@ using namespace boost::asio::ip;
 using namespace boost::asio::ssl;
 
 ServerSession::ServerSession(Service* _service, const Config& config, boost::asio::ssl::context& ssl_context,
-  const tp::string& plain_http_response)
+  const tp::string& plain_http_response, const tp::string& plain_http_server)
     : SocketSession(_service, config),
       status(HANDSHAKE),
+      handshake_timer(_service->get_io_context()),
       out_socket(_service->get_io_context()),
       udp_socket(_service->get_io_context()),
       udp_resolver(_service->get_io_context()),
       plain_http_response(plain_http_response),
+      plain_http_server(plain_http_server),
       has_queried_out(false) {
 
     set_session_name("ServerSession");
@@ -46,14 +49,16 @@ ServerSession::ServerSession(Service* _service, const Config& config, boost::asi
 }
 
 ServerSession::ServerSession(Service* _service, const Config& config, std::shared_ptr<SSLSocket> socket,
-  const tp::string& plain_http_response)
+  const tp::string& plain_http_response, const tp::string& plain_http_server)
     : SocketSession(_service, config),
       status(HANDSHAKE),
       in_socket(std::move(socket)),
+      handshake_timer(_service->get_io_context()),
       out_socket(_service->get_io_context()),
       udp_socket(_service->get_io_context()),
       udp_resolver(_service->get_io_context()),
       plain_http_response(plain_http_response),
+      plain_http_server(plain_http_server),
       has_queried_out(false) {
 
     boost::system::error_code ec;
@@ -78,25 +83,49 @@ void ServerSession::start() {
             return;
         }
         auto self = shared_from_this();
-        in_socket->async_handshake(stream_base::server, tp::bind_mem_alloc([this, self](const boost::system::error_code error) {
-            if (error) {
-                _log_with_endpoint(get_in_endpoint(), tp::string("SSL handshake failed: ") + error.message().c_str(), Log::ERROR);
-                if (error.category() == boost::asio::error::get_ssl_category() &&
-                    ERR_GET_REASON(error.value()) == SSL_R_HTTP_REQUEST && !plain_http_response.empty()) {
-                    get_stat().inc_recv_len(plain_http_response.length());
-                    boost::asio::async_write(accept_socket(), boost::asio::buffer(plain_http_response),
-                      tp::bind_mem_alloc([this, self](const boost::system::error_code, size_t) {
-                          output_debug_info();
-                          destroy();
-                      }));
-                    return;
+        const auto timeout = get_config().get_ssl().handshake_timeout;
+        if (timeout) {
+            handshake_timer.expires_after(std::chrono::seconds(timeout));
+            handshake_timer.async_wait(tp::bind_mem_alloc([this, self](const boost::system::error_code& ec) {
+                if (!ec && status == HANDSHAKE) {
+                    _log_with_endpoint(get_in_endpoint(), "TLS handshake timeout", Log::WARN);
+                    boost::system::error_code close_ec;
+                    accept_socket().shutdown(tcp::socket::shutdown_both, close_ec);
+                    accept_socket().close(close_ec);
+                    destroy();
                 }
-                output_debug_info();
-                destroy();
-                return;
-            }
-            in_async_read();
-        }));
+            }));
+        }
+        auto* socket = &accept_socket();
+        boost::asio::async_read(*socket, boost::asio::buffer(handshake_prefix),
+          tp::bind_mem_alloc([this, self, socket](const boost::system::error_code ec, size_t length) {
+              if (ec) { destroy(); return; }
+                 if (!is_tls_record_start(handshake_prefix.data(), length)) {
+                  if (!is_plain_http_start(handshake_prefix.data(), length)) {
+                      boost::system::error_code close_ec;
+                      socket->shutdown(tcp::socket::shutdown_both, close_ec);
+                      socket->close(close_ec);
+                      destroy();
+                      return;
+                  }
+                  auto response = TP_MAKE_SHARED(tp::string, make_plain_http_response(plain_http_response, plain_http_server));
+                  if (response->empty()) { destroy(); return; }
+                  boost::asio::async_write(*socket, boost::asio::buffer(*response),
+                    tp::bind_mem_alloc([this, self, response](const boost::system::error_code, size_t) { destroy(); }));
+                  return;
+              }
+              in_socket->async_handshake(stream_base::server, boost::asio::buffer(handshake_prefix),
+                 tp::bind_mem_alloc([this, self](const boost::system::error_code error, size_t) {
+                  handshake_timer.cancel();
+                  if (error) {
+                      _log_with_endpoint(get_in_endpoint(), tp::string("SSL handshake failed: ") + error.message().c_str(), Log::ERROR);
+                      output_debug_info();
+                      destroy();
+                      return;
+                  }
+                  in_async_read();
+              }));
+          }));
     } else {
         in_async_read();
     }
@@ -533,6 +562,7 @@ void ServerSession::destroy(bool pipeline_call /*= false*/) {
         return;
     }
     status = DESTROY;
+    handshake_timer.cancel();
 
     _log_with_endpoint(get_in_endpoint(),
       (is_udp_forward_session() ? "[udp] session_id: " : "session_id: ") + tp::to_string(get_session_id()) +

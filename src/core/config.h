@@ -72,6 +72,8 @@ class Config {
         long session_timeout;
         int ssl_shutdown_wait_time;
         tp::string plain_http_response;
+        tp::string plain_http_server;
+        uint32_t handshake_timeout = 60;
         tp::string curves;
     };
     using TCPConfig = struct {

@@ -155,6 +155,7 @@ Service::Service(Config& config, bool test)
     }
 
     config.prepare_ssl_context(ssl_context, plain_http_response);
+    plain_http_server = config.get_ssl().plain_http_server;
 
 #ifdef ENABLE_QUIC
     if (!test) {
@@ -683,12 +684,12 @@ void Service::async_accept() {
     if (config.get_run_type() == Config::SERVER) {
         if (config.get_experimental().pipeline_num > 0) {
             // start a pipeline mode in server run_type
-            auto pipeline = TP_MAKE_SHARED(PipelineSession, this, config, ssl_context, plain_http_response);
+            auto pipeline = TP_MAKE_SHARED(PipelineSession, this, config, ssl_context, plain_http_response, plain_http_server);
             pipeline->set_icmpd(icmp_processor);
 
             session = pipeline;
         } else {
-            session = TP_MAKE_SHARED(ServerSession, this, config, ssl_context, plain_http_response);
+            session = TP_MAKE_SHARED(ServerSession, this, config, ssl_context, plain_http_response, plain_http_server);
         }
     } else {
         if (config.get_run_type() == Config::FORWARD) {
