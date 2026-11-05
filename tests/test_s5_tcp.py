@@ -100,6 +100,9 @@ class TcpHandshakeRegression(unittest.TestCase):
                                 if expected:
                                     with ctx.wrap_socket(sock, server_hostname='unknown.example') as tls:
                                         self.assertEqual(tls.selected_alpn_protocol(), expected)
+                                        if pipeline and mode == 'default' and expected == 'h2':
+                                            tls.settimeout(5)
+                                            self.assertEqual(tls.recv(1), b'', 'pipeline authentication deadline missing')
                                 else:
                                     with self.assertRaisesRegex(ssl.SSLError, 'NO_APPLICATION_PROTOCOL'):
                                         ctx.wrap_socket(sock, server_hostname='localhost')

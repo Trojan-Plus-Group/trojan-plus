@@ -116,6 +116,7 @@ void PipelineSession::start() {
                   destroy();
                   return;
               }
+              timer_async_wait();
               in_async_read();
           }));
       }));
