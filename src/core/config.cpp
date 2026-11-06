@@ -151,6 +151,12 @@ void Config::populate(const ptree& tree) {
     ssl.cert                 = tree.get("ssl.cert", std::string()).c_str();
     ssl.key                  = tree.get("ssl.key", std::string()).c_str();
     ssl.key_password         = tree.get("ssl.key_password", std::string()).c_str();
+    ssl.padding = tree.get("ssl.padding", true);
+    const auto padding_bytes = tree.get<int64_t>("ssl.padding_bytes", 16384);
+    if (padding_bytes < 0 || padding_bytes > UINT32_MAX) {
+        throw std::invalid_argument("ssl.padding_bytes must be between 0 and 4294967295");
+    }
+    ssl.padding_bytes = static_cast<uint32_t>(padding_bytes);
     ssl.fingerprint = tree.get("ssl.fingerprint", std::string("chrome")).c_str();
     if (ssl.fingerprint != "chrome" && ssl.fingerprint != "none") {
         throw std::runtime_error("ssl.fingerprint must be chrome or none");
