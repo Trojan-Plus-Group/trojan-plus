@@ -12,6 +12,8 @@
     "udp_timeout": 60,
     "log_level": 1,
     "ssl": {
+        "padding": true,
+        "padding_bytes": 16384,
         "verify": true,
         "verify_hostname": true,
         "cert": "",

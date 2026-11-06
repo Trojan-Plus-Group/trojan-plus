@@ -56,6 +56,8 @@ deadlines are checked within one second after resume. Other platforms use
         "verify_hostname": true,
         "cert": "",
         "fingerprint": "chrome",
+        "padding": true,
+        "padding_bytes": 16384,
         "cipher": "",
         "cipher_tls13": "",
         "sni": "",
@@ -90,6 +92,8 @@ deadlines are checked within one second after resume. Other platforms use
     - `verify`: whether to verify `SSL` certificate **STRONGLY RECOMMENDED**
     - `verify_hostname`: whether to verify `SSL` hostname (specified in the `sni` field) **STRONGLY RECOMMENDED**
     - `cert`: if `verify` is set to `true`, the same certificate used by the server or a collection of `CA` certificates could be provided. If you leave this field blank, BoringSSL will try to look for a system `CA` store and will be likely to fail. Certificates can be retrieved with [this simple Python script](https://github.com/trojan-gfw/trojan/blob/master/scripts/getcert.py).
+    - `padding`: enables the padded CONNECT command for client TCP sessions, including QUIC streams; defaults to `true`. Pipeline sessions retain their existing framing. Unsupported servers are remembered for the process lifetime and retried once with legacy CONNECT.
+    - `padding_bytes`: real-data budget per direction before END switches the stream to raw bytes; defaults to `16384`, valid range `0` through `4294967295`. Servers accept padded CONNECT regardless of `padding`; `0` ends their outbound framing immediately. Each framed flush uses a random size from 900 through 1450 bytes without adding delay.
     - `fingerprint`: client TLS handshake profile, `chrome` (default) or `none`; any other value is rejected. `chrome` uses Chrome-like TLS handshake defaults. `none` uses plain BoringSSL defaults for debugging. This affects only the TLS handshake, not browser application behavior (HTTP headers, HTTP/2 settings, JavaScript, or other browser features).
     - `cipher`: a cipher list to send and use; empty by default to preserve the selected fingerprint
     - `cipher_tls13`: a cipher list for TLS 1.3 to use; empty by default to preserve the selected fingerprint
@@ -132,6 +136,8 @@ PROTIP: If you simply want to redirect a raw TCP connection, you can use `iptabl
         "verify_hostname": true,
         "cert": "",
         "fingerprint": "chrome",
+        "padding": true,
+        "padding_bytes": 16384,
         "cipher": "",
         "cipher_tls13": "",
         "sni": "",
@@ -184,6 +190,8 @@ Do not redirect the Trojan server's own address, or the NAT process will loop. A
         "verify_hostname": true,
         "cert": "",
         "fingerprint": "chrome",
+        "padding": true,
+        "padding_bytes": 16384,
         "cipher": "",
         "cipher_tls13": "",
         "sni": "",
@@ -303,6 +311,8 @@ IPv4 keeps the same shape with `iptables`, `ip rule`, and `ip route add local 0.
     - `session_timeout`: if `reuse_session` is set to `true`, specify `SSL` session timeout
     - `plain_http_response`: raw TCP response file for plain HTTP requests sent to the TLS port. Empty (default) uses the built-in nginx-style `400 Bad Request` response, including the "The plain HTTP request was sent to HTTPS port" HTML page, current GMT `Date`, `Content-Type: text/html`, computed `Content-Length`, and `Connection: close`. A nonempty file overrides the entire response.
     - `plain_http_server`: built-in response `Server` header and HTML footer identity; defaults to `nginx`. Empty string omits both. Control characters are rejected; HTML text is escaped. Set this to match the fallback web server's identity.
+    - `padding`: client preference only; servers always accept padded CONNECT (`0x05`) regardless of this value.
+    - `padding_bytes`: outbound real-data budget for padded sessions, default `16384`; `0` sends END on the first outbound write and then uses raw bytes. DATA and random PAD frames use a one-byte type and two-byte big-endian length; END has zero length. The target-side connection is unchanged.
     - `handshake_timeout`: maximum TLS handshake duration in seconds for TCP server and QUIC server; defaults to `60`; `0` disables the timeout.
     - `curves`: `ECC` curves to use
     - `dhparam`: ignored. A nonempty value logs one warning at config startup: `ssl.dhparam is ignored: FFDHE is not supported`. ECDHE uses `curves`.
