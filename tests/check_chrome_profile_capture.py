@@ -17,6 +17,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import xml.etree.ElementTree as ET
 
 
 @contextlib.contextmanager
@@ -59,6 +60,41 @@ def grease(value):
     return value & 0x0f0f == 0x0a0a and value >> 8 == value & 0xff
 
 
+def inspect_layout(capture, port):
+    """Check first flight, not accumulated PTO retries, against Chrome 156."""
+    result = subprocess.run(
+        ["tshark", "-r", str(capture), "-d", "udp.port==%d,quic" % port,
+         "-Y", "quic.long.packet_type == 0 && udp.dstport == %d" % port,
+         "-T", "pdml"], capture_output=True, check=True, timeout=15)
+    packets = ET.fromstring(result.stdout).findall("packet")
+
+    def value(node, name):
+        return node.find('.//field[@name="' + name + '"]').get("show")
+
+    frames = []
+    previous = None
+    for packet in packets:
+        timestamp = float(value(packet, "frame.time_epoch"))
+        if previous is not None and timestamp - previous > 0.1:
+            break
+        previous = timestamp
+        assert int(value(packet, "udp.length")) == 1258
+        frames.extend(packet.findall('.//field[@name="quic.frame"]'))
+    types = [int(value(frame, "quic.frame_type"), 0) for frame in frames]
+    offsets = [int(value(frame, "quic.crypto.offset"))
+               for frame, kind in zip(frames, types) if kind == 6]
+    # Chrome 156, 2026-11-06: 30 fresh browser captures plus six supplied
+    # captures; one target-origin connection per fresh capture, 36 samples.
+    counts = (types.count(6), types.count(1), types.count(0))
+    assert 8 <= counts[0] <= 23, ("CRYPTO count", counts)
+    assert 5 <= counts[1] <= 19, ("PING count", counts)
+    assert 4 <= counts[2] <= 11, ("PADDING runs", counts)
+    pairs = len(offsets) * (len(offsets) - 1) / 2
+    disorder = sum(a > b for i, a in enumerate(offsets) for b in offsets[i + 1:]) / pairs
+    assert disorder >= 0.2, ("Offset disorder", disorder, offsets)
+    return counts, disorder
+
+
 def inspect(capture, port, quic):
     names = ["tls.handshake.ja4", "tls.handshake.extension.type", "tls.handshake.ciphersuite"]
     rows = fields(capture, "tls.handshake.type == 1", names, port, quic)
@@ -82,6 +118,7 @@ def inspect(capture, port, quic):
             assert set(integers(dcid)) == {8}, dcid
             assert set(integers(scid)) == {0}, scid
             assert int(length) == 1258, length  # Eight-byte UDP header; payload is 1250.
+        inspect_layout(capture, port)
     return extension_ids, [value for value in cipher_ids if grease(value)]
 
 
