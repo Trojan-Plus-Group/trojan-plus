@@ -31,7 +31,8 @@ public:
     tp::string password;
     enum Command {
         CONNECT = 1,
-        UDP_ASSOCIATE = 3
+        UDP_ASSOCIATE = 3,
+        CONNECT_PADDED = 5
     } command;
     SOCKS5Address address;
     std::string_view payload;

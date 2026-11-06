@@ -42,7 +42,8 @@ ServerSession::ServerSession(Service* _service, const Config& config, boost::asi
       udp_resolver(_service->get_io_context()),
       plain_http_response(plain_http_response),
       plain_http_server(plain_http_server),
-      has_queried_out(false) {
+      has_queried_out(false),
+      padding_encoder(config.get_ssl().padding_bytes) {
 
     set_session_name("ServerSession");
     in_socket = TP_MAKE_SHARED(SSLSocket, _service->get_io_context(), ssl_context);
@@ -59,7 +60,8 @@ ServerSession::ServerSession(Service* _service, const Config& config, std::share
       udp_resolver(_service->get_io_context()),
       plain_http_response(plain_http_response),
       plain_http_server(plain_http_server),
-      has_queried_out(false) {
+      has_queried_out(false),
+      padding_encoder(config.get_ssl().padding_bytes) {
 
     boost::system::error_code ec;
     set_in_endpoint(in_socket->next_layer().remote_endpoint(ec));
@@ -145,6 +147,9 @@ void ServerSession::in_async_read() {
           in_read_buf.prepare(MAX_BUF_LENGTH), tp::bind_mem_alloc([this, self](const boost::system::error_code error, size_t length) {
               in_read_buf.end_read();
               if (error) {
+                  if (error == boost::asio::error::eof && padded && !padding_decoder.ended()) {
+                      _log_with_endpoint(get_in_endpoint(), "Truncated padded CONNECT frame stream", Log::WARN);
+                  }
                   output_debug_info_ec(error);
                   destroy();
                   return;
@@ -176,6 +181,18 @@ void ServerSession::in_async_write(const std::string_view& data) {
             destroy();
         }
     } else {
+        if (padded) {
+            if (!data.empty()) padding_sent_data = true;
+            auto encoded = padding_encoder.encode(data);
+            if (!encoded.success) {
+                _log_with_endpoint(get_in_endpoint(), "Padded CONNECT encoding failed", Log::WARN);
+                destroy();
+                return;
+            }
+            for (auto& flush : encoded.flushes) padding_flushes.push_back(std::move(flush));
+            write_padding_flush();
+            return;
+        }
         auto data_copy = get_service()->get_sending_data_allocator().allocate(data);
         boost::asio::async_write(
           *in_socket, data_copy->data(), tp::bind_mem_alloc([this, self, data_copy](const boost::system::error_code error, size_t) {
@@ -188,6 +205,29 @@ void ServerSession::in_async_write(const std::string_view& data) {
               in_sent();
           }));
     }
+}
+
+void ServerSession::write_padding_flush() {
+    if (status == DESTROY) return;
+    if (padding_flushes.empty()) {
+        if (padding_finish) {
+            destroy();
+            return;
+        }
+        in_sent();
+        return;
+    }
+    auto self = shared_from_this();
+    boost::asio::async_write(*in_socket, boost::asio::buffer(padding_flushes.front()),
+      tp::bind_mem_alloc([this, self](const boost::system::error_code& ec, size_t) {
+          if (ec) {
+              output_debug_info_ec(ec);
+              destroy();
+              return;
+          }
+          padding_flushes.pop_front();
+          write_padding_flush();
+      }));
 }
 
 void ServerSession::out_async_read() {
@@ -209,6 +249,12 @@ void ServerSession::out_async_read() {
       out_read_buf.prepare(MAX_BUF_LENGTH), tp::bind_mem_alloc([this, self](const boost::system::error_code error, size_t length) {
           out_read_buf.end_read();
           if (error) {
+              // EOF before outbound DATA stays silent for legacy fallback compatibility.
+              if (error == boost::asio::error::eof && padded && padding_sent_data && !padding_encoder.ended()) {
+                  padding_finish = true;
+                  in_async_write({});
+                  return;
+              }
               output_debug_info_ec(error);
               destroy();
               return;
@@ -312,8 +358,24 @@ void ServerSession::in_recv(const std::string_view& data, size_t ack_count) {
             return;
         }
 
+        request_buf.append(data.data(), data.size());
         TrojanRequest req;
-        bool use_alpn = req.parse(data) == -1;
+        int parsed = req.parse(request_buf);
+        const auto password_end = request_buf.find("\r\n");
+        auto password_prefix = std::string_view(request_buf).substr(0, password_end);
+        if (password_end == tp::string::npos && !password_prefix.empty() && password_prefix.back() == '\r') {
+            password_prefix.remove_suffix(1); // CRLF may be split across reads.
+        }
+        if (password_prefix.size() > Config::MAX_PASSWORD_LENGTH ||
+            password_prefix.find_first_not_of("0123456789abcdef") != std::string_view::npos) {
+            parsed = -1;
+        }
+        if (parsed == 0 && request_buf.size() <= Config::MAX_PASSWORD_LENGTH + 264) {
+            in_async_read();
+            return;
+        }
+        const std::string_view request_data(request_buf);
+        bool use_alpn = parsed <= 0;
         if (!use_alpn) {
             auto password_iterator = get_config().get_password().find(req.password);
             if (password_iterator == get_config().get_password().end()) {
@@ -341,6 +403,15 @@ void ServerSession::in_recv(const std::string_view& data, size_t ack_count) {
         }());
 
         if (!use_alpn) {
+            if (req.command == TrojanRequest::CONNECT_PADDED) {
+                // Pipeline ACK accounting counts wire bytes, not decoded payload bytes.
+                if (get_pipeline_component().is_using_pipeline()) {
+                    _log_with_endpoint(get_in_endpoint(), "Padded CONNECT is unsupported on pipeline sessions", Log::WARN);
+                    destroy();
+                    return;
+                }
+                padded = true;
+            }
             if (req.command == TrojanRequest::UDP_ASSOCIATE) {
                 set_udp_forward_session(true);
                 udp_timer_async_wait();
@@ -376,11 +447,18 @@ void ServerSession::in_recv(const std::string_view& data, size_t ack_count) {
                 tp::to_string(static_cast<int>(req.address.address_type)),
               Log::INFO);
 
-            streambuf_append(out_write_buf, req.payload);
+            auto decoded = padded ? padding_decoder.decode(req.payload) : s2::DecodeResult{};
+            if (padded && !decoded.success) {
+                _log_with_endpoint(get_in_endpoint(), "Invalid padded CONNECT frame", Log::WARN);
+                destroy();
+                return;
+            }
+            streambuf_append(out_write_buf, padded ? std::string_view(decoded.data) : req.payload);
 
         } else {
-            streambuf_append(out_write_buf, data);
+            streambuf_append(out_write_buf, request_data);
         }
+        tp::string().swap(request_buf);
 
         get_stat().inc_sent_len(out_write_buf.size());
         has_queried_out = true;
@@ -397,8 +475,19 @@ void ServerSession::in_recv(const std::string_view& data, size_t ack_count) {
         });
 
     } else if (status == FORWARD) {
-        get_stat().inc_sent_len(data.length());
-        out_async_write(data, ack_count);
+        auto decoded = padded ? padding_decoder.decode(data) : s2::DecodeResult{};
+        if (padded && !decoded.success) {
+            _log_with_endpoint(get_in_endpoint(), "Invalid padded CONNECT frame", Log::WARN);
+            destroy();
+            return;
+        }
+        const std::string_view payload = padded ? std::string_view(decoded.data) : data;
+        get_stat().inc_sent_len(payload.size());
+        if (padded && payload.empty()) {
+            in_async_read();
+            return;
+        }
+        out_async_write(payload, ack_count);
     } else if (status == UDP_FORWARD) {
         streambuf_append(udp_data_buf, data);
         out_udp_sent();
