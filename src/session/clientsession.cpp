@@ -633,7 +633,7 @@ void ClientSession::request_remote() {
         pipeline_session = via_pipeline;
         padding.begin(get_config().get_remote_addr(), static_cast<uint16_t>(get_config().get_remote_port()),
                       !via_pipeline && !is_udp_forward_session() && get_config().get_ssl().padding,
-                      get_config().get_ssl().padding_bytes);
+                      get_config().get_ssl().padding_bytes, get_config().get_ssl().padding_flushes);
         padding_request = true;
 
         boost::system::error_code ec;

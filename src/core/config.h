@@ -63,6 +63,7 @@ class Config {
         tp::string fingerprint = "chrome";
         bool padding = true;
         uint32_t padding_bytes = 16384;
+        uint32_t padding_flushes = 8;
         tp::string cipher;
         tp::string cipher_tls13;
         bool prefer_server_cipher;

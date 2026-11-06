@@ -41,7 +41,7 @@ QuicProxySession::QuicProxySession(std::shared_ptr<QuicConnection> conn, int64_t
       m_resolver(io_ctx),
       m_udp_socket(io_ctx),
       m_udp_resolver(io_ctx),
-      m_padding_encoder(config.get_ssl().padding_bytes),
+      m_padding_encoder(config.get_ssl().padding_bytes, config.get_ssl().padding_flushes),
       m_write_timer(io_ctx) {
     m_quic_recv_buf.reserve(kQuicRecvBufReserveSize);
     _log_with_date_time("QuicProxySession: QuicProxySession constructed stream_id=" + 

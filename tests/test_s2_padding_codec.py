@@ -69,7 +69,7 @@ static tp::string join(const s2::EncodeResult& result) {
 static void roundtrip(size_t budget, size_t size, size_t step) {
     tp::string source;
     for (size_t i = 0; i < size; ++i) source.push_back(static_cast<char>(i));
-    s2::Encoder encoder(budget);
+    s2::Encoder encoder(budget, 0);
     tp::string wire;
     for (size_t i = 0; i < size;) {
         const auto n = std::min(step, size - i);
@@ -146,12 +146,58 @@ int main() {
             for (size_t step : {1u, 2u, 3u, 997u, 65536u}) roundtrip(budget, size, step);
         }
     }
+    // Small writes must not turn the real-byte budget into unbounded padding.
+    // Zero flush limit retains byte-budget-only behavior.
+    for (bool unlimited : {false, true}) {
+        auto encoder = unlimited ? s2::Encoder(32, 0) : s2::Encoder();
+        s2::Decoder decoder;
+        tp::string source, decoded;
+        size_t padded_flushes = 0, padding_bytes = 0;
+        for (size_t i = 0; i < 1000; ++i) {
+            const char byte = static_cast<char>(i);
+            source.push_back(byte);
+            const bool raw = encoder.ended();
+            const auto encoded = encoder.encode({&byte, 1});
+            assert(encoded.success && encoded.flushes.size() == 1);
+            const auto& flush = encoded.flushes.front();
+            if (raw) {
+                assert(flush == tp::string(1, byte));
+            } else {
+                ++padded_flushes;
+                assert(flush.size() >= 900 && flush.size() <= 1450);
+                size_t pos = 0;
+                while (pos < flush.size()) {
+                    const auto length = length_at(flush, pos);
+                    if (flush[pos] == s2::PAD) padding_bytes += length;
+                    if (flush[pos] == s2::END) {
+                        assert(encoder.ended() && pos + 3 == flush.size());
+                    }
+                    pos += 3 + length;
+                }
+                assert(pos == flush.size());
+                assert(encoder.ended() == (padded_flushes == (unlimited ? 32u : 8u)));
+            }
+            const auto result = decoder.decode(view(flush));
+            assert(result.success);
+            decoded += result.data;
+        }
+        assert(padded_flushes == (unlimited ? 32u : 8u));
+        if (!unlimited) assert(padding_bytes < 8 * 1450);
+        assert(encoder.remaining() == (unlimited ? 0u : s2::default_budget - 8));
+        assert(decoded == source && decoder.complete());
+    }
+    // A prefix-only flush also consumes the cap and includes END when final.
+    s2::Encoder prefix_cap(16384, 1);
+    auto prefix_final = prefix_cap.encode({}, "header");
+    assert(prefix_final.success && prefix_final.flushes.size() == 1 && prefix_cap.ended());
+    assert(prefix_final.flushes.front().substr(prefix_final.flushes.front().size() - 3) == frame(s2::END, 0));
+    assert(join(prefix_cap.encode("raw")) == "raw");
     // Prefix counts toward the uniform total, appears once and is not DATA.
     for (uint32_t total : {900u, 1450u}) {
         for (size_t prefix_size : {1u, 100u, 887u}) {
             for (size_t budget : {0u, 1u, 16384u}) {
                 for (bool payload : {false, true}) {
-                    s2::Encoder encoder(budget);
+                    s2::Encoder encoder(budget, 0);
                     const tp::string prefix(prefix_size, 'H');
                     draws = {551 + total - 900};
                     auto encoded = encoder.encode(payload ? "hello" : "", view(prefix));
@@ -177,7 +223,7 @@ int main() {
     assert(oversized_prefix.failed());
     // Packing guarantees progress regardless of random split: at least 888
     // real bytes per full flush, without a geometric tail near budget exhaustion.
-    s2::Encoder packed(16384);
+    s2::Encoder packed(16384, 0);
     const auto packed_result = packed.encode(tp::string(20000, 'p'));
     assert(packed_result.success && packed.ended());
     assert(packed_result.flushes.size() <= (16384 + 887) / 888 + 1);

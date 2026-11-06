@@ -43,7 +43,7 @@ ServerSession::ServerSession(Service* _service, const Config& config, boost::asi
       plain_http_response(plain_http_response),
       plain_http_server(plain_http_server),
       has_queried_out(false),
-      padding_encoder(config.get_ssl().padding_bytes) {
+      padding_encoder(config.get_ssl().padding_bytes, config.get_ssl().padding_flushes) {
 
     set_session_name("ServerSession");
     in_socket = TP_MAKE_SHARED(SSLSocket, _service->get_io_context(), ssl_context);
@@ -61,7 +61,7 @@ ServerSession::ServerSession(Service* _service, const Config& config, std::share
       plain_http_response(plain_http_response),
       plain_http_server(plain_http_server),
       has_queried_out(false),
-      padding_encoder(config.get_ssl().padding_bytes) {
+      padding_encoder(config.get_ssl().padding_bytes, config.get_ssl().padding_flushes) {
 
     boost::system::error_code ec;
     set_in_endpoint(in_socket->next_layer().remote_endpoint(ec));

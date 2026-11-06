@@ -224,13 +224,15 @@ class PaddingIntegration(unittest.TestCase):
                         'verify': False, 'verify_hostname': False, 'sni': 'localhost',
                         'alpn': ['http/1.1']}, 'experimental': {'pipeline_num': 0}}
 
-    def server(self, name, budget=None):
+    def server(self, name, budget=None, flush_limit=None):
         target = Peer(echo)
         self.addCleanup(target.close)
         port = free_port()
         cfg = self.config('server', port, 1)
         if budget is not None:
             cfg['ssl']['padding_bytes'] = budget
+        if flush_limit is not None:
+            cfg['ssl']['padding_flushes'] = flush_limit
         proc = Process(self.work, name, cfg)
         self.addCleanup(proc.close)
         return port, target.port
@@ -245,7 +247,7 @@ class PaddingIntegration(unittest.TestCase):
         return tls
 
     def test_server_split_frames_end_and_default_budget(self):
-        port, target = self.server('server-default')
+        port, target = self.server('server-default', flush_limit=0)
         with self.tls(port) as tls:
             header = request(5, target)
             for part in (header[:1], header[1:57], header[57:60], header[60:]):
@@ -308,7 +310,7 @@ class PaddingIntegration(unittest.TestCase):
         self.addCleanup(server.close)
         port = free_port()
         client = Process(self.work, 'client-large-upload', self.config('client', port, server_port))
-        self.addCleanup(client.close)
+        self.addCleanup(lambda: client.close() if not client.log.closed else None)
         with socket.create_connection(('127.0.0.1', port), TIMEOUT) as sock:
             sock.settimeout(TIMEOUT)
             sock.sendall(b'\x05\x01\x00')
@@ -327,8 +329,17 @@ class PaddingIntegration(unittest.TestCase):
             sock.sendall(payload)
             self.assertEqual(exact(sock, len(response)), response)
         self.assertTrue(received.is_set())
+        client.close()
+        self.assertEqual((self.work / 'client-large-upload.log').read_text().count('S2 replay cap reached'), 1)
 
     def test_client_legacy_retry_and_memo(self):
+        self.check_client_legacy_retry_and_memo(False)
+
+    def test_client_upload_retry_preserves_payload(self):
+        self.check_client_legacy_retry_and_memo(True)
+
+    def check_client_legacy_retry_and_memo(self, upload):
+        upload_payload = bytes(range(256)) * 192  # 49152 bytes, below replay cap.
         commands = []
         lock = threading.Lock()
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -350,16 +361,23 @@ class PaddingIntegration(unittest.TestCase):
                 raise AssertionError(f'unknown ATYP: {atyp}')
             self.assertEqual(exact(sock, 2), b'\r\n')
             if command == 5:
+                if upload:
+                    self.assertEqual(PaddingReader(sock).read(len(upload_payload)), upload_payload)
                 sock.sendall(b'HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n')
                 return
             self.assertEqual(command, 1)
-            echo(sock)
+            if upload:
+                self.assertEqual(exact(sock, len(upload_payload)), upload_payload)
+                sock.sendall(upload_payload)
+            else:
+                echo(sock)
 
         peer = Peer(legacy, ctx)
         self.addCleanup(peer.close)
         port = free_port()
         # Leave ssl.padding absent: default-on must attempt command 5.
-        proc = Process(self.work, 'client-legacy-retry', self.config('client', port, peer.port))
+        name = 'client-upload-retry' if upload else 'client-legacy-retry'
+        proc = Process(self.work, name, self.config('client', port, peer.port))
         self.addCleanup(proc.close)
         for index in range(2):
             with socket.create_connection(('127.0.0.1', port), TIMEOUT) as sock:
@@ -377,7 +395,7 @@ class PaddingIntegration(unittest.TestCase):
                     exact(sock, exact(sock, 1)[0] + 2)
                 else:
                     self.fail(f'unknown SOCKS reply ATYP: {atyp}')
-                payload = f'connection {index}: retry preserves original payload'.encode()
+                payload = upload_payload if upload else f'connection {index}: retry preserves original payload'.encode()
                 sock.sendall(payload)
                 self.assertEqual(exact(sock, len(payload)), payload)
             with lock:
