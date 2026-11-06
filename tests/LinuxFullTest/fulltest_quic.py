@@ -1138,11 +1138,10 @@ def test_large_file_transfer(binary_path):
 
 
 def test_h1_upstream_dns_failure(binary_path):
-    """T13: h1_upstream hostname doesn't resolve → session destroyed, server stays alive.
+    """T13: valid H3 with unresolvable h1_upstream gets 502, server stays alive.
 
-    QuicProxySession::forward_to_h1_upstream() calls async_resolve on the
-    h1_upstream address.  If DNS fails, the error is logged and destroy() is
-    called.  The server process must not crash.
+    Resolver failure must be logged without an H3 parser error. Malformed
+    fallback traffic may be rejected before resolution and belongs in T15.
     """
     print_time_log("[T13] h1_upstream_dns_failure: starting...")
 
@@ -1151,36 +1150,31 @@ def test_h1_upstream_dns_failure(binary_path):
         "remote_port": HTTP_TARGET_PORT,
         "quic": {"enabled": True, "h1_upstream": f"{_RESOLVER_FAILURE_HOST}:443"},
     })
-    # Wrong password forces the server into forward_to_h1_upstream().
-    cli_cfg = patch_quic_config("quic_client_config.json", {
-        "password": ["wrongpassword_t13"],
-    })
-
     server, srv_log = start_trojan(binary_path, srv_cfg)
-    client, cli_log = start_trojan(binary_path, cli_cfg)
     dump = False
     try:
-        if not server or not client:
+        if not server:
             dump = True
             return False
 
-        if not wait_for_log(cli_log, r"QuicConnection: handshake completed", timeout=15):
-            print_time_log("[T13] FAIL: QUIC handshake not seen")
-            dump = True
-            return False
-        time.sleep(1)
-
-        if not wait_for_port(QUIC_CLIENT_PROXY_PORT, timeout=5):
-            print_time_log("[T13] FAIL: proxy port not open")
+        if not wait_for_log(srv_log, r"QuicServerEndpoint: listening on UDP", timeout=10):
+            print_time_log("[T13] FAIL: server QUIC endpoint not ready")
             dump = True
             return False
 
-        # Trigger the wrong-password → forward_to_h1_upstream() → DNS failure path.
-        try:
-            url = f"http://127.0.0.1:{HTTP_TARGET_PORT}/"
-            http_get_via_socks5(url, QUIC_CLIENT_PROXY_PORT, timeout=5)
-        except Exception:
-            pass  # Expected: DNS fails, session is dropped.
+        # Reuse T4's valid H3 request. Wrong-password Trojan bytes are malformed
+        # H3: parser rejection can cancel the resolver before its callback runs.
+        import subprocess
+        script_path = os.path.join(current_dir, "quic_t4_aioquic_client.py")
+        result = subprocess.run(
+            [sys.executable, "-u", script_path, str(QUIC_SERVER_PORT)],
+            capture_output=True, text=True, timeout=15,
+        )
+        print_time_log(f"[T13] aioquic: {result.stdout.strip()}")
+        if result.returncode != 0 or "STATUS: 502" not in result.stdout:
+            print_time_log(f"[T13] FAIL: expected H3 502 response: {result.stderr}")
+            dump = True
+            return False
 
         # The oversized ASCII name fails in the native resolver without DNS traffic.
         m = wait_for_log(srv_log, r"h1_upstream TCP resolve failed", timeout=20)
@@ -1195,6 +1189,12 @@ def test_h1_upstream_dns_failure(binary_path):
             dump = True
             return False
 
+        with open(srv_log, errors='replace') as f:
+            if "H3 protocol error" in f.read():
+                print_time_log("[T13] FAIL: valid H3 request rejected")
+                dump = True
+                return False
+
         print_time_log("[T13] h1_upstream_dns_failure PASSED")
         return True
     except Exception:
@@ -1202,7 +1202,6 @@ def test_h1_upstream_dns_failure(binary_path):
         dump = True
         return False
     finally:
-        close_process(client, dump)
         close_process(server, dump)
 
 
