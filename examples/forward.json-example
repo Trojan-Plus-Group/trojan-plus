@@ -14,6 +14,7 @@
     "ssl": {
         "padding": true,
         "padding_bytes": 16384,
+        "padding_flushes": 8,
         "verify": true,
         "verify_hostname": true,
         "cert": "",

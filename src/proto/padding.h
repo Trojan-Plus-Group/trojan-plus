@@ -29,6 +29,7 @@ struct DecodeResult {
 
 class Encoder {
     std::size_t remaining_;
+    std::uint32_t flushes_remaining_;
     bool ended_ = false;
     bool failed_ = false;
     bool started_ = false;
@@ -53,13 +54,16 @@ class Encoder {
     }
 
 public:
-    explicit Encoder(std::size_t budget = default_budget) : remaining_(budget) {}
+    explicit Encoder(std::size_t budget = default_budget, std::uint32_t flushes = 8)
+        : remaining_(budget), flushes_remaining_(flushes) {}
     bool ended() const { return ended_; }
     bool failed() const { return failed_; }
     std::size_t remaining() const { return remaining_; }
 
     // Each padded flush is uniformly 900..1450 bytes: packed DATA split at a
-    // random boundary, then one random PAD, then END if budget is exhausted.
+    // random boundary, then one random PAD, then END if either limit is reached.
+    // Inner TLS handshakes fit in the first few flushes; cap later padding bandwidth.
+    // Zero flush limit disables the flush cap; the real-byte budget still applies.
     // Empty-input END and subsequent raw flushes are exempt from size bounds.
     // Empty input without a prefix explicitly ends padding, including on the first call.
     // RNG failure is terminal: no partial flushes returned; caller must close.
@@ -91,7 +95,10 @@ public:
                 return {};
             }
             const std::size_t first = real ? 1 + choice : 0;
-            const bool finish = real == remaining_;
+            const bool finish = real == remaining_ || flushes_remaining_ == 1;
+            if (flushes_remaining_) {
+                --flushes_remaining_;
+            }
             tp::string flush;
             flush.reserve(total);
             if (!first_flush_prefix.empty()) {
@@ -122,7 +129,7 @@ public:
             data.remove_prefix(real);
             remaining_ -= real;
         }
-        // A nonempty call that did not exhaust budget leaves framing active.
+        // A nonempty call that did not reach either limit leaves framing active.
         // An empty call is also an explicit finish operation.
         if (!ended_ && (!remaining_ || result.flushes.empty())) {
             tp::string end;

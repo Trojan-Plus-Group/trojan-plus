@@ -5,7 +5,6 @@
 #include "proto/padding.h"
 #include "proto/trojanrequest.h"
 #include "quic/outbound_transport.h"
-#include <cstdio>
 #include <memory>
 #include <mutex>
 #include <new>
@@ -22,7 +21,9 @@ class ClientPadding {
     }
     tp::string key;
     tp::string header;
-    std::unique_ptr<std::FILE, decltype(&std::fclose)> replay{nullptr, &std::fclose};
+    tp::string replay;
+    static constexpr size_t replay_limit = 64 * 1024;
+    bool retryable{true};
     s2::Encoder encoder;
     s2::Decoder decoder;
     bool active{false};
@@ -41,12 +42,12 @@ class ClientPadding {
 
   public:
     bool enabled() const { return active; }
-    void begin(const tp::string& host, uint16_t port, bool enable, uint32_t budget) {
+    void begin(const tp::string& host, uint16_t port, bool enable, uint32_t budget, uint32_t flush_limit = 8) {
         key = format_host_port(host, port);
         std::lock_guard<std::mutex> lock(mutex());
         auto it = capabilities().find(key);
         active = enable && !retried && (it == capabilities().end() || it->second);
-        encoder = s2::Encoder(budget);
+        encoder = s2::Encoder(budget, flush_limit);
         decoder = s2::Decoder();
     }
     bool encode(std::string_view data, bool request, tp::vector<tp::string>& flushes) {
@@ -64,9 +65,14 @@ class ClientPadding {
             flushes.emplace_back(data.data(), data.size());
             return true;
         }
-        if (!decoder.saw_data() && !received_data && !data.empty()) {
-            if (!replay) replay.reset(std::tmpfile());
-            if (!replay || std::fwrite(data.data(), 1, data.size(), replay.get()) != data.size()) return false;
+        if (!decoder.saw_data() && !received_data && retryable && !data.empty()) {
+            if (data.size() > replay_limit - replay.size()) {
+                tp::string().swap(replay);
+                retryable = false;
+                Log::log_with_date_time("S2 replay cap reached (64 KiB); legacy retry disabled for " + key, Log::INFO);
+            } else {
+                replay.append(data.data(), data.size());
+            }
         }
         auto result = encoder.encode(data, {prefix.data(), prefix.size()});
         if (!result.success) return false;
@@ -81,7 +87,7 @@ class ClientPadding {
         auto result = decoder.decode(data);
         if (decoder.saw_data() || (result.success && !result.data.empty())) {
             received_data = true;
-            replay.reset();
+            tp::string().swap(replay);
             header.clear();
             if (result.success) remember(true);
         }
@@ -94,24 +100,14 @@ class ClientPadding {
         remember(false);
         active = false;
         retried = true;
+        if (!retryable) return false;
         try {
             request = std::move(header);
-            if (replay) {
-                if (std::fflush(replay.get()) != 0 || std::fseek(replay.get(), 0, SEEK_SET) != 0) return false;
-                char chunk[8192];
-                for (;;) {
-                    const size_t length = std::fread(chunk, 1, sizeof(chunk), replay.get());
-                    request.append(chunk, length);
-                    if (length != sizeof(chunk)) {
-                        if (std::ferror(replay.get())) return false;
-                        break;
-                    }
-                }
-            }
+            request.append(replay);
         } catch (const std::bad_alloc&) {
             return false;
         }
-        replay.reset();
+        tp::string().swap(replay);
         return true;
     }
 };

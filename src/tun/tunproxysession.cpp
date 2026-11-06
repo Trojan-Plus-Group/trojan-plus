@@ -83,7 +83,7 @@ void TUNProxySession::start() {
         m_connected = true;
         m_padding.begin(get_config().get_remote_addr(), static_cast<uint16_t>(get_config().get_remote_port()),
                         !get_pipeline_component().is_using_pipeline() && !is_udp_forward_session() && get_config().get_ssl().padding,
-                        get_config().get_ssl().padding_bytes);
+                        get_config().get_ssl().padding_bytes, get_config().get_ssl().padding_flushes);
         m_padding_request = true;
 
         if (m_out && m_out->is_via_quic()) {

@@ -12,6 +12,7 @@
     "ssl": {
         "padding": true,
         "padding_bytes": 16384,
+        "padding_flushes": 8,
         "cert": "/path/to/certificate.crt",
         "key": "/path/to/private.key",
         "key_password": "",
