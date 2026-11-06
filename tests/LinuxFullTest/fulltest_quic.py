@@ -1569,7 +1569,7 @@ def test_quic_load_test(binary_path):
         "remote_port": HTTP_TARGET_PORT,
         "quic": {
             "h1_upstream": f"127.0.0.1:{HTTP_TARGET_PORT}",
-            "alpn_token": "h3"
+            "alpn_token": "trojan"
         }
     })
     cli_cfg = patch_quic_config("quic_client_config.json", {
