@@ -118,7 +118,7 @@ static void roundtrip(size_t budget, size_t size, size_t step) {
     }
     assert(decoded == source);
     assert(decoder.complete() && !decoder.failed());
-    assert(decoder.saw_data() == (budget != 0 && size != 0));
+    assert(decoder.saw_data() == (size != 0));
     const auto raw = encoder.encode("raw\0tail"sv);
     const auto result = decoder.decode(view(join(raw)));
     assert(result.success && result.data == tp::string("raw\0tail", 8));
@@ -187,6 +187,20 @@ int main() {
             assert(!decoder.decode(view(frame(s2::END, 0))).success);
         }
     }
+    // Empty frames/END are not evidence of real traffic; raw bytes are.
+    s2::Decoder raw_only;
+    assert(raw_only.decode(view(frame(s2::DATA, 0) + frame(s2::END, 0))).success);
+    assert(raw_only.complete() && !raw_only.saw_data());
+    assert(raw_only.decode({}).success && !raw_only.saw_data());
+    assert(raw_only.decode("raw").data == "raw" && raw_only.saw_data());
+    s2::Decoder coalesced_raw;
+    assert(coalesced_raw.decode(view(frame(s2::END, 0) + "raw")).data == "raw");
+    assert(coalesced_raw.saw_data() && coalesced_raw.complete());
+    s2::Decoder empty_data;
+    assert(empty_data.decode(view(frame(s2::DATA, 0))).success);
+    assert(!empty_data.saw_data());
+    assert(empty_data.decode(view(frame(s2::DATA, 1))).data == "x");
+    assert(empty_data.saw_data());
     s2::Decoder transactional;
     assert(!transactional.decode(view(frame(s2::DATA, 1) + frame(7, 0))).success);
     assert(transactional.saw_data()); // Never allow fallback after accepted DATA.

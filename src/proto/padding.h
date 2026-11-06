@@ -132,8 +132,8 @@ class Decoder {
 public:
     bool ended() const { return ended_; }
     bool failed() const { return failed_; }
-    // True once a complete DATA frame was accepted (including zero-length DATA).
-    // Caller retains original wire bytes if pre-DATA protocol fallback is needed.
+    // True once real bytes were accepted, from nonempty DATA or raw after END.
+    // Caller retains original wire bytes if pre-data protocol fallback is needed.
     bool saw_data() const { return saw_data_; }
     // EOF before END is truncation, even at a frame boundary.
     bool complete() const { return !failed_ && ended_; }
@@ -148,6 +148,7 @@ public:
         while (!input.empty()) {
             if (ended_) {
                 result.data.append(input.data(), input.size());
+                saw_data_ = true;
                 break;
             }
             if (pending_.size() < 3) {
@@ -173,7 +174,7 @@ public:
                 break;
             }
             if (type == DATA) {
-                saw_data_ = true;
+                saw_data_ = saw_data_ || length != 0;
                 result.data.append(pending_.data() + 3, length);
             } else if (type == END) {
                 ended_ = true;
