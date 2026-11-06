@@ -252,6 +252,11 @@ bool TUNProxySession::retry_legacy() {
     if (m_destroyed || !m_padding.fallback(request)) return false;
     m_send_buf.consume(m_send_buf.size());
     streambuf_append(m_send_buf, request);
+    for (auto& pending : m_out_queue) {
+        streambuf_append(m_send_buf, pending.first);
+        m_padding_waiters.emplace_back(std::move(pending.second));
+    }
+    m_out_queue.clear();
     m_padding_retry = true;
     m_connected = false;
     m_out->cancel();
@@ -277,6 +282,7 @@ void TUNProxySession::destroy(bool pipeline_call) {
         return;
     }
     m_destroyed = true;
+    m_out_queue.clear();
 
     auto note_str =
       "TUNProxySession session_id: " + tp::to_string(get_session_id()) + " disconnected, " + get_stat().to_string();
@@ -326,6 +332,13 @@ void TUNProxySession::recv_ack_cmd(size_t ack_count) {
     _unguard;
 }
 
+void TUNProxySession::drain_out_queue() {
+    if (m_destroyed || m_padding_retry || m_out_writing || m_out_queue.empty()) return;
+    auto pending = std::move(m_out_queue.front());
+    m_out_queue.pop_front();
+    out_async_send_impl(pending.first, std::move(pending.second));
+}
+
 void TUNProxySession::out_async_send_impl(const std::string_view& data_to_send, SentHandler&& _handler) {
     _guard;
 
@@ -359,6 +372,10 @@ void TUNProxySession::out_async_send_impl(const std::string_view& data_to_send, 
           }));
     } else {
         if (m_out) {
+            if (m_out_writing) {
+                m_out_queue.emplace_back(tp::string(data_to_send.data(), data_to_send.size()), std::move(_handler));
+                return;
+            }
             tp::vector<tp::string> flushes;
             if (!m_padding.encode(data_to_send, m_padding_request, flushes)) {
                 destroy();
@@ -366,6 +383,7 @@ void TUNProxySession::out_async_send_impl(const std::string_view& data_to_send, 
                 return;
             }
             m_padding_request = false;
+            _assert(m_out_writing == 0);
             ++m_out_writing;
             auto self        = shared_from_this();
             auto data_len    = data_to_send.length();
@@ -388,6 +406,7 @@ void TUNProxySession::out_async_send_impl(const std::string_view& data_to_send, 
                   } else {
                       get_stat().inc_sent_len(data_len);
                   }
+                  drain_out_queue();
                   _handler(ec);
                   _unguard;
               }));
