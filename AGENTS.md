@@ -26,6 +26,26 @@ QUIC uses ngtcp2 + nghttp3 + BoringSSL; TUN uses embedded lwIP.
   `src/tun` (lwIP/DNS), `src/mem`.
 - Submodules include BoringSSL, ngtcp2, nghttp3, mimalloc, GSL, badvpn and mobile dependencies.
 
+## Padding and handshake invariants
+
+- Padded CONNECT uses command `0x05` and `[type:1][len:2 big-endian][payload]` frames
+  (DATA 0, PAD 1, END 2); zero-length END switches that direction to raw bytes.
+  Never change legacy `0x01` / `0x03` behavior. Both ends must be upgraded for padding;
+  clients memoize server capability and allow one legacy retry with at most 64 KiB
+  of in-memory replay. Pipeline sessions do not support padding. See [docs/protocol.md](docs/protocol.md).
+- Server nginx-conformance rules: TCP/QUIC handshake timeout defaults to 60 seconds;
+  plain HTTP gets a built-in nginx-style 400 (configurable identity/response), other
+  non-TLS first records close silently. TCP rejects offered ALPN lists with no match
+  using `no_application_protocol`; QUIC accepts only `h3` or `quic.alpn_token`.
+  Malformed UDP gets no Stateless Reset; eligible unknown-version Initials get Version
+  Negotiation. Valid-looking unknown short headers can still get Stateless Reset.
+  `tests/test_s5_tcp.py` and `tests/test_s5_quic.py` pin these behaviors, not full nginx
+  equivalence. Settings: [docs/config.md](docs/config.md).
+- `ssl.fingerprint` defaults to `chrome`; `none` uses BoringSSL defaults. QUIC Chrome
+  Initial packet numbers start at 1. Its flight layout comes from the ngtcp2 build-tree
+  patch in `src/quic/ngtcp2_fingerprint.cmake`; never edit the ngtcp2 submodule for it.
+  Packet-shape claims need capture evidence via `tests/check_chrome_profile_capture.py`.
+
 ## Address, IPv6 and DNS invariants
 
 - SOCKS5/Trojan: ATYP 1 for IPv4; ATYP 4 for native IPv6. Unwrap IPv4-mapped
@@ -68,7 +88,7 @@ More: [docs/build.md](docs/build.md), `CMakeLists.txt`.
 
 Install Python dependencies: `pip install PySocks psutil dnspython aioquic`.
 Run from `tests/LinuxFullTest`; use an absolute binary path.
-Suites without `-g` need existing `tests/LinuxFullTest/html`; generate content with `-g`.
+Suites without `-g` need generated HTML content; generate it with `-g`.
 
 ```bash
 python3 fulltest_main.py /absolute/path/to/trojan -g -n -f
@@ -80,7 +100,13 @@ sudo python3 fulltest_main.py /absolute/path/to/trojan -6
 sudo env TP_IPV6_REQUIRE_ALL=1 python3 fulltest_main.py /absolute/path/to/trojan -6 --ipv6-nat --ipv6-include-expected-fail
 ```
 
-- QUIC cases extend through T22; `fulltest_quic.py BINARY all` is the direct runner.
+- QUIC cases extend through T31 (with gaps); `ALL_TESTS` in
+  `tests/LinuxFullTest/fulltest_quic.py` is authoritative. From that directory,
+  `python3 fulltest_quic.py BINARY all` is the direct runner.
+- `tests/test_s5_tcp.py` and `tests/test_s5_quic.py` find a binary via positional
+  argument, then `S5_BINARY`, then executable `trojan` in the root build directory,
+  then Azure's `LinuxBinary` artifact under `PIPELINE_WORKSPACE`. Missing binary fails
+  under `TF_BUILD` or `CI`; otherwise skips.
 - TUN requires root, `/dev/net/tun`, and appropriate interface/routes; see CI setup.
   IPv6 NAT needs root/passwordless sudo, network namespaces and ip6tables/nftables.
 - CI uses `TP_IPV6_REQUIRE_ALL=1`: required IPv6 cases must fail rather than silently skip.

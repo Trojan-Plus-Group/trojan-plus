@@ -21,6 +21,13 @@ against `ssl.sni`, or `remote_addr` when `ssl.sni` is empty. An IP literal must 
 Setting `ssl.verify_hostname` to `false` keeps CA chain verification only;
 setting `ssl.verify` to `false` disables certificate verification entirely.
 
+## QUIC ALPN
+
+`quic.alpn_token` defaults to `"h3"`. Clients offer this token, including with
+`ssl.fingerprint` set to `chrome`; a custom token therefore changes the handshake
+fingerprint. Servers prefer the configured token and also accept `h3`, rejecting
+unrelated protocols. Set the same custom token on both ends when needed.
+
 ## QUIC retry and timing
 
 `quic.retry_connect_timeout_ms` defaults to `1000` milliseconds when omitted.
