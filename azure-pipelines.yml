@@ -123,25 +123,27 @@ stages:
 
         dependencies_started=$SECONDS
         sudo apt-get update
-        sudo apt-get install -y iproute2 iptables nftables build-essential libboost-dev
+        sudo apt-get install -y iproute2 iptables nftables build-essential libboost-dev python3-venv
+        python3 -m venv "$AGENT_TEMPDIRECTORY/fulltest-venv"
+        PYTHON="$AGENT_TEMPDIRECTORY/fulltest-venv/bin/python3"
+        "$PYTHON" -m pip install PySocks psutil dnspython aioquic
         echo "CI test dependency setup: $((SECONDS - dependencies_started)) seconds"
         sudo sysctl -w net.ipv6.conf.all.disable_ipv6=0 net.ipv6.conf.default.disable_ipv6=0 net.ipv6.conf.lo.disable_ipv6=0
         sudo ip link set lo up
-        python3 -c 'import socket; s = socket.socket(socket.AF_INET6); s.bind(("::1", 0)); s.close()'
-        python3 -m pip install PySocks psutil dnspython aioquic
+        "$PYTHON" -c 'import socket; s = socket.socket(socket.AF_INET6); s.bind(("::1", 0)); s.close()'
         export S5_BINARY="$BINARY"
-        for test in tests/test_*.py; do python3 -u "$test"; done
+        for test in tests/test_*.py; do "$PYTHON" -u "$test"; done
 
-        python3 -u tests/LinuxFullTest/check_local_fixtures.py
-        python3 -u tests/LinuxFullTest/check_quic_regressions.py
-        python3 -u tests/LinuxFullTest/check_quic_resolver_fixtures.py
-        python3 -u tests/LinuxFullTest/check_h3_fin_retry.py
-        python3 -u tests/LinuxFullTest/check_t16_quiescence.py
-        python3 -u tests/LinuxFullTest/check_t16_live_counters.py
+        "$PYTHON" -u tests/LinuxFullTest/check_local_fixtures.py
+        "$PYTHON" -u tests/LinuxFullTest/check_quic_regressions.py
+        "$PYTHON" -u tests/LinuxFullTest/check_quic_resolver_fixtures.py
+        "$PYTHON" -u tests/LinuxFullTest/check_h3_fin_retry.py
+        "$PYTHON" -u tests/LinuxFullTest/check_t16_quiescence.py
+        "$PYTHON" -u tests/LinuxFullTest/check_t16_live_counters.py
         cd tests/LinuxFullTest/
-        sudo env TP_IPV6_REQUIRE_ALL=1 python3 -u fulltest_main.py "$BINARY" -6
-        sudo env TP_IPV6_REQUIRE_ALL=1 python3 -u fulltest_main.py "$BINARY" -6 --ipv6-nat --ipv6-include-expected-fail
-        sudo python3 -u fulltest_main.py $BINARY -g -q -d 5333 -f
+        sudo env TF_BUILD=True TP_IPV6_REQUIRE_ALL=1 "$PYTHON" -u fulltest_main.py "$BINARY" -6
+        sudo env TF_BUILD=True TP_IPV6_REQUIRE_ALL=1 "$PYTHON" -u fulltest_main.py "$BINARY" -6 --ipv6-nat --ipv6-include-expected-fail
+        sudo env TF_BUILD=True "$PYTHON" -u fulltest_main.py "$BINARY" -g -q -d 5333 -f
 
         ifconfig
         route -n
@@ -155,10 +157,11 @@ stages:
         ifconfig
         route -n
         
-        sudo python3 -u fulltest_main.py $BINARY -t -n -d 5333
-        sudo python3 -u fulltest_main.py $BINARY -q
+        sudo env TF_BUILD=True "$PYTHON" -u fulltest_main.py "$BINARY" -t -n -d 5333
+        sudo env TF_BUILD=True "$PYTHON" -u fulltest_main.py "$BINARY" -q
       env:
         PIPELINE_WORKSPACE: $(Pipeline.Workspace)
+        AGENT_TEMPDIRECTORY: $(Agent.TempDirectory)
 
   - job: Windows
     pool:
