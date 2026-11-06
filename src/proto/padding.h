@@ -31,6 +31,7 @@ class Encoder {
     std::size_t remaining_;
     bool ended_ = false;
     bool failed_ = false;
+    bool started_ = false;
 
     // Rejection sampling avoids modulo bias, including non-power-of-two ranges.
     static bool uniform(std::uint32_t count, std::uint32_t& result) {
@@ -60,14 +61,22 @@ public:
     // Each padded flush is uniformly 900..1450 bytes: packed DATA split at a
     // random boundary, then one random PAD, then END if budget is exhausted.
     // Empty-input END and subsequent raw flushes are exempt from size bounds.
-    // Empty input explicitly ends padding, including on the first call.
+    // Empty input without a prefix explicitly ends padding, including on the first call.
     // RNG failure is terminal: no partial flushes returned; caller must close.
-    EncodeResult encode(std::string_view data) {
+    // Prefix is allowed only on the first call, at most 887 bytes so even a
+    // 900-byte flush can hold split DATA, PAD and END. It is not framed DATA.
+    // A prefix-only call pads the header without ending a nonzero budget.
+    EncodeResult encode(std::string_view data, std::string_view first_flush_prefix = {}) {
         EncodeResult result;
         if (failed_) {
             return result;
         }
-        while (!ended_ && remaining_ && !data.empty()) {
+        if (!first_flush_prefix.empty() && (started_ || first_flush_prefix.size() > 887)) {
+            failed_ = true;
+            return result;
+        }
+        started_ = true;
+        while (!ended_ && ((!data.empty() && remaining_) || !first_flush_prefix.empty())) {
             std::uint32_t choice;
             if (!uniform(551, choice)) {
                 failed_ = true;
@@ -76,20 +85,26 @@ public:
             const std::size_t total = 900 + choice;
             // Reserve two DATA headers, one PAD header and END. Pack a fixed
             // amount of real data so random splits cannot create a long tail.
-            const auto real = std::min({data.size(), remaining_, total - 12});
-            if (!uniform(static_cast<std::uint32_t>(real), choice)) {
+            const auto real = std::min({data.size(), remaining_, total - first_flush_prefix.size() - 12});
+            if (real && !uniform(static_cast<std::uint32_t>(real), choice)) {
                 failed_ = true;
                 return {};
             }
-            const std::size_t first = 1 + choice;
+            const std::size_t first = real ? 1 + choice : 0;
             const bool finish = real == remaining_;
             tp::string flush;
             flush.reserve(total);
-            header(flush, DATA, first);
-            flush.append(data.data(), first);
-            if (first < real) {
-                header(flush, DATA, real - first);
-                flush.append(data.data() + first, real - first);
+            if (!first_flush_prefix.empty()) {
+                flush.append(first_flush_prefix.data(), first_flush_prefix.size());
+            }
+            first_flush_prefix = {};
+            if (real) {
+                header(flush, DATA, first);
+                flush.append(data.data(), first);
+                if (first < real) {
+                    header(flush, DATA, real - first);
+                    flush.append(data.data() + first, real - first);
+                }
             }
             const std::size_t padding = total - flush.size() - 3 - (finish ? 3 : 0);
             header(flush, PAD, padding);

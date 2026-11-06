@@ -103,12 +103,23 @@ void ClientSession::in_async_read() {
             " Permit to ClientSession::in_async_read! ack:" + tp::to_string(get_pipeline_component().pipeline_ack_counter));
     }
     
+    if (local_read_pending || padding_retry_pending) return;
+    local_read_pending = true;
     auto read_buf = get_in_read_buf();
     read_buf->begin_read(__FILE__, __LINE__);
     auto self = shared_from_this();
     in_socket.async_read_some(
       read_buf->prepare(MAX_BUF_LENGTH), tp::bind_mem_alloc([this, self, read_buf](const boost::system::error_code error, size_t length) {
           read_buf->end_read();
+          local_read_pending = false;
+          if (padding_retry_pending) {
+              if (!error && length) {
+                  read_buf->commit(length);
+                  streambuf_append(out_write_buf, read_buf->to_string_view());
+              }
+              reconnect_legacy();
+              return;
+          }
           if (error == boost::asio::error::operation_aborted) {
               return;
           }
@@ -199,7 +210,7 @@ void ClientSession::out_async_read() {
 }
 
 bool ClientSession::use_download_slots() {
-    return status == FORWARD && !get_pipeline_component().is_using_pipeline() && m_out;
+    return status == FORWARD && !pipeline_session && m_out;
 }
 
 void ClientSession::download_read() {
@@ -243,6 +254,12 @@ void ClientSession::download_read_done(int slot, const boost::system::error_code
         return;
     }
     download_read_slot = -1;
+    if (padding_retry_pending) {
+        download_slot.state = DownloadSlotState::EMPTY;
+        download_slot.buf->consume_all();
+        reconnect_legacy();
+        return;
+    }
 
     if (status == DESTROY) {
         download_slot.state = DownloadSlotState::EMPTY;
@@ -253,6 +270,7 @@ void ClientSession::download_read_done(int slot, const boost::system::error_code
     if (error || length == 0) {
         download_slot.state = DownloadSlotState::EMPTY;
         download_slot.buf->consume_all();
+        if (retry_legacy()) return;
         download_terminal_error   = error ? error : boost::asio::error::eof;
         download_terminal_pending = true;
         download_finish();
@@ -260,6 +278,24 @@ void ClientSession::download_read_done(int slot, const boost::system::error_code
     }
 
     download_slot.buf->commit(length);
+    if (padding.enabled()) {
+        tp::string plain;
+        const bool valid = padding.decode(download_slot.buf->to_string_view(), plain);
+        download_slot.buf->consume_all();
+        if (!valid) {
+            download_slot.state = DownloadSlotState::EMPTY;
+            if (!retry_legacy()) destroy();
+            return;
+        }
+        streambuf_append(*download_slot.buf, plain);
+        length = plain.size();
+        if (!upload_pending) in_async_read();
+        if (plain.empty()) {
+            download_slot.state = DownloadSlotState::EMPTY;
+            download_read();
+            return;
+        }
+    }
     download_slot.state = DownloadSlotState::READY;
     get_stat().inc_recv_len(length);
     if (download_write_slot == -1) {
@@ -352,10 +388,22 @@ void ClientSession::out_async_write(std::shared_ptr<ReadBufWithGuard> buf) {
           }));
     } else {
         
-        // data_copy keeps the string alive; m_out reads from the string_view asynchronously.
-        m_out->async_write(
-          buf, [this, self](const boost::system::error_code error, size_t) {
+        tp::vector<tp::string> flushes;
+        if (!padding.encode(buf->to_string_view(), padding_request, flushes)) {
+            destroy();
+            return;
+        }
+        padding_request = false;
+        upload_pending = true;
+        client_padding_write(m_out, std::move(flushes),
+          [this, self](const boost::system::error_code error, size_t) {
+              upload_pending = false;
+              if (padding_retry_pending) {
+                  reconnect_legacy();
+                  return;
+              }
               if (error) {
+                  if (retry_legacy()) return;
                   output_debug_info_ec(error);
                   destroy();
                   return;
@@ -583,6 +631,10 @@ void ClientSession::request_remote() {
             return;
         }
         pipeline_session = via_pipeline;
+        padding.begin(get_config().get_remote_addr(), static_cast<uint16_t>(get_config().get_remote_port()),
+                      !via_pipeline && !is_udp_forward_session() && get_config().get_ssl().padding,
+                      get_config().get_ssl().padding_bytes);
+        padding_request = true;
 
         boost::system::error_code ec;
         if (is_udp_forward_session()) {
@@ -706,6 +758,29 @@ void ClientSession::request_remote() {
             [remote_init_cb]() { remote_init_cb(false); },
             [this, self]() { destroy(); });
     }
+}
+
+bool ClientSession::retry_legacy() {
+    tp::string request;
+    if (status == DESTROY || !padding.fallback(request)) return false;
+    out_write_buf.consume(out_write_buf.size());
+    streambuf_append(out_write_buf, request);
+    padding_retry_pending = true;
+    boost::system::error_code ec;
+    if (local_read_pending) in_socket.cancel(ec);
+    m_out->cancel();
+    m_out->close();
+    reconnect_legacy();
+    return true;
+}
+
+void ClientSession::reconnect_legacy() {
+    if (!padding_retry_pending || upload_pending || local_read_pending || download_read_slot != -1 || status == DESTROY) return;
+    padding_retry_pending = false;
+    m_out.reset();
+    status = CONNECT;
+    // Original destination header and pre-DATA application bytes remain in out_write_buf.
+    request_remote();
 }
 
 void ClientSession::out_recv(const std::string_view& data, size_t ack_count) {

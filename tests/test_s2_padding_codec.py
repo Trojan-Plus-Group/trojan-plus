@@ -146,6 +146,35 @@ int main() {
             for (size_t step : {1u, 2u, 3u, 997u, 65536u}) roundtrip(budget, size, step);
         }
     }
+    // Prefix counts toward the uniform total, appears once and is not DATA.
+    for (uint32_t total : {900u, 1450u}) {
+        for (size_t prefix_size : {1u, 100u, 887u}) {
+            for (size_t budget : {0u, 1u, 16384u}) {
+                for (bool payload : {false, true}) {
+                    s2::Encoder encoder(budget);
+                    const tp::string prefix(prefix_size, 'H');
+                    draws = {551 + total - 900};
+                    auto encoded = encoder.encode(payload ? "hello" : "", view(prefix));
+                    assert(encoded.success && draws.empty());
+                    assert(encoded.flushes.front().size() == total);
+                    assert(encoded.flushes.front().substr(0, prefix_size) == prefix);
+                    encoded.flushes.front().erase(0, prefix_size);
+                    s2::Decoder decoder;
+                    auto decoded = decoder.decode(view(join(encoded)));
+                    assert(decoded.success && decoded.data == (payload ? "hello" : ""));
+                    assert(encoder.ended() == (budget == 0 || (payload && budget == 1)));
+                    assert(decoder.complete() == encoder.ended());
+                    const auto next = encoder.encode("tail");
+                    auto tail = decoder.decode(view(join(next)));
+                    assert(tail.success && tail.data == "tail");
+                    assert(!encoder.encode("bad", view(prefix)).success);
+                }
+            }
+        }
+    }
+    s2::Encoder oversized_prefix;
+    assert(!oversized_prefix.encode("data", view(tp::string(888, 'H'))).success);
+    assert(oversized_prefix.failed());
     // Packing guarantees progress regardless of random split: at least 888
     // real bytes per full flush, without a geometric tail near budget exhaustion.
     s2::Encoder packed(16384);

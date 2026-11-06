@@ -23,11 +23,21 @@
 #define _TUN_PROXY_SESSION_H_
 
 #include "quic/outbound_transport.h"
+#include "session/clientpadding.h"
 #include "tun/tunsession.h"
 
 class TUNProxySession : public TUNSession {
 
     size_t m_read_ack_count{0};
+    ClientPadding m_padding;
+    bool m_padding_request{false};
+    bool m_padding_retry{false};
+    bool m_replaying{false};
+    bool m_out_reading{false};
+    size_t m_out_writing{0};
+    bool retry_legacy();
+    void reconnect_legacy();
+    tp::vector<SentHandler> m_padding_waiters;
 
     SSLSocket m_out_socket;
     boost::asio::ip::tcp::resolver m_out_resolver;

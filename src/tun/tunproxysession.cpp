@@ -79,7 +79,12 @@ void TUNProxySession::start() {
     auto self = shared_from_this();
     auto cb   = [this, self]() {
         _guard;
+        if (m_destroyed) return;
         m_connected = true;
+        m_padding.begin(get_config().get_remote_addr(), static_cast<uint16_t>(get_config().get_remote_port()),
+                        !get_pipeline_component().is_using_pipeline() && !is_udp_forward_session() && get_config().get_ssl().padding,
+                        get_config().get_ssl().padding_bytes);
+        m_padding_request = true;
 
         if (m_out && m_out->is_via_quic()) {
             auto note_str = "TUNProxySession session_id: " + tp::to_string(get_session_id()) + " started via QUIC";
@@ -121,7 +126,9 @@ void TUNProxySession::start() {
             _unguard;
         };
 
-        if (m_send_buf.size() > 0) {
+        if (m_replaying) {
+            m_replaying = false;
+        } else if (m_send_buf.size() > 0) {
             tp::streambuf tmp_buf;
             streambuf_append(tmp_buf, m_send_buf);
             m_send_buf.consume(m_send_buf.size());
@@ -181,16 +188,11 @@ void TUNProxySession::start() {
         if (!force_no_pipeline && get_pipeline_component().is_using_pipeline()) {
             cb();
         } else {
-            get_service()->get_config().prepare_ssl_reuse(m_out_socket);
-            if (is_udp_forward_session()) {
-                connect_remote_server_ssl(self, get_service()->get_config().get_remote_addr(),
-                  tp::to_string(get_service()->get_config().get_remote_port()), m_out_resolver, m_out_socket,
-                  m_local_addr_udp, cb);
-            } else {
-                connect_remote_server_ssl(self, get_service()->get_config().get_remote_addr(),
-                  tp::to_string(get_service()->get_config().get_remote_port()), m_out_resolver, m_out_socket,
-                  m_local_addr, cb);
-            }
+            auto in_ep = is_udp_forward_session() ? tcp::endpoint(m_local_addr_udp.address(), m_local_addr_udp.port()) : m_local_addr;
+            m_out = create_outbound_transport(get_service()->get_io_context(), get_service()->get_ssl_context(),
+                                             get_config(), in_ep, nullptr);
+            m_out->async_connect(get_config().get_remote_addr(), static_cast<uint16_t>(get_config().get_remote_port()),
+                                 cb, [this, self]() { destroy(); });
         }
     };
 
@@ -243,6 +245,29 @@ void TUNProxySession::start() {
     }
 
     _unguard;
+}
+
+bool TUNProxySession::retry_legacy() {
+    tp::string request;
+    if (m_destroyed || !m_padding.fallback(request)) return false;
+    m_send_buf.consume(m_send_buf.size());
+    streambuf_append(m_send_buf, request);
+    m_padding_retry = true;
+    m_connected = false;
+    m_out->cancel();
+    m_out->close();
+    reconnect_legacy();
+    return true;
+}
+
+void TUNProxySession::reconnect_legacy() {
+    if (!m_padding_retry || m_out_writing || m_out_reading || m_destroyed) return;
+    m_padding_retry = false;
+    m_replaying = true;
+    m_out.reset();
+    for (auto& handler : m_padding_waiters) m_wait_connected_handler.emplace_back(std::move(handler));
+    m_padding_waiters.clear();
+    start();
 }
 
 void TUNProxySession::destroy(bool pipeline_call) {
@@ -334,14 +359,29 @@ void TUNProxySession::out_async_send_impl(const std::string_view& data_to_send, 
           }));
     } else {
         if (m_out) {
-            auto quic_buf = TP_MAKE_SHARED(ReadBufWithGuard);
-            streambuf_append(*quic_buf, data_to_send);
+            tp::vector<tp::string> flushes;
+            if (!m_padding.encode(data_to_send, m_padding_request, flushes)) {
+                destroy();
+                _handler(boost::asio::error::fault);
+                return;
+            }
+            m_padding_request = false;
+            ++m_out_writing;
             auto self        = shared_from_this();
             auto data_len    = data_to_send.length();
-            m_out->async_write(quic_buf,
+            client_padding_write(m_out, std::move(flushes),
               tp::bind_mem_alloc([this, self, _handler, data_len](boost::system::error_code ec, size_t) {
                   _guard;
+                  --m_out_writing;
                   udp_timer_async_wait();
+                  if (m_padding_retry || (ec && m_padding.enabled())) {
+                      m_padding_waiters.emplace_back(_handler);
+                      if (m_padding_retry || retry_legacy()) {
+                          reconnect_legacy();
+                          return;
+                      }
+                      m_padding_waiters.pop_back();
+                  }
                   if (ec) {
                       output_debug_info_ec(ec);
                       destroy();
@@ -534,18 +574,41 @@ void TUNProxySession::out_async_read() {
               _unguard;
           });
     } else {
+        if (m_out_reading || m_destroyed) return;
+        m_out_reading = true;
         m_recv_buf.begin_read(__FILE__, __LINE__);
         auto self = shared_from_this();
         auto on_read = tp::bind_mem_alloc([this, self](const boost::system::error_code error, size_t length) {
             _guard;
 
             m_recv_buf.end_read();
+            m_out_reading = false;
+            if (m_padding_retry) {
+                reconnect_legacy();
+                return;
+            }
             if (error) {
+                if (retry_legacy()) return;
                 output_debug_info_ec(error);
                 destroy();
                 return;
             }
             m_recv_buf.commit(length);
+            if (m_padding.enabled()) {
+                tp::string plain;
+                const bool valid = m_padding.decode(m_recv_buf.to_string_view(), plain);
+                m_recv_buf.consume(m_recv_buf.size());
+                if (!valid) {
+                    if (!retry_legacy()) destroy();
+                    return;
+                }
+                streambuf_append(m_recv_buf, plain);
+                length = plain.size();
+                if (!length) {
+                    out_async_read();
+                    return;
+                }
+            }
             get_stat().inc_recv_len(length);
 
             if (is_udp_forward_session()) {
