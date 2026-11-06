@@ -267,8 +267,10 @@ def run_case(binary, directory, profile, mode, cert, key, http_port, timeout):
             if mode == "first_reply":
                 if relay.stats["server"]["initials_dropped"] != 1:
                     raise RuntimeError("first server reply was not a QUIC v1 Initial")
-                if max(s["initials"] for s in relay.stats.values()) < 2:
-                    raise RuntimeError("no repeated QUIC Initial observed after forced drop")
+                # Chrome's first flight already has two client Initial packets;
+                # require a second server Initial after dropping its first reply.
+                if relay.stats["server"]["initials"] < 2:
+                    raise RuntimeError("no repeated server Initial observed after forced drop")
             result["handshake_evidence"] = {role: HANDSHAKE for role in ("client", "server")}
             result["status"] = "passed"
     except BaseException as error:
