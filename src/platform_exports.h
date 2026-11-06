@@ -22,6 +22,8 @@
 #ifndef PLATFORM_EXPORTS_H
 #define PLATFORM_EXPORTS_H
 
+#include <stddef.h>
+
 // Platform export macro definitions
 #if defined(_WIN32)
     #ifdef TROJAN_EXPORTS
@@ -39,7 +41,9 @@
 #ifdef __ANDROID__
 #include <jni.h>
 
+#ifdef __cplusplus
 extern "C" {
+#endif
 
 // Global JNI variables
 extern JNIEnv* g_android_java_env;
@@ -57,7 +61,9 @@ JNIEXPORT jstring JNICALL Java_com_trojan_1plus_android_TrojanPlusVPNService_get
 // Android socket protection helper
 void android_protect_socket(int fd);
 
+#ifdef __cplusplus
 } // extern "C"
+#endif
 
 #else
 
@@ -75,6 +81,12 @@ extern "C" {
 TROJAN_API void trojan_run_main(const char* config_path);
 TROJAN_API void trojan_stop_main(void);
 TROJAN_API const char* trojan_get_version(void);
+
+// See docs/native-logging.md for threading, lifetime and shutdown contract.
+// Bytes exclude trailing NUL; callback must not throw or retain message pointer.
+// Returns 0 on success, -1 inside callback (no change), -2 on native failure.
+typedef void (*trojan_log_callback)(const char* message, size_t length, int level, void* context);
+TROJAN_API int trojan_set_log_callback(trojan_log_callback callback, void* context);
 
 #ifdef __cplusplus
 }

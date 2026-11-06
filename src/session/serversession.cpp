@@ -382,7 +382,7 @@ void ServerSession::in_recv(const std::string_view& data, size_t ack_count) {
                 use_alpn = true;
             } else {
                 _log_with_endpoint(get_in_endpoint(),
-                  "session_id: " + tp::to_string(get_session_id()) + " authenticated as " + password_iterator->second,
+                  "session_id: " + tp::to_string(get_session_id()) + " authenticated",
                   Log::INFO);
             }
         }

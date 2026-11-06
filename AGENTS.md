@@ -82,6 +82,8 @@ or `build_and_test_docker_linux.sh` for Docker. Important defaults:
 `BUILD_LIBRARY` produces libraries and is enabled automatically for mobile builds.
 Android: `build_android_so.sh`; iOS: `make_ios.sh`, `make_xcframework_ios.sh`.
 Library exports: [src/platform_exports.h](src/platform_exports.h).
+Native log callback lifecycle and managed integration: [docs/native-logging.md](docs/native-logging.md).
+Unregister successfully before releasing managed delegate/context; never wait on logging threads inside callback.
 More: [docs/build.md](docs/build.md), `CMakeLists.txt`.
 
 ## Testing

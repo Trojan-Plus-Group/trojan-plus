@@ -352,14 +352,6 @@ void Http1UpstreamConn::parse_tcp_data() {
             if (ec && ec != boost::beast::http::error::need_buffer && ec != boost::beast::http::error::need_more) {
                 // Log detailed diagnostics for chunked parse errors.
                 if (Log::level <= Log::ERROR && ec != boost::beast::http::error::end_of_stream) {
-                    tp::string hex_tail;
-                    std::size_t dump_start = (consumed > 32) ? consumed - 32 : 0;
-                    std::size_t dump_end   = std::min(consumed + 32, m_unconsumed_bytes);
-                    for (std::size_t i = dump_start; i < dump_end; ++i) {
-                        char hx[4];
-                        snprintf(hx, sizeof(hx), "%02x ", static_cast<unsigned char>(m_tcp_read_buf[i]));
-                        hex_tail += hx;
-                    }
                     _log_with_date_time("Http1UpstreamConn: body parse error: " +
                                             tp::string(ec.message().c_str()) +
                                             " consumed=" + tp::to_string(consumed) +
@@ -367,8 +359,7 @@ void Http1UpstreamConn::parse_tcp_data() {
                                             " n=" + tp::to_string(n) +
                                             " body_bytes=" + tp::to_string(body_bytes) +
                                             " buffered=" + tp::to_string(m_buffered_bytes) +
-                                            " is_done=" + tp::to_string(m_resp_parser->is_done()) +
-                                            " hex_around_consumed=[" + hex_tail + "]",
+                                            " is_done=" + tp::to_string(m_resp_parser->is_done()),
                                         Log::ERROR);
                 }
                 
