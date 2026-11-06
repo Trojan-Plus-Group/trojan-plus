@@ -38,6 +38,8 @@ class TUNProxySession : public TUNSession {
     bool retry_legacy();
     void reconnect_legacy();
     tp::vector<SentHandler> m_padding_waiters;
+    tp::deque<std::pair<tp::string, SentHandler>> m_out_queue;
+    void drain_out_queue();
 
     SSLSocket m_out_socket;
     boost::asio::ip::tcp::resolver m_out_resolver;
