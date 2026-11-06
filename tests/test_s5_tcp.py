@@ -12,6 +12,13 @@ import time
 import unittest
 
 BINARY = sys.argv.pop(1) if len(sys.argv) > 1 else os.environ.get('S5_BINARY')
+if not BINARY:
+    candidates = [Path(__file__).resolve().parents[1] / 'build/trojan']
+    if os.environ.get('PIPELINE_WORKSPACE'):
+        candidates.append(Path(os.environ['PIPELINE_WORKSPACE']) / 'LinuxBinary/trojan')
+    BINARY = next((str(path) for path in candidates if path.is_file()), None)
+if not BINARY and ('TF_BUILD' in os.environ or 'CI' in os.environ):
+    sys.exit('S5 TCP: binary missing; pass BINARY, set S5_BINARY, or build build/trojan')
 
 
 @unittest.skipUnless(BINARY, 'pass BINARY or set S5_BINARY')
@@ -119,4 +126,6 @@ class TcpHandshakeRegression(unittest.TestCase):
 
 
 if __name__ == '__main__':
+    if not BINARY:
+        print('SKIP S5 TCP: pass BINARY, set S5_BINARY, or build build/trojan')
     unittest.main()

@@ -95,6 +95,8 @@ void PipelineSession::start() {
           if (read_ec) { destroy(); return; }
           if (!is_tls_record_start(handshake_prefix.data(), length)) {
               if (!is_plain_http_start(handshake_prefix.data(), length)) {
+                  // nginx builds differ: stock 1.26.3/OpenSSL sends a 7-byte alert + RST;
+                  // quic.nginx.org sends 0 bytes. Deliberately use the simpler silent close.
                   boost::system::error_code close_ec;
                   socket->shutdown(tcp::socket::shutdown_both, close_ec);
                   socket->close(close_ec);
@@ -108,7 +110,7 @@ void PipelineSession::start() {
               return;
           }
           live_socket->async_handshake(stream_base::server, boost::asio::buffer(handshake_prefix),
-                 tp::bind_mem_alloc([this, self](const boost::system::error_code error, size_t) {
+            tp::bind_mem_alloc([this, self](const boost::system::error_code error, size_t) {
               handshake_timer.cancel();
               if (error) {
                   _log_with_endpoint(get_in_endpoint(), tp::string("SSL handshake failed: ") + error.message().c_str(), Log::ERROR);

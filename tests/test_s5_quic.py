@@ -21,7 +21,14 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     binary = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("S5_BINARY")
     if not binary:
-        print("SKIP S5 QUIC: pass BINARY or set S5_BINARY")
+        candidates = [ROOT / "build/trojan"]
+        if os.environ.get("PIPELINE_WORKSPACE"):
+            candidates.append(Path(os.environ["PIPELINE_WORKSPACE"]) / "LinuxBinary/trojan")
+        binary = next((str(path) for path in candidates if path.is_file()), None)
+    if not binary:
+        if "TF_BUILD" in os.environ or "CI" in os.environ:
+            sys.exit("S5 QUIC: binary missing; pass BINARY, set S5_BINARY, or build build/trojan")
+        print("SKIP S5 QUIC: pass BINARY, set S5_BINARY, or build build/trojan")
         return
     from aioquic.asyncio.client import connect
     from aioquic.quic.configuration import QuicConfiguration
