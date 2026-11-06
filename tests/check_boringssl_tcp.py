@@ -165,9 +165,12 @@ def main():
                     ssl.TLSVersion.TLSv1_3, "TLS_AES_128_GCM_SHA256"))
 
                 def no_match():
-                    with tls(context(alpn=["unmatched"]), number) as sock:
-                        assert sock.selected_alpn_protocol() is None
-                check("ALPN no match continues without selection", no_match)
+                    try:
+                        with tls(context(alpn=["unmatched"]), number):
+                            raise AssertionError("unmatched ALPN accepted")
+                    except ssl.SSLError as error:
+                        assert error.reason == "TLSV1_ALERT_NO_APPLICATION_PROTOCOL", error
+                check("ALPN no match rejected with no_application_protocol", no_match)
 
                 def wrong_curve():
                     try:
@@ -240,7 +243,10 @@ def main():
                               "password": base["password"], "log_level": 0,
                               "ssl": {"verify": True, "verify_hostname": True,
                                       "cert": str(FIXTURES / "server.crt"),
-                                      "sni": "yuchting", "alpn": ["h2"]}}
+                                      "sni": "yuchting", "alpn": ["h2"],
+                                       # This peer reads legacy Trojan bytes, not S2 frames;
+                                       # test configured ALPN, not Chrome's fixed offer.
+                                       "padding": False, "fingerprint": "none"}}
                     with running(tmp, config) as (client_port, _):
                         with connect(client_port) as client:
                             client.sendall(HTTP)
