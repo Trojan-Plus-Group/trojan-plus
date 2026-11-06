@@ -28,6 +28,7 @@
 #include <string_view>
 
 #include "core/pipeline.h"
+#include "clientpadding.h"
 #include "core/utils.h"
 #include "quic/outbound_transport.h"
 #include "socketsession.h"
@@ -72,6 +73,13 @@ class ClientSession : public SocketSession {
     tp::streambuf out_write_buf;
     tp::streambuf udp_data_buf;
     bool pipeline_session{false};
+    ClientPadding padding;
+    bool padding_request{false};
+    bool upload_pending{false};
+    bool local_read_pending{false};
+    bool padding_retry_pending{false};
+    bool retry_legacy();
+    void reconnect_legacy();
 
   protected:
     void in_async_read();
