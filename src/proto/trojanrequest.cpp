@@ -29,15 +29,34 @@ int TrojanRequest::parse(const std::string_view& data) {
 
     size_t first = data.find("\r\n");
     if (first == std::string::npos) {
-        return -1;
+        return 0;
     }
     password = data.substr(0, first);
     payload  = data.substr(first + 2);
-    if (payload.length() == 0 || (payload[0] != CONNECT && payload[0] != UDP_ASSOCIATE)) {
+    if (payload.empty()) {
+        return 0;
+    }
+    if (payload[0] != CONNECT && payload[0] != UDP_ASSOCIATE && payload[0] != CONNECT_PADDED) {
         return -1;
     }
-    command            = static_cast<Command>(payload[0]);
+    command = static_cast<Command>(payload[0]);
+    if (payload.size() < 2) {
+        return 0;
+    }
     size_t address_len = 0;
+    switch (payload[1]) {
+        case SOCKS5Address::IPv4: address_len = 7; break;
+        case SOCKS5Address::IPv6: address_len = 19; break;
+        case SOCKS5Address::DOMAINNAME:
+            if (payload.size() < 3) return 0;
+            if (static_cast<uint8_t>(payload[2]) == 0) return -1;
+            address_len = 4 + static_cast<uint8_t>(payload[2]);
+            break;
+        default: return -1;
+    }
+    if (payload.size() < address_len + 1) {
+        return 0;
+    }
     bool is_addr_valid = address.parse(payload.substr(1), address_len);
     if (!is_addr_valid) {
         return -1;

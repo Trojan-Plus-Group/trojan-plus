@@ -26,6 +26,7 @@
 
 #include "quic_stream_handler.h"
 #include "mem/memallocator.h"
+#include "proto/padding.h"
 
 class QuicConnection;
 class Config;
@@ -57,7 +58,8 @@ class QuicProxySession : public QuicStreamHandler, public std::enable_shared_fro
     void forward_to_h1_upstream(std::string_view data, bool fin);
     void connect_target(const tp::string& host, uint16_t port);
     void tcp_read();
-    void write_to_target(tp::string data, bool fin = false);
+    void receive_tcp_data(std::string_view data, bool fin);
+    void write_to_target(tp::string data, bool fin, std::size_t wire_bytes);
     void do_tcp_write();
     void destroy(bool reset = false, uint64_t app_error_code = 0, bool from_close_cb = false);
 
@@ -86,6 +88,13 @@ class QuicProxySession : public QuicStreamHandler, public std::enable_shared_fro
     bool m_is_udp{false};
     bool m_udp_fin_received{false};
 
+    bool m_padded{false};
+    s2::Encoder m_padding_encoder;
+    s2::Decoder m_padding_decoder;
+    tp::deque<tp::string> m_padding_flushes;
+    bool m_padding_finish{false};
+    bool m_padding_sent_data{false};
+    void send_padding_flush();
     bool m_request_parsed{false};
     bool m_destroyed{false};
     std::size_t m_unacked_stream_bytes{0};
@@ -97,6 +106,7 @@ class QuicProxySession : public QuicStreamHandler, public std::enable_shared_fro
     struct TcpWriteBuffer {
         tp::string data;
         bool fin{false};
+        std::size_t wire_bytes{0};
     };
     tp::deque<TcpWriteBuffer> m_tcp_write_queue;
     bool m_is_writing_to_tcp{false};

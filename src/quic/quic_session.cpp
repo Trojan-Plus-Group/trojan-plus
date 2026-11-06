@@ -41,6 +41,7 @@ QuicProxySession::QuicProxySession(std::shared_ptr<QuicConnection> conn, int64_t
       m_resolver(io_ctx),
       m_udp_socket(io_ctx),
       m_udp_resolver(io_ctx),
+      m_padding_encoder(config.get_ssl().padding_bytes),
       m_write_timer(io_ctx) {
     m_quic_recv_buf.reserve(kQuicRecvBufReserveSize);
     _log_with_date_time("QuicProxySession: QuicProxySession constructed stream_id=" + 
@@ -76,7 +77,7 @@ void QuicProxySession::on_stream_data(const uint8_t* data, std::size_t len, bool
             if (fin) m_udp_fin_received = true;
             out_udp_sent();
         } else {
-            write_to_target(tp::string(reinterpret_cast<const char*>(data), len), fin);
+            receive_tcp_data(std::string_view(reinterpret_cast<const char*>(data), len), fin);
         }
     }
 }
@@ -133,7 +134,10 @@ void QuicProxySession::try_parse_request(std::string_view data, bool fin) {
         return;
     }
     if (parsed == 0) {
-        // Need more bytes.
+        if (fin) {
+            _log_with_date_time("QuicProxySession: truncated Trojan request", Log::WARN);
+            destroy(true, NGHTTP3_H3_INTERNAL_ERROR);
+        }
         return;
     }
 
@@ -172,10 +176,10 @@ void QuicProxySession::try_parse_request(std::string_view data, bool fin) {
         }
 
     }else{
-        if (!req.payload.empty()) {
-            write_to_target(tp::string(req.payload.data(), req.payload.length()), fin);
-        }
-        
+        m_padded = req.command == TrojanRequest::CONNECT_PADDED;
+        receive_tcp_data(req.payload, fin);
+        if (m_destroyed) return;
+
         connect_target(tp::string(req.address.address), req.address.port);
     }
 }
@@ -243,11 +247,29 @@ void QuicProxySession::connect_target(const tp::string& host, uint16_t port) {
         }));
 }
 
-void QuicProxySession::write_to_target(tp::string data, bool fin) {
-    if (data.empty() && !fin) {
-        return;
+void QuicProxySession::receive_tcp_data(std::string_view data, bool fin) {
+    tp::string decoded;
+    if (m_padded) {
+        auto result = m_padding_decoder.decode(data);
+        if (!result.success || (fin && !m_padding_decoder.ended())) {
+            _log_with_date_time("QuicProxySession: invalid padded CONNECT frame", Log::WARN);
+            destroy(true, NGHTTP3_H3_INTERNAL_ERROR);
+            return;
+        }
+        decoded = std::move(result.data);
+    } else {
+        decoded.assign(data.data(), data.size());
     }
-    m_tcp_write_queue.push_back({std::move(data), fin});
+    write_to_target(std::move(decoded), fin, data.size());
+}
+
+void QuicProxySession::write_to_target(tp::string data, bool fin, std::size_t wire_bytes) {
+    if (data.empty()) {
+        if (auto c = m_conn.lock()) c->stream_extend_window(m_stream_id, wire_bytes);
+        wire_bytes = 0;
+        if (!fin) return;
+    }
+    m_tcp_write_queue.push_back({std::move(data), fin, wire_bytes});
     if (!m_is_writing_to_tcp && m_tcp_socket.is_open()) {
         do_tcp_write();
     }
@@ -274,11 +296,12 @@ void QuicProxySession::do_tcp_write() {
 
     auto buf = TP_MAKE_SHARED(tp::string, std::move(front.data));
     bool fin = front.fin;
+    const auto wire_bytes = front.wire_bytes;
     m_tcp_write_queue.pop_front();
 
     boost::asio::async_write(
         m_tcp_socket, boost::asio::buffer(*buf),
-        tp::bind_mem_alloc([this, self, buf, fin](const boost::system::error_code& ec, std::size_t sent) {
+        tp::bind_mem_alloc([this, self, buf, fin, wire_bytes](const boost::system::error_code& ec, std::size_t) {
             if (m_destroyed) {
                 return;
             }
@@ -288,7 +311,7 @@ void QuicProxySession::do_tcp_write() {
             }
 
             if(auto c = m_conn.lock()){
-                c->stream_extend_window(m_stream_id, sent);
+                c->stream_extend_window(m_stream_id, wire_bytes);
             }
 
             // If we received a FIN from QUIC, we should shut down the TCP send side
@@ -314,6 +337,19 @@ void QuicProxySession::tcp_read() {
                 return;
             }
             if (ec) {
+                // EOF before outbound DATA stays silent for legacy fallback compatibility.
+                if (ec == boost::asio::error::eof && m_padded && m_padding_sent_data && !m_padding_encoder.ended()) {
+                    auto encoded = m_padding_encoder.encode({});
+                    if (!encoded.success) {
+                        _log_with_date_time("QuicProxySession: padded CONNECT encoding failed", Log::WARN);
+                        destroy(true, NGHTTP3_H3_INTERNAL_ERROR);
+                        return;
+                    }
+                    m_padding_finish = true;
+                    for (auto& flush : encoded.flushes) m_padding_flushes.push_back(std::move(flush));
+                    send_padding_flush();
+                    return;
+                }
                 if (ec != boost::asio::error::eof) {
                     _log_with_date_time("QuicProxySession: tcp read: " +
                                             tp::string(ec.message().c_str()),
@@ -325,6 +361,18 @@ void QuicProxySession::tcp_read() {
             auto locked_conn = m_conn.lock();
             if (locked_conn && !locked_conn->is_closed()) {
                 buff->commit(bytes);
+                if (m_padded) {
+                    m_padding_sent_data = true;
+                    auto encoded = m_padding_encoder.encode(streambuf_to_string_view(*buff));
+                    if (!encoded.success) {
+                        _log_with_date_time("QuicProxySession: padded CONNECT encoding failed", Log::WARN);
+                        destroy(true, NGHTTP3_H3_INTERNAL_ERROR);
+                        return;
+                    }
+                    for (auto& flush : encoded.flushes) m_padding_flushes.push_back(std::move(flush));
+                    send_padding_flush();
+                    return;
+                }
                 locked_conn->send_stream_data(m_stream_id,
                     buff, false, tp::bind_mem_alloc([self, this](boost::system::error_code ec, std::size_t){
                         if(ec){
@@ -337,6 +385,35 @@ void QuicProxySession::tcp_read() {
                 destroy();
             }
         }));
+}
+
+void QuicProxySession::send_padding_flush() {
+    if (m_destroyed) return;
+    if (m_padding_flushes.empty()) {
+        if (m_padding_finish) {
+            destroy();
+            return;
+        }
+        tcp_read();
+        return;
+    }
+    auto conn = m_conn.lock();
+    if (!conn || conn->is_closed()) {
+        destroy();
+        return;
+    }
+    auto buff = TP_MAKE_SHARED(ReadBufWithGuard);
+    streambuf_append(*buff, m_padding_flushes.front());
+    m_padding_flushes.pop_front();
+    auto self = shared_from_this();
+    conn->send_stream_data(m_stream_id, buff, false,
+      tp::bind_mem_alloc([this, self](boost::system::error_code ec, std::size_t) {
+          if (ec) {
+              destroy(false, 0, true);
+              return;
+          }
+          send_padding_flush();
+      }));
 }
 
 void QuicProxySession::destroy(bool reset, uint64_t app_error_code, bool from_close_cb) {

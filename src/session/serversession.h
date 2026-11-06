@@ -31,6 +31,7 @@
 
 #include "core/pipeline.h"
 #include "core/utils.h"
+#include "proto/padding.h"
 #include "pipelinesession.h"
 #include "socketsession.h"
 
@@ -62,6 +63,14 @@ class ServerSession : public SocketSession {
     using PipelineSessionRef = std::weak_ptr<Session>;
     PipelineSessionRef pipeline_session;
     bool has_queried_out;
+    tp::string request_buf;
+    bool padded{false};
+    s2::Encoder padding_encoder;
+    s2::Decoder padding_decoder;
+    tp::deque<tp::string> padding_flushes;
+    bool padding_finish{false};
+    bool padding_sent_data{false};
+    void write_padding_flush();
 
     friend class PipelineSession;
     void in_async_read();
