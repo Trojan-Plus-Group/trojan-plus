@@ -3,8 +3,9 @@
 
 Uses BoringSSL's real declaration and an injectable link-time RNG stub to cover
 rejection sampling and RNG failure. Does not build or modify any submodule.
-All generated files and compiler/runtime output stay in /home/hermes/work/logs/s2.
+Temporary artifacts are cleaned up; set S2_LOG_DIR to retain output instead.
 """
+from contextlib import nullcontext
 from pathlib import Path
 import os
 import shlex
@@ -12,7 +13,6 @@ import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-LOGS = Path("/home/hermes/work/logs/s2")
 PROGRAM = r'''
 #include "proto/padding.h"
 #include <cassert>
@@ -307,8 +307,16 @@ int main() {
 
 
 def main():
-    LOGS.mkdir(parents=True, exist_ok=True)
-    run = Path(tempfile.mkdtemp(prefix="codec-", dir=LOGS))
+    output = os.environ.get("S2_LOG_DIR")
+    if output:
+        Path(output).mkdir(parents=True, exist_ok=True)
+    with (nullcontext(tempfile.mkdtemp(prefix="codec-", dir=output)) if output
+          else tempfile.TemporaryDirectory(prefix="codec-")) as directory:
+        check(Path(directory))
+    print("S2 codec checks passed")
+
+
+def check(run):
     source = run / "codec.cpp"
     binary = run / "codec"
     source.write_text(PROGRAM)
@@ -320,8 +328,13 @@ def main():
     with (run / "output.log").open("w") as log:
         log.write(shlex.join(command) + "\n")
         log.flush()
-        subprocess.run(command, check=True, stdout=log, stderr=subprocess.STDOUT)
-        subprocess.run([str(binary)], check=True, stdout=log, stderr=subprocess.STDOUT)
+        try:
+            subprocess.run(command, check=True, stdout=log, stderr=subprocess.STDOUT)
+            subprocess.run([str(binary)], check=True, stdout=log, stderr=subprocess.STDOUT)
+        except subprocess.CalledProcessError:
+            log.flush()
+            print((run / "output.log").read_text())
+            raise
         log.write("S2 codec checks passed\n")
 
 
