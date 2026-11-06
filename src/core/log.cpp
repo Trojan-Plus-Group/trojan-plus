@@ -21,11 +21,13 @@
  */
 
 #include "log.h"
+#include "platform_exports.h"
 #include <boost/date_time/posix_time/posix_time.hpp>
 #include <boost/date_time/posix_time/posix_time_io.hpp>
 #include <cerrno>
 #include <cstring>
 #include <gsl/gsl>
+#include <mutex>
 #include <sstream>
 #include <stdexcept>
 #ifdef ENABLE_ANDROID_LOG
@@ -44,6 +46,47 @@ Log::Level Log::level(INVALID);
 FILE* Log::keylog(nullptr);
 FILE* Log::output_stream(stderr);
 Log::LogCallback Log::log_callback{};
+
+namespace {
+std::mutex native_callback_mutex;
+trojan_log_callback native_callback = nullptr;
+void* native_callback_context = nullptr;
+thread_local bool in_native_callback = false;
+
+void deliver_native_log(const tp::string& message, Log::Level level) noexcept {
+    if (in_native_callback) {
+        return;
+    }
+    try {
+        std::lock_guard<std::mutex> lock(native_callback_mutex);
+        if (native_callback) {
+            in_native_callback = true;
+            try {
+                native_callback(message.data(), message.size(), static_cast<int>(level), native_callback_context);
+            } catch (...) {
+                // Foreign callbacks must catch their own exceptions; contain native C++ throws too.
+            }
+            in_native_callback = false;
+        }
+    } catch (...) {
+        // Logging failure must not stop the proxy.
+    }
+}
+} // namespace
+
+extern "C" TROJAN_API int trojan_set_log_callback(trojan_log_callback callback, void* context) {
+    if (in_native_callback) {
+        return -1;
+    }
+    try {
+        std::lock_guard<std::mutex> lock(native_callback_mutex);
+        native_callback = callback;
+        native_callback_context = callback ? context : nullptr;
+        return 0;
+    } catch (...) {
+        return -2;
+    }
+}
 
 void Log::log(const tp::string& message, Level level) {
     if (level >= Log::level) {
@@ -97,6 +140,7 @@ void Log::log(const tp::string& message, Level level) {
         fprintf(output_stream, "%s\n", message.c_str());
         fflush(output_stream);
 #endif // ENABLE_IOS_LOG
+        deliver_native_log(message, level);
         if (log_callback) {
             log_callback(message, level);
         }
@@ -106,10 +150,10 @@ void Log::log(const tp::string& message, Level level) {
 void Log::log_with_date_time(const tp::string& message, Level level) {
     static const char* level_strings[] = {"ALL", "INFO", "WARN", "ERROR", "FATAL", "OFF"};
 
-    static tp::ostringstream time_stream;
-    static const std::locale loc(
+    static thread_local tp::ostringstream time_stream;
+    static thread_local const std::locale loc(
       time_stream.getloc(), new time_facet("[%Y-%m-%d %H:%M:%S.%f] ")); // have to use fu*k nacked new
-    static bool set_time_stream = false;
+    static thread_local bool set_time_stream = false;
     if (!set_time_stream) {
         set_time_stream = true;
         time_stream.imbue(loc);

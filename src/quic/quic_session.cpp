@@ -152,7 +152,7 @@ void QuicProxySession::try_parse_request(std::string_view data, bool fin) {
     }
 
     _log_with_date_time("QuicProxySession: stream " + tp::to_string(m_stream_id) +
-                            " authenticated as " + it->second + " → " + req.address.address +
+                            " authenticated, target " + req.address.address +
                             ":" + tp::to_string(req.address.port) + " payload_len=" +
                             tp::to_string(req.payload.length()),
                         Log::INFO);

@@ -86,19 +86,11 @@ void QuicUpstreamHandler::h3_retry_feed() {
 
     if (consumed < 0) {
         if (Log::level <= Log::WARN) {
-            tp::string hex_data;
-            for (std::size_t i = 0; i < std::min(sv.size(), (std::size_t)64); ++i) {
-                char hex_buf[4];
-                snprintf(hex_buf, sizeof(hex_buf), "%02x ", static_cast<unsigned char>(sv[i]));
-                hex_data += hex_buf;
-            }
-
             _log_with_date_time("QuicUpstreamHandler: H3 protocol error on stream " +
                                 tp::to_string(m_stream_id) + ": " +
                                 tp::string(nghttp3_strerror(static_cast<int>(consumed))) +
                                 " data_len=" + tp::to_string(sv.size()) +
-                                " fin=" + tp::to_string(m_h3_in_fin) +
-                                " hex=[" + hex_data + "]",
+                                " fin=" + tp::to_string(m_h3_in_fin),
                                 Log::WARN);
         }
         
