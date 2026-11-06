@@ -52,6 +52,7 @@
     },
     "quic": {
         "enabled": false,
+        "alpn_token": "h3",
         "h1_upstream": ""
     }
 }

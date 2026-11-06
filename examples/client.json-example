@@ -45,6 +45,7 @@
         "pipeline_proxy_icmp": false
     },
     "quic": {
-        "enabled": false
+        "enabled": false,
+        "alpn_token": "h3"
     }
 }
