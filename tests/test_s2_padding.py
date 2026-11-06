@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Real TLS padding regressions. Pass BINARY or set S2_BINARY; never skip in CI."""
+"""Real TLS padding regressions. Pass BINARY or set S2_BINARY; never skip in CI.
+
+Temporary artifacts are cleaned up; set S2_LOG_DIR to retain output instead.
+"""
 import hashlib
 import json
 import os
@@ -208,9 +211,14 @@ class PaddingReader:
 class PaddingIntegration(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        output = Path(os.environ.get('S2_LOG_DIR', '/home/hermes/work/logs/s2'))
-        output.mkdir(parents=True, exist_ok=True)
-        cls.work = Path(tempfile.mkdtemp(prefix='s2-padding-', dir=output))
+        output = os.environ.get('S2_LOG_DIR')
+        if output:
+            Path(output).mkdir(parents=True, exist_ok=True)
+            cls.work = Path(tempfile.mkdtemp(prefix='s2-padding-', dir=output))
+        else:
+            work = tempfile.TemporaryDirectory(prefix='s2-padding-')
+            cls.addClassCleanup(work.cleanup)
+            cls.work = Path(work.name)
         subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
                         '-keyout', str(cls.work / 'key.pem'), '-out', str(cls.work / 'cert.pem'),
                         '-days', '1', '-subj', '/CN=localhost'], check=True,
