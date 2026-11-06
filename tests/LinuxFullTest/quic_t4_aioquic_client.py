@@ -17,6 +17,10 @@ class H3ClientProtocol(QuicConnectionProtocol):
 
     def quic_event_received(self, event):
         for h3_event in self.h3.handle_event(event):
+            if isinstance(h3_event, HeadersReceived):
+                for name, value in h3_event.headers:
+                    if name == b":status":
+                        print("STATUS:", value.decode('ascii'), flush=True)
             if isinstance(h3_event, DataReceived):
                 self.response_data += h3_event.data
             if getattr(h3_event, 'stream_ended', False):
