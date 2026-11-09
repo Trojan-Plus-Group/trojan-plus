@@ -251,7 +251,8 @@ void QuicProxySession::receive_tcp_data(std::string_view data, bool fin) {
     tp::string decoded;
     if (m_padded) {
         auto result = m_padding_decoder.decode(data);
-        if (!result.success || (fin && !m_padding_decoder.ended())) {
+        // Client close can precede END on short sessions; only an incomplete frame is truncation.
+        if (!result.success || (fin && !m_padding_decoder.at_frame_boundary())) {
             _log_with_date_time("QuicProxySession: invalid padded CONNECT frame", Log::WARN);
             destroy(true, NGHTTP3_H3_INTERNAL_ERROR);
             return;

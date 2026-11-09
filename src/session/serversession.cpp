@@ -147,7 +147,8 @@ void ServerSession::in_async_read() {
           in_read_buf.prepare(MAX_BUF_LENGTH), tp::bind_mem_alloc([this, self](const boost::system::error_code error, size_t length) {
               in_read_buf.end_read();
               if (error) {
-                  if (error == boost::asio::error::eof && padded && !padding_decoder.ended()) {
+                  // Match QUIC: short sessions need no END at EOF, but partial frames remain invalid.
+                  if (error == boost::asio::error::eof && padded && !padding_decoder.at_frame_boundary()) {
                       _log_with_endpoint(get_in_endpoint(), "Truncated padded CONNECT frame stream", Log::WARN);
                   }
                   output_debug_info_ec(error);
