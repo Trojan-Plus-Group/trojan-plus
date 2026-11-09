@@ -13,7 +13,6 @@
 #include <chrono>
 #include <cstring>
 
-#include <boost/asio/connect.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/post.hpp>
@@ -25,6 +24,7 @@
 #include "core/config.h"
 #include "core/log.h"
 #include "mem/memallocator.h"
+#include "platform_exports.h"
 #ifdef ENABLE_QUIC
 #include "quic_client_endpoint.h"
 #endif
@@ -71,8 +71,8 @@ class TlsOutboundTransport
                     on_error();
                     return;
                 }
-                boost::asio::async_connect(
-                    m_socket.next_layer(), results,
+                connect_endpoint(
+                    results.begin(), results.end(),
                     [this, self, host, port,
                      on_success = std::move(on_success),
                      on_error   = std::move(on_error)](
@@ -157,6 +157,41 @@ class TlsOutboundTransport
     bool is_via_quic() const override { return false; }
 
   private:
+    void connect_endpoint(
+        boost::asio::ip::tcp::resolver::results_type::iterator next,
+        boost::asio::ip::tcp::resolver::results_type::iterator end,
+        std::function<void(boost::system::error_code,
+                           boost::asio::ip::tcp::endpoint)> handler,
+        boost::system::error_code ec = boost::asio::error::not_found) {
+        auto& socket = m_socket.next_layer();
+        while (next != end) {
+            auto ep = (next++)->endpoint();
+            socket.close(ec);
+            socket.open(ep.protocol(), ec);
+            if (ec) {
+                continue;
+            }
+            // Asio's composed connect closes AFTER its connect condition; protect
+            // the newly opened descriptor here instead, before every attempt.
+            android_protect_socket(static_cast<int>(socket.native_handle()));
+            auto self = shared_from_this();
+            socket.async_connect(ep, tp::bind_mem_alloc(
+                [this, self, next, end, ep, handler = std::move(handler)](
+                    boost::system::error_code ec) mutable {
+                    if (!m_socket.next_layer().is_open()) {
+                        ec = boost::asio::error::operation_aborted;
+                    }
+                    if (!ec || ec == boost::asio::error::operation_aborted) {
+                        handler(ec, ep);
+                    } else {
+                        connect_endpoint(next, end, std::move(handler), ec);
+                    }
+                }));
+            return;
+        }
+        handler(ec, {});
+    }
+
     SSLSocket                       m_socket;
     boost::asio::ip::tcp::resolver  m_resolver;
     const Config&                   m_config;

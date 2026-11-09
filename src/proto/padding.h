@@ -157,8 +157,10 @@ public:
     // True once real bytes were accepted, from nonempty DATA or raw after END.
     // Caller retains original wire bytes if pre-data protocol fallback is needed.
     bool saw_data() const { return saw_data_; }
-    // EOF before END is truncation, even at a frame boundary.
+    // END completes padding and switches to raw bytes.
     bool complete() const { return !failed_ && ended_; }
+    // Short sessions may close before END, but never inside a frame.
+    bool at_frame_boundary() const { return !failed_ && pending_.empty(); }
 
     // Partial headers/payloads succeed with no output until their frame completes.
     // Malformed input permanently fails and discards this call's decoded output.
