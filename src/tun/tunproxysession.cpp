@@ -311,8 +311,9 @@ void TUNProxySession::destroy(bool pipeline_call) {
     }
 
     if (!m_close_from_tundev_flag && m_close_cb) {
-        m_close_cb(this);
-        m_close_cb = nullptr;
+        // Move out first. Client destructor clears this member from inside the callback.
+        auto close_cb = std::move(m_close_cb);
+        close_cb(this);
     }
     _unguard;
 }
@@ -537,7 +538,8 @@ size_t TUNProxySession::parse_udp_packet_data(const std::string_view& data) {
             break;
         }
 
-        if (m_write_to_lwip(this, &packet.payload) < 0) {
+        auto write_to_lwip = m_write_to_lwip; // copy: client dtor may clear member mid-call
+        if (!write_to_lwip || write_to_lwip(this, &packet.payload) < 0) {
             output_debug_info();
             destroy();
             break;
@@ -584,7 +586,8 @@ void TUNProxySession::out_async_read() {
                   m_recv_buf_ack_length += data.length();
 
                   get_pipeline_component().set_async_writing_data(true);
-                  if (m_write_to_lwip(this, nullptr) < 0) {
+                  auto write_to_lwip = m_write_to_lwip; // copy: client dtor may clear member mid-call
+                  if (!write_to_lwip || write_to_lwip(this, nullptr) < 0) {
                       output_debug_info();
                       destroy();
                   }
@@ -639,7 +642,8 @@ void TUNProxySession::out_async_read() {
             } else {
                 m_recv_buf_ack_length += length;
 
-                if (m_write_to_lwip(this, nullptr) < 0) {
+                auto write_to_lwip = m_write_to_lwip; // copy: client dtor may clear member mid-call
+                if (!write_to_lwip || write_to_lwip(this, nullptr) < 0) {
                     output_debug_info();
                     destroy();
                 }

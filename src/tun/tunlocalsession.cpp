@@ -66,7 +66,8 @@ void TUNLocalSession::start() {
           get_service(), m_local_addr_udp, remote_addr,
           [this](const udp::endpoint&, const std::string_view& data) {
               _guard;
-              if (m_write_to_lwip(this, (std::string_view*)&data) < 0) {
+              auto write_to_lwip = m_write_to_lwip; // copy: client dtor may clear member mid-call
+              if (!write_to_lwip || write_to_lwip(this, (std::string_view*)&data) < 0) {
                   output_debug_info();
                   destroy();
               }
@@ -173,7 +174,8 @@ void TUNLocalSession::out_async_read() {
 
               m_recv_buf_ack_length += length;
 
-              if (m_write_to_lwip(this, nullptr) < 0) {
+              auto write_to_lwip = m_write_to_lwip; // copy: client dtor may clear member mid-call
+              if (!write_to_lwip || write_to_lwip(this, nullptr) < 0) {
                   output_debug_info();
                   destroy();
               }
@@ -254,8 +256,9 @@ void TUNLocalSession::destroy(bool /*= false*/) {
     }
 
     if (!m_close_from_tundev_flag && m_close_cb) {
-        m_close_cb(this);
-        m_close_cb = nullptr;
+        // Move out first. Client destructor clears this member from inside the callback.
+        auto close_cb = std::move(m_close_cb);
+        close_cb(this);
     }
     _unguard;
 }
