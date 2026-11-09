@@ -66,6 +66,15 @@ lwip_tcp_client::lwip_tcp_client(struct tcp_pcb* _pcb, std::shared_ptr<TUNSessio
     _unguard;
 }
 
+lwip_tcp_client::~lwip_tcp_client() {
+    // QUIC can keep the session after the last client shared_ptr drops.
+    // Clear raw-this callbacks so a later destroy cannot call into freed storage.
+    if (m_tun_session) {
+        m_tun_session->set_close_callback({});
+        m_tun_session->set_write_to_lwip({});
+    }
+}
+
 void lwip_tcp_client::client_log(const char* fmt, ...) {
     _guard;
 
