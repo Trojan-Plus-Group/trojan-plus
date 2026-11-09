@@ -129,6 +129,13 @@ sudo env TP_IPV6_REQUIRE_ALL=1 python3 fulltest_main.py /absolute/path/to/trojan
   IPv6 plus unit/regression checks. A red pipeline is a blocker.
 - Manual fixtures: [quic_proxy_test/](quic_proxy_test/).
 
+## Weak-network measurements
+
+- Harness and usage: `tests/netem/README.md`; run `tests/netem/run_in_container.sh IMAGE EXTERNAL_LOG_DIR [harness args...]`.
+- Requires a privileged container; builds once and runs cells serially. Never run competing measurements.
+- Results and logs belong only in the external log directory, never in the repository.
+- One-repeat profiles are not evidence for changing defaults.
+
 ## Remote validation: only when requested
 
 Follow [quic_proxy_test_remote/AGENTS.md](quic_proxy_test_remote/AGENTS.md) for host
