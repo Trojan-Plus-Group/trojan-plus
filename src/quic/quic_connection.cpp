@@ -8,10 +8,18 @@
  * (at your option) any later version.
  */
 
+// Preserve historical logical lines for log/allocator metadata and OFF object equality.
 #include "quic_connection.h"
 #include "core/utils.h"
 
 #include <chrono>
+#if TROJAN_QUIC_STATS
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <fstream>
+#endif
+#line 15
 #include "mem/memallocator.h"
 
 static void *tj_ngtcp2_malloc(size_t size, void *user_data) {
@@ -65,6 +73,108 @@ static const ngtcp2_mem tj_ngtcp2_mem = {
 #include "core/utils.h"
 
 // ---- helpers ----------------------------------------------------------------
+#if TROJAN_QUIC_STATS
+
+namespace {
+
+// Cached once. Unset or empty means off: callers do one bool check and nothing else.
+bool quic_stats_enabled() {
+    static const bool enabled = [] {
+        const char* path = std::getenv("TROJAN_QUIC_STATS");
+        return path != nullptr && path[0] != '\0';
+    }();
+    return enabled;
+}
+
+// bbr is the historical default. Unknown values warn once and stay on BBR.
+ngtcp2_cc_algo quic_cc_from_env() {
+    static const ngtcp2_cc_algo algo = [] {
+        const char* value = std::getenv("TROJAN_QUIC_CC");
+        if (value == nullptr || value[0] == '\0' || std::strcmp(value, "bbr") == 0) {
+            return NGTCP2_CC_ALGO_BBR;
+        }
+        if (std::strcmp(value, "cubic") == 0) {
+            return NGTCP2_CC_ALGO_CUBIC;
+        }
+        if (std::strcmp(value, "reno") == 0) {
+            return NGTCP2_CC_ALGO_RENO;
+        }
+        _log_with_date_time(tp::string("TROJAN_QUIC_CC unknown value, keeping BBR: ") + value, Log::WARN);
+        return NGTCP2_CC_ALGO_BBR;
+    }();
+    return algo;
+}
+
+// One process-wide CSV. Connection methods run on a single io_context thread.
+class QuicStatsFile {
+  public:
+    void write(const char* line, bool force_flush) {
+        if (!ensure_open()) {
+            return;
+        }
+        m_out << line << '\n';
+        const auto now = std::chrono::steady_clock::now();
+        if (force_flush || now - m_last_flush >= std::chrono::seconds(1)) {
+            m_out.flush();
+            m_last_flush = now;
+        }
+    }
+
+  private:
+    bool ensure_open() {
+        if (m_out.is_open()) {
+            return true;
+        }
+        if (m_failed) {
+            return false;
+        }
+        const char* path = std::getenv("TROJAN_QUIC_STATS");
+        if (path == nullptr || path[0] == '\0') {
+            m_failed = true;
+            return false;
+        }
+        bool nonempty = false;
+        {
+            std::ifstream existing(path, std::ios::binary);
+            nonempty = existing.good() && existing.peek() != std::char_traits<char>::eof();
+        }
+        m_out.open(path, std::ios::app);
+        if (!m_out) {
+            m_failed = true;
+            _log_with_date_time(tp::string("TROJAN_QUIC_STATS open failed: ") + path, Log::WARN);
+            return false;
+        }
+        if (!nonempty) {
+            m_out << "t_ms,role,cwnd,ssthresh,bytes_in_flight,latest_rtt,min_rtt,smoothed_rtt,rttvar,"
+                     "pkt_sent,bytes_sent,pkt_recv,bytes_recv,pkt_lost,bytes_lost,pkt_discarded,"
+                     "max_data_left,streams_bidi_left,max_stream_data_left,app_queue_bytes,"
+                     "stream_data_blocked,write_more,zero_len_send,udp_send_errors,"
+                     "pump_other,data_other,vecs_other,udp_sent_other,"
+                     "pump_ack,data_ack,vecs_ack,udp_sent_ack,"
+                     "pump_retry,data_retry,vecs_retry,udp_sent_retry,"
+                     "pump_loss,data_loss,vecs_loss,udp_sent_loss,"
+                     "pump_application,data_application,vecs_application,udp_sent_application,"
+                     "pump_flow,data_flow,vecs_flow,udp_sent_flow,"
+                     "retry_arms,retry_expires_bytes,retry_expires_empty,open_packet_gap_max_ms,"
+                     "zero_write_expiry_ms,zero_write_expiry_max_ms\n";
+        }
+        m_last_flush = std::chrono::steady_clock::now();
+        return true;
+    }
+
+    std::ofstream m_out;
+    std::chrono::steady_clock::time_point m_last_flush{};
+    bool m_failed{false};
+};
+
+QuicStatsFile& quic_stats_file() {
+    static QuicStatsFile file;
+    return file;
+}
+
+} // namespace
+#endif
+#line 68
 
 static ngtcp2_tstamp now_nanos() {
     return static_cast<ngtcp2_tstamp>(
@@ -150,6 +260,11 @@ int QuicConnection::cb_acked_stream_data_offset(ngtcp2_conn* /*conn*/, int64_t s
                                                 void* user_data, void* /*stream_user_data*/) {
     auto* self = static_cast<QuicConnection*>(user_data);
 
+    QUIC_STAT(
+        if (self->m_stats.m_stats_enabled && self->m_in_read_pkt) self->m_stats.m_stats_read_ack = true;
+        StatsReasonScope reason(*self, SendReason::ack);
+    )
+#line 153
     // Notify H3 engine to free internal buffers and release backpressure.
     if (self->m_h3) {
         self->m_h3->acked_stream_data(stream_id, static_cast<std::size_t>(datalen));
@@ -292,6 +407,10 @@ int QuicConnection::cb_extend_max_local_streams_bidi(ngtcp2_conn* /*conn*/,
     if (self->on_extend_max_streams_cb) {
         boost::asio::post(self->m_endpoint.io_context(), [self = self->shared_from_this()]() {
             if (self->on_extend_max_streams_cb && !self->m_closed) {
+                QUIC_STAT(
+                    StatsReasonScope reason(*self, SendReason::flow);
+                )
+#line 295
                 self->on_extend_max_streams_cb();
             }
         });
@@ -310,6 +429,15 @@ QuicConnection::QuicConnection(QuicEndpoint& endpoint, std::shared_ptr<QuicTlsCt
       m_write_buf(std::max<std::size_t>(NGTCP2_MAX_UDP_PAYLOAD_SIZE, 1250)),
       m_in_read_pkt(false),
       m_in_pump_write(false) {
+    QUIC_STAT(
+        static const bool announced = [] {
+            _log_with_date_time("quic stats: compiled in", Log::INFO);
+            return true;
+        }();
+        (void)announced;
+        m_stats.m_stats_enabled = quic_stats_enabled();
+    )
+#line 313
     _log_with_date_time("QuicConnection: QuicConnection constructed for peer " + 
                         tp::string(peer.address().to_string().c_str()) + ":" + 
                         tp::to_string(peer.port()), Log::INFO);
@@ -317,6 +445,13 @@ QuicConnection::QuicConnection(QuicEndpoint& endpoint, std::shared_ptr<QuicTlsCt
 }
 
 QuicConnection::~QuicConnection() {
+    QUIC_STAT(
+        if (m_stats.m_stats_armed) {
+            m_stats.m_stats_timer->cancel();
+            write_stats_sample(true);
+        }
+    )
+#line 320
     _log_with_date_time("QuicConnection counters peer=" +
                         tp::string(m_peer.address().to_string().c_str()) + ":" +
                         tp::to_string(m_peer.port()) + " partial_write_retries=" +
@@ -392,7 +527,8 @@ bool QuicConnection::init_server(const uint8_t* data, std::size_t datalen,
 
     ngtcp2_settings settings;
     ngtcp2_settings_default(&settings);
-    settings.cc_algo = NGTCP2_CC_ALGO_BBR;
+    settings.cc_algo = QUIC_CC_ALGO;
+#line 396
     settings.initial_ts = now_nanos();
     const auto handshake_timeout = m_endpoint.config().get_ssl().handshake_timeout;
     settings.handshake_timeout = handshake_timeout
@@ -461,12 +597,17 @@ bool QuicConnection::init_server(const uint8_t* data, std::size_t datalen,
             const auto written = ngtcp2_conn_write_connection_close(m_conn, &ps.path, &pi,
               m_write_buf.data(), m_write_buf.size(), &ccerr, now_nanos());
             if (written > 0) {
-                m_endpoint.send_packet(m_peer, m_write_buf.data(), static_cast<std::size_t>(written));
+                QUIC_SEND(m_peer, m_write_buf.data(), static_cast<std::size_t>(written));
+#line 465
             }
         }
         return false;
     }
 
+    QUIC_STAT(
+        start_stats_sampler();
+    )
+#line 470
     pump_write(FUNC_NAME);
     reschedule_loss_timer();
     return true;
@@ -539,7 +680,8 @@ bool QuicConnection::init_client(const boost::asio::ip::udp::endpoint& local_ep,
 
     ngtcp2_settings settings;
     ngtcp2_settings_default(&settings);
-    settings.cc_algo = NGTCP2_CC_ALGO_BBR;
+    settings.cc_algo = QUIC_CC_ALGO;
+#line 543
     settings.initial_ts = now_nanos();
 
     ngtcp2_transport_params params;
@@ -603,6 +745,10 @@ bool QuicConnection::init_client(const boost::asio::ip::udp::endpoint& local_ep,
 
     ngtcp2_conn_set_tls_native_handle(m_conn, m_ssl);
 
+    QUIC_STAT(
+        start_stats_sampler();
+    )
+#line 606
     pump_write(FUNC_NAME);
     reschedule_loss_timer();
     return true;
@@ -615,6 +761,16 @@ void QuicConnection::on_packet(const uint8_t* data, std::size_t datalen,
                                const boost::asio::ip::udp::endpoint& remote_ep) {
     if (m_closed || !m_conn) {
         return;
+    QUIC_STAT(
+        }
+        StatsReasonScope reason(*this, SendReason::other);
+        uint64_t credit_before = 0;
+        if (m_stats.m_stats_enabled) credit_before = ngtcp2_conn_get_max_data_left2(m_conn);
+        if (m_stats.m_stats_enabled) {
+            m_stats.m_stats_read_flow = false;
+            m_stats.m_stats_read_ack = false;
+    )
+#line 618
     }
     m_in_read_pkt = true;
     auto path = make_path(local_ep, remote_ep);
@@ -641,6 +797,16 @@ void QuicConnection::on_packet(const uint8_t* data, std::size_t datalen,
         if (rv == 0 && after.pkt_recv > before.pkt_recv) {
             m_last_packet_received = QuicClock::now();
         }
+        QUIC_STAT(
+            // Window evidence wins over ACK evidence; unclassified receives stay other.
+            if (m_stats.m_stats_enabled) {
+                if (m_stats.m_stats_read_flow || ngtcp2_conn_get_max_data_left2(m_conn) > credit_before)
+                    m_stats.m_stats_reason = SendReason::flow;
+                else if (m_stats.m_stats_read_ack || after.bytes_in_flight < before.bytes_in_flight)
+                    m_stats.m_stats_reason = SendReason::ack;
+            }
+        )
+#line 644
         // ACKs release congestion credit; MAX_DATA and MAX_STREAM_DATA release
         // flow credit. Retry only after read_pkt returns, never inside callbacks.
         schedule_send_wakeup();
@@ -661,11 +827,19 @@ void QuicConnection::probe() {
 
 void QuicConnection::schedule_send_wakeup() {
     if (m_closed || m_send_wakeup_pending || m_conn_unacked_bufs.empty()) return;
+    QUIC_STAT(
+        if (m_stats.m_stats_enabled) m_stats.m_stats_wakeup_reason = m_stats.m_stats_reason;
+    )
+#line 664
     m_send_wakeup_pending = true;
     // One socket drain can accept many ACKs. Coalesce their wake-ups rather
     // than scanning queues and cancelling/rearming timers for every datagram;
     // that churn starves H3 and other connections under concurrent load.
     boost::asio::post(m_endpoint.io_context(), tp::bind_mem_alloc([this, self = shared_from_this()]() {
+        QUIC_STAT(
+            StatsReasonScope reason(*this, m_stats.m_stats_enabled ? m_stats.m_stats_wakeup_reason : SendReason::other);
+        )
+#line 669
         m_send_wakeup_pending = false;
         if (m_closed) return;
         resume_blocked_sends();
@@ -735,6 +909,13 @@ void QuicConnection::on_pump_write(const char* debug_path) {
 // ---- pump_write : send ACK/Control/handshake packet without stream id --------------------------
 
 void QuicConnection::pump_write(const char* debug_path) {
+    QUIC_STAT(
+        if (m_stats.m_stats_enabled) {
+            ++m_stats.m_reason_stats[static_cast<unsigned>(m_stats.m_stats_reason)].pump;
+            stats_observe_gap(false);
+        }
+    )
+#line 738
     if (m_closed || !m_conn) {
         return;
     }
@@ -769,6 +950,10 @@ void QuicConnection::pump_write(const char* debug_path) {
 
     bool ppe_pending = false;
     for (;;) {
+        QUIC_STAT(
+            if (m_stats.m_stats_enabled) stats_observe_gap(false);
+        )
+#line 772
         if (!ppe_pending) prepare_packet();
         auto ts = now_nanos();
         auto nwrite = ngtcp2_conn_write_pkt(m_conn, &ps.path, &pi, m_write_buf.data(), m_write_buf.size(), ts);
@@ -782,7 +967,8 @@ void QuicConnection::pump_write(const char* debug_path) {
                 auto flush_nwrite = ngtcp2_conn_write_pkt(m_conn, &ps.path, &pi, m_write_buf.data(),
                                                           m_write_buf.size(), flush_ts);
                 if (flush_nwrite > 0) {
-                    m_endpoint.send_packet(m_peer, m_write_buf.data(), static_cast<std::size_t>(flush_nwrite));
+                    QUIC_SEND(m_peer, m_write_buf.data(), static_cast<std::size_t>(flush_nwrite));
+#line 786
                     record_packet(static_cast<std::size_t>(flush_nwrite));
                 }
             }
@@ -798,6 +984,10 @@ void QuicConnection::pump_write(const char* debug_path) {
         }
         ppe_pending = false;
         if (nwrite == 0) {
+            QUIC_STAT(
+                if (m_stats.m_stats_enabled) stats_zero_write_expiry();
+            )
+#line 801
             break;
         }
         // Determine destination from the path returned by ngtcp2.
@@ -813,7 +1003,8 @@ void QuicConnection::pump_write(const char* debug_path) {
             dest = boost::asio::ip::udp::endpoint(boost::asio::ip::address_v6(bytes),
                                                   ntohs(sin6->sin6_port));
         }
-        m_endpoint.send_packet(dest, m_write_buf.data(), static_cast<std::size_t>(nwrite));
+        QUIC_SEND(dest, m_write_buf.data(), static_cast<std::size_t>(nwrite));
+#line 817
         record_packet(static_cast<std::size_t>(nwrite));
     }
 }
@@ -821,6 +1012,12 @@ void QuicConnection::pump_write(const char* debug_path) {
 // ---- send_stream_data -------------------------------------------------------
 
 void QuicConnection::send_stream_data(int64_t stream_id, std::shared_ptr<ReadBufWithGuard> buf, bool fin, IoHandler sent_cb){
+    QUIC_STAT(
+        // Preserve synchronous transport trigger; untriggered submissions are application.
+        StatsReasonScope reason(*this, m_stats.m_stats_enabled && m_stats.m_stats_reason != SendReason::other
+                                          ? m_stats.m_stats_reason : SendReason::application);
+    )
+#line 824
     if (m_closed || !m_conn) {
         if(sent_cb){
             sent_cb(boost::asio::error::broken_pipe, 0);
@@ -830,7 +1027,10 @@ void QuicConnection::send_stream_data(int64_t stream_id, std::shared_ptr<ReadBuf
 
     if (m_in_read_pkt) {
         auto self = shared_from_this();
-        boost::asio::post(m_endpoint.io_context(), [this, self, stream_id, buf, fin, sent_cb]() {
+        QUIC_STAT(const auto trigger = m_stats.m_stats_enabled ? m_stats.m_stats_reason : SendReason::other;)
+        boost::asio::post(m_endpoint.io_context(), [this, self, stream_id, buf, fin, sent_cb QUIC_STAT(, trigger)]() {
+            QUIC_STAT(StatsReasonScope reason(*this, trigger);)
+#line 834
             send_stream_data(stream_id, buf, fin, sent_cb);
         });
         return;
@@ -844,11 +1044,26 @@ void QuicConnection::send_stream_data(int64_t stream_id, std::shared_ptr<ReadBuf
             // that FIN was accepted. Losing it retains ngtcp2 stream state for
             // the connection lifetime, visible as T16 allocator growth.
             auto timer = TP_MAKE_SHARED(boost::asio::steady_timer, m_endpoint.io_context());
+            QUIC_STAT(
+                if (m_stats.m_stats_enabled) ++m_stats.m_retry_arms;
+            )
+#line 847
             timer->expires_after(std::chrono::milliseconds(10));
             timer->async_wait(tp::bind_mem_alloc(
               [this, self = shared_from_this(), timer, stream_id, buf, fin, sent_cb = std::move(sent_cb)](
                 const boost::system::error_code& ec) mutable {
-                  if (!ec) send_stream_data(stream_id, buf, fin, std::move(sent_cb));
+                  if (!ec) {
+                      // Public submission normally starts application attribution;
+                      // this timer is an empty-FIN retry instead.
+                      QUIC_STAT(StatsReasonScope reason(*this, SendReason::retry);)
+                      QUIC_STAT(const auto before = m_stats.m_stats_enabled ? m_stats.m_stats_udp_sent : 0;)
+                      send_stream_data(stream_id, buf, fin, std::move(sent_cb));
+                      QUIC_STAT(if (m_stats.m_stats_enabled) {
+                          if (m_stats.m_stats_udp_sent > before) ++m_stats.m_retry_expires_bytes;
+                          else ++m_stats.m_retry_expires_empty;
+                      })
+                  }
+#line 852
                   else if (sent_cb) sent_cb(ec, 0);
               }));
             return;
@@ -953,10 +1168,16 @@ void QuicConnection::UnackedBuf::send(){
         m_retry_delay_ms = 100;
 
         if (!m_timer_running) {
+            QUIC_STAT(
+                if (conn->m_stats.m_stats_enabled) ++conn->m_stats.m_retry_arms;
+            )
+#line 956
             m_timer_running = true;
             m_write_timer.expires_after(std::chrono::milliseconds(m_retry_delay_ms));
             m_write_timer.async_wait(
-                [unacked = this->shared_from_this(), sent, generation = ++m_timer_generation](boost::system::error_code ec){
+                [unacked = this->shared_from_this(), sent, generation = ++m_timer_generation
+                 QUIC_STAT(, stats_enabled = conn->m_stats.m_stats_enabled)](boost::system::error_code ec){
+#line 960
                     // aa0f39b removed event wake-ups because cancelling this
                     // wait completed the send with an error and wiped its queue.
                     // A cancelled old wait must not touch a newly armed timer.
@@ -976,6 +1197,20 @@ void QuicConnection::UnackedBuf::send(){
                         tp::to_string(unacked->m_buf ? unacked->m_buf->size() : 0), 
                         Log::ALL);
 
+                    QUIC_STAT(
+                        if (stats_enabled) {
+                            auto conn = unacked->m_conn.lock();
+                            if (conn) {
+                                const auto before = conn->m_stats.m_stats_udp_sent;
+                                StatsReasonScope reason(*conn, SendReason::retry);
+                                unacked->send();
+                                if (conn->m_stats.m_stats_udp_sent > before) ++conn->m_stats.m_retry_expires_bytes;
+                                else ++conn->m_stats.m_retry_expires_empty;
+                                return;
+                            }
+                        }
+                    )
+#line 979
                     unacked->send();
                 }
             );
@@ -1026,13 +1261,30 @@ void QuicConnection::fail_all_unacked_buffers(const boost::system::error_code& e
 
 int64_t QuicConnection::send_stream_vecs(int64_t stream_id, 
     const ngtcp2_vec* datav, std::size_t datavcnt, bool fin, bool& accepted, const char* debug_path){
+    QUIC_STAT(
+        StatsReasonScope reason(*this, m_stats.m_stats_enabled && m_stats.m_stats_reason != SendReason::other
+                                          ? m_stats.m_stats_reason : SendReason::application);
+    )
+#line 1029
     return send_stream_vecs_impl(stream_id, datav, datavcnt, fin, accepted, debug_path);
 }
 
 int64_t QuicConnection::send_stream_data_impl(int64_t stream_id, const uint8_t* data, std::size_t datalen,
                                       bool fin) {
+    QUIC_STAT(
+        if (m_stats.m_stats_enabled) ++m_stats.m_reason_stats[static_cast<unsigned>(m_stats.m_stats_reason)].data;
+    )
+#line 1034
     if (m_closed || !m_conn) {
         return -1;
+    QUIC_STAT(
+        }
+        if (m_stats.m_stats_enabled) {
+            stats_observe_gap(false);
+            m_stats.m_stats_have_stream = true;
+            m_stats.m_stats_stream_id = stream_id;
+    )
+#line 1036
     }
 
     _log_with_date_time("send_stream_data_impl enter: stream_id=" + tp::to_string(stream_id) + 
@@ -1079,12 +1331,17 @@ int64_t QuicConnection::send_stream_data_impl(int64_t stream_id, const uint8_t* 
         auto flush_nwrite = ngtcp2_conn_writev_stream(m_conn, &ps.path, &pi, m_write_buf.data(), m_write_buf.size(),
                                                       nullptr, 0, -1, nullptr, 0, packet_ts);
         if (flush_nwrite > 0) {
-            m_endpoint.send_packet(m_peer, m_write_buf.data(), static_cast<std::size_t>(flush_nwrite));
+            QUIC_SEND(m_peer, m_write_buf.data(), static_cast<std::size_t>(flush_nwrite));
+#line 1083
             record_packet(static_cast<std::size_t>(flush_nwrite));
         }
     };
 
     for (;;) {
+        QUIC_STAT(
+            if (m_stats.m_stats_enabled) stats_observe_gap(false);
+        )
+#line 1088
         if (!ppe_pending) {
             prepare_packet();
             packet_ts = now_nanos();
@@ -1110,6 +1367,10 @@ int64_t QuicConnection::send_stream_data_impl(int64_t stream_id, const uint8_t* 
         auto nwrite = ngtcp2_conn_writev_stream(m_conn, &ps.path, &pi, m_write_buf.data(), m_write_buf.size(),
                                                 &pdatalen, flags, stream_id, &vec, 1, packet_ts);
 
+        QUIC_STAT(
+            if (m_stats.m_stats_enabled && nwrite == 0) stats_zero_write_expiry();
+        )
+#line 1113
         if (nwrite == NGTCP2_ERR_WRITE_MORE) {
             ++m_write_more_count;
             _log_with_date_time("send_stream_data_impl: WRITE_MORE stream=" + 
@@ -1152,7 +1413,8 @@ int64_t QuicConnection::send_stream_data_impl(int64_t stream_id, const uint8_t* 
 
         ppe_pending = false;  // successful writev clears internal PPE_PENDING
         if (nwrite > 0) {
-            m_endpoint.send_packet(m_peer, m_write_buf.data(), static_cast<std::size_t>(nwrite));
+            QUIC_SEND(m_peer, m_write_buf.data(), static_cast<std::size_t>(nwrite));
+#line 1156
             record_packet(static_cast<std::size_t>(nwrite));
         }
 
@@ -1165,6 +1427,12 @@ int64_t QuicConnection::send_stream_data_impl(int64_t stream_id, const uint8_t* 
         }
 
         if (pdatalen <= 0) {
+            QUIC_STAT(
+                if (m_stats.m_stats_enabled) {
+                    ++m_stats.m_zero_len_sends;
+                }
+            )
+#line 1168
             _log_with_date_time("send_stream_data_impl: loop break due to pdatalen<=0 stream=" + tp::to_string(stream_id) + 
                 " written=" + tp::to_string(written), Log::ALL);
             // Flow control, congestion control, or no more data for this stream in current packets.
@@ -1184,9 +1452,21 @@ int64_t QuicConnection::send_stream_data_impl(int64_t stream_id, const uint8_t* 
 int64_t QuicConnection::send_stream_vecs_impl(int64_t stream_id,
                                           const ngtcp2_vec* datav,
                                           std::size_t datavcnt, bool fin, bool& accepted, const char* debug_path) {
+    QUIC_STAT(
+        if (m_stats.m_stats_enabled) ++m_stats.m_reason_stats[static_cast<unsigned>(m_stats.m_stats_reason)].vecs;
+    )
+#line 1187
     accepted = false;
     if (m_closed || !m_conn) {
         return -1;
+    QUIC_STAT(
+        }
+        if (m_stats.m_stats_enabled) {
+            stats_observe_gap(false);
+            m_stats.m_stats_have_stream = true;
+            m_stats.m_stats_stream_id = stream_id;
+    )
+#line 1190
     }
 
     _log_with_date_time("send_stream_vecs_impl enter: stream_id=" + tp::to_string(stream_id) + 
@@ -1240,12 +1520,17 @@ int64_t QuicConnection::send_stream_vecs_impl(int64_t stream_id,
         auto flush_nwrite = ngtcp2_conn_writev_stream(m_conn, &ps.path, &pi, m_write_buf.data(), m_write_buf.size(),
                                                       nullptr, 0, -1, nullptr, 0, packet_ts);
         if (flush_nwrite > 0) {
-            m_endpoint.send_packet(m_peer, m_write_buf.data(), static_cast<std::size_t>(flush_nwrite));
+            QUIC_SEND(m_peer, m_write_buf.data(), static_cast<std::size_t>(flush_nwrite));
+#line 1244
             record_packet(static_cast<std::size_t>(flush_nwrite));
         }
     };
 
     for (;;) {
+        QUIC_STAT(
+            if (m_stats.m_stats_enabled) stats_observe_gap(false);
+        )
+#line 1249
         if (!ppe_pending) {
             prepare_packet();
             packet_ts = now_nanos();
@@ -1309,6 +1594,10 @@ int64_t QuicConnection::send_stream_vecs_impl(int64_t stream_id,
         // pdatalen == 0 accepts an empty FIN; -1 means no stream frame was accepted.
         if (pdatalen >= 0 && (nwrite >= 0 || nwrite == NGTCP2_ERR_WRITE_MORE)) accepted = true;
 
+        QUIC_STAT(
+            if (m_stats.m_stats_enabled && nwrite == 0) stats_zero_write_expiry();
+        )
+#line 1312
         if (nwrite == NGTCP2_ERR_WRITE_MORE) {
             ++m_write_more_count;
             _log_with_date_time("send_stream_vecs_impl: WRITE_MORE stream=" + 
@@ -1354,7 +1643,8 @@ int64_t QuicConnection::send_stream_vecs_impl(int64_t stream_id,
 
         ppe_pending = false;  // successful writev clears internal PPE_PENDING
         if (nwrite > 0) {
-            m_endpoint.send_packet(m_peer, m_write_buf.data(), static_cast<std::size_t>(nwrite));
+            QUIC_SEND(m_peer, m_write_buf.data(), static_cast<std::size_t>(nwrite));
+#line 1358
             record_packet(static_cast<std::size_t>(nwrite));
         }
 
@@ -1367,6 +1657,12 @@ int64_t QuicConnection::send_stream_vecs_impl(int64_t stream_id,
         }
 
         if (pdatalen <= 0) {
+            QUIC_STAT(
+                if (m_stats.m_stats_enabled) {
+                    ++m_stats.m_zero_len_sends;
+                }
+            )
+#line 1370
             _log_with_date_time("send_stream_vecs_impl: loop break due to pdatalen<=0 stream=" + tp::to_string(stream_id) + 
                 " written=" + tp::to_string(written) + 
                 " path=" + tp::string(debug_path), Log::ALL);
@@ -1509,6 +1805,12 @@ void QuicConnection::close(uint64_t app_error_code) {
     }
     m_closed = true;
     m_loss_timer.cancel();
+    QUIC_STAT(
+        if (m_stats.m_stats_armed) {
+            m_stats.m_stats_timer->cancel();
+        }
+    )
+#line 1512
 
     fail_all_unacked_buffers(boost::asio::error::broken_pipe);
 
@@ -1551,9 +1853,14 @@ void QuicConnection::close(uint64_t app_error_code) {
         auto nwrite = ngtcp2_conn_write_connection_close(m_conn, &ps.path, &pi, m_write_buf.data(),
                                                          m_write_buf.size(), &ccerr, now_nanos());
         if (nwrite > 0) {
-            m_endpoint.send_packet(m_peer, m_write_buf.data(), static_cast<std::size_t>(nwrite));
+            QUIC_SEND(m_peer, m_write_buf.data(), static_cast<std::size_t>(nwrite));
+#line 1555
         }
     }
+    QUIC_STAT(
+        write_stats_sample(true);
+    )
+#line 1557
 }
 
 // ---- handshake_completed ----------------------------------------------------
@@ -1627,6 +1934,11 @@ void QuicConnection::reschedule_loss_timer() {
         if (m_closed) {
             return;
         }
+        QUIC_STAT(
+            // Aggregate ngtcp2 timer: includes loss/PTO, ACK, pacing and idle expiry.
+            StatsReasonScope reason(*this, SendReason::loss);
+        )
+#line 1630
         auto now = now_nanos();
         m_last_timer_expiry = 0; // reset
         auto rv = ngtcp2_conn_handle_expiry(m_conn, now);
@@ -1648,6 +1960,10 @@ void QuicConnection::reschedule_loss_timer() {
 
 
 void QuicConnection::stream_extend_window(int64_t stream_id, std::size_t n) {
+    QUIC_STAT(
+        StatsReasonScope reason(*this, SendReason::flow);
+    )
+#line 1651
     if (m_conn && !m_closed && n > 0) {
         ngtcp2_conn_extend_max_stream_offset(m_conn, stream_id, n);
         ngtcp2_conn_extend_max_offset(m_conn, n);
@@ -1662,6 +1978,10 @@ void QuicConnection::stream_extend_window(int64_t stream_id, std::size_t n) {
 }
 
 void QuicConnection::conn_extend_window(std::size_t n) {
+    QUIC_STAT(
+        StatsReasonScope reason(*this, SendReason::flow);
+    )
+#line 1665
     if (m_conn && !m_closed && n > 0) {
         ngtcp2_conn_extend_max_offset(m_conn, n);
         // Trigger active pump write to immediately transmit window updates (MAX_DATA / MAX_STREAM_DATA) to prevent deadlock.
@@ -1701,6 +2021,11 @@ void QuicConnection::stop_reading_stream(int64_t stream_id, uint64_t app_error_c
 }
 
 void QuicConnection::on_extend_max_stream_data(int64_t stream_id, uint64_t max_data) {
+    QUIC_STAT(
+        StatsReasonScope reason(*this, SendReason::flow);
+        if (m_stats.m_stats_enabled && m_in_read_pkt) m_stats.m_stats_read_flow = true;
+    )
+#line 1704
     _log_with_date_time("on_extend_max_stream_data: stream=" + tp::to_string(stream_id) + 
                         " max_data=" + tp::to_string(max_data), Log::ALL);
     if (m_h3) {
@@ -1713,3 +2038,170 @@ bool QuicConnection::is_stream_flow_control_blocked(int64_t stream_id) const {
     if (!m_conn) return false;
     return ngtcp2_conn_get_max_stream_data_left(m_conn, stream_id) == 0;
 }
+#if TROJAN_QUIC_STATS
+
+void QuicConnection::send_udp(const boost::asio::ip::udp::endpoint& dest, const uint8_t* data, std::size_t len) {
+    if (!m_stats.m_stats_enabled) {
+        m_endpoint.send_packet(dest, data, len);
+        return;
+    }
+    const bool sent = m_endpoint.send_packet(dest, data, len);
+    if (!sent) ++m_stats.m_udp_send_errors;
+    if (sent && len != 0) {
+        ++m_stats.m_stats_udp_sent;
+        ++m_stats.m_reason_stats[static_cast<unsigned>(m_stats.m_stats_reason)].packets;
+        stats_observe_gap(true);
+    }
+}
+
+void QuicConnection::stats_zero_write_expiry() {
+    const auto expiry = ngtcp2_conn_get_expiry2(m_conn);
+    if (expiry == UINT64_MAX) {
+        m_stats.m_zero_write_expiry_last = UINT64_MAX;
+        return;
+    }
+    const auto now = now_nanos();
+    m_stats.m_zero_write_expiry_last = expiry > now ? expiry - now : 0;
+    m_stats.m_zero_write_expiry_max = std::max(m_stats.m_zero_write_expiry_max, m_stats.m_zero_write_expiry_last);
+}
+
+void QuicConnection::stats_observe_gap(bool sent) {
+    if (!m_conn) return;
+    ngtcp2_conn_info info{};
+    ngtcp2_conn_get_conn_info2(m_conn, &info);
+    bool open = false;
+    if (info.bytes_in_flight < info.cwnd && ngtcp2_conn_get_max_data_left2(m_conn) != 0) {
+        for (const auto& [id, queue] : m_conn_unacked_bufs) {
+            if (ngtcp2_conn_get_max_stream_data_left2(m_conn, id) == 0) continue;
+            for (const auto& buf : queue->buffers) {
+                if (buf->m_buf && buf->m_sending_offset < buf->m_buf->size()) { open = true; break; }
+            }
+            if (open) break;
+        }
+    }
+    const auto now = now_nanos();
+    if (open && m_stats.m_open_gap_start != 0)
+        m_stats.m_open_gap_max = std::max(m_stats.m_open_gap_max, now - m_stats.m_open_gap_start);
+    m_stats.m_open_gap_start = open ? (sent || m_stats.m_open_gap_start == 0 ? now : m_stats.m_open_gap_start) : 0;
+}
+
+void QuicConnection::start_stats_sampler() {
+    if (!m_stats.m_stats_enabled || m_stats.m_stats_armed || !m_conn) {
+        return;
+    }
+    m_stats.m_stats_timer = TP_MAKE_UNIQUE(boost::asio::steady_timer, m_endpoint.io_context());
+    m_stats.m_stats_armed = true;
+    m_stats.m_stats_origin = std::chrono::steady_clock::now();
+    arm_stats_timer();
+}
+
+void QuicConnection::arm_stats_timer() {
+    auto weak = weak_from_this();
+    m_stats.m_stats_timer->expires_after(std::chrono::milliseconds(100));
+    m_stats.m_stats_timer->async_wait(tp::bind_mem_alloc([weak](const boost::system::error_code& ec) {
+        auto self = weak.lock();
+        if (!self || ec || self->m_closed || !self->m_conn) {
+            return;
+        }
+        self->write_stats_sample(false);
+        if (!self->m_closed) {
+            self->arm_stats_timer();
+        }
+    }));
+}
+
+std::size_t QuicConnection::stats_app_queue_bytes(int64_t& stream_id, bool& have_stream) const {
+    std::size_t bytes = 0;
+    stream_id = m_stats.m_stats_stream_id;
+    have_stream = m_stats.m_stats_have_stream;
+    bool picked = false;
+    std::size_t best = 0;
+    for (const auto& [id, queue] : m_conn_unacked_bufs) {
+        std::size_t pending = 0;
+        for (const auto& buf : queue->buffers) {
+            if (!buf->m_buf) {
+                continue;
+            }
+            const auto size = buf->m_buf->size();
+            if (buf->m_sending_offset < size) {
+                pending += size - buf->m_sending_offset;
+            }
+        }
+        bytes += pending;
+        if (!picked || pending > best) {
+            best = pending;
+            stream_id = id;
+            have_stream = true;
+            picked = true;
+        }
+    }
+    return bytes;
+}
+
+void QuicConnection::write_stats_sample(bool final_sample) {
+    if (!m_stats.m_stats_enabled || !m_stats.m_stats_armed || !m_conn) {
+        return;
+    }
+    if (final_sample) {
+        if (m_stats.m_stats_final_written) {
+            return;
+        }
+        m_stats.m_stats_final_written = true;
+    }
+
+    ngtcp2_conn_info info{};
+    ngtcp2_conn_get_conn_info2(m_conn, &info);
+
+    int64_t stream_id = -1;
+    bool have_stream = false;
+    const auto queue_bytes = stats_app_queue_bytes(stream_id, have_stream);
+
+    char stream_credit[32] = "";
+    if (have_stream) {
+        std::snprintf(stream_credit, sizeof(stream_credit), "%llu",
+          static_cast<unsigned long long>(ngtcp2_conn_get_max_stream_data_left2(m_conn, stream_id)));
+    }
+
+    const auto t_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - m_stats.m_stats_origin)
+                        .count();
+
+    stats_observe_gap(false);
+    char line[2048];
+    std::snprintf(line, sizeof(line),
+      "%lld,%s,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%s,%llu,%llu,%llu,%llu,%llu",
+      static_cast<long long>(t_ms), m_is_server ? "server" : "client",
+      static_cast<unsigned long long>(info.cwnd), static_cast<unsigned long long>(info.ssthresh),
+      static_cast<unsigned long long>(info.bytes_in_flight), static_cast<unsigned long long>(info.latest_rtt),
+      static_cast<unsigned long long>(info.min_rtt), static_cast<unsigned long long>(info.smoothed_rtt),
+      static_cast<unsigned long long>(info.rttvar), static_cast<unsigned long long>(info.pkt_sent),
+      static_cast<unsigned long long>(info.bytes_sent), static_cast<unsigned long long>(info.pkt_recv),
+      static_cast<unsigned long long>(info.bytes_recv), static_cast<unsigned long long>(info.pkt_lost),
+      static_cast<unsigned long long>(info.bytes_lost), static_cast<unsigned long long>(info.pkt_discarded),
+      static_cast<unsigned long long>(ngtcp2_conn_get_max_data_left2(m_conn)),
+      static_cast<unsigned long long>(ngtcp2_conn_get_streams_bidi_left2(m_conn)), stream_credit,
+      static_cast<unsigned long long>(queue_bytes), static_cast<unsigned long long>(m_stream_data_blocked_count),
+      static_cast<unsigned long long>(m_write_more_count), static_cast<unsigned long long>(m_stats.m_zero_len_sends),
+      static_cast<unsigned long long>(m_stats.m_udp_send_errors));
+    // All added counts are cumulative; only gap maximum/baseline reset per row.
+    std::size_t used = std::strlen(line);
+    for (const auto& counts : m_stats.m_reason_stats) {
+        used += static_cast<std::size_t>(std::snprintf(line + used, sizeof(line) - used,
+            ",%llu,%llu,%llu,%llu", static_cast<unsigned long long>(counts.pump),
+            static_cast<unsigned long long>(counts.data), static_cast<unsigned long long>(counts.vecs),
+            static_cast<unsigned long long>(counts.packets)));
+    }
+    char expiry_ms[32] = "";
+    if (m_stats.m_zero_write_expiry_last != UINT64_MAX)
+        std::snprintf(expiry_ms, sizeof(expiry_ms), "%.6f", m_stats.m_zero_write_expiry_last / 1e6);
+    std::snprintf(line + used, sizeof(line) - used, ",%llu,%llu,%llu,%.6f,%s,%.6f",
+        static_cast<unsigned long long>(m_stats.m_retry_arms), static_cast<unsigned long long>(m_stats.m_retry_expires_bytes),
+        static_cast<unsigned long long>(m_stats.m_retry_expires_empty), m_stats.m_open_gap_max / 1e6,
+        expiry_ms, m_stats.m_zero_write_expiry_max / 1e6);
+    quic_stats_file().write(line, final_sample);
+    m_stats.m_open_gap_max = 0;
+    m_stats.m_zero_write_expiry_last = UINT64_MAX;
+    m_stats.m_zero_write_expiry_max = 0;
+    if (m_stats.m_open_gap_start != 0) m_stats.m_open_gap_start = now_nanos();
+}
+#endif

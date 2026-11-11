@@ -77,6 +77,8 @@ The `cmake ..` command can be extended with the following options.
 - `ENABLE_REUSE_PORT` (Only on Linux)
     - `-DENABLE_REUSE_PORT=ON`: build with `SO_REUSEPORT` support (default).
     - `-DENABLE_REUSE_PORT=OFF`: build without `SO_REUSEPORT` support.
+- `TROJAN_QUIC_STATS` (diagnostics only, default `OFF`)
+    - `-DTROJAN_QUIC_STATS=ON`: compile QUIC sender-state CSV sampling and diagnostic `TROJAN_QUIC_CC` selection. Set the `TROJAN_QUIC_STATS` environment variable to a CSV path to sample. Default builds contain neither feature and always use BBR. See [diagnostics](../tests/netem/DIAGNOSTICS.md).
 - `ENABLE_QUIC` (Experimental)
     - `-DENABLE_QUIC=ON`: build QUIC/HTTP3 from the `boringssl`, `ngtcp2`, and `nghttp3` submodules (default).
     - `-DENABLE_QUIC=OFF`: build without QUIC support.

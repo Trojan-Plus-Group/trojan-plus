@@ -1,0 +1,2 @@
+// Shared class layout must match in non-QUIC consumers too.
+#cmakedefine TROJAN_QUIC_STATS_LAYOUT 1

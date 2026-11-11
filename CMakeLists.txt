@@ -272,7 +272,16 @@ set(TROJAN_SOURCE_FILES
 
 # QUIC transport via ngtcp2 + BoringSSL (default ON)
 option(ENABLE_QUIC "Build QUIC transport via ngtcp2 + BoringSSL" ON)
+option(TROJAN_QUIC_STATS "Build QUIC sender diagnostics and diagnostic CC selection" OFF)
+set(TROJAN_QUIC_STATS_LAYOUT ${TROJAN_QUIC_STATS})
+configure_file(src/quic/quic_stats_config.h.in generated/quic_stats_config.h)
+include_directories("${CMAKE_BINARY_DIR}/generated")
 if(ENABLE_QUIC)
+    if(TROJAN_QUIC_STATS)
+        file(GLOB QUIC_DIAGNOSTIC_SOURCES src/quic/*.cpp src/quic/h1_upstream/*.cpp)
+        set_source_files_properties(${QUIC_DIAGNOSTIC_SOURCES}
+            PROPERTIES COMPILE_DEFINITIONS TROJAN_QUIC_STATS=1)
+    endif()
     list(APPEND TROJAN_SOURCE_FILES
         src/quic/quic_tls_ctx.cpp
         src/quic/quic_endpoint.cpp
