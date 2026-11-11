@@ -28,6 +28,32 @@ setting `ssl.verify` to `false` disables certificate verification entirely.
 fingerprint. Servers prefer the configured token and also accept `h3`, rejecting
 unrelated protocols. Set the same custom token on both ends when needed.
 
+## QUIC UDP GSO
+
+`quic.udp_gso` defaults to `false`. This send-only endpoint option works on
+both clients and servers independently; peers need no matching setting.
+On Linux (including Android when headers define `UDP_SEGMENT`), enabling it
+bundles loss-timer coalescing with `UDP_SEGMENT` send batching. An armed,
+unfired timer can remain earlier than a new deadline; an earlier requested
+deadline always re-arms it. The equivalence tolerance is 1 ms.
+The send queue holds at most four 64 KiB buffers. At the cap, packet generation
+stops before calling ngtcp2; socket writability drains retained encrypted bytes
+and resumes producers. `EAGAIN` retains bytes and ordering rather than using the
+legacy per-datagram retry path. Receive behavior and QUIC protocol stay unchanged.
+
+GSO activation logs once at INFO. A failed non-transient GSO send permanently
+disables aggregation for that socket, logs WARN with errno, and retries the same
+bytes in order using ordinary datagrams. Unsupported platforms compile out the
+feature and warn when requested. This is opt-in, not a change to default packet
+shaping; GRO and ACK thinning are not enabled.
+
+```json
+"quic": {
+    "enabled": true,
+    "udp_gso": false
+}
+```
+
 ## QUIC retry and timing
 
 `quic.retry_connect_timeout_ms` defaults to `1000` milliseconds when omitted.
@@ -36,6 +62,7 @@ Set it explicitly to `0` to disable automatic client reconnection. For example:
 ```json
 "quic": {
     "enabled": true,
+    "udp_gso": false,
     "retry_connect_timeout_ms": 1000
 }
 ```

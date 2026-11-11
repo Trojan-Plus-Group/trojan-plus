@@ -18,6 +18,8 @@
 #include <boost/asio/ip/udp.hpp>
 
 #include "mem/memallocator.h"
+#include <quic_stats_config.h>
+#include "quic_udp_gso.h"
 
 // Length of the per-process Stateless Reset secret (256-bit).
 constexpr std::size_t kStatelessResetSecretLen = 32;
@@ -52,6 +54,12 @@ class QuicEndpoint : public std::enable_shared_from_this<QuicEndpoint> {
     bool send_packet(const boost::asio::ip::udp::endpoint& dest,
                      const uint8_t* data, std::size_t len);
 
+#if TP_QUIC_UDP_GSO
+    bool aggregate_capacity(const std::shared_ptr<QuicConnection>& connection);
+    void send_aggregate(const boost::asio::ip::udp::endpoint& dest,
+                        tp::vector<uint8_t>&& bytes, std::size_t segment);
+#endif
+
     // Local endpoint of the bound UDP socket (needed to build ngtcp2 path).
     boost::asio::ip::udp::endpoint local_endpoint() const;
 
@@ -70,6 +78,19 @@ class QuicEndpoint : public std::enable_shared_from_this<QuicEndpoint> {
     boost::asio::ip::udp::endpoint m_recv_endpoint;
     tp::vector<uint8_t> m_recv_buf;
     bool m_running;
+#if TP_QUIC_UDP_GSO
+    struct PendingAggregate {
+        boost::asio::ip::udp::endpoint dest;
+        tp::vector<uint8_t> bytes;
+        std::size_t segment;
+        std::size_t offset{0};
+    };
+    void drain_aggregates();
+    quic_udp_gso::Queue<tp::deque<PendingAggregate>> m_aggregate_queue;
+    tp::vector<std::shared_ptr<QuicConnection>> m_aggregate_waiters;
+    bool m_send_wait{false};
+    bool m_gso_fallback_logged{false};
+#endif
     // 256-bit secret randomised once per process lifetime.
     uint8_t m_stateless_reset_secret[kStatelessResetSecretLen];
 };

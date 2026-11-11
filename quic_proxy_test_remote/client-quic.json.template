@@ -38,6 +38,7 @@
         "pipeline_proxy_icmp": false
     },
     "quic": {
+        "udp_gso": false,
         "enabled": true,
         "alpn_token": "h3",
         "debug_disable_tcp": true

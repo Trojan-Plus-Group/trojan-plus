@@ -38,6 +38,7 @@
         "pipeline_num": 0
     },
     "quic": {
+        "udp_gso": false,
         "enabled": true,
         "retry_connect_timeout_ms": 1000,
         "alpn_token": "h3",

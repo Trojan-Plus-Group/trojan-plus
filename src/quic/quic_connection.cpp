@@ -588,6 +588,12 @@ bool QuicConnection::init_server(const uint8_t* data, std::size_t datalen,
             "QuicConnection::init_server: initial ngtcp2_conn_read_pkt: " + tp::string(ngtcp2_strerror(rv)),
             Log::WARN);
         if (rv == NGTCP2_ERR_CRYPTO) {
+#if TP_QUIC_UDP_GSO
+            if (m_endpoint.config().get_quic().udp_gso) {
+                close(); // Capacity-aware close preserves the endpoint FIFO.
+                return false;
+            }
+#endif
             // Initial TLS failures must reach the peer as QUIC crypto alerts, not silent drops.
             ngtcp2_ccerr ccerr;
             ngtcp2_ccerr_set_tls_alert(&ccerr, ngtcp2_conn_get_tls_alert(m_conn), nullptr, 0);
@@ -880,6 +886,9 @@ void QuicConnection::on_pump_write(const char* debug_path) {
     if (m_closed || !m_conn || m_in_read_pkt) {
         return;
     }
+#if TP_QUIC_UDP_GSO
+    if (m_close_waiting) return;
+#endif
 
     if (m_in_pump_write) {
         return;
@@ -909,6 +918,13 @@ void QuicConnection::on_pump_write(const char* debug_path) {
 // ---- pump_write : send ACK/Control/handshake packet without stream id --------------------------
 
 void QuicConnection::pump_write(const char* debug_path) {
+#if TP_QUIC_UDP_GSO
+    if (m_endpoint.config().get_quic().udp_gso && m_conn && !m_closed) {
+        bool accepted = false;
+        send_gso(-1, nullptr, 0, false, accepted);
+        return;
+    }
+#endif
     QUIC_STAT(
         if (m_stats.m_stats_enabled) {
             ++m_stats.m_reason_stats[static_cast<unsigned>(m_stats.m_stats_reason)].pump;
@@ -1287,6 +1303,14 @@ int64_t QuicConnection::send_stream_data_impl(int64_t stream_id, const uint8_t* 
 #line 1036
     }
 
+#if TP_QUIC_UDP_GSO
+    if (m_endpoint.config().get_quic().udp_gso) {
+        ngtcp2_vec vec{const_cast<uint8_t*>(data), datalen};
+        bool accepted = false;
+        return send_gso(stream_id, &vec, 1, fin, accepted);
+    }
+#endif
+
     _log_with_date_time("send_stream_data_impl enter: stream_id=" + tp::to_string(stream_id) + 
                     " datalen=" + tp::to_string(datalen) + " fin=" + tp::to_string(fin), Log::ALL);
 
@@ -1472,6 +1496,10 @@ int64_t QuicConnection::send_stream_vecs_impl(int64_t stream_id,
     _log_with_date_time("send_stream_vecs_impl enter: stream_id=" + tp::to_string(stream_id) + 
                     " datavcnt=" + tp::to_string(datavcnt) + " fin=" + tp::to_string(fin) + 
                     " path=" + tp::string(debug_path), Log::ALL);
+
+#if TP_QUIC_UDP_GSO
+    if (m_endpoint.config().get_quic().udp_gso) return send_gso(stream_id, datav, datavcnt, fin, accepted);
+#endif
 
     // Calculate total data length across all vectors
     std::size_t total_len = 0;
@@ -1681,6 +1709,101 @@ int64_t QuicConnection::send_stream_vecs_impl(int64_t stream_id,
     return static_cast<int64_t>(written);
 }
 
+#if TP_QUIC_UDP_GSO
+void QuicConnection::on_socket_writable() {
+    if (m_close_waiting) {
+        m_close_waiting = false;
+        close(m_close_waiting_error);
+        return;
+    }
+    if (m_closed || !m_conn) return;
+    resume_blocked_sends();
+    on_pump_write(FUNC_NAME);
+}
+
+int64_t QuicConnection::send_gso(int64_t stream_id, const ngtcp2_vec* vecs,
+                                std::size_t count, bool fin, bool& accepted) {
+    accepted = false;
+    if (m_close_waiting) return 0;
+    // Reserve queue capacity before ngtcp2 consumes plaintext or creates ciphertext.
+    if (!m_endpoint.aggregate_capacity(shared_from_this())) return 0;
+    struct Context {
+        int64_t id;
+        tp::vector<ngtcp2_vec> vecs;
+        std::size_t written{0};
+        bool fin;
+        bool accepted{false};
+        std::size_t encrypted{0};
+        int error{0};
+    } context{stream_id, {}, 0, fin};
+    if (count) context.vecs.assign(vecs, vecs + count);
+    m_gso_context = &context;
+    auto callback = [](ngtcp2_conn* conn, ngtcp2_path* path, ngtcp2_pkt_info* pi,
+                       uint8_t* dest, size_t size, ngtcp2_tstamp ts, void* user) -> ngtcp2_ssize {
+        auto* self = static_cast<QuicConnection*>(user);
+        auto& c = *static_cast<Context*>(self->m_gso_context);
+        ngtcp2_ssize consumed = -1;
+        auto n = ngtcp2_conn_writev_stream(conn, path, pi, dest, size, &consumed,
+            NGTCP2_WRITE_STREAM_FLAG_PADDING | (c.fin ? NGTCP2_WRITE_STREAM_FLAG_FIN : 0),
+            c.id, c.vecs.data(), c.vecs.size(), ts);
+        if (n == NGTCP2_ERR_STREAM_DATA_BLOCKED || n == NGTCP2_ERR_STREAM_SHUT_WR ||
+            n == NGTCP2_ERR_STREAM_NOT_FOUND) {
+            consumed = -1;
+            n = ngtcp2_conn_write_pkt(conn, path, pi, dest, size, ts);
+        }
+        if (n < 0) {
+            c.error = static_cast<int>(n);
+            // Aggregate API discards its prefix on negative callback return.
+            // Flush existing ciphertext first, then handle this error outside.
+            return c.encrypted ? 0 : n;
+        }
+        if (n > 0) c.encrypted += static_cast<std::size_t>(n);
+        if (n >= 0 && consumed >= 0) {
+            c.accepted = true;
+            c.written += static_cast<std::size_t>(consumed);
+            auto left = static_cast<std::size_t>(consumed);
+            bool empty = true;
+            for (auto& v : c.vecs) {
+                auto take = std::min(left, v.len);
+                if (take) v.base += take;
+                v.len -= take;
+                left -= take;
+                empty = empty && v.len == 0;
+            }
+            if (empty) { c.id = -1; c.fin = false; c.vecs.clear(); }
+        }
+        return n;
+    };
+    tp::vector<uint8_t> buffer(quic_udp_gso::buffer_size);
+    ngtcp2_path_storage path;
+    ngtcp2_path_storage_zero(&path);
+    ngtcp2_pkt_info pi{};
+    std::size_t segment = 0;
+    // ngtcp2 clamps aggregation to its send quantum and updates packet transmit time.
+    auto n = ngtcp2_conn_write_aggregate_pkt(m_conn, &path.path, &pi, buffer.data(),
+        buffer.size(), &segment, callback, now_nanos());
+    m_gso_context = nullptr;
+    if (n > 0) {
+        auto peer = m_peer;
+        if (path.path.remote.addr && path.path.remote.addrlen > 0 &&
+            static_cast<std::size_t>(path.path.remote.addrlen) <= peer.capacity()) {
+            std::memcpy(peer.data(), path.path.remote.addr, path.path.remote.addrlen);
+            peer.resize(path.path.remote.addrlen);
+        }
+        buffer.resize(static_cast<std::size_t>(n));
+        m_endpoint.send_aggregate(peer, std::move(buffer), segment);
+    }
+    const int error = context.error ? context.error : (n < 0 ? static_cast<int>(n) : 0);
+    if (error) {
+        _log_with_date_time("QUIC aggregate write: " + tp::string(ngtcp2_strerror(error)), Log::WARN);
+        if (error == NGTCP2_ERR_CLOSING || error == NGTCP2_ERR_DRAINING) close();
+    }
+    accepted = context.accepted;
+    reschedule_loss_timer();
+    return n < 0 && !context.written ? -1 : static_cast<int64_t>(context.written);
+}
+#endif
+
 // ---- open_bidi_stream -------------------------------------------------------
 
 int QuicConnection::open_bidi_stream(int64_t& stream_id) {
@@ -1803,6 +1926,14 @@ void QuicConnection::close(uint64_t app_error_code) {
         });
         return;
     }
+#if TP_QUIC_UDP_GSO
+    if (m_endpoint.config().get_quic().udp_gso &&
+        !m_endpoint.aggregate_capacity(shared_from_this())) {
+        m_close_waiting = true;
+        m_close_waiting_error = app_error_code;
+        return; // Do not create a close packet until its FIFO slot is available.
+    }
+#endif
     m_closed = true;
     m_loss_timer.cancel();
     QUIC_STAT(
@@ -1915,6 +2046,10 @@ void QuicConnection::reschedule_loss_timer() {
     if (expiry == m_last_timer_expiry) {
         return;
     }
+#if TP_QUIC_UDP_GSO
+    if (m_endpoint.config().get_quic().udp_gso &&
+        quic_udp_gso::keep_timer(m_last_timer_expiry, expiry)) return;
+#endif
 
     auto now_ns    = now_nanos();
     auto delay_ns  = expiry > now_ns ? expiry - now_ns : 0;

@@ -212,12 +212,12 @@ class Target(http.server.BaseHTTPRequestHandler):
         pass
 
 
-def run_case(binary, directory, profile, mode, cert, key, http_port, timeout):
+def run_case(binary, directory, profile, mode, cert, key, http_port, timeout, *, udp_gso_roles=()):
     directory.mkdir()
     processes = []
     relay = None
     result = {"profile": profile, "mode": mode, "loss_backend": "deterministic UDP relay, NOT tc netem",
-              "status": "failed"}
+              "udp_gso_roles": list(udp_gso_roles), "status": "failed"}
     try:
         with contextlib.ExitStack() as stack:
             server_port = free_port()
@@ -234,6 +234,7 @@ def run_case(binary, directory, profile, mode, cert, key, http_port, timeout):
                 config["password"] = ["public-quic-initial-loss-test-fixture"]
                 config["ssl"]["cert"] = str(cert)
                 config["quic"]["debug_disable_tcp"] = True
+                config["quic"]["udp_gso"] = role in udp_gso_roles
                 config["tcp"]["reuse_port"] = False
                 if role == "server":
                     config["ssl"]["key"] = str(key)
@@ -306,12 +307,14 @@ def self_check():
     assert len(PAYLOAD) == 1024 * 1024
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--binary", type=Path)
+    parser.add_argument("--udp-gso", action="store_true",
+                        help="run SHA256 transfers with server-only and both-endpoint UDP GSO")
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--timeout", type=float, default=60, help="deadline per case, seconds")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     self_check()
     if args.binary is None:
         print("PASS helper self-checks; SKIP live QUIC integration (supply --binary and --output-dir)")
@@ -345,11 +348,19 @@ def main():
                                 "-keyout", str(key), "-out", str(cert), "-days", "1",
                                 "-subj", "/CN=localhost"], stdout=log, stderr=subprocess.STDOUT,
                                check=True, timeout=30)
-            for profile in ("none", "chrome"):
-                for mode in ("normal", "loss5", "first_reply"):
-                    run_case(args.binary.resolve(), run / f"{profile}-{mode}", profile, mode,
-                             cert, key, target.server_port, args.timeout)
-                    print(f"PASS {profile}/{mode}: 1 MiB SHA256 + client/server QUIC handshake", flush=True)
+            if args.udp_gso:
+                for roles in (("server",), ("server", "client")):
+                    name = "gso-" + "-".join(roles)
+                    for mode in ("normal", "loss5"):
+                        run_case(args.binary.resolve(), run / f"{name}-{mode}", "chrome", mode,
+                                 cert, key, target.server_port, args.timeout, udp_gso_roles=roles)
+                        print(f"PASS {name}/{mode}: 1 MiB SHA256 + client/server QUIC handshake", flush=True)
+            else:
+                for profile in ("none", "chrome"):
+                    for mode in ("normal", "loss5", "first_reply"):
+                        run_case(args.binary.resolve(), run / f"{profile}-{mode}", profile, mode,
+                                 cert, key, target.server_port, args.timeout)
+                        print(f"PASS {profile}/{mode}: 1 MiB SHA256 + client/server QUIC handshake", flush=True)
     finally:
         target.shutdown()
         target.server_close()
