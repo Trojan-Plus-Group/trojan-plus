@@ -38,6 +38,7 @@
         "pipeline_proxy_icmp": false
     },
     "quic": {
+        "udp_gso": false,
         "enabled": false
     }
 }

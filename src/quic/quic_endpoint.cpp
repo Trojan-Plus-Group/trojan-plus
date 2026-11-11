@@ -15,6 +15,9 @@
 #include <openssl/sha.h>
 
 #include <array>
+#if TROJAN_QUIC_STATS
+#include <cstdlib>
+#endif
 #include <fstream>
 
 #include "core/config.h"
@@ -22,6 +25,11 @@
 #include "mem/memallocator.h"
 #include "platform_exports.h"
 #include "quic_tls_ctx.h"
+#if TP_QUIC_UDP_GSO
+#include "quic_connection.h"
+#include <boost/asio/post.hpp>
+#include <sys/socket.h>
+#endif
 
 namespace {
 constexpr std::size_t kRecvBufBytes = 65536;
@@ -36,6 +44,11 @@ QuicEndpoint::QuicEndpoint(boost::asio::io_context& io_ctx, const Config& config
       m_recv_buf(kRecvBufBytes, 0),
       m_running(false) {
     derive_stateless_reset_secret();
+#if !TP_QUIC_UDP_GSO
+    if (config.get_quic().udp_gso) {
+        _log_with_date_time("QUIC udp_gso unavailable: Linux UDP_SEGMENT support required", Log::WARN);
+    }
+#endif
 }
 
 void QuicEndpoint::derive_stateless_reset_secret() {
@@ -106,6 +119,11 @@ void QuicEndpoint::open_socket(const boost::asio::ip::udp::endpoint& bind_ep,
         return;
     }
 
+#if TP_QUIC_UDP_GSO
+    if (m_config.get_quic().udp_gso) {
+        _log_with_date_time("QUIC UDP_SEGMENT enabled for socket", Log::INFO);
+    }
+#endif
     // Keep option, query, and non-blocking errors separate so each result remains observable.
     const auto& q = m_config.get_quic();
     if (q.recv_buffer_size > 0) {
@@ -235,6 +253,22 @@ void QuicEndpoint::async_recv() {
 
 void QuicEndpoint::stop() {
     m_running = false;
+#if TP_QUIC_UDP_GSO
+#if TROJAN_QUIC_STATS
+    const char* stats_path = std::getenv("TROJAN_QUIC_STATS");
+    if (m_config.get_quic().udp_gso && stats_path && stats_path[0]) {
+        _log_with_date_time("QUIC UDP_SEGMENT gso_attempts=" + tp::to_string(m_aggregate_queue.gso_attempts) +
+                           " gso_successes=" + tp::to_string(m_aggregate_queue.gso_successes) +
+                           " gso_datagrams=" + tp::to_string(m_aggregate_queue.gso_datagrams) +
+                           " gso_bytes=" + tp::to_string(m_aggregate_queue.gso_bytes) +
+                           " eagain_retries=" + tp::to_string(m_aggregate_queue.eagain_retries) +
+                           " fallback_datagrams=" + tp::to_string(m_aggregate_queue.fallback_datagrams) +
+                           " fallback_activations=" + tp::to_string(m_aggregate_queue.fallback_activations), Log::INFO);
+    }
+#endif
+    m_aggregate_waiters.clear();
+    m_aggregate_queue.pending.clear();
+#endif
     boost::system::error_code ec;
     if (m_socket.is_open()) {
         m_socket.cancel(ec);
@@ -247,6 +281,14 @@ bool QuicEndpoint::send_packet(const boost::asio::ip::udp::endpoint& dest,
     if (!m_socket.is_open() || len == 0) {
         return false;
     }
+#if TP_QUIC_UDP_GSO
+    if (m_config.get_quic().udp_gso) {
+        // Direct control/close datagrams share the FIFO; never overtake ciphertext.
+        if (m_aggregate_queue.full()) return false;
+        send_aggregate(dest, tp::vector<uint8_t>(data, data + len), len);
+        return true;
+    }
+#endif
     boost::system::error_code ec;
     auto sent = m_socket.send_to(boost::asio::buffer(data, len), dest, 0, ec);
     if (ec) {
@@ -257,6 +299,56 @@ bool QuicEndpoint::send_packet(const boost::asio::ip::udp::endpoint& dest,
     }
     return sent == len;
 }
+
+#if TP_QUIC_UDP_GSO
+bool QuicEndpoint::aggregate_capacity(const std::shared_ptr<QuicConnection>& connection) {
+    if (!m_aggregate_queue.full() && m_socket.is_open()) return true;
+    for (auto& waiter : m_aggregate_waiters) {
+        if (waiter == connection) return false;
+    }
+    m_aggregate_waiters.push_back(connection);
+    return false;
+}
+
+void QuicEndpoint::send_aggregate(const boost::asio::ip::udp::endpoint& dest,
+                                  tp::vector<uint8_t>&& bytes, std::size_t segment) {
+    assert(!m_aggregate_queue.full());
+    assert(!bytes.empty() && bytes.size() <= quic_udp_gso::buffer_size && segment > 0);
+    const bool queued = m_aggregate_queue.push(PendingAggregate{dest, std::move(bytes), segment});
+    assert(queued);
+    (void)queued;
+    drain_aggregates();
+}
+
+void QuicEndpoint::drain_aggregates() {
+    if (m_send_wait || !m_socket.is_open()) return;
+    const int error = m_aggregate_queue.drain(m_socket.native_handle());
+    if (m_aggregate_queue.fallback_errno && !m_gso_fallback_logged) {
+        m_gso_fallback_logged = true;
+        _log_with_date_time("QUIC UDP_SEGMENT disabled; retrying datagrams: errno=" +
+                           tp::to_string(m_aggregate_queue.fallback_errno), Log::WARN);
+    }
+    if (error == EAGAIN) {
+        m_send_wait = true;
+        m_socket.async_wait(boost::asio::ip::udp::socket::wait_write,
+            tp::bind_mem_alloc([this, self = shared_from_this()](boost::system::error_code wait_ec) {
+                m_send_wait = false;
+                if (!wait_ec) drain_aggregates();
+            }));
+        return;
+    }
+    if (error) {
+        _log_with_date_time("QUIC UDP send failed; endpoint stopped: errno=" + tp::to_string(error), Log::ERROR);
+        stop();
+        return;
+    }
+    auto waiters = std::move(m_aggregate_waiters);
+    m_aggregate_waiters.clear();
+    for (auto& conn : waiters) {
+        boost::asio::post(m_io_context, tp::bind_mem_alloc([conn] { conn->on_socket_writable(); }));
+    }
+}
+#endif
 
 boost::asio::ip::udp::endpoint QuicEndpoint::local_endpoint() const {
     boost::system::error_code ec;

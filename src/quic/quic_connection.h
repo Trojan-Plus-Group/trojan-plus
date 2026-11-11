@@ -30,8 +30,9 @@
 #include "mem/memallocator.h"
 #include "quic_stream_handler.h"
 #include "quic_clock.h"
-#include "quic_stats.h"
 #include <quic_stats_config.h>
+#include "quic_stats.h"
+#include "quic_udp_gso.h"
 
 class QuicEndpoint;
 class QuicTlsCtx;
@@ -82,6 +83,9 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
                    const boost::asio::ip::udp::endpoint& remote_ep);
 
     void on_pump_write(const char* debug_path);
+#if TP_QUIC_UDP_GSO
+    void on_socket_writable();
+#endif
     void probe();
     QuicClock::time_point last_packet_received() const { return m_last_packet_received; }
 
@@ -214,6 +218,13 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
 
     // Write pending stream data (call after every read or timer event).
     void pump_write(const char* debug_path);
+#if TP_QUIC_UDP_GSO
+    int64_t send_gso(int64_t stream_id, const ngtcp2_vec* vecs, std::size_t count,
+                     bool fin, bool& accepted);
+    void* m_gso_context{nullptr};
+    bool m_close_waiting{false};
+    uint64_t m_close_waiting_error{0};
+#endif
 
 #ifdef TROJAN_QUIC_STATS_LAYOUT
     // UDP send for this connection. Counts send failures only when stats sampling is on.
