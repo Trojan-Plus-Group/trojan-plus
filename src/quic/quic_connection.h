@@ -221,6 +221,7 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
 #if TP_QUIC_UDP_GSO
     int64_t send_gso(int64_t stream_id, const ngtcp2_vec* vecs, std::size_t count,
                      bool fin, bool& accepted);
+    tp::vector<ngtcp2_vec> m_gso_vecs;
     void* m_gso_context{nullptr};
     bool m_close_waiting{false};
     uint64_t m_close_waiting_error{0};

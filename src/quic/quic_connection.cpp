@@ -589,7 +589,7 @@ bool QuicConnection::init_server(const uint8_t* data, std::size_t datalen,
             Log::WARN);
         if (rv == NGTCP2_ERR_CRYPTO) {
 #if TP_QUIC_UDP_GSO
-            if (m_endpoint.config().get_quic().udp_gso) {
+            if (m_endpoint.udp_gso_enabled()) {
                 close(); // Capacity-aware close preserves the endpoint FIFO.
                 return false;
             }
@@ -919,7 +919,7 @@ void QuicConnection::on_pump_write(const char* debug_path) {
 
 void QuicConnection::pump_write(const char* debug_path) {
 #if TP_QUIC_UDP_GSO
-    if (m_endpoint.config().get_quic().udp_gso && m_conn && !m_closed) {
+    if (m_endpoint.udp_gso_enabled() && m_conn && !m_closed) {
         bool accepted = false;
         send_gso(-1, nullptr, 0, false, accepted);
         return;
@@ -1304,7 +1304,7 @@ int64_t QuicConnection::send_stream_data_impl(int64_t stream_id, const uint8_t* 
     }
 
 #if TP_QUIC_UDP_GSO
-    if (m_endpoint.config().get_quic().udp_gso) {
+    if (m_endpoint.udp_gso_enabled()) {
         ngtcp2_vec vec{const_cast<uint8_t*>(data), datalen};
         bool accepted = false;
         return send_gso(stream_id, &vec, 1, fin, accepted);
@@ -1498,7 +1498,7 @@ int64_t QuicConnection::send_stream_vecs_impl(int64_t stream_id,
                     " path=" + tp::string(debug_path), Log::ALL);
 
 #if TP_QUIC_UDP_GSO
-    if (m_endpoint.config().get_quic().udp_gso) return send_gso(stream_id, datav, datavcnt, fin, accepted);
+    if (m_endpoint.udp_gso_enabled()) return send_gso(stream_id, datav, datavcnt, fin, accepted);
 #endif
 
     // Calculate total data length across all vectors
@@ -1726,16 +1726,18 @@ int64_t QuicConnection::send_gso(int64_t stream_id, const ngtcp2_vec* vecs,
     accepted = false;
     if (m_close_waiting) return 0;
     // Reserve queue capacity before ngtcp2 consumes plaintext or creates ciphertext.
-    if (!m_endpoint.aggregate_capacity(shared_from_this())) return 0;
+    if (!m_endpoint.aggregate_capacity(*this)) return 0;
     struct Context {
         int64_t id;
-        tp::vector<ngtcp2_vec> vecs;
+        tp::vector<ngtcp2_vec>& vecs;
         std::size_t written{0};
         bool fin;
         bool accepted{false};
         std::size_t encrypted{0};
         int error{0};
-    } context{stream_id, {}, 0, fin};
+    } context{stream_id, m_gso_vecs, 0, fin};
+    assert(!m_gso_context); // Connection sends stay on this endpoint's event loop.
+    m_gso_vecs.clear();
     if (count) context.vecs.assign(vecs, vecs + count);
     m_gso_context = &context;
     auto callback = [](ngtcp2_conn* conn, ngtcp2_path* path, ngtcp2_pkt_info* pi,
@@ -1774,7 +1776,8 @@ int64_t QuicConnection::send_gso(int64_t stream_id, const ngtcp2_vec* vecs,
         }
         return n;
     };
-    tp::vector<uint8_t> buffer(quic_udp_gso::buffer_size);
+    auto buffer = m_endpoint.acquire_aggregate_buffer();
+    assert(buffer); // Queue capacity reserves room for this in-flight writer.
     ngtcp2_path_storage path;
     ngtcp2_path_storage_zero(&path);
     ngtcp2_pkt_info pi{};
@@ -1927,8 +1930,8 @@ void QuicConnection::close(uint64_t app_error_code) {
         return;
     }
 #if TP_QUIC_UDP_GSO
-    if (m_endpoint.config().get_quic().udp_gso &&
-        !m_endpoint.aggregate_capacity(shared_from_this())) {
+    if (m_endpoint.udp_gso_enabled() &&
+        !m_endpoint.aggregate_capacity(*this)) {
         m_close_waiting = true;
         m_close_waiting_error = app_error_code;
         return; // Do not create a close packet until its FIFO slot is available.
@@ -2043,15 +2046,18 @@ void QuicConnection::reschedule_loss_timer() {
         return;
     }
 
-    if (expiry == m_last_timer_expiry) {
-        return;
-    }
+    uint64_t now_ns;
 #if TP_QUIC_UDP_GSO
-    if (m_endpoint.config().get_quic().udp_gso &&
-        quic_udp_gso::keep_timer(m_last_timer_expiry, expiry)) return;
+    if (m_endpoint.udp_gso_enabled()) {
+        now_ns = now_nanos();
+        if (quic_udp_gso::keep_timer(m_last_timer_expiry, expiry, now_ns)) return;
+    } else
 #endif
+    {
+        if (expiry == m_last_timer_expiry) return;
+        now_ns = now_nanos();
+    }
 
-    auto now_ns    = now_nanos();
     auto delay_ns  = expiry > now_ns ? expiry - now_ns : 0;
     auto delay_dur = std::chrono::nanoseconds(delay_ns);
 

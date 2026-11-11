@@ -55,9 +55,13 @@ class QuicEndpoint : public std::enable_shared_from_this<QuicEndpoint> {
                      const uint8_t* data, std::size_t len);
 
 #if TP_QUIC_UDP_GSO
-    bool aggregate_capacity(const std::shared_ptr<QuicConnection>& connection);
+    using AggregatePool = quic_udp_gso::BufferPool<tp::tj_unique_ptr<uint8_t[]>>;
+    using AggregateBuffer = AggregatePool::Buffer;
+    bool udp_gso_enabled() const { return m_udp_gso; }
+    bool aggregate_capacity(QuicConnection& connection);
+    AggregateBuffer acquire_aggregate_buffer();
     void send_aggregate(const boost::asio::ip::udp::endpoint& dest,
-                        tp::vector<uint8_t>&& bytes, std::size_t segment);
+                        AggregateBuffer&& bytes, std::size_t segment);
 #endif
 
     // Local endpoint of the bound UDP socket (needed to build ngtcp2 path).
@@ -81,11 +85,13 @@ class QuicEndpoint : public std::enable_shared_from_this<QuicEndpoint> {
 #if TP_QUIC_UDP_GSO
     struct PendingAggregate {
         boost::asio::ip::udp::endpoint dest;
-        tp::vector<uint8_t> bytes;
+        AggregateBuffer bytes;
         std::size_t segment;
         std::size_t offset{0};
     };
     void drain_aggregates();
+    const bool m_udp_gso; // Immutable endpoint-lifetime setting.
+    AggregatePool m_aggregate_pool; // Must outlive queued leases.
     quic_udp_gso::Queue<tp::deque<PendingAggregate>> m_aggregate_queue;
     tp::vector<std::shared_ptr<QuicConnection>> m_aggregate_waiters;
     bool m_send_wait{false};

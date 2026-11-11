@@ -15,6 +15,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <utility>
+#include <array>
 #else
 #define TP_QUIC_UDP_GSO 0
 #endif
@@ -23,12 +24,68 @@ namespace quic_udp_gso {
 constexpr std::size_t buffer_size = 65536;
 constexpr std::size_t queue_limit = 4;
 constexpr uint64_t timer_tolerance_ns = 1'000'000;
-// Later deadlines within 1 ms are equivalent; farther later deadlines also keep
-// the already armed earlier wakeup. Earlier requests always rearm, even within 1 ms.
-constexpr bool keep_timer(uint64_t armed, uint64_t requested) {
-    return armed != 0 && armed != UINT64_MAX && requested >= armed;
+// Keep earlier wakeups; tolerating earlier requests adds at most 1 ms loss delay.
+// Expired wakeups must rearm, even if their handler has not run yet.
+constexpr bool keep_timer(uint64_t armed, uint64_t requested, uint64_t now = 0) {
+    return armed != 0 && armed != UINT64_MAX && requested != 0 && requested != UINT64_MAX && armed > now &&
+           (requested >= armed || armed - requested <= timer_tolerance_ns);
 }
 #if TP_QUIC_UDP_GSO
+// Endpoint owns four queued buffers plus one in-flight writer. Storage is lazy,
+// uninitialized, and retained until endpoint destruction; leases never copy bytes.
+template <class Storage> class BufferPool {
+    struct Slot {
+        Storage storage;
+        bool used{false};
+    };
+    std::array<Slot, queue_limit + 1> slots;
+
+  public:
+#if TROJAN_QUIC_STATS
+    uint64_t buffer_allocations{0};
+#endif
+    class Buffer {
+        Slot* slot{nullptr};
+        std::size_t length{0};
+        friend class BufferPool;
+        explicit Buffer(Slot& value) : slot(&value), length(buffer_size) { slot->used = true; }
+        void release() { if (slot) slot->used = false; }
+
+      public:
+        Buffer() = default;
+        ~Buffer() { release(); }
+        Buffer(const Buffer&) = delete;
+        Buffer& operator=(const Buffer&) = delete;
+        Buffer(Buffer&& other) noexcept : slot(std::exchange(other.slot, nullptr)), length(other.length) {}
+        Buffer& operator=(Buffer&& other) noexcept {
+            if (this != &other) {
+                release();
+                slot = std::exchange(other.slot, nullptr);
+                length = other.length;
+            }
+            return *this;
+        }
+        explicit operator bool() const { return slot != nullptr; }
+        uint8_t* data() { return slot ? slot->storage.get() : nullptr; }
+        std::size_t size() const { return slot ? length : 0; }
+        bool empty() const { return size() == 0; }
+        void resize(std::size_t size) { assert(slot && size <= buffer_size); length = size; }
+    };
+    template <class Allocate> Buffer acquire(Allocate allocate) {
+        for (auto& slot : slots) {
+            if (slot.used) continue;
+            if (!slot.storage) {
+                slot.storage = allocate();
+#if TROJAN_QUIC_STATS
+                ++buffer_allocations;
+#endif
+            }
+            return Buffer(slot);
+        }
+        return {};
+    }
+};
+
 // Container uses tp allocations in production; tests use std containers.
 // All entries own ciphertext, including after EAGAIN and permanent GSO fallback.
 template <class Container> class Queue {

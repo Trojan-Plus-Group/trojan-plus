@@ -42,7 +42,11 @@ QuicEndpoint::QuicEndpoint(boost::asio::io_context& io_ctx, const Config& config
       m_tls_ctx(std::move(tls_ctx)),
       m_socket(io_ctx),
       m_recv_buf(kRecvBufBytes, 0),
-      m_running(false) {
+      m_running(false)
+#if TP_QUIC_UDP_GSO
+      , m_udp_gso(config.get_quic().udp_gso)
+#endif
+      {
     derive_stateless_reset_secret();
 #if !TP_QUIC_UDP_GSO
     if (config.get_quic().udp_gso) {
@@ -120,7 +124,7 @@ void QuicEndpoint::open_socket(const boost::asio::ip::udp::endpoint& bind_ep,
     }
 
 #if TP_QUIC_UDP_GSO
-    if (m_config.get_quic().udp_gso) {
+    if (udp_gso_enabled()) {
         _log_with_date_time("QUIC UDP_SEGMENT enabled for socket", Log::INFO);
     }
 #endif
@@ -256,14 +260,26 @@ void QuicEndpoint::stop() {
 #if TP_QUIC_UDP_GSO
 #if TROJAN_QUIC_STATS
     const char* stats_path = std::getenv("TROJAN_QUIC_STATS");
-    if (m_config.get_quic().udp_gso && stats_path && stats_path[0]) {
-        _log_with_date_time("QUIC UDP_SEGMENT gso_attempts=" + tp::to_string(m_aggregate_queue.gso_attempts) +
+    if (udp_gso_enabled() && stats_path && stats_path[0]) {
+        const auto counters = "gso_attempts=" + tp::to_string(m_aggregate_queue.gso_attempts) +
                            " gso_successes=" + tp::to_string(m_aggregate_queue.gso_successes) +
                            " gso_datagrams=" + tp::to_string(m_aggregate_queue.gso_datagrams) +
                            " gso_bytes=" + tp::to_string(m_aggregate_queue.gso_bytes) +
                            " eagain_retries=" + tp::to_string(m_aggregate_queue.eagain_retries) +
                            " fallback_datagrams=" + tp::to_string(m_aggregate_queue.fallback_datagrams) +
-                           " fallback_activations=" + tp::to_string(m_aggregate_queue.fallback_activations), Log::INFO);
+                           " fallback_activations=" + tp::to_string(m_aggregate_queue.fallback_activations) +
+                           " buffer_allocations=" + tp::to_string(m_aggregate_pool.buffer_allocations);
+        _log_with_date_time("QUIC UDP_SEGMENT " + counters, Log::INFO);
+        // Separate from connection CSV; append preserves other endpoints and prior stops.
+        const auto sidecar_path = tp::string(stats_path) + ".udp_gso";
+        std::ofstream sidecar(sidecar_path.c_str(), std::ios::app);
+        if (sidecar) {
+            sidecar << counters << '\n';
+            sidecar.close();
+        }
+        if (!sidecar) {
+            _log_with_date_time("QUIC UDP_SEGMENT stats write failed: " + tp::string(stats_path) + ".udp_gso", Log::ERROR);
+        }
     }
 #endif
     m_aggregate_waiters.clear();
@@ -282,10 +298,14 @@ bool QuicEndpoint::send_packet(const boost::asio::ip::udp::endpoint& dest,
         return false;
     }
 #if TP_QUIC_UDP_GSO
-    if (m_config.get_quic().udp_gso) {
+    if (udp_gso_enabled()) {
         // Direct control/close datagrams share the FIFO; never overtake ciphertext.
-        if (m_aggregate_queue.full()) return false;
-        send_aggregate(dest, tp::vector<uint8_t>(data, data + len), len);
+        if (m_aggregate_queue.full() || len > quic_udp_gso::buffer_size) return false;
+        auto bytes = acquire_aggregate_buffer();
+        if (!bytes) return false;
+        std::memcpy(bytes.data(), data, len);
+        bytes.resize(len);
+        send_aggregate(dest, std::move(bytes), len);
         return true;
     }
 #endif
@@ -301,17 +321,21 @@ bool QuicEndpoint::send_packet(const boost::asio::ip::udp::endpoint& dest,
 }
 
 #if TP_QUIC_UDP_GSO
-bool QuicEndpoint::aggregate_capacity(const std::shared_ptr<QuicConnection>& connection) {
+bool QuicEndpoint::aggregate_capacity(QuicConnection& connection) {
     if (!m_aggregate_queue.full() && m_socket.is_open()) return true;
     for (auto& waiter : m_aggregate_waiters) {
-        if (waiter == connection) return false;
+        if (waiter.get() == &connection) return false;
     }
-    m_aggregate_waiters.push_back(connection);
+    m_aggregate_waiters.push_back(connection.shared_from_this());
     return false;
 }
 
+QuicEndpoint::AggregateBuffer QuicEndpoint::acquire_aggregate_buffer() {
+    return m_aggregate_pool.acquire([] { return TP_MAKE_UNIQUE(uint8_t[], quic_udp_gso::buffer_size); });
+}
+
 void QuicEndpoint::send_aggregate(const boost::asio::ip::udp::endpoint& dest,
-                                  tp::vector<uint8_t>&& bytes, std::size_t segment) {
+                                  AggregateBuffer&& bytes, std::size_t segment) {
     assert(!m_aggregate_queue.full());
     assert(!bytes.empty() && bytes.size() <= quic_udp_gso::buffer_size && segment > 0);
     const bool queued = m_aggregate_queue.push(PendingAggregate{dest, std::move(bytes), segment});
