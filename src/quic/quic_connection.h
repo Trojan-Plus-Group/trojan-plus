@@ -11,6 +11,7 @@
 #ifndef _QUIC_CONNECTION_H_
 #define _QUIC_CONNECTION_H_
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -29,6 +30,8 @@
 #include "mem/memallocator.h"
 #include "quic_stream_handler.h"
 #include "quic_clock.h"
+#include "quic_stats.h"
+#include <quic_stats_config.h>
 
 class QuicEndpoint;
 class QuicTlsCtx;
@@ -185,6 +188,24 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     void reschedule_loss_timer();
     void resume_blocked_sends();
     void schedule_send_wakeup();
+#ifdef TROJAN_QUIC_STATS_LAYOUT
+    // Attribution is synchronous; nested scopes restore the caller's trigger.
+    // ack requires an ACKed-stream callback or observed bytes_in_flight reduction;
+    // loss means aggregate ngtcp2 timer wakeup, not proven loss/PTO alone.
+    // flow means explicit local/peer window event; other includes startup/probes.
+    // A coalesced posted wakeup retains its first scheduling trigger.
+    // Application callbacks run under their enclosing trigger; later independent
+    // submissions enter application. Packets may mix frames from several causes.
+    enum class SendReason { other, ack, retry, loss, application, flow, count };
+    struct StatsReasonScope {
+        QuicConnection* conn;
+        SendReason previous{SendReason::other};
+        StatsReasonScope(QuicConnection& c, SendReason reason) : conn(c.m_stats.m_stats_enabled ? &c : nullptr) {
+            if (conn) { previous = conn->m_stats.m_stats_reason; conn->m_stats.m_stats_reason = reason; }
+        }
+        ~StatsReasonScope() { if (conn) conn->m_stats.m_stats_reason = previous; }
+    };
+#endif
     bool m_send_wakeup_pending{false};
     bool m_resuming_sends{false};
     QuicClock::time_point m_last_packet_received{QuicClock::now()};
@@ -193,7 +214,19 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
 
     // Write pending stream data (call after every read or timer event).
     void pump_write(const char* debug_path);
+
+#ifdef TROJAN_QUIC_STATS_LAYOUT
+    // UDP send for this connection. Counts send failures only when stats sampling is on.
+    void send_udp(const boost::asio::ip::udp::endpoint& dest, const uint8_t* data, std::size_t len);
+
+    // TROJAN_QUIC_STATS sampler. Armed only when the env var is set.
+    void start_stats_sampler();
+    void arm_stats_timer();
+    void write_stats_sample(bool final_sample);
+    std::size_t stats_app_queue_bytes(int64_t& stream_id, bool& have_stream) const;
     
+
+#endif
 
     // Send data on an existing bidi stream. Returns false on error.
     int64_t send_stream_data_impl(int64_t stream_id, const uint8_t* data, std::size_t datalen, bool fin);
@@ -264,6 +297,48 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     tp::vector<uint8_t> m_write_buf;
     bool m_in_read_pkt{false};
     bool m_in_pump_write{false};
+
+#ifdef TROJAN_QUIC_STATS_LAYOUT
+    void stats_zero_write_expiry();
+    void stats_observe_gap(bool sent);
+    struct StatsState {
+        bool m_stats_read_flow{false};
+        bool m_stats_read_ack{false};
+        SendReason m_stats_reason{SendReason::other};
+        SendReason m_stats_wakeup_reason{SendReason::other};
+        // Stats sampler state. m_stats_enabled is a cached env check; the timer stays disarmed when unset.
+        bool m_stats_enabled{false};
+        bool m_stats_armed{false};
+        bool m_stats_final_written{false};
+        bool m_stats_have_stream{false};
+        int64_t m_stats_stream_id{-1};
+        uint64_t m_zero_len_sends{0};
+        uint64_t m_udp_send_errors{0};
+        // Cumulative loop entries and successful UDP datagrams, not QUIC frames.
+        struct ReasonStats { uint64_t pump{0}, data{0}, vecs{0}, packets{0}; };
+        ReasonStats m_reason_stats[static_cast<unsigned>(SendReason::count)]{};
+        // Successful retry expiries classified by actual successful UDP sends during
+        // the synchronous retry (including nested pumps/callbacks), not pending bytes.
+        // Positive includes control packets/empty FIN; empty means no UDP send success.
+        uint64_t m_retry_arms{0}, m_retry_expires_bytes{0}, m_retry_expires_empty{0};
+        // Gap eligibility is observed at writes/samples, not continuously proven:
+        // unsent UnackedBuf bytes on at least one stream with positive stream and
+        // connection credit, and bytes_in_flight < cwnd. Excludes H3-owned queues,
+        // FIN-only work and pacing eligibility. Any successful UDP datagram ends a
+        // gap, even control-only traffic. A closed observation discards its tail.
+        // Reset baseline and maximum each sample; includes unfinished gaps at sample time.
+        uint64_t m_open_gap_start{0}, m_open_gap_max{0};
+        uint64_t m_stats_udp_sent{0};
+        // Remaining aggregate expiry at a zero packet write, not pacing evidence.
+        // Last snapshot and maximum reset each sample; UINT64_MAX means no deadline.
+        uint64_t m_zero_write_expiry_last{UINT64_MAX}, m_zero_write_expiry_max{0};
+        // ngtcp2 exposes aggregate expiry, not pacing.next_ts: zero writes and timer
+        // expiries cannot be labelled pacing-blocked without guessing. No such counters.
+        std::chrono::steady_clock::time_point m_stats_origin{};
+        std::unique_ptr<boost::asio::steady_timer, tp::tj_deleter<boost::asio::steady_timer>> m_stats_timer;
+
+    } m_stats;
+#endif
 
 };
 
