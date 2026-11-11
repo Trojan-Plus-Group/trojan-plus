@@ -34,9 +34,11 @@ unrelated protocols. Set the same custom token on both ends when needed.
 both clients and servers independently; peers need no matching setting.
 On Linux (including Android when headers define `UDP_SEGMENT`), enabling it
 bundles loss-timer coalescing with `UDP_SEGMENT` send batching. An armed,
-unfired timer can remain earlier than a new deadline; an earlier requested
-deadline always re-arms it. The equivalence tolerance is 1 ms.
-The send queue holds at most four 64 KiB buffers. At the cap, packet generation
+unfired, non-stale timer remains armed for equal or later deadlines and for
+requests up to 1 ms earlier. This can delay loss detection by at most 1 ms;
+earlier requests beyond that tolerance re-arm it. A fired timer always re-arms.
+The send queue holds at most four 64 KiB buffers; an endpoint-owned pool reuses
+at most five buffers, including one in-flight writer. At the queue cap, packet generation
 stops before calling ngtcp2; socket writability drains retained encrypted bytes
 and resumes producers. `EAGAIN` retains bytes and ordering rather than using the
 legacy per-datagram retry path. Receive behavior and QUIC protocol stay unchanged.

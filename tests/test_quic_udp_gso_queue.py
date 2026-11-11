@@ -17,7 +17,7 @@ def main():
                               "-I" + str(ROOT / "src"),
                               str(ROOT / "tests/test_quic_udp_gso_queue.cpp"), "-o", str(binary)]
         subprocess.run(command, check=True)
-        subprocess.run([str(binary)], check=True, timeout=10)
+        subprocess.run([str(binary)], check=True, timeout=60)
     print("PASS QUIC UDP GSO production queue and timer helpers")
 
 

@@ -5,6 +5,7 @@
 #include <deque>
 #include <vector>
 #include <utility>
+#include <memory>
 #if TP_QUIC_UDP_GSO
 #include <netinet/in.h>
 #include <unistd.h>
@@ -20,6 +21,94 @@ struct Packet {
     std::size_t segment;
     std::size_t offset{0};
 };
+static std::size_t allocations;
+template <class T> struct CountingAllocator : std::allocator<T> {
+    template <class U> struct rebind { using other = CountingAllocator<U>; };
+    T* allocate(std::size_t n) { ++allocations; return std::allocator<T>::allocate(n); }
+};
+using Pool = quic_udp_gso::BufferPool<std::unique_ptr<uint8_t[]>>;
+struct PooledPacket {
+    Address dest;
+    Pool::Buffer bytes;
+    std::size_t segment;
+    std::size_t offset{0};
+};
+static void test_pool(int tx, int rx, Address dest) {
+    constexpr unsigned iterations = 10000;
+    for (unsigned i = 0; i < iterations; ++i) {
+        std::vector<uint8_t, CountingAllocator<uint8_t>> old(quic_udp_gso::buffer_size);
+        old[0] = i;
+    }
+    const auto before = allocations;
+    assert(before == iterations);
+    Pool pool;
+    auto allocate = [] { ++allocations; return std::unique_ptr<uint8_t[]>(new uint8_t[quic_udp_gso::buffer_size]); };
+    const auto start = allocations;
+    quic_udp_gso::Queue<std::deque<PooledPacket>> queue;
+    for (unsigned i = 0; i < iterations; ++i) {
+        auto buffer = pool.acquire(allocate);
+        assert(buffer && buffer.size() == quic_udp_gso::buffer_size);
+        buffer.data()[0] = i;
+        buffer.resize(1);
+        assert(queue.push(PooledPacket{dest, std::move(buffer), 1}));
+        assert(queue.drain(tx) == 0);
+        uint8_t received;
+        assert(recvfrom(rx, &received, 1, 0, nullptr, nullptr) == 1);
+        assert(received == static_cast<uint8_t>(i));
+    }
+    assert(allocations - start == 1);
+    const auto warm = allocations;
+    for (unsigned i = 0; i < iterations; ++i) {
+        auto buffer = pool.acquire(allocate);
+        assert(buffer);
+    }
+    assert(allocations == warm);
+#if TROJAN_QUIC_STATS
+    assert(pool.buffer_allocations == 1);
+#endif
+    std::printf("allocation-before-after calls=%u old=%zu new=%zu steady=%zu\n",
+                iterations, before, warm - start, allocations - warm);
+    queue.send_fault = [](bool) { return EAGAIN; };
+    for (std::size_t i = 0; i < quic_udp_gso::queue_limit; ++i) {
+        auto buffer = pool.acquire(allocate);
+        buffer.data()[0] = i;
+        buffer.data()[1] = i + 10;
+        buffer.data()[2] = i + 20;
+        buffer.resize(3);
+        assert(queue.push(PooledPacket{dest, std::move(buffer), 2}));
+        assert(!buffer); // Queue alone owns ciphertext.
+    }
+    assert(queue.full() && queue.drain(tx) == EAGAIN);
+    {
+        auto in_flight = pool.acquire(allocate);
+        assert(in_flight);
+        assert(!pool.acquire(allocate)); // Four pending plus one writer; no sixth allocation.
+        auto moved = std::move(in_flight);
+        assert(!in_flight && moved);
+    }
+    assert(allocations - start == quic_udp_gso::queue_limit + 1);
+#if TROJAN_QUIC_STATS
+    assert(pool.buffer_allocations == quic_udp_gso::queue_limit + 1);
+#endif
+    queue.send_fault = [](bool gso) { return gso ? EIO : 0; };
+    assert(queue.drain(tx) == 0 && queue.disabled);
+    for (std::size_t i = 0; i < quic_udp_gso::queue_limit; ++i) {
+        uint8_t bytes[3];
+        assert(recvfrom(rx, bytes, sizeof(bytes), 0, nullptr, nullptr) == 2);
+        assert(bytes[0] == i && bytes[1] == i + 10);
+        assert(recvfrom(rx, bytes, sizeof(bytes), 0, nullptr, nullptr) == 1);
+        assert(bytes[0] == i + 20);
+    }
+    const auto peak = allocations;
+    { auto empty_write = pool.acquire(allocate); } // ngtcp2 zero/error path.
+    auto buffer = pool.acquire(allocate);
+    buffer.resize(1);
+    assert(queue.push(PooledPacket{dest, std::move(buffer), 1}));
+    queue.pending.clear(); // Endpoint stop returns leases.
+    std::array<Pool::Buffer, quic_udp_gso::queue_limit + 1> leases;
+    for (auto& lease : leases) { lease = pool.acquire(allocate); assert(lease); }
+    assert(!pool.acquire(allocate) && allocations == peak);
+}
 static int calls;
 static int fault(bool gso) {
     if (!gso) return 0;
@@ -32,8 +121,14 @@ int main() {
     static_assert(timer_tolerance_ns == 1'000'000);
     assert(!keep_timer(0, 1));
     assert(!keep_timer(UINT64_MAX, 1));
-    assert(!keep_timer(2'000'000, 1'999'999));
-    assert(!keep_timer(2'000'000, 1'000'000));
+    assert(!keep_timer(1, 0));
+    assert(!keep_timer(1, UINT64_MAX));
+    assert(keep_timer(2'000'000, 1'999'999));
+    assert(keep_timer(2'000'000, 1'000'000));
+    assert(!keep_timer(2'000'000, 999'999));
+    assert(!keep_timer(2'000'000, 2'000'000, 2'000'000));
+    assert(!keep_timer(2'000'000, 3'000'000, 2'000'001));
+    assert(!keep_timer(2'000'000, 1'999'999, 2'000'001));
     assert(keep_timer(2'000'000, 2'000'000));
     assert(keep_timer(2'000'000, 2'000'001));
     assert(keep_timer(2'000'000, 20'000'000));
@@ -41,12 +136,12 @@ int main() {
     uint64_t armed = 0, baseline = 0;
     unsigned arms = 0, baseline_arms = 0;
     for (uint64_t deadline : {10'000'000ULL, 10'500'000ULL, 30'000'000ULL,
-                              9'999'999ULL, 9'000'000ULL}) {
+                              9'999'999ULL, 9'000'000ULL, 8'999'999ULL}) {
         if (baseline != deadline) { baseline = deadline; ++baseline_arms; }
         if (!keep_timer(armed, deadline)) { armed = deadline; ++arms; }
-        assert(armed <= deadline);
+        assert(armed <= deadline || armed - deadline <= timer_tolerance_ns);
     }
-    assert(arms == 3 && baseline_arms == 5);
+    assert(arms == 2 && baseline_arms == 6);
     armed = 0; // Successful handler fired: next identical expiry must arm again.
     assert(!keep_timer(armed, 9'000'000));
 #if TP_QUIC_UDP_GSO
@@ -125,6 +220,7 @@ int main() {
         assert(real_queue.gso_bytes == real_bytes.size());
     }
 #endif
+    test_pool(tx, rx, dest);
     close(tx);
     close(rx);
 #endif
