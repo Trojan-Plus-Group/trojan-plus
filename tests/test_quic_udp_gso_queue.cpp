@@ -109,6 +109,146 @@ static void test_pool(int tx, int rx, Address dest) {
     for (auto& lease : leases) { lease = pool.acquire(allocate); assert(lease); }
     assert(!pool.acquire(allocate) && allocations == peak);
 }
+struct SendStep { bool gso; int error; };
+static std::vector<SendStep> send_steps;
+static std::size_t send_step;
+static int scripted_fault(bool gso) {
+    assert(send_step < send_steps.size());
+    const auto step = send_steps[send_step++];
+    assert(step.gso == gso);
+    return step.error;
+}
+static void test_errors(int tx, int rx, Address dest) {
+    using TestQueue = quic_udp_gso::Queue<std::deque<Packet>>;
+    auto script = [](std::initializer_list<SendStep> steps) {
+        send_steps = steps;
+        send_step = 0;
+    };
+    auto receive = [&](std::initializer_list<uint8_t> expected) {
+        uint8_t bytes[8];
+        assert(recvfrom(rx, bytes, sizeof(bytes), MSG_DONTWAIT, nullptr, nullptr) ==
+               static_cast<ssize_t>(expected.size()));
+        assert(std::equal(expected.begin(), expected.end(), bytes));
+    };
+    auto empty = [&] {
+        uint8_t byte;
+        assert(recvfrom(rx, &byte, 1, MSG_DONTWAIT, nullptr, nullptr) == -1 && errno == EAGAIN);
+    };
+    for (int error : {EIO, EINVAL, EOPNOTSUPP, ENOPROTOOPT, ENOTSUP}) {
+        TestQueue q;
+        q.send_fault = scripted_fault;
+        assert(q.push(Packet{dest, {1, 2, 3}, 2}));
+        script({{true, error}, {false, 0}, {false, 0}});
+        std::vector<int> errors;
+        assert(q.drain(tx, [&](int e) { errors.push_back(e); }) == 0);
+        assert(q.disabled && q.fallback_errno == error && q.pending.empty());
+        assert(errors == std::vector<int>{error} && send_step == 3);
+        receive({1, 2});
+        receive({3});
+        empty();
+    }
+    for (int error : {EAGAIN, EWOULDBLOCK, ENOBUFS}) {
+        for (bool fallback : {false, true}) {
+            TestQueue q;
+            q.disabled = fallback;
+            q.send_fault = scripted_fault;
+            assert(q.push(Packet{dest, {1, 2, 3}, 2}));
+            script({{!fallback, error}});
+            unsigned warnings = 0;
+            assert(q.drain(tx, [&](int) { ++warnings; }) == (error == ENOBUFS ? ENOBUFS : EAGAIN));
+            assert(q.pending.size() == 1 && q.pending.front().offset == 0);
+            assert(q.disabled == fallback && warnings == 0);
+            q.disabled = true;
+            script({{false, 0}, {false, 0}});
+            assert(q.drain(tx) == 0);
+            receive({1, 2});
+            receive({3});
+            empty();
+        }
+    }
+    // EMSGSIZE splits only this entry, including across a transient retry.
+    {
+        TestQueue q;
+        q.send_fault = scripted_fault;
+        assert(q.push(Packet{dest, {1, 2, 3}, 2}));
+        assert(q.push(Packet{dest, {4, 5, 6}, 2}));
+        script({{true, EMSGSIZE}, {false, 0}, {false, ENOBUFS}});
+        std::vector<int> errors;
+        auto warn = [&](int e) { errors.push_back(e); };
+        assert(q.drain(tx, warn) == ENOBUFS);
+        assert(!q.disabled && q.pending.front().offset == 2);
+        receive({1, 2});
+        script({{false, 0}, {true, EAGAIN}});
+        assert(q.drain(tx, warn) == EAGAIN);
+        assert(!q.disabled && q.pending.size() == 1 && q.pending.front().offset == 0);
+        assert(errors == std::vector<int>{EMSGSIZE});
+        receive({3});
+        q.disabled = true;
+        script({{false, 0}, {false, 0}});
+        assert(q.drain(tx) == 0);
+        receive({4, 5});
+        receive({6});
+        empty();
+    }
+    // Endpoint restart must discard an EMSGSIZE split retained across EAGAIN.
+    {
+        TestQueue q;
+        q.send_fault = scripted_fault;
+        assert(q.push(Packet{dest, {1, 2, 3}, 2}));
+        script({{true, EMSGSIZE}, {false, EAGAIN}});
+        assert(q.drain(tx) == EAGAIN && send_step == 2);
+        assert(!q.disabled && q.pending.front().offset == 0);
+        q.clear();
+        assert(q.pending.empty());
+        assert(q.push(Packet{dest, {4, 5, 6}, 2}));
+        script({{true, EAGAIN}});
+        assert(q.drain(tx) == EAGAIN && send_step == 1);
+        assert(!q.disabled && q.pending.front().offset == 0);
+        empty();
+    }
+    // Non-capability errors drop only the failing aggregate or fallback datagram.
+    for (int error : {ENETUNREACH, EHOSTUNREACH, EPERM, EACCES, ECONNREFUSED, EADDRNOTAVAIL, EAFNOSUPPORT, EMSGSIZE}) {
+        for (bool fallback : {false, true}) {
+            if (!fallback && error == EMSGSIZE) continue;
+            TestQueue q;
+            q.disabled = fallback;
+            q.send_fault = scripted_fault;
+            assert(q.push(Packet{dest, {1, 2, 3}, 2}));
+            assert(q.push(Packet{dest, {4}, 2}));
+            if (fallback) script({{false, error}, {false, 0}, {false, 0}});
+            else script({{true, error}, {false, 0}});
+            std::vector<int> errors;
+            assert(q.drain(tx, [&](int e) { errors.push_back(e); }) == 0);
+            assert(q.pending.empty() && q.disabled == fallback);
+            assert(errors == std::vector<int>{error});
+            if (fallback) receive({3});
+            receive({4});
+            empty();
+        }
+    }
+    // Short sends never replay bytes; report EIO without disabling GSO.
+    for (bool fallback : {false, true}) {
+        TestQueue q;
+        q.disabled = fallback;
+        q.short_send = [](bool) { return true; };
+        assert(q.push(Packet{dest, {1, 2, 3}, 2}));
+        assert(q.push(Packet{dest, {4}, 2}));
+        std::vector<int> errors;
+        assert(q.drain(tx, [&](int e) { errors.push_back(e); }) == 0);
+        assert(q.pending.empty() && q.disabled == fallback);
+        assert(errors == std::vector<int>(fallback ? 3 : 2, EIO));
+        empty();
+    }
+    {
+        TestQueue q;
+        q.send_fault = scripted_fault;
+        assert(q.push(Packet{dest, {9}, 2}));
+        script({{false, EINTR}, {false, 0}});
+        assert(q.drain(tx, [](int) { assert(false); }) == 0);
+        receive({9});
+        empty();
+    }
+}
 static int calls;
 static int fault(bool gso) {
     if (!gso) return 0;
@@ -145,6 +285,12 @@ int main() {
     armed = 0; // Successful handler fired: next identical expiry must arm again.
     assert(!keep_timer(armed, 9'000'000));
 #if TP_QUIC_UDP_GSO
+    static_assert(aggregate_limit(0) == 0);
+    static_assert(aggregate_limit(1) == 64);
+    static_assert(aggregate_limit(1023) == 65472);
+    static_assert(aggregate_limit(1024) == 65507);
+    static_assert(aggregate_limit(1200) == 65507);
+    static_assert(aggregate_limit(SIZE_MAX) == 65507);
     int rx = socket(AF_INET, SOCK_DGRAM, 0);
     int tx = socket(AF_INET, SOCK_DGRAM, 0);
     assert(rx >= 0 && tx >= 0);
@@ -221,6 +367,7 @@ int main() {
     }
 #endif
     test_pool(tx, rx, dest);
+    test_errors(tx, rx, dest);
     close(tx);
     close(rx);
 #endif

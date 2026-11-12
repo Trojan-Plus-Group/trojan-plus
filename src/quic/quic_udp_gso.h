@@ -24,13 +24,17 @@ namespace quic_udp_gso {
 constexpr std::size_t buffer_size = 65536;
 constexpr std::size_t queue_limit = 4;
 constexpr uint64_t timer_tolerance_ns = 1'000'000;
-// Keep earlier wakeups; tolerating earlier requests adds at most 1 ms loss delay.
+// Shared ngtcp2 expiry covers loss/PTO, delayed ACK, pacing and idle.
+// Tolerance delays loss/PTO detection, delayed-ACK sending and pacing wakeup by at most 1 ms.
 // Expired wakeups must rearm, even if their handler has not run yet.
 constexpr bool keep_timer(uint64_t armed, uint64_t requested, uint64_t now = 0) {
     return armed != 0 && armed != UINT64_MAX && requested != 0 && requested != UINT64_MAX && armed > now &&
            (requested >= armed || armed - requested <= timer_tolerance_ns);
 }
 #if TP_QUIC_UDP_GSO
+constexpr std::size_t aggregate_limit(std::size_t segment) {
+    return segment > 65507 / 64 ? 65507 : 64 * segment;
+}
 // Endpoint owns four queued buffers plus one in-flight writer. Storage is lazy,
 // uninitialized, and retained until endpoint destruction; leases never copy bytes.
 template <class Storage> class BufferPool {
@@ -41,7 +45,7 @@ template <class Storage> class BufferPool {
     std::array<Slot, queue_limit + 1> slots;
 
   public:
-#if TROJAN_QUIC_STATS
+#if defined(TROJAN_QUIC_STATS_LAYOUT) || TROJAN_QUIC_STATS
     uint64_t buffer_allocations{0};
 #endif
     class Buffer {
@@ -76,7 +80,7 @@ template <class Storage> class BufferPool {
             if (slot.used) continue;
             if (!slot.storage) {
                 slot.storage = allocate();
-#if TROJAN_QUIC_STATS
+#if defined(TROJAN_QUIC_STATS_LAYOUT) || TROJAN_QUIC_STATS
                 ++buffer_allocations;
 #endif
             }
@@ -89,11 +93,13 @@ template <class Storage> class BufferPool {
 // Container uses tp allocations in production; tests use std containers.
 // All entries own ciphertext, including after EAGAIN and permanent GSO fallback.
 template <class Container> class Queue {
+    bool split{false}; // EMSGSIZE applies only to the current aggregate, across retries.
+
   public:
     Container pending;
     bool disabled{false};
     int fallback_errno{0};
-#if TROJAN_QUIC_STATS
+#if defined(TROJAN_QUIC_STATS_LAYOUT) || TROJAN_QUIC_STATS
     uint64_t gso_attempts{0};
     uint64_t gso_successes{0};
     uint64_t gso_datagrams{0};
@@ -104,7 +110,9 @@ template <class Container> class Queue {
 #endif
 #ifdef TP_QUIC_GSO_TEST
     int (*send_fault)(bool gso){nullptr};
+    bool (*short_send)(bool gso){nullptr};
 #endif
+    void clear() { pending.clear(); split = false; }
     bool full() const { return pending.size() >= queue_limit; }
     template <class Packet> bool push(Packet&& packet) {
         if (full() || packet.bytes.empty() || packet.bytes.size() > buffer_size ||
@@ -112,12 +120,14 @@ template <class Container> class Queue {
         pending.push_back(std::move(packet));
         return true;
     }
-    // 0: drained, EAGAIN: keep bytes and wait for writability, other errno: stop endpoint.
-    int drain(int fd) {
+    // Errors are reported on every occurrence; endpoint may suppress duplicate warnings.
+    // 0: drained; EAGAIN/ENOBUFS: keep bytes and retry later.
+    int drain(int fd) { return drain(fd, [](int) {}); }
+    template <class OnError> int drain(int fd, OnError on_error) {
         while (!pending.empty()) {
             auto& p = pending.front();
             const auto remaining = p.bytes.size() - p.offset;
-            const bool gso = !disabled && remaining > p.segment;
+            const bool gso = !disabled && !split && remaining > p.segment;
             const auto length = gso ? remaining : std::min(p.segment, remaining);
             iovec iov{p.bytes.data() + p.offset, length};
             alignas(cmsghdr) char control[CMSG_SPACE(sizeof(uint16_t))]{};
@@ -136,13 +146,14 @@ template <class Container> class Queue {
                 const auto segment = static_cast<uint16_t>(p.segment);
                 std::memcpy(CMSG_DATA(c), &segment, sizeof(segment));
             }
-#if TROJAN_QUIC_STATS
+#if defined(TROJAN_QUIC_STATS_LAYOUT) || TROJAN_QUIC_STATS
             if (gso) ++gso_attempts;
 #endif
             ssize_t n;
 #ifdef TP_QUIC_GSO_TEST
             const int fault = send_fault ? send_fault(gso) : 0;
             if (fault) { errno = fault; n = -1; }
+            else if (short_send && short_send(gso)) n = length - 1;
             else
 #endif
             n = gso ? sendmsg(fd, &msg, MSG_DONTWAIT)
@@ -152,34 +163,46 @@ template <class Container> class Queue {
                 const int error = errno;
                 if (error == EINTR) continue;
                 if (error == EAGAIN || error == EWOULDBLOCK) {
-#if TROJAN_QUIC_STATS
+#if defined(TROJAN_QUIC_STATS_LAYOUT) || TROJAN_QUIC_STATS
                     ++eagain_retries;
 #endif
                     return EAGAIN;
                 }
-                if (gso) {
+                if (error == ENOBUFS) return ENOBUFS;
+                on_error(error);
+                if (gso && (error == EIO || error == EINVAL || error == EOPNOTSUPP ||
+                            error == ENOPROTOOPT || error == ENOTSUP)) {
                     disabled = true;
                     fallback_errno = error;
-#if TROJAN_QUIC_STATS
+#if defined(TROJAN_QUIC_STATS_LAYOUT) || TROJAN_QUIC_STATS
                     ++fallback_activations;
 #endif
                     continue; // Same bytes, same boundaries, same queue position.
                 }
-                return error;
-            }
-            // Datagram sends are atomic. Never replay a successful prefix.
-            if (static_cast<std::size_t>(n) != length) return EIO;
-#if TROJAN_QUIC_STATS
-            if (gso) {
-                ++gso_successes;
-                gso_datagrams += (length + p.segment - 1) / p.segment;
-                gso_bytes += length;
-            } else if (disabled) {
-                ++fallback_datagrams;
-            }
+                if (gso && error == EMSGSIZE) {
+                    split = true;
+                    continue;
+                }
+            } else if (static_cast<std::size_t>(n) != length) {
+                // Datagram sends are atomic. Never replay a successful prefix.
+                on_error(EIO);
+            } else {
+#if defined(TROJAN_QUIC_STATS_LAYOUT) || TROJAN_QUIC_STATS
+                if (gso) {
+                    ++gso_successes;
+                    gso_datagrams += (length + p.segment - 1) / p.segment;
+                    gso_bytes += length;
+                } else if (disabled || split) {
+                    ++fallback_datagrams;
+                }
 #endif
-            p.offset += static_cast<std::size_t>(n);
-            if (p.offset == p.bytes.size()) pending.pop_front();
+            }
+            // Success or permanent error: consume this aggregate/datagram and continue.
+            p.offset += length;
+            if (p.offset == p.bytes.size()) {
+                pending.pop_front();
+                split = false;
+            }
         }
         return 0;
     }

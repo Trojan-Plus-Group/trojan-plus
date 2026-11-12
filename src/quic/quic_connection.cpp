@@ -588,12 +588,6 @@ bool QuicConnection::init_server(const uint8_t* data, std::size_t datalen,
             "QuicConnection::init_server: initial ngtcp2_conn_read_pkt: " + tp::string(ngtcp2_strerror(rv)),
             Log::WARN);
         if (rv == NGTCP2_ERR_CRYPTO) {
-#if TP_QUIC_UDP_GSO
-            if (m_endpoint.udp_gso_enabled()) {
-                close(); // Capacity-aware close preserves the endpoint FIFO.
-                return false;
-            }
-#endif
             // Initial TLS failures must reach the peer as QUIC crypto alerts, not silent drops.
             ngtcp2_ccerr ccerr;
             ngtcp2_ccerr_set_tls_alert(&ccerr, ngtcp2_conn_get_tls_alert(m_conn), nullptr, 0);
@@ -887,7 +881,7 @@ void QuicConnection::on_pump_write(const char* debug_path) {
         return;
     }
 #if TP_QUIC_UDP_GSO
-    if (m_close_waiting) return;
+    if (m_endpoint.udp_gso_enabled() && m_close_waiting) return;
 #endif
 
     if (m_in_pump_write) {
@@ -1149,6 +1143,7 @@ void QuicConnection::UnackedBuf::complete(const boost::system::error_code& ec, s
 }
 
 void QuicConnection::UnackedBuf::send(){
+    auto self = shared_from_this(); // Completion callbacks can erase the owning queue.
     auto conn = m_conn.lock();
     if(!conn){
         complete(boost::asio::error::broken_pipe, 0);
@@ -1166,10 +1161,7 @@ void QuicConnection::UnackedBuf::send(){
     }else if((std::size_t)sent >= len){
         // finished, and wait for ack since now
         m_sending_offset += sent;
-        if(m_sent_cb){
-            m_sent_cb({}, m_sending_offset);
-            m_sent_cb = nullptr;
-        }
+        complete({}, m_sending_offset);
 
         cancel_timer();
         conn->send_next_unacked_buff(m_stream_id, this);
@@ -1241,14 +1233,14 @@ void QuicConnection::UnackedBuf::send(){
 void QuicConnection::send_next_unacked_buff(int64_t stream_id, UnackedBuf* /*buf_finished*/){
     auto stream_id_it = m_conn_unacked_bufs.find(stream_id);
     if(stream_id_it != m_conn_unacked_bufs.end()){
-        auto& list = stream_id_it->second->buffers;
-        for(auto& buf : list){
+        auto queue = stream_id_it->second;
+        for(auto buf : queue->buffers){
             if(buf->m_buf && buf->m_sending_offset < buf->m_buf->size()){
                 buf->send();
-                return;
+                return; // Sending can erase the stream and its queue.
             }
         }
-        stream_id_it->second->m_sending = false;
+        queue->m_sending = false;
     }
 }
 void QuicConnection::fail_unacked_buffers(int64_t stream_id, const boost::system::error_code& ec) {
@@ -1711,6 +1703,10 @@ int64_t QuicConnection::send_stream_vecs_impl(int64_t stream_id,
 
 #if TP_QUIC_UDP_GSO
 void QuicConnection::on_socket_writable() {
+    if (!m_endpoint.send_available()) {
+        close(m_close_waiting ? m_close_waiting_error : 0);
+        return;
+    }
     if (m_close_waiting) {
         m_close_waiting = false;
         close(m_close_waiting_error);
@@ -1748,8 +1744,7 @@ int64_t QuicConnection::send_gso(int64_t stream_id, const ngtcp2_vec* vecs,
         auto n = ngtcp2_conn_writev_stream(conn, path, pi, dest, size, &consumed,
             NGTCP2_WRITE_STREAM_FLAG_PADDING | (c.fin ? NGTCP2_WRITE_STREAM_FLAG_FIN : 0),
             c.id, c.vecs.data(), c.vecs.size(), ts);
-        if (n == NGTCP2_ERR_STREAM_DATA_BLOCKED || n == NGTCP2_ERR_STREAM_SHUT_WR ||
-            n == NGTCP2_ERR_STREAM_NOT_FOUND) {
+        if (n == NGTCP2_ERR_STREAM_DATA_BLOCKED) {
             consumed = -1;
             n = ngtcp2_conn_write_pkt(conn, path, pi, dest, size, ts);
         }
@@ -1784,7 +1779,8 @@ int64_t QuicConnection::send_gso(int64_t stream_id, const ngtcp2_vec* vecs,
     std::size_t segment = 0;
     // ngtcp2 clamps aggregation to its send quantum and updates packet transmit time.
     auto n = ngtcp2_conn_write_aggregate_pkt(m_conn, &path.path, &pi, buffer.data(),
-        buffer.size(), &segment, callback, now_nanos());
+        quic_udp_gso::aggregate_limit(ngtcp2_conn_get_path_max_tx_udp_payload_size2(m_conn)),
+        &segment, callback, now_nanos());
     m_gso_context = nullptr;
     if (n > 0) {
         auto peer = m_peer;
@@ -1799,10 +1795,11 @@ int64_t QuicConnection::send_gso(int64_t stream_id, const ngtcp2_vec* vecs,
     const int error = context.error ? context.error : (n < 0 ? static_cast<int>(n) : 0);
     if (error) {
         _log_with_date_time("QUIC aggregate write: " + tp::string(ngtcp2_strerror(error)), Log::WARN);
-        if (error == NGTCP2_ERR_CLOSING || error == NGTCP2_ERR_DRAINING) close();
+        if (error == NGTCP2_ERR_CLOSING || error == NGTCP2_ERR_DRAINING) defer_close();
     }
     accepted = context.accepted;
     reschedule_loss_timer();
+    if (error == NGTCP2_ERR_STREAM_SHUT_WR || error == NGTCP2_ERR_STREAM_NOT_FOUND) return -1;
     return n < 0 && !context.written ? -1 : static_cast<int64_t>(context.written);
 }
 #endif
@@ -1918,19 +1915,28 @@ bool QuicConnection::forward_to_h1_upstream(int64_t stream_id, const uint8_t* da
 
 // ---- close ------------------------------------------------------------------
 
+void QuicConnection::defer_close(uint64_t app_error_code) {
+    if (m_closed || m_close_pending) return;
+    m_close_pending = true;
+    boost::asio::post(m_endpoint.io_context(),
+        [self = shared_from_this(), endpoint = m_endpoint.shared_from_this(), app_error_code]() {
+        self->m_close_pending = false;
+        self->close(app_error_code);
+    });
+}
+
 void QuicConnection::close(uint64_t app_error_code) {
     if (m_closed) {
         return;
     }
     if (m_in_read_pkt) {
-        auto self = shared_from_this();
-        boost::asio::post(m_endpoint.io_context(), [this, self, app_error_code]() {
-            close(app_error_code);
-        });
+        defer_close(app_error_code);
         return;
     }
+    auto self = shared_from_this(); // Close callbacks can release the endpoint's last reference.
+    const bool send_available = m_endpoint.send_available();
 #if TP_QUIC_UDP_GSO
-    if (m_endpoint.udp_gso_enabled() &&
+    if (send_available && m_endpoint.udp_gso_enabled() &&
         !m_endpoint.aggregate_capacity(*this)) {
         m_close_waiting = true;
         m_close_waiting_error = app_error_code;
@@ -1948,16 +1954,16 @@ void QuicConnection::close(uint64_t app_error_code) {
 
     fail_all_unacked_buffers(boost::asio::error::broken_pipe);
 
-    if (on_close_cb && !m_is_server) {
-        on_close_cb(this);
-        on_close_cb = nullptr;
+    if (on_close_cb && (!m_is_server || !send_available)) {
+        auto cb = std::move(on_close_cb);
+        cb(this);
     } else if (on_close_cb) {
         m_loss_timer.expires_after(std::chrono::seconds(5));
         auto self = shared_from_this();
         m_loss_timer.async_wait([this, self](const boost::system::error_code& ec) {
             if (!ec && on_close_cb) {
-                on_close_cb(this);
-                on_close_cb = nullptr;
+                auto cb = std::move(on_close_cb);
+                cb(this);
             }
         });
     }
@@ -1969,7 +1975,7 @@ void QuicConnection::close(uint64_t app_error_code) {
                             tp::to_string(m_peer.port()),
                         Log::INFO);
 
-    if (m_conn) {
+    if (m_conn && send_available) {
         ngtcp2_path_storage ps;
         ngtcp2_path_storage_zero(&ps);
         ngtcp2_pkt_info pi{};

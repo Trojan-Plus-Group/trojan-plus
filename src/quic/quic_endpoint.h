@@ -16,6 +16,7 @@
 
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/udp.hpp>
+#include <boost/asio/steady_timer.hpp>
 
 #include "mem/memallocator.h"
 #include <quic_stats_config.h>
@@ -45,6 +46,7 @@ class QuicEndpoint : public std::enable_shared_from_this<QuicEndpoint> {
     boost::asio::io_context& io_context() { return m_io_context; }
     const Config& config() const { return m_config; }
     bool is_running() const { return m_running; }
+    bool send_available() const { return m_running && m_socket.is_open(); }
 
     // Per-process secret for deterministic Stateless Reset token derivation.
     // Generated once at endpoint construction, shared across all connections.
@@ -94,7 +96,10 @@ class QuicEndpoint : public std::enable_shared_from_this<QuicEndpoint> {
     AggregatePool m_aggregate_pool; // Must outlive queued leases.
     quic_udp_gso::Queue<tp::deque<PendingAggregate>> m_aggregate_queue;
     tp::vector<std::shared_ptr<QuicConnection>> m_aggregate_waiters;
+    boost::asio::steady_timer m_send_retry{m_io_context};
+    tp::vector<int> m_send_errors;
     bool m_send_wait{false};
+    bool m_buffer_write_wait{false};
     bool m_gso_fallback_logged{false};
 #endif
     // 256-bit secret randomised once per process lifetime.
