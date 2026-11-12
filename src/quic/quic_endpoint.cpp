@@ -27,11 +27,8 @@
 #include "mem/memallocator.h"
 #include "platform_exports.h"
 #include "quic_tls_ctx.h"
-#if TP_QUIC_UDP_GSO
 #include "quic_connection.h"
 #include <boost/asio/post.hpp>
-#include <sys/socket.h>
-#endif
 
 namespace {
 constexpr std::size_t kRecvBufBytes = 65536;
@@ -44,17 +41,8 @@ QuicEndpoint::QuicEndpoint(boost::asio::io_context& io_ctx, const Config& config
       m_tls_ctx(std::move(tls_ctx)),
       m_socket(io_ctx),
       m_recv_buf(kRecvBufBytes, 0),
-      m_running(false)
-#if TP_QUIC_UDP_GSO
-      , m_udp_gso(config.get_quic().udp_gso)
-#endif
-      {
+      m_running(false) {
     derive_stateless_reset_secret();
-#if !TP_QUIC_UDP_GSO
-    if (config.get_quic().udp_gso) {
-        _log_with_date_time("QUIC udp_gso unavailable: Linux UDP_SEGMENT support required", Log::WARN);
-    }
-#endif
 }
 
 void QuicEndpoint::derive_stateless_reset_secret() {
@@ -125,11 +113,13 @@ void QuicEndpoint::open_socket(const boost::asio::ip::udp::endpoint& bind_ep,
         return;
     }
 
-#if TP_QUIC_UDP_GSO
+    m_udp_gso = m_config.get_quic().udp_gso && quic_udp_gso::platform_supported() &&
+                quic_udp_gso::probe(m_socket.native_handle());
     if (udp_gso_enabled()) {
         _log_with_date_time("QUIC UDP_SEGMENT enabled for socket", Log::INFO);
+    } else if (m_config.get_quic().udp_gso) {
+        _log_with_date_time("QUIC udp_gso unavailable: Linux UDP_SEGMENT support required", Log::WARN);
     }
-#endif
     // Keep option, query, and non-blocking errors separate so each result remains observable.
     const auto& q = m_config.get_quic();
     if (q.recv_buffer_size > 0) {
@@ -259,7 +249,6 @@ void QuicEndpoint::async_recv() {
 
 void QuicEndpoint::stop() {
     m_running = false;
-#if TP_QUIC_UDP_GSO
 #if TROJAN_QUIC_STATS
     const char* stats_path = std::getenv("TROJAN_QUIC_STATS");
     if (udp_gso_enabled() && stats_path && stats_path[0]) {
@@ -291,7 +280,6 @@ void QuicEndpoint::stop() {
     m_aggregate_waiters.clear();
     m_aggregate_queue.clear();
     m_send_retry.cancel();
-#endif
     boost::system::error_code ec;
     if (m_socket.is_open()) {
         m_socket.cancel(ec);
@@ -304,7 +292,6 @@ bool QuicEndpoint::send_packet(const boost::asio::ip::udp::endpoint& dest,
     if (!send_available() || len == 0) {
         return false;
     }
-#if TP_QUIC_UDP_GSO
     if (udp_gso_enabled()) {
         // Stateless/control packets may fail at capacity. A connection reserves
         // capacity before generating its own CONNECTION_CLOSE; never overtake ciphertext.
@@ -316,7 +303,6 @@ bool QuicEndpoint::send_packet(const boost::asio::ip::udp::endpoint& dest,
         send_aggregate(dest, std::move(bytes), len);
         return true;
     }
-#endif
     boost::system::error_code ec;
     auto sent = m_socket.send_to(boost::asio::buffer(data, len), dest, 0, ec);
     if (ec) {
@@ -328,7 +314,6 @@ bool QuicEndpoint::send_packet(const boost::asio::ip::udp::endpoint& dest,
     return sent == len;
 }
 
-#if TP_QUIC_UDP_GSO
 bool QuicEndpoint::aggregate_capacity(QuicConnection& connection) {
     if (!send_available()) return false;
     if (!m_aggregate_queue.full()) return true;
@@ -365,7 +350,7 @@ void QuicEndpoint::drain_aggregates() {
         _log_with_date_time("QUIC UDP_SEGMENT disabled; retrying datagrams: errno=" +
                            tp::to_string(m_aggregate_queue.fallback_errno), Log::WARN);
     }
-    if (error == ENOBUFS) {
+    if (quic_udp_gso::no_buffers(error)) {
         // A writable socket can still have exhausted kernel buffers. Bound retry rate.
         m_send_wait = true;
         if (!m_buffer_write_wait) {
@@ -383,7 +368,7 @@ void QuicEndpoint::drain_aggregates() {
             }));
         return;
     }
-    if (error == EAGAIN) {
+    if (quic_udp_gso::would_block(error)) {
         m_send_wait = true;
         m_socket.async_wait(boost::asio::ip::udp::socket::wait_write,
             tp::bind_mem_alloc([this, self = shared_from_this()](boost::system::error_code wait_ec) {
@@ -399,7 +384,6 @@ void QuicEndpoint::drain_aggregates() {
         boost::asio::post(m_io_context, tp::bind_mem_alloc([conn, self = shared_from_this()] { conn->on_socket_writable(); }));
     }
 }
-#endif
 
 boost::asio::ip::udp::endpoint QuicEndpoint::local_endpoint() const {
     boost::system::error_code ec;
