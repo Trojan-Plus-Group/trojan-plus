@@ -70,6 +70,7 @@ inline bool no_buffers(int) { return false; }
 inline bool message_too_large(int) { return false; }
 inline bool capability_error(int) { return false; }
 #endif
+constexpr bool valid_source_port(uint16_t port) { return port != 0; }
 constexpr std::size_t buffer_size = 65536;
 constexpr std::size_t queue_limit = 4;
 constexpr uint64_t timer_tolerance_ns = 1'000'000;
@@ -142,6 +143,7 @@ template <class Storage> class BufferPool {
 // All entries own ciphertext, including after EAGAIN and permanent GSO fallback.
 template <class Container> class Queue {
     bool split{false}; // EMSGSIZE applies only to the current aggregate, across retries.
+    unsigned enobufs_count{0};
 
   public:
     Container pending;
@@ -155,12 +157,14 @@ template <class Container> class Queue {
     uint64_t fallback_activations{0};
     uint64_t eagain_retries{0};
     uint64_t fallback_datagrams{0};
+    uint64_t enobufs_drops{0};
 #endif
 #ifdef TP_QUIC_GSO_TEST
     int (*send_fault)(bool gso){nullptr};
     bool (*short_send)(bool gso){nullptr};
 #endif
-    void clear() { pending.clear(); split = false; }
+    unsigned retry_delay_ms() const { return 2u << std::min(enobufs_count ? enobufs_count - 1 : 0, 4u); }
+    void clear() { pending.clear(); split = false; enobufs_count = 0; }
     bool full() const { return pending.size() >= queue_limit; }
     template <class Packet> bool push(Packet&& packet) {
         if (full() || packet.bytes.empty() || packet.bytes.size() > buffer_size ||
@@ -180,15 +184,16 @@ template <class Container> class Queue {
 #if defined(TROJAN_QUIC_STATS_LAYOUT) || TROJAN_QUIC_STATS
             if (gso) ++gso_attempts;
 #endif
-            std::ptrdiff_t n;
+            auto send = [&](bool aggregate, std::size_t size) -> std::ptrdiff_t {
 #ifdef TP_QUIC_GSO_TEST
-            const int fault = send_fault ? send_fault(gso) : 0;
-            if (fault) { errno = fault; n = -1; }
-            else if (short_send && short_send(gso)) n = length - 1;
-            else
+                const int fault = send_fault ? send_fault(aggregate) : 0;
+                if (fault) { errno = fault; return -1; }
+                if (short_send && short_send(aggregate)) return size - 1;
 #endif
-            n = send_datagram(fd, p.dest.data(), p.dest.size(), p.bytes.data() + p.offset,
-                              length, gso ? p.segment : 0);
+                return send_datagram(fd, p.dest.data(), p.dest.size(), p.bytes.data() + p.offset,
+                                     size, aggregate ? p.segment : 0);
+            };
+            const auto n = send(gso, length);
             if (n < 0) {
                 const int error = errno;
                 if (error == EINTR) continue;
@@ -198,16 +203,39 @@ template <class Container> class Queue {
 #endif
                     return EAGAIN;
                 }
-                if (no_buffers(error)) return error;
-                on_error(error);
-                if (gso && capability_error(error)) {
-                    disabled = true;
-                    fallback_errno = error;
+                if (no_buffers(error)) {
+                    if (++enobufs_count < 8) return error;
+                    on_error(error);
 #if defined(TROJAN_QUIC_STATS_LAYOUT) || TROJAN_QUIC_STATS
-                    ++fallback_activations;
+                    ++enobufs_drops;
 #endif
-                    continue; // Same bytes, same boundaries, same queue position.
+                    pending.pop_front();
+                    split = false;
+                    enobufs_count = 0;
+                    continue;
                 }
+                if (gso && capability_error(error)) {
+                    std::ptrdiff_t plain;
+                    do { plain = send(false, p.segment); } while (plain < 0 && errno == EINTR);
+                    if (plain == static_cast<std::ptrdiff_t>(p.segment)) {
+                        disabled = true;
+                        fallback_errno = error;
+                        enobufs_count = 0;
+                        p.offset += p.segment;
+#if defined(TROJAN_QUIC_STATS_LAYOUT) || TROJAN_QUIC_STATS
+                        ++fallback_activations;
+                        ++fallback_datagrams;
+#endif
+                        on_error(error);
+                    } else {
+                        on_error(plain < 0 ? errno : EIO);
+                        pending.pop_front();
+                        split = false;
+                        enobufs_count = 0;
+                    }
+                    continue;
+                }
+                on_error(error);
                 if (gso && message_too_large(error)) {
                     split = true;
                     continue;
@@ -216,6 +244,7 @@ template <class Container> class Queue {
                 // Datagram sends are atomic. Never replay a successful prefix.
                 on_error(EIO);
             } else {
+                enobufs_count = 0;
 #if defined(TROJAN_QUIC_STATS_LAYOUT) || TROJAN_QUIC_STATS
                 if (gso) {
                     ++gso_successes;
@@ -231,6 +260,7 @@ template <class Container> class Queue {
             if (p.offset == p.bytes.size()) {
                 pending.pop_front();
                 split = false;
+                enobufs_count = 0;
             }
         }
         return 0;

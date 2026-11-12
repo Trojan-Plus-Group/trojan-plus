@@ -227,6 +227,12 @@ void QuicEndpoint::async_recv() {
                     break;
                 }
 
+                if (!quic_udp_gso::valid_source_port(m_recv_endpoint.port())) {
+#if TROJAN_QUIC_STATS
+                    ++m_zero_port_drops;
+#endif
+                    continue;
+                }
                 if (bytes_recvd > 0) {
                     // on_packet will set the quic connection stream offset
                     on_packet(m_recv_buf.data(), bytes_recvd, m_recv_endpoint);
@@ -259,7 +265,9 @@ void QuicEndpoint::stop() {
                            " eagain_retries=" + tp::to_string(m_aggregate_queue.eagain_retries) +
                            " fallback_datagrams=" + tp::to_string(m_aggregate_queue.fallback_datagrams) +
                            " fallback_activations=" + tp::to_string(m_aggregate_queue.fallback_activations) +
-                           " buffer_allocations=" + tp::to_string(m_aggregate_pool.buffer_allocations);
+                           " buffer_allocations=" + tp::to_string(m_aggregate_pool.buffer_allocations) +
+                           " enobufs_drops=" + tp::to_string(m_aggregate_queue.enobufs_drops) +
+                           " zero_port_drops=" + tp::to_string(m_zero_port_drops);
         _log_with_date_time("QUIC UDP_SEGMENT " + counters, Log::INFO);
         // Separate from connection CSV; append preserves other endpoints and prior stops.
         const auto sidecar_path = tp::string(stats_path) + ".udp_gso";
@@ -340,27 +348,29 @@ void QuicEndpoint::send_aggregate(const boost::asio::ip::udp::endpoint& dest,
 void QuicEndpoint::drain_aggregates() {
     if (m_send_wait || !m_socket.is_open()) return;
     const int error = m_aggregate_queue.drain(m_socket.native_handle(), [this](int send_error) {
-        if (std::find(m_send_errors.begin(), m_send_errors.end(), send_error) != m_send_errors.end()) return;
-        m_send_errors.push_back(send_error);
-        _log_with_date_time("QUIC UDP send failed: errno=" +
-                           tp::to_string(send_error), Log::WARN);
+        auto found = std::find_if(m_send_errors.begin(), m_send_errors.end(),
+                                  [send_error](const SendError& entry) { return entry.error == send_error; });
+        if (found == m_send_errors.end()) {
+            m_send_errors.push_back(SendError{send_error});
+            found = m_send_errors.end() - 1;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (found->last != std::chrono::steady_clock::time_point{} &&
+            now - found->last < std::chrono::seconds(10)) {
+            ++found->suppressed;
+            return;
+        }
+        const auto family = m_aggregate_queue.pending.front().dest.protocol().family();
+        _log_with_date_time("QUIC UDP send failed: errno=" + tp::to_string(send_error) +
+                           " suppressed=" + tp::to_string(found->suppressed) +
+                           " family=" + tp::to_string(family), Log::WARN);
+        found->suppressed = 0;
+        found->last = now;
     });
-    if (m_aggregate_queue.fallback_errno && !m_gso_fallback_logged) {
-        m_gso_fallback_logged = true;
-        _log_with_date_time("QUIC UDP_SEGMENT disabled; retrying datagrams: errno=" +
-                           tp::to_string(m_aggregate_queue.fallback_errno), Log::WARN);
-    }
     if (quic_udp_gso::no_buffers(error)) {
         // A writable socket can still have exhausted kernel buffers. Bound retry rate.
         m_send_wait = true;
-        if (!m_buffer_write_wait) {
-            m_buffer_write_wait = true;
-            m_socket.async_wait(boost::asio::ip::udp::socket::wait_write,
-                tp::bind_mem_alloc([this, self = shared_from_this()](boost::system::error_code) {
-                    m_buffer_write_wait = false;
-                }));
-        }
-        m_send_retry.expires_after(std::chrono::milliseconds(2));
+        m_send_retry.expires_after(std::chrono::milliseconds(m_aggregate_queue.retry_delay_ms()));
         m_send_retry.async_wait(tp::bind_mem_alloc(
             [this, self = shared_from_this()](boost::system::error_code ec) {
                 m_send_wait = false;

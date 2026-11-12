@@ -47,16 +47,22 @@ drains retained encrypted bytes and resumes producers. Stateless/control packets
 not tied to a connection may be dropped at capacity (`send_packet` returns false);
 a connection's own CONNECTION_CLOSE waits for capacity instead of being dropped.
 If the endpoint stops, waiting connections complete their local close immediately
-without sending CONNECTION_CLOSE. Receive behavior and QUIC protocol stay unchanged.
+without sending CONNECTION_CLOSE. Packets from source port 0 are ignored on
+both clients and servers, regardless of GSO configuration.
 
-GSO activation logs once at INFO. Only `EIO`, `EINVAL`, `EOPNOTSUPP`,
-`ENOPROTOOPT` (and `ENOTSUP` if distinct) permanently disable aggregation for that
-socket; the same ciphertext is retried in order as ordinary datagrams.
-`EMSGSIZE` splits only the current aggregate into ordinary datagrams without
-permanently disabling GSO. `EAGAIN`/`EWOULDBLOCK` and `ENOBUFS` retain bytes and
-ordering until socket writability; `ENOBUFS` also schedules a short timer retry.
-Other send errors log WARN once per errno kind per endpoint, drop the failed
-aggregate (or only the failed datagram in per-datagram mode), and continue draining
+GSO activation logs once at INFO. After `EIO`, `EINVAL`, `EOPNOTSUPP`,
+`ENOPROTOOPT` (and `ENOTSUP` if distinct), the first datagram is sent without GSO
+to the same destination. Only a successful plain send permanently disables GSO
+for that socket; remaining ciphertext is sent in order without replaying that
+first datagram. If the plain send also fails, only that queue item is dropped;
+GSO stays enabled. `EMSGSIZE` splits only the current aggregate into ordinary
+datagrams without permanently disabling GSO. `EAGAIN`/`EWOULDBLOCK` retain bytes
+and ordering until socket writability. `ENOBUFS` retries use timer backoff of
+2, 4, 8, 16, then 32 ms (capped); eight consecutive failures for the same head
+item drop that item and continue draining. Any successful send resets backoff.
+Send errors log WARN at most once per errno per endpoint per 10 seconds, including
+the suppressed count and destination address family. Other send errors drop the
+failed aggregate (or only the failed datagram in per-datagram mode) and continue draining
 without stopping the endpoint. Unexpected short sends also drop the item and
 continue. Unsupported platforms or sockets run with the feature off and warn
 when requested.

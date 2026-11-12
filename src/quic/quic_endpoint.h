@@ -11,6 +11,7 @@
 #ifndef _QUIC_ENDPOINT_H_
 #define _QUIC_ENDPOINT_H_
 
+#include <chrono>
 #include <cstdint>
 #include <memory>
 
@@ -94,10 +95,16 @@ class QuicEndpoint : public std::enable_shared_from_this<QuicEndpoint> {
     quic_udp_gso::Queue<tp::deque<PendingAggregate>> m_aggregate_queue;
     tp::vector<std::shared_ptr<QuicConnection>> m_aggregate_waiters;
     boost::asio::steady_timer m_send_retry{m_io_context};
-    tp::vector<int> m_send_errors;
+    struct SendError {
+        int error;
+        uint64_t suppressed{0};
+        std::chrono::steady_clock::time_point last{};
+    };
+    tp::vector<SendError> m_send_errors;
+#if defined(TROJAN_QUIC_STATS_LAYOUT) || TROJAN_QUIC_STATS
+    uint64_t m_zero_port_drops{0};
+#endif
     bool m_send_wait{false};
-    bool m_buffer_write_wait{false};
-    bool m_gso_fallback_logged{false};
     // 256-bit secret randomised once per process lifetime.
     uint8_t m_stateless_reset_secret[kStatelessResetSecretLen];
 };

@@ -249,6 +249,134 @@ static void test_errors(int tx, int rx, Address dest) {
         empty();
     }
 }
+static void expect_datagram(int rx, std::initializer_list<uint8_t> expected) {
+    uint8_t bytes[8];
+    assert(recvfrom(rx, bytes, sizeof(bytes), MSG_DONTWAIT, nullptr, nullptr) ==
+           static_cast<ssize_t>(expected.size()));
+    assert(std::equal(expected.begin(), expected.end(), bytes));
+}
+static void expect_empty(int rx) {
+    uint8_t byte;
+    assert(recvfrom(rx, &byte, 1, MSG_DONTWAIT, nullptr, nullptr) == -1 && errno == EAGAIN);
+}
+static void script_sends(std::initializer_list<SendStep> steps) {
+    send_steps = steps;
+    send_step = 0;
+}
+static void test_destination_einval_keeps_next_gso(int tx, int rx, Address dest) {
+    quic_udp_gso::Queue<std::deque<Packet>> q;
+    q.send_fault = scripted_fault;
+    assert(q.push(Packet{dest, {1, 2, 3}, 2}));
+    assert(q.push(Packet{dest, {4, 5, 6}, 2}));
+    script_sends({{true, EINVAL}, {false, EINVAL}, {true, EAGAIN}});
+    std::vector<int> errors;
+    assert(q.drain(tx, [&](int e) { errors.push_back(e); }) == EAGAIN);
+    assert(send_step == 3 && errors == std::vector<int>{EINVAL});
+    assert(!q.disabled && q.fallback_errno == 0);
+    assert(q.pending.size() == 1 && q.pending.front().bytes[0] == 4 && q.pending.front().offset == 0);
+#if TROJAN_QUIC_STATS
+    assert(q.gso_attempts == 2 && q.fallback_activations == 0 && q.fallback_datagrams == 0);
+#endif
+    expect_empty(rx);
+    script_sends({{true, 0}});
+    assert(q.drain(tx, [&](int e) { errors.push_back(e); }) == 0 && send_step == 1);
+    assert(q.pending.empty() && !q.disabled && errors == std::vector<int>{EINVAL});
+    expect_datagram(rx, {4, 5});
+    expect_datagram(rx, {6});
+    expect_empty(rx);
+}
+static void test_fallback_success_no_duplicate(int tx, int rx, Address dest) {
+    quic_udp_gso::Queue<std::deque<Packet>> q;
+    q.send_fault = scripted_fault;
+    assert(q.push(Packet{dest, {1, 2, 3}, 2}));
+    script_sends({{true, EINVAL}, {false, 0}, {false, EAGAIN}});
+    std::vector<int> errors;
+    assert(q.drain(tx, [&](int e) { errors.push_back(e); }) == EAGAIN);
+    assert(send_step == 3 && errors == std::vector<int>{EINVAL});
+    assert(q.disabled && q.fallback_errno == EINVAL && q.pending.front().offset == 2);
+    expect_datagram(rx, {1, 2});
+    expect_empty(rx);
+    script_sends({{false, 0}});
+    assert(q.drain(tx, [](int) { assert(false); }) == 0 && send_step == 1);
+    assert(q.pending.empty());
+    expect_datagram(rx, {3});
+    expect_empty(rx);
+#if TROJAN_QUIC_STATS
+    assert(q.gso_attempts == 1 && q.gso_successes == 0);
+    assert(q.fallback_activations == 1 && q.fallback_datagrams == 2);
+#endif
+}
+static void test_real_port_zero_then_loopback_gso(int tx, int rx, Address dest) {
+    quic_udp_gso::Queue<std::deque<Packet>> q;
+    auto invalid = dest;
+    invalid.value.sin_port = 0;
+    assert(q.push(Packet{invalid, {1, 2, 3}, 2}));
+    std::vector<int> errors;
+    auto warn = [&](int e) { errors.push_back(e); };
+    assert(q.drain(tx, warn) == 0 && q.pending.empty());
+    assert(errors.size() == 1 && !q.disabled && q.fallback_errno == 0);
+    expect_empty(rx);
+    assert(q.push(Packet{dest, {4, 5, 6}, 2}));
+    assert(q.drain(tx, warn) == 0 && q.pending.empty());
+    expect_datagram(rx, {4, 5});
+    expect_datagram(rx, {6});
+    expect_empty(rx);
+#if TROJAN_QUIC_STATS
+    assert(q.gso_attempts == 2 && q.enobufs_drops == 0);
+    if (q.disabled) {
+        assert(errors.size() == 2 && q.fallback_activations == 1 && q.fallback_datagrams == 2);
+        std::puts("SKIP port-zero native UDP_SEGMENT stats: kernel rejected it; fallback passed");
+    } else {
+        assert(errors.size() == 1 && q.gso_successes == 1 && q.gso_datagrams == 2 && q.gso_bytes == 3);
+        assert(q.fallback_activations == 0 && q.fallback_datagrams == 0);
+    }
+#endif
+}
+static void test_enobufs_eighth_drops_only_head_and_resets(int tx, int rx, Address dest) {
+    for (bool fallback : {false, true}) {
+        quic_udp_gso::Queue<std::deque<Packet>> q;
+        q.disabled = fallback;
+        q.send_fault = scripted_fault;
+        assert(q.push(Packet{dest, {1, 2, 3}, 2}));
+        assert(q.push(Packet{dest, {4}, 2}));
+        std::vector<int> errors;
+        auto warn = [&](int e) { errors.push_back(e); };
+        assert(q.retry_delay_ms() == 2);
+        for (unsigned delay : {2, 4, 8, 16, 32, 32, 32}) {
+            script_sends({{!fallback, ENOBUFS}});
+            assert(q.drain(tx, warn) == ENOBUFS && send_step == 1);
+            assert(q.retry_delay_ms() == delay && errors.empty());
+            assert(q.pending.size() == 2 && q.pending.front().offset == 0);
+#if TROJAN_QUIC_STATS
+            assert(q.enobufs_drops == 0);
+#endif
+        }
+        script_sends({{!fallback, ENOBUFS}, {false, EAGAIN}});
+        assert(q.drain(tx, warn) == EAGAIN && send_step == 2);
+        assert(errors == std::vector<int>{ENOBUFS} && q.disabled == fallback);
+        assert(q.pending.size() == 1 && q.pending.front().bytes[0] == 4 && q.pending.front().offset == 0);
+        assert(q.retry_delay_ms() == 2);
+#if TROJAN_QUIC_STATS
+        assert(q.enobufs_drops == 1);
+#endif
+        for (unsigned delay : {2, 4}) {
+            script_sends({{false, ENOBUFS}});
+            assert(q.drain(tx, warn) == ENOBUFS && q.retry_delay_ms() == delay);
+        }
+        script_sends({{false, 0}});
+        assert(q.drain(tx, warn) == 0 && q.pending.empty() && q.retry_delay_ms() == 2);
+        assert(errors == std::vector<int>{ENOBUFS});
+        expect_datagram(rx, {4});
+        expect_empty(rx);
+        assert(q.push(Packet{dest, {5}, 2}));
+        for (unsigned delay : {2, 4}) {
+            script_sends({{false, ENOBUFS}});
+            assert(q.drain(tx, warn) == ENOBUFS && q.retry_delay_ms() == delay);
+        }
+        q.clear();
+        assert(q.pending.empty() && q.retry_delay_ms() == 2);
+    }
+}
 static int calls;
 static int fault(bool gso) {
     if (!gso) return 0;
@@ -258,6 +386,11 @@ static int fault(bool gso) {
 #endif
 int main() {
     using namespace quic_udp_gso;
+    static_assert(!valid_source_port(0));
+    static_assert(valid_source_port(1));
+    static_assert(valid_source_port(UINT16_MAX));
+    for (uint32_t port = 0; port <= UINT16_MAX; ++port)
+        assert(valid_source_port(static_cast<uint16_t>(port)) == (port != 0));
     static_assert(timer_tolerance_ns == 1'000'000);
     assert(!keep_timer(0, 1));
     assert(!keep_timer(UINT64_MAX, 1));
@@ -368,6 +501,10 @@ int main() {
 #endif
     test_pool(tx, rx, dest);
     test_errors(tx, rx, dest);
+    test_destination_einval_keeps_next_gso(tx, rx, dest);
+    test_fallback_success_no_duplicate(tx, rx, dest);
+    test_real_port_zero_then_loopback_gso(tx, rx, dest);
+    test_enobufs_eighth_drops_only_head_and_resets(tx, rx, dest);
     close(tx);
     close(rx);
 #endif

@@ -1906,11 +1906,15 @@ bool QuicConnection::forward_to_h1_upstream(int64_t stream_id, const uint8_t* da
 // ---- close ------------------------------------------------------------------
 
 void QuicConnection::defer_close(uint64_t app_error_code) {
-    if (m_closed || m_close_pending) return;
+    if (m_closed) return;
+    if (m_close_pending_error == 0) m_close_pending_error = app_error_code;
+    if (m_close_pending) return;
     m_close_pending = true;
     boost::asio::post(m_endpoint.io_context(),
-        [self = shared_from_this(), endpoint = m_endpoint.shared_from_this(), app_error_code]() {
+        [self = shared_from_this(), endpoint = m_endpoint.shared_from_this()]() {
         self->m_close_pending = false;
+        const auto app_error_code = self->m_close_pending_error;
+        self->m_close_pending_error = 0;
         self->close(app_error_code);
     });
 }

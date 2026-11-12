@@ -193,6 +193,7 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     void schedule_send_wakeup();
     void defer_close(uint64_t app_error_code = 0);
     bool m_close_pending{false};
+    uint64_t m_close_pending_error{0};
 #ifdef TROJAN_QUIC_STATS_LAYOUT
     // Attribution is synchronous; nested scopes restore the caller's trigger.
     // ack requires an ACKed-stream callback or observed bytes_in_flight reduction;
