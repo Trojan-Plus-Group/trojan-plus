@@ -84,9 +84,13 @@ constexpr int NGTCP2_CCERR_TYPE_APPLICATION = 1;
 void ngtcp2_path_storage_zero(ngtcp2_path_storage*) {}
 int ngtcp2_conn_get_tls_alert(void*) { return 0; }
 void ngtcp2_ccerr_set_tls_alert(ngtcp2_ccerr*, int, const void*, int) {}
-void ngtcp2_ccerr_default(ngtcp2_ccerr*) {}
+void ngtcp2_ccerr_default(ngtcp2_ccerr* error) { error->error_code = 0; }
+uint64_t close_error_code = 0;
 int ngtcp2_conn_write_connection_close(void*, ngtcp2_path*, ngtcp2_pkt_info*, uint8_t*, size_t,
-                                      ngtcp2_ccerr*, uint64_t) { return 10; }
+                                      ngtcp2_ccerr* error, uint64_t) {
+    close_error_code = error->error_code;
+    return 10;
+}
 uint64_t now_nanos() { return 1; }
 struct QuicConnection;
 struct QuicEndpoint : std::enable_shared_from_this<QuicEndpoint> {
@@ -139,7 +143,7 @@ struct QuicConnection : std::enable_shared_from_this<QuicConnection> {
     bool is_closed() const { return m_closed; }
     void reschedule_loss_timer() {}
     bool m_in_read_pkt = false, m_is_server = true;
-    uint64_t m_close_waiting_error = 0;
+    uint64_t m_close_waiting_error = 0, m_close_pending_error = 0;
     ngtcp2_conn* m_conn = &native;
     boost::asio::ip::udp::endpoint m_peer;
     std::vector<uint8_t> m_write_buf = std::vector<uint8_t>(1200);
@@ -270,6 +274,22 @@ int main() {
     assert(endpoint.io.poll_one() == 0); // Guard posts exactly once.
     conn->close();
     assert(closed == 1 && sent == 1);
+
+    for (uint64_t first : {0, 5}) {
+        auto owner = std::make_shared<Endpoint>();
+        owner->m_aggregate_queue.pending.clear();
+        auto c = std::make_shared<QuicConnection>(*owner);
+        c->m_is_server = false;
+        c->m_in_read_pkt = true;
+        c->close(first);
+        c->close(7);
+        assert(!c->m_closed && c->m_close_pending);
+        c->m_in_read_pkt = false;
+        assert(owner->io.poll_one() == 1);
+        assert(c->m_closed && c->packets == 1);
+        assert(close_error_code == (first == 0 ? 7 : 5));
+        assert(owner->io.poll_one() == 0);
+    }
 
     for (int terminal : {NGTCP2_ERR_CLOSING, NGTCP2_ERR_DRAINING}) {
       for (bool via_next : {false, true}) {

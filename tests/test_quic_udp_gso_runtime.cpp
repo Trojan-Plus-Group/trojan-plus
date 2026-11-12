@@ -154,6 +154,67 @@ static void close_tests(Config& cfg, std::shared_ptr<QuicTlsCtx> tls) {
     std::cout << "PASS close after stop, deferred waiter, client stop, weak_ptr release\n";
 }
 
+static std::array<std::chrono::steady_clock::time_point, 9> enobufs_attempts;
+static unsigned enobufs_calls;
+static int bounded_enobufs(bool) {
+    require(enobufs_calls < enobufs_attempts.size(), "unexpected ENOBUFS send attempt");
+    enobufs_attempts[enobufs_calls] = std::chrono::steady_clock::now();
+    return ++enobufs_calls <= 8 ? ENOBUFS : 0;
+}
+
+static void enobufs_test(Config& cfg, const std::shared_ptr<QuicTlsCtx>& tls) {
+    boost::asio::io_context io;
+    auto endpoint = std::make_shared<Endpoint>(io, cfg, tls);
+    endpoint->start();
+    require(endpoint->udp_gso_enabled(), "GSO enabled for ENOBUFS runtime test");
+    Udp::socket receiver(io, Udp::endpoint(boost::asio::ip::address_v4::loopback(), 0));
+    std::array<uint8_t, 16> received{};
+    Udp::endpoint source;
+    bool delivered = false;
+    receiver.async_receive_from(boost::asio::buffer(received), source,
+        [&](boost::system::error_code ec, std::size_t size) {
+            require(!ec && size == 1 && received[0] == 2, "ENOBUFS must drop head and deliver later item");
+            delivered = true;
+        });
+    // Keep the transfer test's two-WARN contract: this test checks suppression
+    // directly instead of emitting another first-occurrence warning.
+    endpoint->m_send_errors.push_back(QuicEndpoint::SendError{ENOBUFS});
+    endpoint->m_send_errors.back().last = std::chrono::steady_clock::now();
+#if defined(TROJAN_QUIC_STATS_LAYOUT) || TROJAN_QUIC_STATS
+    const auto drops = endpoint->m_aggregate_queue.enobufs_drops;
+#endif
+    enobufs_calls = 0;
+    endpoint->m_aggregate_queue.send_fault = bounded_enobufs;
+    const uint8_t head = 1, later = 2;
+    require(endpoint->send_packet(receiver.local_endpoint(), &head, 1), "enqueue ENOBUFS head");
+    require(enobufs_calls == 1 && endpoint->m_send_wait, "ENOBUFS must arm retry timer");
+    require(endpoint->send_packet(receiver.local_endpoint(), &later, 1), "enqueue later item");
+    require(enobufs_calls == 1 && endpoint->m_aggregate_queue.pending.size() == 2,
+        "later enqueue must not bypass ENOBUFS timer");
+    until(io, [&] { return delivered; });
+    require(enobufs_calls == 9 && endpoint->m_aggregate_queue.pending.empty() && !endpoint->m_send_wait,
+        "eight ENOBUFS attempts must drop head and drain later item");
+    for (std::size_t i = 1; i < 8; ++i) {
+        const auto delay = enobufs_attempts[i] - enobufs_attempts[i - 1];
+        const auto expected_ms = 2u << std::min(static_cast<unsigned>(i - 1), 4u);
+        // Allow scheduler/clock noise, but reject writable-socket busy retries.
+        require(delay >= std::chrono::milliseconds(expected_ms / 2) && delay < std::chrono::seconds(2),
+            "ENOBUFS retry timer delay outside tolerance");
+    }
+    require(enobufs_attempts[8] - enobufs_attempts[0] < std::chrono::seconds(5),
+        "ENOBUFS retries must finish within bounded time");
+    require(endpoint->m_send_errors.back().suppressed == 1, "ENOBUFS drop must report exactly once");
+#if defined(TROJAN_QUIC_STATS_LAYOUT) || TROJAN_QUIC_STATS
+    require(endpoint->m_aggregate_queue.enobufs_drops == drops + 1, "ENOBUFS drop counter");
+#endif
+    require(endpoint->is_running() && !endpoint->m_aggregate_queue.disabled,
+        "ENOBUFS must preserve endpoint and GSO");
+    endpoint->m_aggregate_queue.send_fault = nullptr;
+    endpoint->stop();
+    poll(io);
+    std::cout << "PASS eight ENOBUFS attempts: bounded timer backoff, one drop, later UDP delivery\n";
+}
+
 static int unreachable(bool) { return ENETUNREACH; }
 static void transfer_tests(Config& server_cfg, Config& client_cfg) {
     boost::asio::io_context io;
@@ -176,7 +237,13 @@ static void transfer_tests(Config& server_cfg, Config& client_cfg) {
     server->send_packet(bad, packet, sizeof(packet));
     server->m_aggregate_queue.send_fault = nullptr;
     require(server->is_running() && !server->m_aggregate_queue.disabled, "unreachable peer stopped endpoint or disabled GSO");
-    require(server->m_send_errors.size() == 1 && server->m_send_errors[0] == ENETUNREACH, "WARN must be rate limited per errno");
+    require(server->m_send_errors.size() == 1 && server->m_send_errors[0].error == ENETUNREACH &&
+            server->m_send_errors[0].suppressed == 1, "WARN must count suppressed errors per errno");
+    server->m_send_errors[0].last -= std::chrono::seconds(10);
+    server->m_aggregate_queue.send_fault = unreachable;
+    server->send_packet(bad, packet, sizeof(packet));
+    server->m_aggregate_queue.send_fault = nullptr;
+    require(server->m_send_errors[0].suppressed == 0, "WARN must reset suppressed count after interval");
     std::vector<uint8_t> payload(1024 * 1024);
     for (std::size_t i = 0; i < payload.size(); ++i) payload[i] = static_cast<uint8_t>(i);
     std::array<std::vector<uint8_t>, 2> received;
@@ -302,6 +369,7 @@ int main(int argc, char** argv) {
         auto client = config(argv[2]);
         auto tls = std::make_shared<QuicTlsCtx>(client, QuicTlsCtx::Role::Client);
         close_tests(client, tls);
+        enobufs_test(client, tls);
         transfer_tests(server, client);
         crypto_failure_test(server, argv[2]);
         return 0;

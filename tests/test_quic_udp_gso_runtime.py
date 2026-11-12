@@ -84,7 +84,8 @@ endif()
         text = log.read_text()
         print(text, end="")
         result.check_returncode()
-        assert text.count("QUIC UDP send failed: errno=") == 1, "expected exactly one send WARN"
+        assert text.count("QUIC UDP send failed: errno=") == 2, "expected one WARN per rate-limit window"
+        assert "suppressed=1 family=" in text, "WARN must include suppressed count and destination family"
         assert "initial ngtcp2_conn_read_pkt: ERR_CRYPTO" in text, "Initial must fail with NGTCP2_ERR_CRYPTO"
         assert "QUIC aggregate write: ERR_CLOSING" in text, "native CLOSING path not exercised"
         assert "QUIC aggregate write: ERR_DRAINING" in text, "native DRAINING path not exercised"
