@@ -9,3 +9,4 @@ Trojan is an unidentifiable mechanism for bypassing GFW. This documentation intr
 - [Config](config)
 - [Build](build)
 - [Usage](usage)
+- [QUIC performance investigation](quic-performance-investigation)
