@@ -1,26 +1,75 @@
-#ifndef TP_QUIC_UDP_GSO_H
-#define TP_QUIC_UDP_GSO_H
+#ifndef QUIC_UDP_GSO_H
+#define QUIC_UDP_GSO_H
 
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
-#ifdef __linux__
-#include <linux/udp.h>
-#endif
-#if defined(__linux__) && defined(UDP_SEGMENT)
-#define TP_QUIC_UDP_GSO 1
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cstring>
+#include <utility>
+#ifdef __linux__
+#include <linux/udp.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <utility>
-#include <array>
-#else
-#define TP_QUIC_UDP_GSO 0
+// Older Android NDK headers omit this Linux UAPI socket option.
+#ifndef UDP_SEGMENT
+#define UDP_SEGMENT 103
+#endif
 #endif
 
 namespace quic_udp_gso {
+#ifdef __linux__
+constexpr bool platform_supported() { return true; }
+inline bool probe(std::intptr_t fd) {
+    int segment = 0;
+    socklen_t length = sizeof(segment);
+    return getsockopt(static_cast<int>(fd), IPPROTO_UDP, UDP_SEGMENT, &segment, &length) == 0;
+}
+inline std::ptrdiff_t send_datagram(std::intptr_t fd, const void* dest, std::size_t destlen,
+                                    const uint8_t* bytes, std::size_t length, std::size_t segment) {
+    if (!segment)
+        return sendto(static_cast<int>(fd), bytes, length, MSG_DONTWAIT,
+                      static_cast<const sockaddr*>(dest), static_cast<socklen_t>(destlen));
+    iovec iov{const_cast<uint8_t*>(bytes), length};
+    alignas(cmsghdr) char control[CMSG_SPACE(sizeof(uint16_t))]{};
+    msghdr msg{};
+    msg.msg_name = const_cast<void*>(dest);
+    msg.msg_namelen = static_cast<socklen_t>(destlen);
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    msg.msg_control = control;
+    msg.msg_controllen = sizeof(control);
+    auto* c = CMSG_FIRSTHDR(&msg);
+    c->cmsg_level = IPPROTO_UDP;
+    c->cmsg_type = UDP_SEGMENT;
+    c->cmsg_len = CMSG_LEN(sizeof(uint16_t));
+    const auto size = static_cast<uint16_t>(segment);
+    std::memcpy(CMSG_DATA(c), &size, sizeof(size));
+    return sendmsg(static_cast<int>(fd), &msg, MSG_DONTWAIT);
+}
+inline bool would_block(int error) { return error == EAGAIN || error == EWOULDBLOCK; }
+inline bool no_buffers(int error) { return error == ENOBUFS; }
+inline bool message_too_large(int error) { return error == EMSGSIZE; }
+inline bool capability_error(int error) {
+    return error == EIO || error == EINVAL || error == EOPNOTSUPP ||
+           error == ENOPROTOOPT || error == ENOTSUP;
+}
+#else
+constexpr bool platform_supported() { return false; }
+inline bool probe(std::intptr_t) { return false; }
+// Unused off Linux: endpoint uses its native asynchronous send path.
+inline std::ptrdiff_t send_datagram(std::intptr_t, const void*, std::size_t,
+                                    const uint8_t*, std::size_t, std::size_t) {
+    errno = EINVAL;
+    return -1;
+}
+inline bool would_block(int error) { return error == EAGAIN; }
+inline bool no_buffers(int) { return false; }
+inline bool message_too_large(int) { return false; }
+inline bool capability_error(int) { return false; }
+#endif
 constexpr std::size_t buffer_size = 65536;
 constexpr std::size_t queue_limit = 4;
 constexpr uint64_t timer_tolerance_ns = 1'000'000;
@@ -31,7 +80,6 @@ constexpr bool keep_timer(uint64_t armed, uint64_t requested, uint64_t now = 0) 
     return armed != 0 && armed != UINT64_MAX && requested != 0 && requested != UINT64_MAX && armed > now &&
            (requested >= armed || armed - requested <= timer_tolerance_ns);
 }
-#if TP_QUIC_UDP_GSO
 constexpr std::size_t aggregate_limit(std::size_t segment) {
     return segment > 65507 / 64 ? 65507 : 64 * segment;
 }
@@ -122,56 +170,37 @@ template <class Container> class Queue {
     }
     // Errors are reported on every occurrence; endpoint may suppress duplicate warnings.
     // 0: drained; EAGAIN/ENOBUFS: keep bytes and retry later.
-    int drain(int fd) { return drain(fd, [](int) {}); }
-    template <class OnError> int drain(int fd, OnError on_error) {
+    int drain(std::intptr_t fd) { return drain(fd, [](int) {}); }
+    template <class OnError> int drain(std::intptr_t fd, OnError on_error) {
         while (!pending.empty()) {
             auto& p = pending.front();
             const auto remaining = p.bytes.size() - p.offset;
             const bool gso = !disabled && !split && remaining > p.segment;
             const auto length = gso ? remaining : std::min(p.segment, remaining);
-            iovec iov{p.bytes.data() + p.offset, length};
-            alignas(cmsghdr) char control[CMSG_SPACE(sizeof(uint16_t))]{};
-            msghdr msg{};
-            msg.msg_name = p.dest.data();
-            msg.msg_namelen = p.dest.size();
-            msg.msg_iov = &iov;
-            msg.msg_iovlen = 1;
-            if (gso) {
-                msg.msg_control = control;
-                msg.msg_controllen = sizeof(control);
-                auto* c = CMSG_FIRSTHDR(&msg);
-                c->cmsg_level = IPPROTO_UDP;
-                c->cmsg_type = UDP_SEGMENT;
-                c->cmsg_len = CMSG_LEN(sizeof(uint16_t));
-                const auto segment = static_cast<uint16_t>(p.segment);
-                std::memcpy(CMSG_DATA(c), &segment, sizeof(segment));
-            }
 #if defined(TROJAN_QUIC_STATS_LAYOUT) || TROJAN_QUIC_STATS
             if (gso) ++gso_attempts;
 #endif
-            ssize_t n;
+            std::ptrdiff_t n;
 #ifdef TP_QUIC_GSO_TEST
             const int fault = send_fault ? send_fault(gso) : 0;
             if (fault) { errno = fault; n = -1; }
             else if (short_send && short_send(gso)) n = length - 1;
             else
 #endif
-            n = gso ? sendmsg(fd, &msg, MSG_DONTWAIT)
-                    : sendto(fd, p.bytes.data() + p.offset, length, MSG_DONTWAIT,
-                             reinterpret_cast<const sockaddr*>(p.dest.data()), p.dest.size());
+            n = send_datagram(fd, p.dest.data(), p.dest.size(), p.bytes.data() + p.offset,
+                              length, gso ? p.segment : 0);
             if (n < 0) {
                 const int error = errno;
                 if (error == EINTR) continue;
-                if (error == EAGAIN || error == EWOULDBLOCK) {
+                if (would_block(error)) {
 #if defined(TROJAN_QUIC_STATS_LAYOUT) || TROJAN_QUIC_STATS
                     ++eagain_retries;
 #endif
                     return EAGAIN;
                 }
-                if (error == ENOBUFS) return ENOBUFS;
+                if (no_buffers(error)) return error;
                 on_error(error);
-                if (gso && (error == EIO || error == EINVAL || error == EOPNOTSUPP ||
-                            error == ENOPROTOOPT || error == ENOTSUP)) {
+                if (gso && capability_error(error)) {
                     disabled = true;
                     fallback_errno = error;
 #if defined(TROJAN_QUIC_STATS_LAYOUT) || TROJAN_QUIC_STATS
@@ -179,7 +208,7 @@ template <class Container> class Queue {
 #endif
                     continue; // Same bytes, same boundaries, same queue position.
                 }
-                if (gso && error == EMSGSIZE) {
+                if (gso && message_too_large(error)) {
                     split = true;
                     continue;
                 }
@@ -207,6 +236,5 @@ template <class Container> class Queue {
         return 0;
     }
 };
-#endif
 } // namespace quic_udp_gso
 #endif

@@ -6,7 +6,7 @@
 #include <vector>
 #include <utility>
 #include <memory>
-#if TP_QUIC_UDP_GSO
+#ifdef __linux__
 #include <netinet/in.h>
 #include <unistd.h>
 
@@ -284,7 +284,7 @@ int main() {
     assert(arms == 2 && baseline_arms == 6);
     armed = 0; // Successful handler fired: next identical expiry must arm again.
     assert(!keep_timer(armed, 9'000'000));
-#if TP_QUIC_UDP_GSO
+#ifdef __linux__
     static_assert(aggregate_limit(0) == 0);
     static_assert(aggregate_limit(1) == 64);
     static_assert(aggregate_limit(1023) == 65472);

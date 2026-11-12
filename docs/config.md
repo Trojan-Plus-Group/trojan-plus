@@ -32,7 +32,7 @@ unrelated protocols. Set the same custom token on both ends when needed.
 
 `quic.udp_gso` defaults to `false`. This send-only endpoint option works on
 both clients and servers independently; peers need no matching setting.
-On Linux (including Android when headers define `UDP_SEGMENT`), enabling it
+On Linux (including Android), enabling it
 bundles loss-timer coalescing with `UDP_SEGMENT` send batching. An armed,
 unfired, non-stale timer remains armed for equal or later deadlines and for
 requests up to 1 ms earlier. The shared ngtcp2 expiry covers loss/PTO,
@@ -58,7 +58,8 @@ ordering until socket writability; `ENOBUFS` also schedules a short timer retry.
 Other send errors log WARN once per errno kind per endpoint, drop the failed
 aggregate (or only the failed datagram in per-datagram mode), and continue draining
 without stopping the endpoint. Unexpected short sends also drop the item and
-continue. Unsupported platforms compile out the feature and warn when requested.
+continue. Unsupported platforms or sockets run with the feature off and warn
+when requested.
 This is opt-in, not a change to default packet shaping; GRO and ACK thinning are
 not enabled.
 

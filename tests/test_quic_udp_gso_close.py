@@ -41,7 +41,6 @@ def main():
 #include <list>
 #include <unordered_map>
 #include <cstring>
-#define TP_QUIC_UDP_GSO 1
 #define QUIC_STAT(...)
 #define QUIC_SEND(...) (++packets)
 #define FUNC_NAME __func__

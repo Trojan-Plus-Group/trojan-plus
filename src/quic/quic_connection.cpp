@@ -880,9 +880,7 @@ void QuicConnection::on_pump_write(const char* debug_path) {
     if (m_closed || !m_conn || m_in_read_pkt) {
         return;
     }
-#if TP_QUIC_UDP_GSO
     if (m_endpoint.udp_gso_enabled() && m_close_waiting) return;
-#endif
 
     if (m_in_pump_write) {
         return;
@@ -912,13 +910,11 @@ void QuicConnection::on_pump_write(const char* debug_path) {
 // ---- pump_write : send ACK/Control/handshake packet without stream id --------------------------
 
 void QuicConnection::pump_write(const char* debug_path) {
-#if TP_QUIC_UDP_GSO
     if (m_endpoint.udp_gso_enabled() && m_conn && !m_closed) {
         bool accepted = false;
         send_gso(-1, nullptr, 0, false, accepted);
         return;
     }
-#endif
     QUIC_STAT(
         if (m_stats.m_stats_enabled) {
             ++m_stats.m_reason_stats[static_cast<unsigned>(m_stats.m_stats_reason)].pump;
@@ -1295,13 +1291,11 @@ int64_t QuicConnection::send_stream_data_impl(int64_t stream_id, const uint8_t* 
 #line 1036
     }
 
-#if TP_QUIC_UDP_GSO
     if (m_endpoint.udp_gso_enabled()) {
         ngtcp2_vec vec{const_cast<uint8_t*>(data), datalen};
         bool accepted = false;
         return send_gso(stream_id, &vec, 1, fin, accepted);
     }
-#endif
 
     _log_with_date_time("send_stream_data_impl enter: stream_id=" + tp::to_string(stream_id) + 
                     " datalen=" + tp::to_string(datalen) + " fin=" + tp::to_string(fin), Log::ALL);
@@ -1489,9 +1483,7 @@ int64_t QuicConnection::send_stream_vecs_impl(int64_t stream_id,
                     " datavcnt=" + tp::to_string(datavcnt) + " fin=" + tp::to_string(fin) + 
                     " path=" + tp::string(debug_path), Log::ALL);
 
-#if TP_QUIC_UDP_GSO
     if (m_endpoint.udp_gso_enabled()) return send_gso(stream_id, datav, datavcnt, fin, accepted);
-#endif
 
     // Calculate total data length across all vectors
     std::size_t total_len = 0;
@@ -1701,7 +1693,6 @@ int64_t QuicConnection::send_stream_vecs_impl(int64_t stream_id,
     return static_cast<int64_t>(written);
 }
 
-#if TP_QUIC_UDP_GSO
 void QuicConnection::on_socket_writable() {
     if (!m_endpoint.send_available()) {
         close(m_close_waiting ? m_close_waiting_error : 0);
@@ -1802,7 +1793,6 @@ int64_t QuicConnection::send_gso(int64_t stream_id, const ngtcp2_vec* vecs,
     if (error == NGTCP2_ERR_STREAM_SHUT_WR || error == NGTCP2_ERR_STREAM_NOT_FOUND) return -1;
     return n < 0 && !context.written ? -1 : static_cast<int64_t>(context.written);
 }
-#endif
 
 // ---- open_bidi_stream -------------------------------------------------------
 
@@ -1935,14 +1925,12 @@ void QuicConnection::close(uint64_t app_error_code) {
     }
     auto self = shared_from_this(); // Close callbacks can release the endpoint's last reference.
     const bool send_available = m_endpoint.send_available();
-#if TP_QUIC_UDP_GSO
     if (send_available && m_endpoint.udp_gso_enabled() &&
         !m_endpoint.aggregate_capacity(*this)) {
         m_close_waiting = true;
         m_close_waiting_error = app_error_code;
         return; // Do not create a close packet until its FIFO slot is available.
     }
-#endif
     m_closed = true;
     m_loss_timer.cancel();
     QUIC_STAT(
@@ -2053,12 +2041,10 @@ void QuicConnection::reschedule_loss_timer() {
     }
 
     uint64_t now_ns;
-#if TP_QUIC_UDP_GSO
     if (m_endpoint.udp_gso_enabled()) {
         now_ns = now_nanos();
         if (quic_udp_gso::keep_timer(m_last_timer_expiry, expiry, now_ns)) return;
     } else
-#endif
     {
         if (expiry == m_last_timer_expiry) return;
         now_ns = now_nanos();
