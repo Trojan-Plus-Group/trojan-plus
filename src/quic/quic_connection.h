@@ -139,6 +139,8 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     static constexpr size_t kServerScidLen = 18;
 
     // Callback invoked on handshake completion (client: after server Finished).
+    void shutdown();
+
     std::function<void()> on_handshake_completed_cb;
     // Callback invoked when stream data arrives (stream_id, data, len, fin).
     std::function<void(int64_t, const uint8_t*, std::size_t, bool)> on_stream_data_cb;
@@ -249,6 +251,7 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     int64_t send_stream_vecs_impl(int64_t stream_id, const ngtcp2_vec* datav, std::size_t datavcnt, bool fin, bool& accepted, const char* debug_path);
 
     QuicEndpoint& m_endpoint;
+    std::weak_ptr<QuicEndpoint> m_endpoint_lifetime;
     std::shared_ptr<QuicTlsCtx> m_tls_ctx;
     boost::asio::ip::udp::endpoint m_peer;
     boost::asio::basic_waitable_timer<QuicClock, QuicWaitTraits> m_loss_timer;
@@ -264,6 +267,7 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     ngtcp2_socklen m_remote_len{0};
 
     bool m_closed{false};
+    bool m_shutdown_pending{false};
     bool m_handshake_done{false};
     bool m_is_server{false};
     ConnType m_conn_type{ConnType::unknown};
@@ -305,6 +309,7 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     void send_next_unacked_buff(int64_t stream_id, UnackedBuf* buf_finished);
 
     tp::unordered_map<int64_t, std::shared_ptr<QuicStreamHandler>> m_stream_handlers;
+    tp::vector<int64_t> m_pump_streams;
     tp::unordered_map<int64_t, std::shared_ptr<UnackedBuffers>> m_conn_unacked_bufs;
     std::unique_ptr<QuicToHttp3Connect> m_h3;  // declared after m_stream_handlers, destroyed first
     tp::vector<uint8_t> m_write_buf;

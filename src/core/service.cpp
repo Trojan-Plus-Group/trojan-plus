@@ -350,7 +350,8 @@ void Service::stop() {
 
 #endif
 
-    io_context.stop();
+    // Run queued QUIC shutdown handlers before stopping the event loop.
+    boost::asio::post(io_context, [this] { io_context.stop(); });
     _unguard;
 }
 

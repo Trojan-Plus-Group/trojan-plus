@@ -113,14 +113,13 @@ def check() -> None:
         else:
             raise AssertionError("Incomplete telemetry passed")
 
-    # Source-level guard: close sends CONNECTION_CLOSE synchronously; stopping
-    # the endpoint first closes its UDP socket and prevents that packet's send.
+    # Service shutdown closes locally, without waiting for network capacity.
     source = (Path(__file__).resolve().parents[2] /
               "src/quic/quic_client_endpoint.cpp").read_text()
     stop = source.split("void QuicClientEndpoint::stop() {", 1)[1].split(
         "\nvoid QuicClientEndpoint::connect_to_server()", 1)[0]
-    assert stop.index("conn->close();") < stop.index("QuicEndpoint::stop();"), \
-        "Send CONNECTION_CLOSE before closing the endpoint socket"
+    assert stop.index("QuicEndpoint::stop();") < stop.index("conn->shutdown();"), \
+        "Close the endpoint socket before local connection shutdown"
 
     assert quic._t16_sustained_growth([100] * 10) == 0
     # Rounds 4-10: median=130, slope=10, six observed intervals.

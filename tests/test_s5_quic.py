@@ -51,7 +51,9 @@ def main():
     path.write_text(json.dumps(config))
 
     def start():
-        log = (work / "server.log").open("ab")
+        log_path = work / "server.log"
+        offset = log_path.stat().st_size if log_path.exists() else 0
+        log = log_path.open("ab")
         proc = subprocess.Popen([binary, "-c", str(path)], stdout=log, stderr=log)
         log.close()
         deadline = time.monotonic() + 10
@@ -59,7 +61,9 @@ def main():
             assert proc.poll() is None, f"server exited; evidence: {work}"
             try:
                 with socket.create_connection(("127.0.0.1", port), timeout=0.1):
-                    return proc
+                    if "QuicServerEndpoint: listening on UDP" in log_path.read_text(errors="replace")[offset:]:
+                        return proc
+                    threading.Event().wait(0.02)
             except OSError:
                 threading.Event().wait(0.02)
         stop(proc)

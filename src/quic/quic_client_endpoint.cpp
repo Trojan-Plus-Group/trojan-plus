@@ -53,12 +53,16 @@ void QuicClientEndpoint::stop() {
     m_probe_timer.cancel();
     m_retry_timer.cancel();
     m_handshake_timer.cancel();
+    QuicEndpoint::stop();
     fail_all_pending_streams();
     auto conn = std::move(m_conn);
-    if (conn && !conn->is_closed()) {
-        conn->close();
+    if (conn) {
+        boost::asio::post(m_io_context, tp::bind_mem_alloc([conn, self = shared_from_this()] {
+            conn->close();
+            conn->shutdown();
+        }));
     }
-    QuicEndpoint::stop();
+    mark_unreachable();
 }
 
 void QuicClientEndpoint::connect_to_server() {

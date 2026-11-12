@@ -133,6 +133,7 @@ struct ReadBufWithGuard {
 };
 struct QuicConnection : std::enable_shared_from_this<QuicConnection> {
     Endpoint& m_endpoint;
+    std::weak_ptr<Endpoint> m_endpoint_lifetime;
     boost::asio::steady_timer m_loss_timer;
     bool m_closed = false, m_close_pending = false, m_close_waiting = false;
     bool m_waiting_for_capacity = false, m_resuming_sends = false;
@@ -142,15 +143,20 @@ struct QuicConnection : std::enable_shared_from_this<QuicConnection> {
     ngtcp2_conn native;
     bool is_closed() const { return m_closed; }
     void reschedule_loss_timer() {}
-    bool m_in_read_pkt = false, m_is_server = true;
+    bool m_in_read_pkt = false, m_in_pump_write = false, m_shutdown_pending = false, m_is_server = true;
     uint64_t m_close_waiting_error = 0, m_close_pending_error = 0;
     ngtcp2_conn* m_conn = &native;
     boost::asio::ip::udp::endpoint m_peer;
     std::vector<uint8_t> m_write_buf = std::vector<uint8_t>(1200);
     std::function<void(QuicConnection*)> on_close_cb;
+    std::function<void()> on_handshake_completed_cb, on_stream_data_cb, on_stream_open_cb,
+        on_stream_close_cb, on_new_connection_id_cb, on_extend_max_streams_cb;
+    struct StreamHandler { void on_stream_close() {} };
+    std::unordered_map<int64_t, std::shared_ptr<StreamHandler>> m_stream_handlers;
     std::function<void()> sent_cb;
     int packets = 0, pumps = 0;
-    explicit QuicConnection(Endpoint& e) : m_endpoint(e), m_loss_timer(e.io) {}
+    explicit QuicConnection(Endpoint& e)
+        : m_endpoint(e), m_endpoint_lifetime(e.weak_from_this()), m_loss_timer(e.io) {}
     using IoHandler = std::function<void(boost::system::error_code, size_t)>;
     struct UnackedBuf : std::enable_shared_from_this<UnackedBuf> {
         int64_t m_stream_id = 1;
@@ -180,6 +186,7 @@ struct QuicConnection : std::enable_shared_from_this<QuicConnection> {
     void resume_blocked_sends() { ++pumps; }
     void on_pump_write(const char*) { ++pumps; }
     void defer_close(uint64_t = 0);
+    void shutdown();
     void close(uint64_t = 0);
     void on_socket_writable();
 };
@@ -190,6 +197,7 @@ struct QuicClientEndpoint : QuicEndpoint {
     boost::asio::steady_timer m_probe_timer{io}, m_retry_timer{io}, m_handshake_timer{io};
     std::shared_ptr<QuicConnection> m_conn;
     void fail_all_pending_streams() {}
+    void mark_unreachable() {}
     void stop();
 };
 // The transport stub injects ngtcp2's terminal states, keeping production send path.
@@ -200,7 +208,7 @@ ngtcp2_ssize ngtcp2_conn_write_aggregate_pkt(ngtcp2_conn* conn, ngtcp2_path* pat
     return callback(conn, path, pi, data, size, ts, active_connection);
 }
 '''
-    program += close + writable
+    program += close + method(source, 'void QuicConnection::shutdown(') + writable
     for signature in ('void QuicConnection::UnackedBuf::cancel_timer(',
                       'void QuicConnection::UnackedBuf::complete(',
                       'void QuicConnection::UnackedBuf::send(',
@@ -240,17 +248,14 @@ int main() {
             if (closed_socket) endpoint.m_socket.open = false;
             endpoint.stop();
             assert(endpoint.m_aggregate_waiters.empty() && !conn->m_waiting_for_capacity);
-            assert(closed == 0 && sent == 0); // stop must post, not invoke callbacks.
+            assert(closed == 0 && sent == 0); // stop only releases waiters.
+            conn->close(42);
+            assert(closed == 1 && sent == 1 && conn->packets == 0);
             conn.reset();
             buf.reset();
             queue.reset();
-            std::weak_ptr<Endpoint> endpoint_weak = endpoint_owner;
-            endpoint_owner.reset();
-            assert(!endpoint_weak.expired()); // Posted waiter retains raw-ref owner.
-            auto keep_io_alive = endpoint_weak.lock();
             endpoint.io.run();
-            keep_io_alive.reset();
-            assert(closed == 1 && sent == 1 && weak.expired() && endpoint_weak.expired());
+            assert(weak.expired());
         }
     }
     auto endpoint_owner = std::make_shared<Endpoint>();
@@ -368,10 +373,26 @@ int main() {
         std::weak_ptr<QuicConnection::UnackedBuf> weak_buf = b;
         b.reset();
         q.reset();
-        c.reset();
         e.stop();
+        c->close();
+        c.reset();
         e.io.run();
         assert(closed == 1 && completed == 1 && weak.expired() && weak_buf.expired());
+    }
+    {
+        struct DyingEndpoint : Endpoint {
+            std::shared_ptr<QuicConnection> conn;
+            ~DyingEndpoint() {
+                conn->close(); // weak_from_this() cannot lock during destruction.
+                assert(conn->m_closed && conn->packets == 0);
+            }
+        };
+        int closed = 0;
+        auto owner = std::make_shared<DyingEndpoint>();
+        owner->conn = std::make_shared<QuicConnection>(*owner);
+        owner->conn->on_close_cb = [&](auto*) { ++closed; };
+        owner.reset();
+        assert(closed == 1);
     }
     {
         auto owner = std::make_shared<QuicClientEndpoint>();
@@ -383,8 +404,8 @@ int main() {
         e.m_conn->on_close_cb = [&](auto*) { ++closed; };
         e.m_conn->close(); // Queue full before client stop.
         assert(e.m_aggregate_waiters.size() == 1);
-        e.stop(); // Production client stop closes locally before base stop posts waiter.
-        assert(closed == 1 && !e.m_conn);
+        e.stop(); // Pending close completes outside stop.
+        assert(closed == 0 && !e.m_conn);
         e.io.run();
         assert(closed == 1 && weak.expired());
     }
