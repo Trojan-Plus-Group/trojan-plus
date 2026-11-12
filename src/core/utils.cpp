@@ -172,12 +172,16 @@ unsigned short get_checksum(const tp::streambuf& buf) { return get_checksum(stre
 
 int get_hashCode(const tp::string& str) {
     _guard;
-    const int hash_code_magic_number = 31;
-    int h                            = 0;
+    const unsigned int hash_code_magic_number = 31;
+    unsigned int h                            = 0;
     for (auto c : str) {
-        h = hash_code_magic_number * h + c;
+        h = hash_code_magic_number * h + static_cast<unsigned int>(c);
     }
-    return h;
+    // Preserve the existing signed hash representation without signed overflow.
+    int result;
+    static_assert(sizeof(result) == sizeof(h));
+    std::memcpy(&result, &h, sizeof(result));
+    return result;
     _unguard;
 }
 

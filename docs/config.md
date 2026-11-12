@@ -35,19 +35,32 @@ both clients and servers independently; peers need no matching setting.
 On Linux (including Android when headers define `UDP_SEGMENT`), enabling it
 bundles loss-timer coalescing with `UDP_SEGMENT` send batching. An armed,
 unfired, non-stale timer remains armed for equal or later deadlines and for
-requests up to 1 ms earlier. This can delay loss detection by at most 1 ms;
-earlier requests beyond that tolerance re-arm it. A fired timer always re-arms.
+requests up to 1 ms earlier. The shared ngtcp2 expiry covers loss/PTO,
+delayed ACK, pacing and idle. This tolerance can delay loss/PTO detection,
+delayed-ACK sending and the pacing wakeup by at most 1 ms; earlier requests
+beyond that tolerance re-arm it. A fired timer always re-arms.
 The send queue holds at most four 64 KiB buffers; an endpoint-owned pool reuses
-at most five buffers, including one in-flight writer. At the queue cap, packet generation
-stops before calling ngtcp2; socket writability drains retained encrypted bytes
-and resumes producers. `EAGAIN` retains bytes and ordering rather than using the
-legacy per-datagram retry path. Receive behavior and QUIC protocol stay unchanged.
+at most five buffers, including one in-flight writer. Generated aggregate payloads
+are limited to `min(65507 bytes, 64 * segment size)`, at most 64 segments. At the
+queue cap, packet generation stops before calling ngtcp2; socket writability
+drains retained encrypted bytes and resumes producers. Stateless/control packets
+not tied to a connection may be dropped at capacity (`send_packet` returns false);
+a connection's own CONNECTION_CLOSE waits for capacity instead of being dropped.
+If the endpoint stops, waiting connections complete their local close immediately
+without sending CONNECTION_CLOSE. Receive behavior and QUIC protocol stay unchanged.
 
-GSO activation logs once at INFO. A failed non-transient GSO send permanently
-disables aggregation for that socket, logs WARN with errno, and retries the same
-bytes in order using ordinary datagrams. Unsupported platforms compile out the
-feature and warn when requested. This is opt-in, not a change to default packet
-shaping; GRO and ACK thinning are not enabled.
+GSO activation logs once at INFO. Only `EIO`, `EINVAL`, `EOPNOTSUPP`,
+`ENOPROTOOPT` (and `ENOTSUP` if distinct) permanently disable aggregation for that
+socket; the same ciphertext is retried in order as ordinary datagrams.
+`EMSGSIZE` splits only the current aggregate into ordinary datagrams without
+permanently disabling GSO. `EAGAIN`/`EWOULDBLOCK` and `ENOBUFS` retain bytes and
+ordering until socket writability; `ENOBUFS` also schedules a short timer retry.
+Other send errors log WARN once per errno kind per endpoint, drop the failed
+aggregate (or only the failed datagram in per-datagram mode), and continue draining
+without stopping the endpoint. Unexpected short sends also drop the item and
+continue. Unsupported platforms compile out the feature and warn when requested.
+This is opt-in, not a change to default packet shaping; GRO and ACK thinning are
+not enabled.
 
 ```json
 "quic": {

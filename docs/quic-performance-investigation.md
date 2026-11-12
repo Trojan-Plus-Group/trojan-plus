@@ -356,6 +356,9 @@ and five lazily pooled buffers including the current writer.
 EAGAIN retained unsent bytes until writable readiness.
 Unsupported GSO fell back to identical per-datagram bytes in order.
 Timer coalescing tolerated up to 1 ms while preserving an earlier armed timer.
+The shared ngtcp2 expiry covers loss/PTO, delayed ACK, pacing and idle; this
+tolerance can delay loss/PTO detection, delayed-ACK sending and the pacing
+wakeup by at most 1 ms.
 The bounded queue and pool addressed research-code ownership and allocation risks.
 No receiver GRO or ACK-threshold change was part of this product option.
 

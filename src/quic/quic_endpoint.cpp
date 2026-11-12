@@ -14,7 +14,9 @@
 #include <openssl/rand.h>
 #include <openssl/sha.h>
 
+#include <algorithm>
 #include <array>
+#include <chrono>
 #if TROJAN_QUIC_STATS
 #include <cstdlib>
 #endif
@@ -282,8 +284,13 @@ void QuicEndpoint::stop() {
         }
     }
 #endif
+    for (auto& conn : m_aggregate_waiters) {
+        conn->m_waiting_for_capacity = false;
+        boost::asio::post(m_io_context, tp::bind_mem_alloc([conn, self = shared_from_this()] { conn->on_socket_writable(); }));
+    }
     m_aggregate_waiters.clear();
-    m_aggregate_queue.pending.clear();
+    m_aggregate_queue.clear();
+    m_send_retry.cancel();
 #endif
     boost::system::error_code ec;
     if (m_socket.is_open()) {
@@ -294,12 +301,13 @@ void QuicEndpoint::stop() {
 
 bool QuicEndpoint::send_packet(const boost::asio::ip::udp::endpoint& dest,
                                const uint8_t* data, std::size_t len) {
-    if (!m_socket.is_open() || len == 0) {
+    if (!send_available() || len == 0) {
         return false;
     }
 #if TP_QUIC_UDP_GSO
     if (udp_gso_enabled()) {
-        // Direct control/close datagrams share the FIFO; never overtake ciphertext.
+        // Stateless/control packets may fail at capacity. A connection reserves
+        // capacity before generating its own CONNECTION_CLOSE; never overtake ciphertext.
         if (m_aggregate_queue.full() || len > quic_udp_gso::buffer_size) return false;
         auto bytes = acquire_aggregate_buffer();
         if (!bytes) return false;
@@ -322,10 +330,10 @@ bool QuicEndpoint::send_packet(const boost::asio::ip::udp::endpoint& dest,
 
 #if TP_QUIC_UDP_GSO
 bool QuicEndpoint::aggregate_capacity(QuicConnection& connection) {
-    if (!m_aggregate_queue.full() && m_socket.is_open()) return true;
-    for (auto& waiter : m_aggregate_waiters) {
-        if (waiter.get() == &connection) return false;
-    }
+    if (!send_available()) return false;
+    if (!m_aggregate_queue.full()) return true;
+    if (connection.m_waiting_for_capacity) return false;
+    connection.m_waiting_for_capacity = true;
     m_aggregate_waiters.push_back(connection.shared_from_this());
     return false;
 }
@@ -346,11 +354,34 @@ void QuicEndpoint::send_aggregate(const boost::asio::ip::udp::endpoint& dest,
 
 void QuicEndpoint::drain_aggregates() {
     if (m_send_wait || !m_socket.is_open()) return;
-    const int error = m_aggregate_queue.drain(m_socket.native_handle());
+    const int error = m_aggregate_queue.drain(m_socket.native_handle(), [this](int send_error) {
+        if (std::find(m_send_errors.begin(), m_send_errors.end(), send_error) != m_send_errors.end()) return;
+        m_send_errors.push_back(send_error);
+        _log_with_date_time("QUIC UDP send failed: errno=" +
+                           tp::to_string(send_error), Log::WARN);
+    });
     if (m_aggregate_queue.fallback_errno && !m_gso_fallback_logged) {
         m_gso_fallback_logged = true;
         _log_with_date_time("QUIC UDP_SEGMENT disabled; retrying datagrams: errno=" +
                            tp::to_string(m_aggregate_queue.fallback_errno), Log::WARN);
+    }
+    if (error == ENOBUFS) {
+        // A writable socket can still have exhausted kernel buffers. Bound retry rate.
+        m_send_wait = true;
+        if (!m_buffer_write_wait) {
+            m_buffer_write_wait = true;
+            m_socket.async_wait(boost::asio::ip::udp::socket::wait_write,
+                tp::bind_mem_alloc([this, self = shared_from_this()](boost::system::error_code) {
+                    m_buffer_write_wait = false;
+                }));
+        }
+        m_send_retry.expires_after(std::chrono::milliseconds(2));
+        m_send_retry.async_wait(tp::bind_mem_alloc(
+            [this, self = shared_from_this()](boost::system::error_code ec) {
+                m_send_wait = false;
+                if (!ec && m_running) drain_aggregates();
+            }));
+        return;
     }
     if (error == EAGAIN) {
         m_send_wait = true;
@@ -361,15 +392,11 @@ void QuicEndpoint::drain_aggregates() {
             }));
         return;
     }
-    if (error) {
-        _log_with_date_time("QUIC UDP send failed; endpoint stopped: errno=" + tp::to_string(error), Log::ERROR);
-        stop();
-        return;
-    }
     auto waiters = std::move(m_aggregate_waiters);
     m_aggregate_waiters.clear();
     for (auto& conn : waiters) {
-        boost::asio::post(m_io_context, tp::bind_mem_alloc([conn] { conn->on_socket_writable(); }));
+        conn->m_waiting_for_capacity = false;
+        boost::asio::post(m_io_context, tp::bind_mem_alloc([conn, self = shared_from_this()] { conn->on_socket_writable(); }));
     }
 }
 #endif
