@@ -191,7 +191,8 @@ void QuicEndpoint::async_recv() {
     }
     auto self = shared_from_this();
     m_socket.async_wait(boost::asio::ip::udp::socket::wait_read,
-        [self, this](boost::system::error_code /*ec*/) {
+        [self, this](boost::system::error_code ec) {
+            if (ec || !m_running) return;
             bool need_flush = false;
 
 
@@ -201,7 +202,7 @@ void QuicEndpoint::async_recv() {
             // ==========================================
             // Phase 1: Drain the NIC buffer (The Drain Loop)
             // ==========================================
-            while (read_count++ < MAX_READS_PER_EVENT) {
+            while (m_running && read_count++ < MAX_READS_PER_EVENT) {
                 boost::system::error_code read_ec;
                 // Read using synchronous non-blocking mode!
                 size_t bytes_recvd = m_socket.receive_from(
@@ -243,7 +244,7 @@ void QuicEndpoint::async_recv() {
             // ==========================================
             // Phase 2: Send accumulated data (The Send Phase)
             // ==========================================
-            if (need_flush) {
+            if (m_running && need_flush) {
                 on_pump_write(FUNC_NAME);
             }
 
@@ -281,10 +282,7 @@ void QuicEndpoint::stop() {
         }
     }
 #endif
-    for (auto& conn : m_aggregate_waiters) {
-        conn->m_waiting_for_capacity = false;
-        boost::asio::post(m_io_context, tp::bind_mem_alloc([conn, self = shared_from_this()] { conn->on_socket_writable(); }));
-    }
+    auto waiters = std::move(m_aggregate_waiters);
     m_aggregate_waiters.clear();
     m_aggregate_queue.clear();
     m_send_retry.cancel();
@@ -292,6 +290,13 @@ void QuicEndpoint::stop() {
     if (m_socket.is_open()) {
         m_socket.cancel(ec);
         m_socket.close(ec);
+    }
+    for (auto& conn : waiters) {
+        conn->m_waiting_for_capacity = false;
+        if (conn->m_close_waiting) {
+            boost::asio::post(m_io_context, tp::bind_mem_alloc(
+                [conn, self = shared_from_this()] { conn->on_socket_writable(); }));
+        }
     }
 }
 

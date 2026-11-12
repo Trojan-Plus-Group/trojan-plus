@@ -60,6 +60,16 @@ void QuicServerEndpoint::start() {
                         Log::INFO);
 }
 
+void QuicServerEndpoint::stop() {
+    QuicEndpoint::stop();
+    auto conns = std::move(m_conns);
+    m_conns.clear();
+    m_pumping_conn.clear();
+    for (auto& entry : conns) {
+        entry.second->shutdown();
+    }
+}
+
 tp::string QuicServerEndpoint::dcid_key(const uint8_t* dcid, std::size_t dcidlen) {
     tp::ostringstream oss;
     for (std::size_t i = 0; i < dcidlen; ++i) {
@@ -151,8 +161,9 @@ void QuicServerEndpoint::on_packet(const uint8_t* data, std::size_t len,
 
     auto it = m_conns.find(key);
     if (it != m_conns.end()) {
-        it->second->on_packet(data, len, local_endpoint(), src);
-        m_pumping_conn.push_back(key);
+        auto conn = it->second;
+        conn->on_packet(data, len, local_endpoint(), src);
+        if (m_running) m_pumping_conn.push_back(key);
         return;
     }
 
@@ -225,7 +236,7 @@ void QuicServerEndpoint::on_packet(const uint8_t* data, std::size_t len,
     // new connection ID generated: add it to the routing table.
     conn->on_new_connection_id_cb = [this, self, weak_conn](const ngtcp2_cid* cid) {
         auto locked = weak_conn.lock();
-        if (locked) {
+        if (locked && m_running) {
             tp::string ckey = dcid_key(cid->data, cid->datalen);
             _log_with_date_time("QuicServerEndpoint: added NEW CID " + ckey, Log::INFO);
             m_conns[ckey] = locked;
@@ -244,7 +255,7 @@ void QuicServerEndpoint::on_packet(const uint8_t* data, std::size_t len,
 
     ngtcp2_cid sv_scid{};
     if (!conn->init_server(data, len, local_endpoint(), src, &dcid_c,
-                           &scid_c, vc.version, &sv_scid)) {
+                           &scid_c, vc.version, &sv_scid) || !m_running) {
         return;
     }
 
@@ -262,12 +273,14 @@ void QuicServerEndpoint::on_packet(const uint8_t* data, std::size_t len,
 }
 
 void QuicServerEndpoint::on_pump_write(const char* debug_path){
-    for(const auto& key : m_pumping_conn){
+    auto pumping = std::move(m_pumping_conn);
+    m_pumping_conn.clear();
+    for (const auto& key : pumping) {
+        if (!m_running) break;
         auto it = m_conns.find(key);
-        if(it != m_conns.end()){
-            it->second->on_pump_write(debug_path);
+        if (it != m_conns.end()) {
+            auto conn = it->second;
+            conn->on_pump_write(debug_path);
         }
     }
-
-    m_pumping_conn.clear();
 }

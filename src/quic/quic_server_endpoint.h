@@ -22,6 +22,7 @@ class QuicServerEndpoint : public QuicEndpoint {
                        std::shared_ptr<QuicTlsCtx> tls_ctx);
 
     void start() override;
+    void stop() override;
 
   protected:
     void on_packet(const uint8_t* data, std::size_t len,

@@ -249,7 +249,8 @@ int QuicConnection::cb_recv_stream_data(ngtcp2_conn* /*conn*/, uint32_t flags, i
         handler->on_stream_data(data, datalen, fin);
     } else if (self->on_stream_data_cb) {
         // client will use cb 
-        self->on_stream_data_cb(stream_id, data, datalen, fin);
+        auto cb = self->on_stream_data_cb;
+        cb(stream_id, data, datalen, fin);
     }
 
     return 0;
@@ -309,7 +310,8 @@ int QuicConnection::cb_acked_stream_data_offset(ngtcp2_conn* /*conn*/, int64_t s
 int QuicConnection::cb_stream_open(ngtcp2_conn* /*conn*/, int64_t stream_id, void* user_data) {
     auto* self = static_cast<QuicConnection*>(user_data);
     if (self->on_stream_open_cb) {
-        self->on_stream_open_cb(stream_id);
+        auto cb = self->on_stream_open_cb;
+        cb(stream_id);
     }
     return 0;
 }
@@ -326,10 +328,11 @@ int QuicConnection::cb_stream_close(ngtcp2_conn* /*conn*/, uint32_t /*flags*/, i
     auto it = self->m_stream_handlers.find(stream_id);
     if (it != self->m_stream_handlers.end()) {
         auto handler = it->second;
+        self->m_stream_handlers.erase(it);
         handler->on_stream_close();
-        self->m_stream_handlers.erase(stream_id);
     } else if (self->on_stream_close_cb) {
-        self->on_stream_close_cb(stream_id);
+        auto cb = self->on_stream_close_cb;
+        cb(stream_id);
     }
 
     self->fail_unacked_buffers(stream_id, boost::asio::error::broken_pipe);
@@ -382,7 +385,8 @@ int QuicConnection::cb_get_new_connection_id(ngtcp2_conn* /*conn*/, ngtcp2_cid* 
     }
 
     if (self->on_new_connection_id_cb) {
-        self->on_new_connection_id_cb(cid);
+        auto cb = self->on_new_connection_id_cb;
+        cb(cid);
     }
 
     return 0;
@@ -411,7 +415,8 @@ int QuicConnection::cb_extend_max_local_streams_bidi(ngtcp2_conn* /*conn*/,
                     StatsReasonScope reason(*self, SendReason::flow);
                 )
 #line 295
-                self->on_extend_max_streams_cb();
+                auto cb = self->on_extend_max_streams_cb;
+                cb();
             }
         });
     }
@@ -422,7 +427,7 @@ int QuicConnection::cb_extend_max_local_streams_bidi(ngtcp2_conn* /*conn*/,
 
 QuicConnection::QuicConnection(QuicEndpoint& endpoint, std::shared_ptr<QuicTlsCtx> tls_ctx,
                                const boost::asio::ip::udp::endpoint& peer)
-    : m_endpoint(endpoint),
+    : m_endpoint(endpoint), m_endpoint_lifetime(endpoint.weak_from_this()),
       m_tls_ctx(std::move(tls_ctx)),
       m_peer(peer),
       m_loss_timer(endpoint.io_context()),
@@ -581,8 +586,16 @@ bool QuicConnection::init_server(const uint8_t* data, std::size_t datalen,
         *out_sv_scid = sv_scid;
     }
 
+    // Keep the connection alive if a callback stops the endpoint.
+    auto self = shared_from_this();
     // Process the first packet to kick off the handshake.
+    m_in_read_pkt = true;
     rv = ngtcp2_conn_read_pkt(m_conn, &path, nullptr, data, datalen, now_nanos());
+    m_in_read_pkt = false;
+    if (m_shutdown_pending) {
+        shutdown();
+        return false;
+    }
     if (rv != 0 && rv != NGTCP2_ERR_RETRY) {
         _log_with_date_time(
             "QuicConnection::init_server: initial ngtcp2_conn_read_pkt: " + tp::string(ngtcp2_strerror(rv)),
@@ -608,9 +621,8 @@ bool QuicConnection::init_server(const uint8_t* data, std::size_t datalen,
         start_stats_sampler();
     )
 #line 470
-    pump_write(FUNC_NAME);
-    reschedule_loss_timer();
-    return true;
+    on_pump_write(FUNC_NAME);
+    return !m_closed;
 }
 
 // ---- client init ------------------------------------------------------------
@@ -749,9 +761,8 @@ bool QuicConnection::init_client(const boost::asio::ip::udp::endpoint& local_ep,
         start_stats_sampler();
     )
 #line 606
-    pump_write(FUNC_NAME);
-    reschedule_loss_timer();
-    return true;
+    on_pump_write(FUNC_NAME);
+    return !m_closed;
 }
 
 // ---- packet receive ---------------------------------------------------------
@@ -772,12 +783,17 @@ void QuicConnection::on_packet(const uint8_t* data, std::size_t datalen,
     )
 #line 618
     }
+    auto self = shared_from_this();
     m_in_read_pkt = true;
     auto path = make_path(local_ep, remote_ep);
     ngtcp2_conn_info before{};
     ngtcp2_conn_get_conn_info2(m_conn, &before);
     int  rv   = ngtcp2_conn_read_pkt(m_conn, &path, nullptr, data, datalen, now_nanos());
     m_in_read_pkt = false;
+    if (m_shutdown_pending) {
+        shutdown();
+        return;
+    }
     if (rv != 0) {
         if (rv != NGTCP2_ERR_DRAINING && rv != NGTCP2_ERR_DROP_CONN) {
             _log_with_date_time(
@@ -820,6 +836,7 @@ void QuicConnection::probe() {
     // through its normal packet writer without inventing transport frames.
     ngtcp2_conn_set_keep_alive_timeout(m_conn, 1);
     on_pump_write(FUNC_NAME);
+    if (m_closed || !m_conn) return;
     ngtcp2_conn_set_keep_alive_timeout(m_conn,
         static_cast<ngtcp2_duration>(m_endpoint.config().get_quic().ping_interval_ms) * 1'000'000ULL);
     reschedule_loss_timer();
@@ -885,12 +902,14 @@ void QuicConnection::on_pump_write(const char* debug_path) {
     if (m_in_pump_write) {
         return;
     }
+    auto self = shared_from_this();
     m_in_pump_write = true;
     
     pump_write(debug_path);
 
-    if (m_closed) {
+    if (m_closed || m_shutdown_pending) {
         m_in_pump_write = false;
+        if (m_shutdown_pending) shutdown();
         return;
     }
 
@@ -898,12 +917,23 @@ void QuicConnection::on_pump_write(const char* debug_path) {
         m_h3->pump_h3_response(debug_path);
     }
 
-    // Give handlers a chance to retry buffered data (e.g. if QPACK was unblocked)
-    for (auto& [id, handler] : m_stream_handlers) {
+    // Callbacks can remove any handler or shut down the connection.
+    m_pump_streams.clear();
+    m_pump_streams.reserve(m_stream_handlers.size());
+    for (const auto& [id, handler] : m_stream_handlers) m_pump_streams.push_back(id);
+    for (auto id : m_pump_streams) {
+        if (m_closed || m_shutdown_pending) break;
+        auto it = m_stream_handlers.find(id);
+        if (it == m_stream_handlers.end()) continue;
+        auto handler = it->second;
         handler->on_connection_pump();
     }
 
     m_in_pump_write = false;
+    if (m_shutdown_pending) {
+        shutdown();
+        return;
+    }
     reschedule_loss_timer();
 }
 
@@ -1836,8 +1866,7 @@ QuicToHttp3Connect& QuicConnection::get_or_create_h3() {
             if (ctrl >= 0 && qenc >= 0 && qdec >= 0) {
                 m_h3->bind_control_streams(ctrl, qenc, qdec);
             }
-            m_h3->pump_h3_response(FUNC_NAME);
-            pump_write(FUNC_NAME);
+            on_pump_write(FUNC_NAME);
         }
     }
     return *m_h3;
@@ -1919,16 +1948,39 @@ void QuicConnection::defer_close(uint64_t app_error_code) {
     });
 }
 
+void QuicConnection::shutdown() {
+    m_loss_timer.cancel();
+    if (m_in_read_pkt || m_in_pump_write) {
+        m_shutdown_pending = true;
+        return;
+    }
+    m_shutdown_pending = false;
+    on_close_cb = nullptr;
+    on_handshake_completed_cb = nullptr;
+    on_stream_data_cb = nullptr;
+    on_stream_open_cb = nullptr;
+    on_stream_close_cb = nullptr;
+    on_new_connection_id_cb = nullptr;
+    on_extend_max_streams_cb = nullptr;
+    if (!m_closed) close();
+    auto handlers = std::move(m_stream_handlers);
+    m_stream_handlers.clear();
+    for (auto& entry : handlers) {
+        entry.second->on_stream_close();
+    }
+}
+
 void QuicConnection::close(uint64_t app_error_code) {
     if (m_closed) {
         return;
     }
-    if (m_in_read_pkt) {
+    auto endpoint = m_endpoint_lifetime.lock();
+    if ((m_in_read_pkt || m_in_pump_write) && endpoint) {
         defer_close(app_error_code);
         return;
     }
-    auto self = shared_from_this(); // Close callbacks can release the endpoint's last reference.
-    const bool send_available = m_endpoint.send_available();
+    auto self = shared_from_this(); // Callbacks can release the last connection reference.
+    const bool send_available = endpoint && endpoint->send_available();
     if (send_available && m_endpoint.udp_gso_enabled() &&
         !m_endpoint.aggregate_capacity(*this)) {
         m_close_waiting = true;
@@ -2017,7 +2069,8 @@ void QuicConnection::on_handshake_completed_impl() {
     (void)alpnlen;
 
     if (on_handshake_completed_cb) {
-        on_handshake_completed_cb();
+        auto cb = on_handshake_completed_cb;
+        cb();
     }
     if (!m_is_server) {
         uint32_t ping_ms = m_endpoint.config().get_quic().ping_interval_ms;
