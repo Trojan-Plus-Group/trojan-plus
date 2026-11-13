@@ -111,6 +111,8 @@ struct QuicEndpoint : std::enable_shared_from_this<QuicEndpoint> {
     std::vector<std::shared_ptr<QuicConnection>> m_aggregate_waiters;
     boost::asio::steady_timer m_send_retry{io};
     bool send_available() const { return m_running && m_socket.is_open(); }
+    bool shutdown_send_available() const { return send_available(); }
+    void send_shutdown_packet(const boost::asio::ip::udp::endpoint&, const uint8_t*, size_t) {}
     bool udp_gso_enabled() const { return true; }
     bool aggregate_capacity(QuicConnection&);
     void stop();
@@ -144,6 +146,8 @@ struct QuicConnection : std::enable_shared_from_this<QuicConnection> {
     bool is_closed() const { return m_closed; }
     void reschedule_loss_timer() {}
     bool m_in_read_pkt = false, m_in_pump_write = false, m_shutdown_pending = false, m_is_server = true;
+    bool m_shutdown_close_sent = false;
+    unsigned m_callback_depth = 0;
     uint64_t m_close_waiting_error = 0, m_close_pending_error = 0;
     ngtcp2_conn* m_conn = &native;
     boost::asio::ip::udp::endpoint m_peer;
@@ -187,6 +191,7 @@ struct QuicConnection : std::enable_shared_from_this<QuicConnection> {
     void on_pump_write(const char*) { ++pumps; }
     void defer_close(uint64_t = 0);
     void shutdown();
+    void send_shutdown_close();
     void close(uint64_t = 0);
     void on_socket_writable();
 };
@@ -209,6 +214,7 @@ ngtcp2_ssize ngtcp2_conn_write_aggregate_pkt(ngtcp2_conn* conn, ngtcp2_path* pat
 }
 '''
     program += close + method(source, 'void QuicConnection::shutdown(') + writable
+    program += method(source, 'void QuicConnection::send_shutdown_close(')
     for signature in ('void QuicConnection::UnackedBuf::cancel_timer(',
                       'void QuicConnection::UnackedBuf::complete(',
                       'void QuicConnection::UnackedBuf::send(',

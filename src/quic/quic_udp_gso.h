@@ -228,6 +228,18 @@ template <class Container> class Queue {
 #endif
                         on_error(error);
                     } else {
+                        if (plain < 0 && would_block(errno)) {
+#if defined(TROJAN_QUIC_STATS_LAYOUT) || TROJAN_QUIC_STATS
+                            ++eagain_retries;
+#endif
+                            return EAGAIN;
+                        }
+                        if (plain < 0 && no_buffers(errno)) {
+                            if (++enobufs_count < 8) return ENOBUFS;
+#if defined(TROJAN_QUIC_STATS_LAYOUT) || TROJAN_QUIC_STATS
+                            ++enobufs_drops;
+#endif
+                        }
                         on_error(plain < 0 ? errno : EIO);
                         pending.pop_front();
                         split = false;

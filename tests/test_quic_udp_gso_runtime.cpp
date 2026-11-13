@@ -145,12 +145,19 @@ static void close_tests(Config& cfg, std::shared_ptr<QuicTlsCtx> tls) {
         require(endpoint->m_aggregate_queue.push(QuicEndpoint::PendingAggregate{endpoint->local_endpoint(), std::move(bytes), 1}), "client queue fill");
     }
     unsigned closed = 0;
+    unsigned failed_opens = 0;
+    endpoint->open_bidi_stream([&](int64_t sid) {
+        require(sid == -1, "client stop pending open failed");
+        ++failed_opens;
+    });
     conn->on_close_cb = [&](QuicConnection*) { ++closed; endpoint->m_conn.reset(); };
     std::weak_ptr<QuicConnection> weak = conn;
     endpoint->stop();
+    require(failed_opens == 0, "client stop pending open deferred");
     conn.reset();
     until(io, [&] { return weak.expired(); });
     require(closed == 1, "client stop full queue callback");
+    require(failed_opens == 1, "client stop pending open callback");
     std::cout << "PASS close after stop, deferred waiter, client stop, weak_ptr release\n";
 }
 

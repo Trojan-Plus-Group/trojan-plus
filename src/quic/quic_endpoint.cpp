@@ -327,6 +327,12 @@ bool QuicEndpoint::send_packet(const boost::asio::ip::udp::endpoint& dest,
     return sent == len;
 }
 
+void QuicEndpoint::send_shutdown_packet(const boost::asio::ip::udp::endpoint& dest,
+                                        const uint8_t* data, std::size_t len) {
+    boost::system::error_code ec;
+    m_socket.send_to(boost::asio::buffer(data, len), dest, 0, ec);
+}
+
 bool QuicEndpoint::aggregate_capacity(QuicConnection& connection) {
     if (!send_available()) return false;
     if (!m_aggregate_queue.full()) return true;

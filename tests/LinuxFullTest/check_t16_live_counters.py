@@ -113,13 +113,18 @@ def check() -> None:
         else:
             raise AssertionError("Incomplete telemetry passed")
 
-    # Service shutdown closes locally, without waiting for network capacity.
-    source = (Path(__file__).resolve().parents[2] /
-              "src/quic/quic_client_endpoint.cpp").read_text()
-    stop = source.split("void QuicClientEndpoint::stop() {", 1)[1].split(
-        "\nvoid QuicClientEndpoint::connect_to_server()", 1)[0]
-    assert stop.index("QuicEndpoint::stop();") < stop.index("conn->shutdown();"), \
-        "Close the endpoint socket before local connection shutdown"
+    # Send close before the endpoint socket is closed, without inline callbacks.
+    root = Path(__file__).resolve().parents[2]
+    for name, next_method in (("client", "connect_to_server"), ("server", "dcid_key")):
+        source = (root / f"src/quic/quic_{name}_endpoint.cpp").read_text()
+        stop = source.split(f"Quic{name.title()}Endpoint::stop() {{", 1)[1].split(
+            f"Quic{name.title()}Endpoint::{next_method}(", 1)[0]
+        assert stop.index("send_shutdown_close();") < stop.index("QuicEndpoint::stop();")
+        assert "m_running = false" not in stop.split("send_shutdown_close();", 1)[0], \
+            "Keep endpoint running until shutdown close is sent"
+        posted = stop.index("boost::asio::post(")
+        assert "->close();" not in stop[:posted]
+        assert "->shutdown();" in stop[posted:]
 
     assert quic._t16_sustained_growth([100] * 10) == 0
     # Rounds 4-10: median=130, slope=10, six observed intervals.
