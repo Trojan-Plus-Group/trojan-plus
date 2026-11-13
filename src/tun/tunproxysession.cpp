@@ -147,15 +147,17 @@ void TUNProxySession::start() {
                 return;
             }
             if (!m_wait_connected_handler.empty()) {
-                for (auto& h : m_wait_connected_handler) {
+                // Drain a local copy: a handler may re-enter the session and touch the member.
+                decltype(m_wait_connected_handler) handlers;
+                std::swap(handlers, m_wait_connected_handler);
+                for (auto& h : handlers) {
                     h(boost::system::error_code());
                 }
-                m_wait_connected_handler.clear();
             }
             out_async_read();
 
             _unguard;
-        });
+        }, true);
         m_send_buf.consume(m_send_buf.size());
 
         _unguard;
@@ -340,7 +342,7 @@ void TUNProxySession::drain_out_queue() {
     out_async_send_impl(pending.first, std::move(pending.second));
 }
 
-void TUNProxySession::out_async_send_impl(const std::string_view& data_to_send, SentHandler&& _handler) {
+void TUNProxySession::out_async_send_impl(const std::string_view& data_to_send, SentHandler&& _handler, bool is_start) {
     _guard;
 
     if (get_pipeline_component().is_using_pipeline()) {
@@ -389,17 +391,21 @@ void TUNProxySession::out_async_send_impl(const std::string_view& data_to_send, 
             auto self        = shared_from_this();
             auto data_len    = data_to_send.length();
             client_padding_write(m_out, std::move(flushes),
-              tp::bind_mem_alloc([this, self, _handler, data_len](boost::system::error_code ec, size_t) {
+              tp::bind_mem_alloc([this, self, _handler, data_len, is_start](boost::system::error_code ec, size_t) {
                   _guard;
                   --m_out_writing;
                   udp_timer_async_wait();
                   if (m_padding_retry || (ec && m_padding.enabled())) {
-                      m_padding_waiters.emplace_back(_handler);
+                      // Only user write handlers are replayed after the legacy reconnect. The start handler
+                      // belongs to this superseded attempt: start() builds a new one for the retried
+                      // connection, and replaying the old one would drain the waiters and call
+                      // out_async_read() a second time (and, queued as its own waiter, call itself).
+                      if (!is_start) m_padding_waiters.emplace_back(_handler);
                       if (m_padding_retry || retry_legacy()) {
                           reconnect_legacy();
                           return;
                       }
-                      m_padding_waiters.pop_back();
+                      if (!is_start) m_padding_waiters.pop_back();
                   }
                   if (ec) {
                       output_debug_info_ec(ec);

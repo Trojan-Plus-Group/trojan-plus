@@ -50,7 +50,7 @@ class TUNProxySession : public TUNSession {
 
     [[nodiscard]] size_t parse_udp_packet_data(const std::string_view& data);
 
-    void out_async_send_impl(const std::string_view& data_to_send, SentHandler&& _handler);
+    void out_async_send_impl(const std::string_view& data_to_send, SentHandler&& _handler, bool is_start = false);
 
   public:
     TUNProxySession(Service* service, bool udp);

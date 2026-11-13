@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Client dies, session destroy must not call the raw-this close callback."""
+"""Client dies, session destroy must not call the raw-this close callback.
+
+Also: TUNProxySession padded-write failure + legacy retry must not re-enter its start handler.
+Run one scenario with: test_tun_client_lifetime.py [local|proxy|padding_retry]
+"""
 import os
 from pathlib import Path
 import subprocess
@@ -13,6 +17,8 @@ SOURCES = [
     ROOT / "src/tun/tunlocalsession.cpp",
     ROOT / "src/tun/tunproxysession.cpp",
     ROOT / "src/tun/tunsession.cpp",
+    ROOT / "src/proto/trojanrequest.cpp",
+    ROOT / "src/proto/socks5address.cpp",
     ROOT / "src/session/session.cpp",
     ROOT / "src/session/pipelinecomponent.cpp",
     ROOT / "src/core/log.cpp",
@@ -47,7 +53,7 @@ def main():
         ]
         subprocess.run(command, check=True)
         subprocess.run([str(binary), *sys.argv[1:]], check=True, timeout=30)
-    print("TUN client lifetime: PASS")
+    print("TUN client lifetime (%s): PASS" % (sys.argv[1] if len(sys.argv) > 1 else "all"))
 
 if __name__ == "__main__":
     main()
