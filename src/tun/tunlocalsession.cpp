@@ -110,10 +110,11 @@ void TUNLocalSession::start() {
                           return;
                       }
                       if (!m_wait_connected_handler.empty()) {
-                          for (auto& h : m_wait_connected_handler) {
+                          decltype(m_wait_connected_handler) handlers;
+                          std::swap(handlers, m_wait_connected_handler);
+                          for (auto& h : handlers) {
                               h(boost::system::error_code());
                           }
-                          m_wait_connected_handler.clear();
                       }
                       out_async_read();
 

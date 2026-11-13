@@ -6,13 +6,20 @@
 #include <openssl/ssl.h>
 
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
+#include <deque>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <string>
+#include <vector>
+#include <unistd.h>
 
 #include "core/log.h"
+#include "core/config.h"
 #include "core/service.h"
+#include "quic/outbound_transport.h"
 #include "tun/lwip_tcp_client.h"
 #include "tun/tunlocalsession.h"
 #include "tun/tunproxysession.h"
@@ -122,6 +129,89 @@ void stale_proxy_path(Service& service) {
     }
 }
 
+// Padded first write fails, legacy reconnect succeeds. Transports are fakes; the session is production code.
+std::deque<std::function<void()>> g_tasks;
+
+struct FakeTransport : OutboundTransport {
+    bool fail_writes;
+    int reads = 0, closes = 0;
+    std::string written;
+    explicit FakeTransport(bool fail) : fail_writes(fail) {}
+    void async_connect(const tp::string&, uint16_t, std::function<void()> ok, std::function<void()>) override {
+        g_tasks.push_back(std::move(ok));
+    }
+    void async_read_some(boost::asio::mutable_buffer, IoHandler) override { ++reads; } // never completes
+    void async_write(std::shared_ptr<ReadBufWithGuard> buf, IoHandler handler) override {
+        written.append(buf->to_string_view());
+        const auto ec = fail_writes ? boost::asio::error::connection_reset : boost::system::error_code();
+        g_tasks.push_back([handler, ec, n = buf->size()] { handler(ec, n); });
+    }
+    void cancel() override {}
+    void close() override { ++closes; }
+    bool is_via_quic() const override { return false; }
+};
+
+std::vector<std::shared_ptr<FakeTransport>> g_transports;
+
+} // namespace
+
+std::shared_ptr<OutboundTransport> create_outbound_transport(boost::asio::io_context&, boost::asio::ssl::context&,
+  const Config&, boost::asio::ip::tcp::endpoint, std::shared_ptr<QuicClientEndpoint>) {
+    auto t = std::make_shared<FakeTransport>(g_transports.empty()); // only the first (padded) attempt fails
+    g_transports.push_back(t);
+    return t;
+}
+
+namespace {
+
+// Config::password is private and config.cpp is not linked; write it through an explicit instantiation.
+tp::map<tp::string, tp::string>& rob_password(Config&);
+template <auto Member> struct RobPassword {
+    friend tp::map<tp::string, tp::string>& rob_password(Config& c) { return c.*Member; }
+};
+template struct RobPassword<&Config::password>;
+
+[[noreturn]] void fail(const char* msg) {
+    std::cerr << "FAIL: " << msg << "\n";
+    _exit(10);
+}
+
+void padding_retry_path() {
+    Config config{};
+    rob_password(config)["hash"] = "pw";
+    Service service(config, true);
+    auto session = std::make_shared<TUNProxySession>(&service, false);
+    int u1 = 0, u2 = 0;
+    auto count = [](int& n) {
+        return [&n](boost::system::error_code ec) {
+            // Unfixed code replays the start handler over the shared waiter list: unbounded re-entry.
+            if (ec || ++n > 3) fail("user write handler error or re-entered");
+        };
+    };
+    const char d1[] = "U1DATA", d2[] = "U2DATA";
+    session->out_async_send((const uint8_t*)d1, 6, count(u1)); // queued before connect
+    session->start();
+    g_tasks.front()(); // transport 1 connects; padded start write is now in flight
+    g_tasks.pop_front();
+    session->out_async_send((const uint8_t*)d2, 6, count(u2)); // queued behind the start write
+    size_t steps = 0;
+    while (!g_tasks.empty()) {
+        if (++steps > 100) fail("task loop did not settle");
+        auto task = std::move(g_tasks.front());
+        g_tasks.pop_front();
+        task();
+    }
+    if (g_transports.size() != 2) fail("expected exactly one legacy reconnect");
+    if (g_transports[0]->reads != 0 || g_transports[1]->reads != 1) fail("out_async_read not started exactly once");
+    if (g_transports[0]->closes == 0) fail("padded transport not closed");
+    if (u1 != 1 || u2 != 1) fail("pending write handlers must complete exactly once");
+    const auto& legacy = g_transports[1]->written;
+    if (legacy.find("U1DATA") == std::string::npos || legacy.find("U2DATA") == std::string::npos) fail("replay lost data");
+    if (session->is_destroyed()) fail("session destroyed");
+    session->destroy();
+    std::cerr << "padding-retry-ok\n";
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -135,6 +225,9 @@ int main(int argc, char** argv) {
     }
     if (which == "all" || which == "proxy") {
         stale_proxy_path(service);
+    }
+    if (which == "all" || which == "padding_retry") {
+        padding_retry_path();
     }
     std::cerr << "tun client lifetime: PASS\n";
     return 0;
