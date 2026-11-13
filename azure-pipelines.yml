@@ -31,6 +31,46 @@ stages:
     - publish: $(System.DefaultWorkingDirectory)/build/trojan
       artifact: LinuxBinary
 
+  - job: LinuxSanitizers
+    pool:
+      vmImage: ubuntu-latest
+    container:
+      image: trojanplusgroup/centos-build:debian
+    steps:
+    - checkout: self
+      submodules: recursive
+    - script: |
+        set -euo pipefail
+        set -v
+        sudo apt-get update
+        sudo apt-get install -y cmake
+        cmake --version | python3 -c 'import re,sys; v=tuple(map(int,re.search(r"(\d+)\.(\d+)",sys.stdin.read()).groups())); assert v >= (3,22), "BoringSSL requires CMake >= 3.22"'
+        cmake -S . -B build-sanitizers -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+          -DDEFAULT_CONFIG=../config.json -DFORCE_TCP_FASTOPEN=ON -DBoost_USE_STATIC_LIBS=ON \
+          -DENABLE_QUIC=ON -DENABLE_MIMALLOC=OFF \
+          -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
+          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+        cmake --build build-sanitizers --parallel
+        export TMPDIR="$AGENT_TEMPDIRECTORY/quic-sanitizers"
+        mkdir -p "$TMPDIR"
+        export ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:exitcode=86
+        export LSAN_OPTIONS=exitcode=86
+        export UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1:exitcode=86
+        scan_sanitizers() {
+          status=$?
+          trap - EXIT
+          if grep -RinE 'AddressSanitizer|LeakSanitizer|UndefinedBehaviorSanitizer|runtime error:' "$TMPDIR"; then
+            status=1
+          fi
+          exit "$status"
+        }
+        trap scan_sanitizers EXIT
+        python3 -u tests/test_quic_shutdown_leaks.py --binary "$PWD/build-sanitizers/trojan" 2>&1 | tee "$TMPDIR/shutdown-output.log"
+        python3 -u tests/test_quic_initial_loss.py --binary "$PWD/build-sanitizers/trojan" --output-dir "$TMPDIR" 2>&1 | tee "$TMPDIR/initial-loss-output.log"
+      env:
+        AGENT_TEMPDIRECTORY: $(Agent.TempDirectory)
+
   - job: macOS
     pool:
       vmImage: macOS-latest

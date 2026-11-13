@@ -62,6 +62,7 @@ int main() {
         flags = ['-fsanitize=address,undefined', '-fno-omit-frame-pointer'] if os.environ.get('QUIC_TEST_SANITIZERS') else []
         subprocess.run([os.environ.get('CXX', 'c++'), '-std=c++17', *flags, str(cpp), '-o', str(binary)], check=True)
         subprocess.run([str(binary)], check=True)
+    print('PASS: QUIC reentrant stop')
 
 
 if __name__ == '__main__':

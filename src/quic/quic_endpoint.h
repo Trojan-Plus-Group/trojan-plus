@@ -61,6 +61,8 @@ class QuicEndpoint : public std::enable_shared_from_this<QuicEndpoint> {
     using AggregateBuffer = AggregatePool::Buffer;
     bool udp_gso_enabled() const { return m_udp_gso; }
     bool aggregate_capacity(QuicConnection& connection);
+    bool shutdown_send_available() const { return send_available() && (!m_udp_gso || !m_aggregate_queue.full()); }
+    void send_shutdown_packet(const boost::asio::ip::udp::endpoint& dest, const uint8_t* data, std::size_t len);
     AggregateBuffer acquire_aggregate_buffer();
     void send_aggregate(const boost::asio::ip::udp::endpoint& dest,
                         AggregateBuffer&& bytes, std::size_t segment);

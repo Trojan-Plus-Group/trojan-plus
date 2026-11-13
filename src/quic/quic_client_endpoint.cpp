@@ -47,22 +47,21 @@ void QuicClientEndpoint::start() {
 }
 
 void QuicClientEndpoint::stop() {
-    m_running = false;
     m_recovering = false;
     m_probing = false;
     m_probe_timer.cancel();
     m_retry_timer.cancel();
     m_handshake_timer.cancel();
+    if (m_conn) m_conn->send_shutdown_close();
     QuicEndpoint::stop();
-    fail_all_pending_streams();
     auto conn = std::move(m_conn);
-    if (conn) {
-        boost::asio::post(m_io_context, tp::bind_mem_alloc([conn, self = shared_from_this()] {
+    boost::asio::post(m_io_context, tp::bind_mem_alloc([conn, self = std::static_pointer_cast<QuicClientEndpoint>(shared_from_this())] {
+        if (conn) {
             conn->close();
             conn->shutdown();
-        }));
-    }
-    mark_unreachable();
+        }
+        self->mark_unreachable();
+    }));
 }
 
 void QuicClientEndpoint::connect_to_server() {

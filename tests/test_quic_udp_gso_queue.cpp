@@ -166,6 +166,42 @@ static void test_errors(int tx, int rx, Address dest) {
             empty();
         }
     }
+    // Transient plain probe errors retain ciphertext and leave GSO enabled.
+    for (int error : {EAGAIN, EWOULDBLOCK, ENOBUFS}) {
+        TestQueue q;
+        q.send_fault = scripted_fault;
+        assert(q.push(Packet{dest, {1, 2, 3}, 2}));
+        script({{true, EINVAL}, {false, error}});
+        std::vector<int> errors;
+        auto warn = [&](int e) { errors.push_back(e); };
+        assert(q.drain(tx, warn) == (error == ENOBUFS ? ENOBUFS : EAGAIN));
+        assert(!q.disabled && q.pending.front().offset == 0 && errors.empty());
+        script({{true, EMSGSIZE}, {false, 0}, {false, 0}});
+        assert(q.drain(tx, warn) == 0 && send_step == 3);
+        assert(!q.disabled && q.fallback_errno == 0 && errors == std::vector<int>{EMSGSIZE});
+        receive({1, 2});
+        receive({3});
+        empty();
+    }
+    // ENOBUFS during the probe shares the bounded retry counter.
+    {
+        TestQueue q;
+        q.send_fault = scripted_fault;
+        assert(q.push(Packet{dest, {1, 2, 3}, 2}));
+        assert(q.push(Packet{dest, {4}, 2}));
+        std::vector<int> errors;
+        auto warn = [&](int e) { errors.push_back(e); };
+        for (unsigned delay : {2, 4, 8, 16, 32, 32, 32}) {
+            script({{true, EINVAL}, {false, ENOBUFS}});
+            assert(q.drain(tx, warn) == ENOBUFS && q.retry_delay_ms() == delay);
+            assert(q.pending.size() == 2 && q.pending.front().offset == 0 && !q.disabled);
+        }
+        script({{true, EINVAL}, {false, ENOBUFS}, {false, 0}});
+        assert(q.drain(tx, warn) == 0 && q.pending.empty() && !q.disabled);
+        assert(errors == std::vector<int>{ENOBUFS});
+        receive({4});
+        empty();
+    }
     // EMSGSIZE splits only this entry, including across a transient retry.
     {
         TestQueue q;

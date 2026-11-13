@@ -114,6 +114,7 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
 
     // Gracefully close the connection with an optional application error code.
     void close(uint64_t app_error_code = 0);
+    void send_shutdown_close();
 
     // Manually extend the QUIC flow control window for a stream.
     // Call this after the application has processed/sent received data.
@@ -156,6 +157,15 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     std::function<void()> on_extend_max_streams_cb;
 
   private:
+    // Keep callbacks and their owner alive across reentrant shutdown.
+    struct CallbackScope {
+        std::shared_ptr<QuicConnection> self;
+        explicit CallbackScope(QuicConnection& conn) : self(conn.shared_from_this()) { ++self->m_callback_depth; }
+        ~CallbackScope() {
+            if (--self->m_callback_depth == 0 && self->m_shutdown_pending) self->shutdown();
+        }
+    };
+
     // ngtcp2 static callbacks — forward to instance methods.
     static int cb_recv_client_initial(ngtcp2_conn*, const ngtcp2_cid* dcid, void* user_data);
     static int cb_recv_crypto_data(ngtcp2_conn*, ngtcp2_encryption_level level,
@@ -267,7 +277,9 @@ class QuicConnection : public std::enable_shared_from_this<QuicConnection> {
     ngtcp2_socklen m_remote_len{0};
 
     bool m_closed{false};
+    bool m_shutdown_close_sent{false};
     bool m_shutdown_pending{false};
+    unsigned m_callback_depth{0};
     bool m_handshake_done{false};
     bool m_is_server{false};
     ConnType m_conn_type{ConnType::unknown};

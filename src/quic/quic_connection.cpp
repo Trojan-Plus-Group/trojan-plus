@@ -249,8 +249,8 @@ int QuicConnection::cb_recv_stream_data(ngtcp2_conn* /*conn*/, uint32_t flags, i
         handler->on_stream_data(data, datalen, fin);
     } else if (self->on_stream_data_cb) {
         // client will use cb 
-        auto cb = self->on_stream_data_cb;
-        cb(stream_id, data, datalen, fin);
+        CallbackScope scope(*self);
+        self->on_stream_data_cb(stream_id, data, datalen, fin);
     }
 
     return 0;
@@ -310,8 +310,8 @@ int QuicConnection::cb_acked_stream_data_offset(ngtcp2_conn* /*conn*/, int64_t s
 int QuicConnection::cb_stream_open(ngtcp2_conn* /*conn*/, int64_t stream_id, void* user_data) {
     auto* self = static_cast<QuicConnection*>(user_data);
     if (self->on_stream_open_cb) {
-        auto cb = self->on_stream_open_cb;
-        cb(stream_id);
+        CallbackScope scope(*self);
+        self->on_stream_open_cb(stream_id);
     }
     return 0;
 }
@@ -320,6 +320,8 @@ int QuicConnection::cb_stream_close(ngtcp2_conn* /*conn*/, uint32_t /*flags*/, i
                                     uint64_t app_error_code, void* user_data,
                                     void* /*stream_user_data*/) {
     auto* self = static_cast<QuicConnection*>(user_data);
+    auto keep_alive = self->shared_from_this();
+    auto endpoint = self->m_endpoint_lifetime.lock();
 
     if (self->m_h3) {
         self->m_h3->close_stream(stream_id, app_error_code);
@@ -331,8 +333,8 @@ int QuicConnection::cb_stream_close(ngtcp2_conn* /*conn*/, uint32_t /*flags*/, i
         self->m_stream_handlers.erase(it);
         handler->on_stream_close();
     } else if (self->on_stream_close_cb) {
-        auto cb = self->on_stream_close_cb;
-        cb(stream_id);
+        CallbackScope scope(*self);
+        self->on_stream_close_cb(stream_id);
     }
 
     self->fail_unacked_buffers(stream_id, boost::asio::error::broken_pipe);
@@ -385,8 +387,8 @@ int QuicConnection::cb_get_new_connection_id(ngtcp2_conn* /*conn*/, ngtcp2_cid* 
     }
 
     if (self->on_new_connection_id_cb) {
-        auto cb = self->on_new_connection_id_cb;
-        cb(cid);
+        CallbackScope scope(*self);
+        self->on_new_connection_id_cb(cid);
     }
 
     return 0;
@@ -415,8 +417,8 @@ int QuicConnection::cb_extend_max_local_streams_bidi(ngtcp2_conn* /*conn*/,
                     StatsReasonScope reason(*self, SendReason::flow);
                 )
 #line 295
-                auto cb = self->on_extend_max_streams_cb;
-                cb();
+                CallbackScope scope(*self);
+                self->on_extend_max_streams_cb();
             }
         });
     }
@@ -1948,9 +1950,25 @@ void QuicConnection::defer_close(uint64_t app_error_code) {
     });
 }
 
+void QuicConnection::send_shutdown_close() {
+    if (m_shutdown_close_sent || m_closed || !m_conn || m_in_read_pkt || m_in_pump_write ||
+        !m_endpoint.shutdown_send_available()) return;
+    m_shutdown_close_sent = true;
+    ngtcp2_path_storage ps;
+    ngtcp2_path_storage_zero(&ps);
+    ngtcp2_pkt_info pi{};
+    ngtcp2_ccerr ccerr;
+    ngtcp2_ccerr_default(&ccerr);
+    auto nwrite = ngtcp2_conn_write_connection_close(m_conn, &ps.path, &pi, m_write_buf.data(),
+                                                      m_write_buf.size(), &ccerr, now_nanos());
+    if (nwrite > 0) {
+        m_endpoint.send_shutdown_packet(m_peer, m_write_buf.data(), static_cast<std::size_t>(nwrite));
+    }
+}
+
 void QuicConnection::shutdown() {
     m_loss_timer.cancel();
-    if (m_in_read_pkt || m_in_pump_write) {
+    if (m_in_read_pkt || m_in_pump_write || m_callback_depth) {
         m_shutdown_pending = true;
         return;
     }
@@ -2050,6 +2068,8 @@ void QuicConnection::close(uint64_t app_error_code) {
 // ---- handshake_completed ----------------------------------------------------
 
 void QuicConnection::on_handshake_completed_impl() {
+    auto self = shared_from_this();
+    auto endpoint = m_endpoint_lifetime.lock();
     if (m_handshake_done) {
         return;
     }
@@ -2069,8 +2089,8 @@ void QuicConnection::on_handshake_completed_impl() {
     (void)alpnlen;
 
     if (on_handshake_completed_cb) {
-        auto cb = on_handshake_completed_cb;
-        cb();
+        CallbackScope scope(*this);
+        on_handshake_completed_cb();
     }
     if (!m_is_server) {
         uint32_t ping_ms = m_endpoint.config().get_quic().ping_interval_ms;

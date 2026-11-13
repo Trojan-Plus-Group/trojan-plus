@@ -61,12 +61,16 @@ void QuicServerEndpoint::start() {
 }
 
 void QuicServerEndpoint::stop() {
+    for (auto& entry : m_conns) {
+        entry.second->send_shutdown_close();
+    }
     QuicEndpoint::stop();
     auto conns = std::move(m_conns);
     m_conns.clear();
     m_pumping_conn.clear();
     for (auto& entry : conns) {
-        entry.second->shutdown();
+        boost::asio::post(m_io_context, tp::bind_mem_alloc(
+            [conn = entry.second, self = shared_from_this()] { conn->shutdown(); }));
     }
 }
 
