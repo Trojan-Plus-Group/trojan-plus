@@ -69,6 +69,7 @@ stages:
         trap scan_sanitizers EXIT
         python3 -u tests/test_quic_shutdown_leaks.py --binary "$PWD/build-sanitizers/trojan" 2>&1 | tee "$TMPDIR/shutdown-output.log"
         python3 -u tests/test_quic_initial_loss.py --binary "$PWD/build-sanitizers/trojan" --output-dir "$TMPDIR" 2>&1 | tee "$TMPDIR/initial-loss-output.log"
+        python3 -u tests/test_pipeline_wrong_password.py "$PWD/build-sanitizers/trojan" 2>&1 | tee "$TMPDIR/pipeline-wrong-password.log"
       env:
         AGENT_TEMPDIRECTORY: $(Agent.TempDirectory)
 

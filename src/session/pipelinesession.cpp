@@ -48,7 +48,7 @@ PipelineSession::PipelineSession(Service* _service, const Config& config, boost:
 
     live_socket = TP_MAKE_SHARED(SSLSocket, _service->get_io_context(), ssl_context);
     sending_data_cache.set_async_writer([this](const tp::streambuf& data, SentHandler&& handler) {
-        if (status == DESTROY) {
+        if (status == DESTROY || !live_socket) {
             return;
         }
 
@@ -125,11 +125,17 @@ void PipelineSession::start() {
 }
 
 void PipelineSession::in_async_read() {
+    if (status == DESTROY || !live_socket) {
+        return;
+    }
     in_read_buf.begin_read(__FILE__, __LINE__);
     auto self = shared_from_this();
     live_socket->async_read_some(in_read_buf.prepare(Pipeline::RECV_BUF_LENGTH),
       tp::bind_mem_alloc([this, self](const boost::system::error_code error, size_t length) {
           in_read_buf.end_read();
+          if (status == DESTROY || !live_socket) {
+              return;
+          }
           if (error) {
               output_debug_info_ec(error);
               destroy();
@@ -140,10 +146,19 @@ void PipelineSession::in_async_read() {
       }));
 }
 void PipelineSession::move_socket_to_serversession(const std::string_view& data) {
+    // Hand the accepted socket to ServerSession at most once. A 3s gc-timer
+    // completion can already be queued when the read handler gets here; cancel()
+    // does not abort that completion. data may view in_read_buf, so copy it
+    // before a later handler mutates the buffer.
+    if (status == DESTROY || !live_socket) {
+        return;
+    }
+    auto socket = std::move(live_socket);
     _log_with_endpoint(get_in_endpoint(), "PipelineSession error password, std::move data to ServerSession", Log::WARN);
-    auto session = TP_MAKE_SHARED(ServerSession, get_service(), get_config(), live_socket, plain_http_response, plain_http_server);
-    session->in_recv(data);
-    live_socket.reset();
+    tp::string owned(data.data(), data.size());
+    auto session = TP_MAKE_SHARED(
+      ServerSession, get_service(), get_config(), std::move(socket), plain_http_response, plain_http_server);
+    session->in_recv(std::string_view(owned.data(), owned.size()));
     destroy();
 }
 
@@ -334,15 +349,17 @@ void PipelineSession::timer_async_wait() {
     gc_timer.expires_after(std::chrono::seconds(3));
     auto self = shared_from_this();
     gc_timer.async_wait(tp::bind_mem_alloc([this, self](const boost::system::error_code error) {
-        if (!error) {
-            if (in_read_buf.size() > 0) {
-                _log_with_endpoint(get_in_endpoint(), "PipelineSession wait for password timeout, but got data, move to ServerSession");
-                move_socket_to_serversession(in_read_buf);
-                return;
-            }
-            _log_with_endpoint(get_in_endpoint(), "PipelineSession wait for password timeout");
-            destroy();
+        // Expiry may already be queued when the socket is moved. Only handshake may move.
+        if (error || status != HANDSHAKE || !live_socket) {
+            return;
         }
+        if (in_read_buf.size() > 0) {
+            _log_with_endpoint(get_in_endpoint(), "PipelineSession wait for password timeout, but got data, move to ServerSession");
+            move_socket_to_serversession(in_read_buf);
+            return;
+        }
+        _log_with_endpoint(get_in_endpoint(), "PipelineSession wait for password timeout");
+        destroy();
     }));
 }
 
