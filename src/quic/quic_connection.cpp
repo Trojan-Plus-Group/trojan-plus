@@ -1817,7 +1817,8 @@ int64_t QuicConnection::send_gso(int64_t stream_id, const ngtcp2_vec* vecs,
     }
     const int error = context.error ? context.error : (n < 0 ? static_cast<int>(n) : 0);
     if (error) {
-        _log_with_date_time("QUIC aggregate write: " + tp::string(ngtcp2_strerror(error)), Log::WARN);
+        _log_with_date_time("QUIC aggregate write: " + tp::string(ngtcp2_strerror(error)),
+            error == NGTCP2_ERR_STREAM_SHUT_WR ? Log::ALL : Log::WARN);
         if (error == NGTCP2_ERR_CLOSING || error == NGTCP2_ERR_DRAINING) defer_close();
     }
     accepted = context.accepted;

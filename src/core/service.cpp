@@ -312,7 +312,7 @@ void Service::stop() {
     }
 
 // don't destroy all components in order to speed up Android disconnection
-// this progress will be killed in Android
+// this progress will be killed in Android; QUIC endpoints are still stopped on Android so the peer gets CONNECTION_CLOSE
 #ifndef __ANDROID__
 
     if (m_tundev) {
@@ -339,6 +339,8 @@ void Service::stop() {
         udp_socket.close(ec);
     }
 
+#endif
+
 #ifdef ENABLE_QUIC
     if (m_quic_server) {
         m_quic_server->stop();
@@ -346,8 +348,6 @@ void Service::stop() {
     if (m_quic_client) {
         m_quic_client->stop();
     }
-#endif
-
 #endif
 
     // Run queued QUIC shutdown handlers before stopping the event loop.
