@@ -20,6 +20,7 @@
 #include "quic/quic_tls_ctx.h"
 #include "quic/quic_stream_handler.h"
 #include "quic/quic_clock.h"
+#include "quic/outbound_transport.h"
 #include <quic_stats_config.h>
 #include "quic/quic_stats.h"
 #include "quic/quic_udp_gso.h"
@@ -159,6 +160,49 @@ static void close_tests(Config& cfg, std::shared_ptr<QuicTlsCtx> tls) {
     require(closed == 1, "client stop full queue callback");
     require(failed_opens == 1, "client stop pending open callback");
     std::cout << "PASS close after stop, deferred waiter, client stop, weak_ptr release\n";
+}
+
+// Production QuicStreamTransport (via the production factory): cancel() must complete a pending read with
+// operation_aborted, posted and exactly once, like the TLS transport (asio). A read left unfinished here
+// stalls TUNProxySession::reconnect_legacy() (m_out_reading stays true).
+static void cancel_pending_read_test(Config& cfg, std::shared_ptr<QuicTlsCtx> tls) {
+    boost::asio::io_context io;
+    auto endpoint = std::make_shared<QuicClientEndpoint>(io, cfg, tls);
+    endpoint->open_socket(Udp::endpoint(boost::asio::ip::address_v4::loopback(), 0), false);
+    endpoint->m_running = true;
+    auto conn = std::make_shared<QuicConnection>(*endpoint, tls, endpoint->local_endpoint());
+    require(conn->init_client(endpoint->local_endpoint(), endpoint->local_endpoint()), "cancel test init");
+    endpoint->m_conn = conn;
+    boost::asio::ssl::context ssl(boost::asio::ssl::context::sslv23);
+    auto transport = create_outbound_transport(io, ssl, cfg, {}, endpoint);
+    require(transport->is_via_quic(), "factory must return the QUIC transport");
+
+    std::array<char, 16> buf{};
+    unsigned calls = 0;
+    boost::system::error_code result;
+    std::size_t bytes = 1;
+    transport->async_read_some(boost::asio::buffer(buf), [&](boost::system::error_code ec, std::size_t n) {
+        ++calls; result = ec; bytes = n;
+    });
+    transport->cancel();
+    require(calls == 0, "cancel must post the read completion, not call it inline");
+    until(io, [&] { return calls == 1; });
+    require(result == boost::asio::error::operation_aborted && bytes == 0, "cancelled read must be operation_aborted, 0");
+    transport->cancel();
+    transport->close();
+    poll(io);
+    require(calls == 1, "read completion duplicated by cancel/close");
+
+    // No read in flight: cancel() must not invent a completion.
+    transport->cancel();
+    poll(io);
+    require(calls == 1, "cancel without a pending read completed something");
+    endpoint->stop();
+    endpoint->m_conn.reset();
+    conn.reset();
+    transport.reset();
+    poll(io);
+    std::cout << "PASS QuicStreamTransport::cancel completes a pending read with operation_aborted\n";
 }
 
 static std::array<std::chrono::steady_clock::time_point, 9> enobufs_attempts;
@@ -376,6 +420,7 @@ int main(int argc, char** argv) {
         auto client = config(argv[2]);
         auto tls = std::make_shared<QuicTlsCtx>(client, QuicTlsCtx::Role::Client);
         close_tests(client, tls);
+        cancel_pending_read_test(client, tls);
         enobufs_test(client, tls);
         transfer_tests(server, client);
         crypto_failure_test(server, argv[2]);
