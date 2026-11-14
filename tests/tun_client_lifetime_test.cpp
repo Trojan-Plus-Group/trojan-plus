@@ -19,6 +19,7 @@
 #include "core/log.h"
 #include "core/config.h"
 #include "core/service.h"
+#include "session/clientpadding.h"
 #include "quic/outbound_transport.h"
 #include "tun/lwip_tcp_client.h"
 #include "tun/tunlocalsession.h"
@@ -129,35 +130,56 @@ void stale_proxy_path(Service& service) {
     }
 }
 
-// Padded first write fails, legacy reconnect succeeds. Transports are fakes; the session is production code.
+// Padded write fails, legacy reconnect succeeds. Transports are fakes; the session is production code.
 std::deque<std::function<void()>> g_tasks;
+bool g_fail_first_write = true; // first transport fails its first write, or (false) only after fail_next is set
 
 struct FakeTransport : OutboundTransport {
-    bool fail_writes;
+    bool fail_next;
     int reads = 0, closes = 0;
+    IoHandler pending_read;
     std::string written;
-    explicit FakeTransport(bool fail) : fail_writes(fail) {}
+    explicit FakeTransport(bool fail) : fail_next(fail) {}
     void async_connect(const tp::string&, uint16_t, std::function<void()> ok, std::function<void()>) override {
         g_tasks.push_back(std::move(ok));
     }
-    void async_read_some(boost::asio::mutable_buffer, IoHandler) override { ++reads; } // never completes
+    void async_read_some(boost::asio::mutable_buffer, IoHandler handler) override {
+        ++reads;
+        pending_read = std::move(handler); // completes only through cancel()
+    }
     void async_write(std::shared_ptr<ReadBufWithGuard> buf, IoHandler handler) override {
         written.append(buf->to_string_view());
-        const auto ec = fail_writes ? boost::asio::error::connection_reset : boost::system::error_code();
+        const auto ec = fail_next ? boost::asio::error::connection_reset : boost::system::error_code();
         g_tasks.push_back([handler, ec, n = buf->size()] { handler(ec, n); });
     }
-    void cancel() override {}
+    // Same semantics as the fixed QuicStreamTransport and as TLS (asio): a pending read is posted with
+    // operation_aborted. Fake limit: this is test code, not the production QUIC transport.
+    void cancel() override {
+        if (pending_read) g_tasks.push_back([h = std::move(pending_read)] { h(boost::asio::error::operation_aborted, 0); });
+        pending_read = nullptr;
+    }
     void close() override { ++closes; }
     bool is_via_quic() const override { return false; }
 };
 
 std::vector<std::shared_ptr<FakeTransport>> g_transports;
 
+[[noreturn]] void fail(const char* msg);
+void drain_tasks() {
+    size_t steps = 0;
+    while (!g_tasks.empty()) {
+        if (++steps > 100) fail("task loop did not settle");
+        auto task = std::move(g_tasks.front());
+        g_tasks.pop_front();
+        task();
+    }
+}
+
 } // namespace
 
 std::shared_ptr<OutboundTransport> create_outbound_transport(boost::asio::io_context&, boost::asio::ssl::context&,
   const Config&, boost::asio::ip::tcp::endpoint, std::shared_ptr<QuicClientEndpoint>) {
-    auto t = std::make_shared<FakeTransport>(g_transports.empty()); // only the first (padded) attempt fails
+    auto t = std::make_shared<FakeTransport>(g_transports.empty() && g_fail_first_write); // only the first (padded) attempt fails
     g_transports.push_back(t);
     return t;
 }
@@ -171,12 +193,21 @@ template <auto Member> struct RobPassword {
 };
 template struct RobPassword<&Config::password>;
 
+// ClientPadding memoizes the server capability process-wide; a legacy fallback in one scenario would
+// disable padding in the next, so reset it per scenario.
+tp::map<tp::string, bool>& (*rob_capabilities())();
+template <auto Fn> struct RobCapabilities {
+    friend tp::map<tp::string, bool>& (*rob_capabilities())() { return Fn; }
+};
+template struct RobCapabilities<&ClientPadding::capabilities>;
+
 [[noreturn]] void fail(const char* msg) {
     std::cerr << "FAIL: " << msg << "\n";
     _exit(10);
 }
 
 void padding_retry_path() {
+    rob_capabilities()().clear();
     Config config{};
     rob_password(config)["hash"] = "pw";
     Service service(config, true);
@@ -209,7 +240,45 @@ void padding_retry_path() {
     if (legacy.find("U1DATA") == std::string::npos || legacy.find("U2DATA") == std::string::npos) fail("replay lost data");
     if (session->is_destroyed()) fail("session destroyed");
     session->destroy();
+    drain_tasks(); // destroy() cancels the transport; run the aborted read completion before Service goes away
+    g_transports.clear();
     std::cerr << "padding-retry-ok\n";
+}
+
+// First padded write succeeds and a read is in flight, then a later user write fails. retry_legacy() cancels the
+// transport; the in-flight read must complete (operation_aborted) so reconnect_legacy() can continue.
+void padding_retry_read_path() {
+    g_fail_first_write = false;
+    rob_capabilities()().clear();
+    g_transports.clear();
+    g_tasks.clear();
+    Config config{};
+    rob_password(config)["hash"] = "pw";
+    Service service(config, true);
+    auto session = std::make_shared<TUNProxySession>(&service, false);
+    int u1 = 0, u2 = 0;
+    auto count = [](int& n) { return [&n](boost::system::error_code ec) { if (ec || ++n > 3) { fail("user write handler error or re-entered"); } }; };
+    auto drain = [] { drain_tasks(); };
+    const char d1[] = "U1DATA", d2[] = "U2DATA";
+    session->out_async_send((const uint8_t*)d1, 6, count(u1)); // queued before connect
+    session->start();
+    drain(); // connect, first padded write succeeds, read in flight
+    if (g_transports.size() != 1 || g_transports[0]->reads != 1 || !g_transports[0]->pending_read) fail("read not in flight");
+    if (u1 != 1) fail("first write handler must complete once");
+    g_transports[0]->fail_next = true;
+    session->out_async_send((const uint8_t*)d2, 6, count(u2)); // this write fails
+    drain();
+    if (g_transports.size() != 2) fail("expected exactly one legacy reconnect (stalled behind the read?)");
+    if (g_transports[0]->closes == 0) fail("padded transport not closed");
+    if (g_transports[1]->reads != 1) fail("out_async_read not restarted exactly once");
+    if (u1 != 1 || u2 != 1) fail("user write handlers must complete exactly once");
+    if (g_transports[1]->written.find("U2DATA") == std::string::npos) fail("replay lost data");
+    if (session->is_destroyed()) fail("session destroyed");
+    session->destroy(); // cancel() posts the in-flight read's operation_aborted completion
+    drain_tasks();      // it must not reconnect or destroy twice
+    if (g_transports.size() != 2) fail("read aborted by destroy() triggered a reconnect");
+    g_transports.clear();
+    std::cerr << "padding-retry-read-ok\n";
 }
 
 } // namespace
@@ -228,6 +297,9 @@ int main(int argc, char** argv) {
     }
     if (which == "all" || which == "padding_retry") {
         padding_retry_path();
+    }
+    if (which == "all" || which == "padding_retry_read") {
+        padding_retry_read_path();
     }
     std::cerr << "tun client lifetime: PASS\n";
     return 0;

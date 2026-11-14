@@ -305,7 +305,14 @@ class QuicStreamTransport : public OutboundTransport,
         }
         m_pending_open_id = 0;
         m_connect_pending = false;
-        m_has_pending     = false;
+        if (m_has_pending) {
+            // Match the TLS transport (asio completes a cancelled read with operation_aborted)
+            // so callers waiting for the read can continue.
+            m_has_pending = false;
+            boost::asio::post(m_io_ctx, tp::bind_mem_alloc([handler = std::move(m_pending_handler)]() mutable {
+                handler(boost::asio::error::operation_aborted, 0);
+            }));
+        }
         m_pending_handler = {};
     }
 
