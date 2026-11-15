@@ -1,5 +1,5 @@
 # Debian trixie ships Boost 1.83 and CMake 3.31, which satisfy the
-# Boost >= 1.77 and CMake >= 3.20 requirements in CMakeLists.txt.
+# Boost >= 1.77 and CMake >= 3.22 requirements in CMakeLists.txt.
 FROM debian:trixie-slim
 
 # Avoid interactive prompts during package installation
