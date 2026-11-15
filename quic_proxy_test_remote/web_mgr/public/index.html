@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>qmgr</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><h1>qmgr</h1><span id="mode" class="badge">?</span><span id="countdown"></span></header>
+<div id="msg" hidden></div>
+<div id="warnings"></div>
+
+<section>
+  <h2>Status</h2>
+  <table id="stat"></table>
+</section>
+
+<section>
+  <h2>Mode</h2>
+  <div class="row">
+    <button data-mode="trojan">trojan (normal)</button>
+    <button data-mode="iperf3">iperf3 on 443</button>
+    <button data-mode="control">control port</button>
+  </div>
+  <label>Auto-restore to trojan
+    <select id="autorestore">
+      <option value="0">off</option><option value="5">5 min</option><option value="10">10 min</option><option value="15">15 min</option>
+    </select>
+  </label>
+  <div id="hints"></div>
+</section>
+
+<section>
+  <h2>Server TX payload size</h2>
+  <div class="row">
+    <select id="payload">
+      <option value="0">default (0)</option><option>1200</option><option>1250</option><option>1350</option><option>1400</option><option>1452</option><option value="custom">custom</option>
+    </select>
+    <input id="payload-custom" type="number" min="1200" max="1452" placeholder="1200-1452" hidden>
+    <button id="payload-apply">Apply (restarts trojan)</button>
+  </div>
+  <p class="note">Sets <code>quic.tx_udp_payload_size</code> on the server only (what the server sends). The client must set the same key in its own config. Trojan mode only.</p>
+</section>
+
+<section>
+  <h2>Packet capture</h2>
+  <div class="row">
+    <input id="cap-ports" placeholder="ports (default 443,8443)" inputmode="numeric">
+    <input id="cap-ip" placeholder="client IP (optional)">
+    <select id="cap-proto"><option value="udp" selected>UDP only</option><option value="tcp+udp">TCP + UDP</option></select>
+    <select id="cap-max"><option>5</option><option>15</option><option selected>30</option><option>60</option><option>120</option></select>
+  </div>
+  <div class="row">
+    <button id="cap-start">Start</button><button id="cap-stop">Stop</button><button id="cap-reset">Reset summary</button>
+  </div>
+  <p id="cap-state" class="note"></p>
+  <div class="scroll"><table id="cap-sum"></table></div>
+  <div class="row">
+    <button id="live-pause">Pause scroll</button><button id="live-clear">Clear view</button><button id="live-clearlog">Clear log file</button>
+  </div>
+  <pre id="live" class="log"></pre>
+  <div id="cap-files"></div>
+  <p class="note">The pcap and live log contain client IPs. Delete after analysis.</p>
+</section>
+
+<section>
+  <h2>Logs</h2>
+  <div class="row">
+    <select id="log-name"><option value="trojan">trojan 443</option><option value="control">control instance</option></select>
+    <input id="log-filter" placeholder="filter (substring / IP)">
+    <button id="log-follow">Follow</button>
+  </div>
+  <div class="row">
+    <button id="log-pause">Pause scroll</button><button id="log-clear">Clear log file</button><a id="log-dl" class="btn" href="#">Download</a>
+  </div>
+  <pre id="log" class="log"></pre>
+</section>
+
+<section>
+  <h2>Actions</h2>
+  <pre id="actions" class="log small"></pre>
+</section>
+<script src="app.js"></script>
+</body>
+</html>
