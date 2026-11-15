@@ -454,7 +454,7 @@ address DNSServer::normalize_address(const address& ip) {
 
     if (ip.is_v6() && ip.to_v6().is_v4_mapped()) {
         const auto bytes = ip.to_v6().to_bytes();
-        return address_v4({{bytes[12], bytes[13], bytes[14], bytes[15]}});
+        return address_v4(address_v4::bytes_type{{bytes[12], bytes[13], bytes[14], bytes[15]}});
     }
     return ip;
 
