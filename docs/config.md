@@ -76,6 +76,29 @@ not enabled.
 }
 ```
 
+## QUIC UDP payload size
+
+`quic.tx_udp_payload_size` (unsigned integer, default `0`) pins the UDP payload
+size of every datagram this endpoint sends. It exists to diagnose paths that
+drop larger UDP datagrams.
+
+- `0`: unchanged behavior. The `chrome` client always sends 1250-byte datagrams;
+  everything else uses the ngtcp2 defaults (Initial padded to 1200, PMTUD probes up to 1452).
+- `1200`..`1452`: applies to server and client connections. Every datagram, including
+  the padded Initial, is at most N bytes, and no PMTUD probe is sent. For the `chrome`
+  client this replaces the fixed 1250.
+- Any other value logs one WARN at startup and is treated as `0`.
+
+Each side controls only what it sends, so set the same value on both peers when diagnosing.
+`quic.max_datagram_size` is unrelated and only sizes socket buffers.
+
+```json
+"quic": {
+    "enabled": true,
+    "tx_udp_payload_size": 1200
+}
+```
+
 ## QUIC retry and timing
 
 `quic.retry_connect_timeout_ms` defaults to `1000` milliseconds when omitted.

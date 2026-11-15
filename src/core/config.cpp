@@ -24,6 +24,7 @@
 #include "ssl/boringssl_compat.h"
 #include "ssl/chrome_profile.h"
 #include <boost/property_tree/json_parser.hpp>
+#include <cerrno>
 #include <cstdlib>
 #include <gsl/gsl>
 #include <openssl/evp.h>
@@ -264,6 +265,21 @@ void Config::populate(const ptree& tree) {
     quic.max_idle_timeout_ms    = tree.get("quic.max_idle_timeout_ms", 60000U);
     quic.max_concurrent_streams = tree.get("quic.max_concurrent_streams", is_server ? 1000U : 100U);
     quic.max_datagram_size      = tree.get("quic.max_datagram_size", 1200U);
+    quic.tx_udp_payload_size    = 0;
+    if (const auto raw = tree.get_optional<std::string>("quic.tx_udp_payload_size")) {
+        // Parse by hand so garbage or huge values warn and fall back instead of aborting startup.
+        const std::string text = *raw;
+        char* end = nullptr;
+        errno = 0;
+        const unsigned long long value = std::strtoull(text.c_str(), &end, 10);
+        const bool numeric = !text.empty() && text[0] != '-' && end && *end == '\0' && errno == 0;
+        if (numeric && (value == 0 || (value >= 1200 && value <= 1452))) {
+            quic.tx_udp_payload_size = static_cast<uint32_t>(value);
+        } else {
+            _log_with_date_time("quic.tx_udp_payload_size=" + text +
+                                " is invalid (allowed: 0 or 1200..1452); using 0", Log::WARN);
+        }
+    }
     quic.recv_buffer_size       = tree.get("quic.recv_buffer_size", quic.max_datagram_size * 64U);
     quic.send_buffer_size       = tree.get("quic.send_buffer_size", quic.max_datagram_size * 64U);
     quic.h1_upstream            = tree.get("quic.h1_upstream", std::string()).c_str();
