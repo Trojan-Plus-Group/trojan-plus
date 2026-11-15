@@ -36,12 +36,12 @@ ServerSession::ServerSession(Service* _service, const Config& config, boost::asi
   const tp::string& plain_http_response, const tp::string& plain_http_server)
     : SocketSession(_service, config),
       status(HANDSHAKE),
-      handshake_timer(_service->get_io_context()),
       out_socket(_service->get_io_context()),
       udp_socket(_service->get_io_context()),
       udp_resolver(_service->get_io_context()),
       plain_http_response(plain_http_response),
       plain_http_server(plain_http_server),
+      handshake_timer(_service->get_io_context()),
       has_queried_out(false),
       padding_encoder(config.get_ssl().padding_bytes, config.get_ssl().padding_flushes) {
 
@@ -54,12 +54,12 @@ ServerSession::ServerSession(Service* _service, const Config& config, std::share
     : SocketSession(_service, config),
       status(HANDSHAKE),
       in_socket(std::move(socket)),
-      handshake_timer(_service->get_io_context()),
       out_socket(_service->get_io_context()),
       udp_socket(_service->get_io_context()),
       udp_resolver(_service->get_io_context()),
       plain_http_response(plain_http_response),
       plain_http_server(plain_http_server),
+      handshake_timer(_service->get_io_context()),
       has_queried_out(false),
       padding_encoder(config.get_ssl().padding_bytes, config.get_ssl().padding_flushes) {
 

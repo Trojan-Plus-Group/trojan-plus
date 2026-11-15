@@ -8,8 +8,9 @@ Install these dependencies before you build:
 
 - [CMake](https://cmake.org/) >= 3.22
 - [Visual Studio](https://visualstudio.microsoft.com/) 2022 and [NASM](https://www.nasm.us/) on PATH (Windows x86/x64 assembly)
-- [XCode](https://developer.apple.com/xcode/) 14+ (only for XCode)
-- [Boost](http://www.boost.org/) >= 1.77.0 (1.85.0+ recommended for stable async_wait support)
+- A C++17 compiler: GCC, or Clang with [Xcode](https://developer.apple.com/xcode/) 14+ on macOS
+- [Git](https://git-scm.com/) (the build needs the git submodules)
+- [Boost](http://www.boost.org/) >= 1.77.0, `program_options` component only (Boost.System is header-only and is not linked on desktop platforms)
 - [BoringSSL](https://boringssl.googlesource.com/boringssl/), built from the pinned `boringssl` submodule and linked statically
 
 BoringSSL is the sole TLS provider, including ngtcp2's QUIC crypto adapter. System OpenSSL and `libssl-dev` are not required.
@@ -22,18 +23,24 @@ TLS behavior:
 
 Link policy:
 
-- Linux keeps glibc and its system libraries dynamic; Boost, BoringSSL, QUIC, mimalloc and the C++/compiler runtimes link statically. Fully static glibc binaries are not supported because getaddrinfo/NSS needs the system runtime.
+- Linux keeps glibc and its system libraries dynamic; Boost, BoringSSL, QUIC, mimalloc and the C++/compiler runtimes link statically (`-static-libstdc++ -static-libgcc`, `Boost_USE_STATIC_LIBS ON`). The static C++ runtime (`libstdc++.a`) and static Boost archives (`libboost_program_options.a`) must therefore be installed. Fully static glibc binaries are not supported because getaddrinfo/NSS needs the system runtime.
 - Windows uses static MSVC CRT and Boost built with `runtime-link=static`. Android keeps `libtrojan.so` shared but uses `ANDROID_STL=c++_static`; iOS exports static archives.
 - Apple and Android allow only platform system libraries/frameworks as dynamic dependencies. Third-party dependencies link statically; use static Boost archives, not shared packages.
 - Mimalloc uses its explicit API for tp allocations only. It does not override process-wide allocation or BoringSSL allocation.
 
-For Debian users, run `sudo apt -y install build-essential cmake libboost-system-dev libboost-program-options-dev` to install all the necessary dependencies.
+For Debian users, run `sudo apt -y install build-essential cmake git libboost-program-options-dev` to install all the necessary dependencies.
 
-For macOS users, we recommend **macOS 10.13 (High Sierra)** or newer for full C++17 compatibility and modern security framework support. Using Homebrew, you can install Boost with:
+For RHEL / Rocky / AlmaLinux / CentOS Stream users, the static libraries live in the CRB repository (named `powertools` on EL8):
+
 ```bash
-brew install boost
+sudo dnf --enablerepo=crb install gcc-c++ make cmake git boost-devel boost-static libstdc++-static
 ```
-If you encounter compatibility issues with older Boost versions (e.g., `< 1.77.0`), ensure you are using the latest version provided by Homebrew.
+
+- If `libstdc++-static` is missing, compiling succeeds but linking fails with `/usr/bin/ld: cannot find -lstdc++`.
+- EL9 ships Boost 1.75, below the required 1.77. On EL9, build Boost >= 1.77 from source (static, `link=static`, with at least `--with-program_options`) and pass it with `-DBOOST_ROOT=/path/to/boost` when running `cmake`. EL10 ships Boost 1.83 and works as is.
+- Verified on Rocky Linux 10 (GCC 14.3.1): BoringSSL is built with `-Werror` and GCC 14.3 reports `-Wstringop-overflow` in `boringssl/crypto/fipsmodule/keccak/keccak.cc.inc`, which fails the build. Configure with `CFLAGS=-Wno-error=stringop-overflow CXXFLAGS=-Wno-error=stringop-overflow cmake ..` to downgrade it to a warning.
+
+For macOS users, see [macOS Build](#macos-build) below.
 
 ## Clone
 
@@ -41,7 +48,7 @@ Type in
 
 ```bash
 git clone https://github.com/Trojan-Plus-Group/trojan-plus.git
-cd trojan/
+cd trojan-plus/
 ```
 
 to clone the project and go into the directory.
@@ -63,7 +70,7 @@ make
 sudo make install
 ```
 
-to build, test, and install trojan. If everything goes well you'll be able to use trojan.
+to build and install trojan. `make` does not run any tests; see [Docker Build Environment](#docker-build-environment) for the test suite. If everything goes well you'll be able to use trojan.
 
 The `cmake ..` command can be extended with the following options.
 
@@ -92,7 +99,7 @@ The `cmake ..` command can be extended with the following options.
     - `-DSYSTEMD_SERVICE=AUTO`: detect systemd automatically and decide whether to install service (default).
     - `-DSYSTEMD_SERVICE=ON`: install systemd service unconditionally.
     - `-DSYSTEMD_SERVICE=OFF`: don't install systemd service unconditionally.
-- `-DSYSTEMD_SERVICE_PATH=/path/to/systemd/system`: the path to which the systemd service will be installed (defaults to `/lib/systemd/system`).
+- `-DSYSTEMD_SERVICE_PATH=/path/to/systemd/system`: the path to which the systemd service will be installed (auto-detected as `/usr/lib/systemd/system` or `/lib/systemd/system` when `SYSTEMD_SERVICE=AUTO`; otherwise defaults to `/lib/systemd/system`).
 
 ## Android Build
 
@@ -100,7 +107,7 @@ To build the Android shared library (.so), you need the Android NDK.
 
 ### Dependencies
 
-- Android NDK >= r19 (tested with r23b)
+- Android NDK; CI and development use NDK 27.2.12479018 (r27). Neither the script nor CMake enforces a minimum version, but the build requires 16 KB page-size support (`-DANDROID_SUPPORT_16KB_PAGE_SIZE=ON`, `-Wl,-z,max-page-size=16384`), so use a recent NDK like r27.
 
 ### Build
 
@@ -112,10 +119,11 @@ To build the Android shared library (.so), you need the Android NDK.
 ./build_android_so.sh /path/to/android-ndk
 ```
 
-This will build the library for multiple architectures (armeabi-v7a, arm64-v8a, x86, x86_64) and output the .so files to `android_lib/<arch>/libtrojan.so`.
+This builds `arm64-v8a` and `x86_64` only (`ANDROID_API` 31; armeabi-v7a and x86 are not built) and outputs the .so files to `android_lib/<arch>/libtrojan.so`.
 
 Options:
 - Add `-r` for clean build: `./build_android_so.sh /path/to/android-ndk -r`
+- Add `-d` for a debug build (`CMAKE_BUILD_TYPE=Debug`, symbols kept); the unstripped library is also copied to `android_lib/<arch>_debug/libtrojan.so`.
 
 ## iOS Build
 
@@ -159,37 +167,34 @@ and the C++ runtime. iOS does not use the desktop Keychain root-import path; con
 
 ## macOS Build
 
-To build the macOS static library (.a) and XCFramework for use in macOS applications (e.g., MAUI apps).
+Desktop macOS uses the normal CMake build (same as the macOS job in `azure-pipelines.yml`).
 
 ### Dependencies
 
-- Xcode (tested with Xcode 17.0+)
-- CMake >= 3.22
-- Boost via Homebrew. TLS is the `boringssl` submodule, built by CMake:
+- Xcode 14+ (or Command Line Tools)
+- CMake >= 3.22 and Boost >= 1.77.0 from Homebrew. TLS is the `boringssl` submodule, built by CMake:
 
 ```bash
-brew install boost
+brew install boost cmake
 ```
 
 ### Build
 
 ```bash
-./make_macos.sh /Applications/Xcode.app -r
+git submodule update --init --recursive
+mkdir build && cd build
+cmake -DBoost_USE_STATIC_LIBS=ON -DCMAKE_OSX_DEPLOYMENT_TARGET=10.14 ..
+make -j$(sysctl -n hw.ncpu)
 ```
 
-This will build for the current architecture (arm64 on Apple Silicon, x86_64 on Intel) and create an XCFramework at `macos_lib/trojan.xcframework`.
-
-Options:
-- Add `-r` for clean build
-
-**Note**: To create a universal binary with both arm64 and x86_64, build on both types of Macs and combine the libraries using `lipo`.
+This produces the `build/trojan` executable. CMake looks for Homebrew Boost in `/opt/homebrew/opt/boost` and `/usr/local/opt/boost`. CI uses deployment target 10.14.
 
 ## Docker Build Environment
 
 The Docker scripts use a Debian trixie build image. BoringSSL, QUIC libraries and optional mimalloc build from pinned submodules; no system TLS development package is needed.
 
 ### 1. Build the Docker Image
-First, build the local Docker image (`trojan-builder`):
+First, build the local Docker image (`scripts/build_docker.sh` tags it `trojanplusgroup/centos-build:debian`):
 
 ```bash
 ./scripts/build_docker.sh
@@ -208,6 +213,8 @@ Run the compilation and full test suite inside the container:
 ```bash
 ./scripts/compile_and_test.sh
 ```
+
+`compile_and_test.sh` runs the image named `trojan-builder`, so tag the image first: `docker tag trojanplusgroup/centos-build:debian trojan-builder`.
 
 This script will:
 1.  Clean previous build artifacts.
