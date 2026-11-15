@@ -108,6 +108,7 @@ class Config {
         uint32_t   max_idle_timeout_ms;       // QUIC idle timeout
         uint32_t   max_concurrent_streams;    // per-connection bidi stream limit
         uint32_t   max_datagram_size;         // per-packet size hint
+        uint32_t   tx_udp_payload_size;       // 0 = ngtcp2/chrome default; 1200..1452 pins sent UDP payload
         uint32_t   recv_buffer_size;          // UDP recv buffer bytes
         uint32_t   send_buffer_size;          // UDP send buffer bytes
         tp::string h1_upstream;               // server: real HTTP/1 backend for non-trojan traffic

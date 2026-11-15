@@ -425,6 +425,15 @@ int QuicConnection::cb_extend_max_local_streams_bidi(ngtcp2_conn* /*conn*/,
     return 0;
 }
 
+// quic.tx_udp_payload_size pins the UDP payload we send (no PMTUD, no shaping) so operators can
+// diagnose paths that drop larger datagrams. 0 keeps ngtcp2 / Chrome defaults.
+static void apply_tx_udp_payload_size(ngtcp2_settings& settings, uint32_t size) {
+    if (size == 0) return;
+    settings.max_tx_udp_payload_size = size;
+    settings.no_tx_udp_payload_size_shaping = 1;
+    settings.no_pmtud = 1;
+}
+
 // ---- constructor / destructor -----------------------------------------------
 
 QuicConnection::QuicConnection(QuicEndpoint& endpoint, std::shared_ptr<QuicTlsCtx> tls_ctx,
@@ -433,7 +442,8 @@ QuicConnection::QuicConnection(QuicEndpoint& endpoint, std::shared_ptr<QuicTlsCt
       m_tls_ctx(std::move(tls_ctx)),
       m_peer(peer),
       m_loss_timer(endpoint.io_context()),
-      m_write_buf(std::max<std::size_t>(NGTCP2_MAX_UDP_PAYLOAD_SIZE, 1250)),
+      m_write_buf(std::max<std::size_t>({NGTCP2_MAX_UDP_PAYLOAD_SIZE, 1250,
+                                         endpoint.config().get_quic().tx_udp_payload_size})),
       m_in_read_pkt(false),
       m_in_pump_write(false) {
     QUIC_STAT(
@@ -535,6 +545,7 @@ bool QuicConnection::init_server(const uint8_t* data, std::size_t datalen,
     ngtcp2_settings settings;
     ngtcp2_settings_default(&settings);
     settings.cc_algo = QUIC_CC_ALGO;
+    apply_tx_udp_payload_size(settings, m_endpoint.config().get_quic().tx_udp_payload_size);
 #line 396
     settings.initial_ts = now_nanos();
     const auto handshake_timeout = m_endpoint.config().get_ssl().handshake_timeout;
@@ -735,6 +746,8 @@ bool QuicConnection::init_client(const boost::asio::ip::udp::endpoint& local_ep,
         params.max_udp_payload_size = 1472;
         params.max_datagram_frame_size = 65536;
     }
+    // Overrides Chrome's fixed 1250 when set.
+    apply_tx_udp_payload_size(settings, m_endpoint.config().get_quic().tx_udp_payload_size);
 
     ngtcp2_cid dcid, scid;
     dcid.datalen = chrome ? 8 : 18;
