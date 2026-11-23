@@ -35,6 +35,9 @@ class TUNProxySession : public TUNSession {
     bool m_replaying{false};
     bool m_out_reading{false};
     size_t m_out_writing{0};
+    // UDP bytes handed to the transport whose send handler has not run yet (see out_async_send)
+    size_t m_udp_inflight{0};
+    static constexpr size_t MAX_UDP_INFLIGHT = 32 * 1024 * 1024;
     bool retry_legacy();
     void reconnect_legacy();
     tp::vector<SentHandler> m_padding_waiters;
