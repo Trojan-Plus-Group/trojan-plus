@@ -51,7 +51,7 @@ TUNProxySession::TUNProxySession(Service* _service, bool _is_udp)
           m_out_socket, data.data(), tp::bind_mem_alloc([this, self, handler](const boost::system::error_code error, size_t length) {
               _guard;
 
-              udp_timer_async_wait();
+              if (!m_destroyed) udp_timer_async_wait();
 
               if (error) {
                   output_debug_info_ec(error);
@@ -350,7 +350,7 @@ void TUNProxySession::out_async_send_impl(const std::string_view& data_to_send, 
         auto self             = shared_from_this();
         get_service()->session_async_send_to_pipeline(*this, PipelineRequest::DATA, data_to_send,
           tp::bind_mem_alloc([this, self, _handler, data_sending_len](const boost::system::error_code error) {
-              udp_timer_async_wait();
+              if (!m_destroyed) udp_timer_async_wait();
               if (error) {
                   output_debug_info_ec(error);
                   destroy();
@@ -394,7 +394,7 @@ void TUNProxySession::out_async_send_impl(const std::string_view& data_to_send, 
               tp::bind_mem_alloc([this, self, _handler, data_len, is_start](boost::system::error_code ec, size_t) {
                   _guard;
                   --m_out_writing;
-                  udp_timer_async_wait();
+                  if (!m_destroyed) udp_timer_async_wait();
                   if (m_padding_retry || (ec && m_padding.enabled())) {
                       // Only user write handlers are replayed after the legacy reconnect. The start handler
                       // belongs to this superseded attempt: start() builds a new one for the retried
@@ -443,11 +443,25 @@ void TUNProxySession::out_async_send(const uint8_t* _data, size_t _length, SentH
         }
     } else {
         if (is_udp_forward_session()) {
+            // Datagrams are read from the TUN device with no backpressure. In pipeline mode they all go into the
+            // pipeline's send queue, which is shared with every TCP session on that pipeline: an unbounded UDP flood
+            // piles up there (hundreds of MB on a lossy link) and TCP waits behind it. Drop like a full socket buffer.
+            if (get_pipeline_component().is_using_pipeline() && m_udp_inflight >= MAX_UDP_INFLIGHT) {
+                _log_with_endpoint_DEBUG(get_udp_local_endpoint(), "session_id: " + tp::to_string(get_session_id()) +
+                                                                     " drop UDP packet, in-flight " + tp::to_string(m_udp_inflight));
+                _handler(boost::system::error_code());
+                return;
+            }
             m_send_buf.consume(m_send_buf.size());
             UDPPacket::generate(m_send_buf,
               get_config().get_tun().redirect_local ? get_redirect_local_remote_addr() : m_remote_addr_udp,
               std::string_view((const char*)_data, _length));
-            out_async_send_impl(streambuf_to_string_view(m_send_buf), std::move(_handler));
+            const size_t framed = m_send_buf.size();
+            m_udp_inflight += framed;
+            out_async_send_impl(streambuf_to_string_view(m_send_buf), [this, framed, h = std::move(_handler)](boost::system::error_code ec) {
+                m_udp_inflight -= framed;
+                h(ec);
+            });
         } else {
             out_async_send_impl(std::string_view((const char*)_data, _length), std::move(_handler));
         }
