@@ -203,14 +203,14 @@ extern tp::tj_unique_ptr<char[]> __debug_str_buf;
 #define TP_LOG_ENDPOINT_DEFAULT(endpoint, message) TP_LOG_ENDPOINT_AT(endpoint, message, Log::ALL)
 #define TP_LOG_SELECT(_1, _2, selected, ...) selected
 #define TP_LOG_ENDPOINT_SELECT(_1, _2, _3, selected, ...) selected
-// Rescan forwarded arguments for the traditional MSVC preprocessor.
+// Rescan the selector and its invocation for the traditional MSVC preprocessor.
 #define TP_LOG_EXPAND(x) x
 #define _log(...) \
-    TP_LOG_EXPAND(TP_LOG_SELECT(__VA_ARGS__, TP_LOG_AT, TP_LOG_DEFAULT, unused))(__VA_ARGS__)
+    TP_LOG_EXPAND(TP_LOG_SELECT(__VA_ARGS__, TP_LOG_AT, TP_LOG_DEFAULT, unused)(__VA_ARGS__))
 #define _log_with_date_time(...) \
-    TP_LOG_EXPAND(TP_LOG_SELECT(__VA_ARGS__, TP_LOG_TIME_AT, TP_LOG_TIME_DEFAULT, unused))(__VA_ARGS__)
+    TP_LOG_EXPAND(TP_LOG_SELECT(__VA_ARGS__, TP_LOG_TIME_AT, TP_LOG_TIME_DEFAULT, unused)(__VA_ARGS__))
 #define _log_with_endpoint(...) \
-    TP_LOG_EXPAND(TP_LOG_ENDPOINT_SELECT(__VA_ARGS__, TP_LOG_ENDPOINT_AT, TP_LOG_ENDPOINT_DEFAULT, unused))(__VA_ARGS__)
+    TP_LOG_EXPAND(TP_LOG_ENDPOINT_SELECT(__VA_ARGS__, TP_LOG_ENDPOINT_AT, TP_LOG_ENDPOINT_DEFAULT, unused)(__VA_ARGS__))
 
 #define output_debug_info_ec(ec)                                                                                       \
     do {                                                                                                               \
