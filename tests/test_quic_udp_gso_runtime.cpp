@@ -54,6 +54,19 @@ class Endpoint : public QuicEndpoint {
     std::vector<Connection> connections;
     std::weak_ptr<QuicConnection> failed_connection;
     unsigned crypto_failures{0};
+    void check_local_rebind() {
+        open_socket(Udp::endpoint(Udp::v4(), 0), false);
+        const auto first = local_endpoint();
+        require(first == m_socket.local_endpoint() && first.address().is_unspecified() && first.port() != 0,
+                "cached wildcard and ephemeral port");
+        stop();
+        require(local_endpoint() == Udp::endpoint(), "closed socket clears endpoint");
+        open_socket(Udp::endpoint(boost::asio::ip::address_v4::loopback(), 0), false);
+        const auto second = local_endpoint();
+        require(second == m_socket.local_endpoint() && second.address().is_loopback() && second.port() != 0,
+                "reopened socket refreshes endpoint");
+        stop();
+    }
     void start() override {
         open_socket(Udp::endpoint(boost::asio::ip::address_v4::loopback(), 0), false);
         m_running = true;
@@ -274,6 +287,7 @@ static void transfer_tests(Config& server_cfg, Config& client_cfg) {
     auto server = std::make_shared<Endpoint>(io, server_cfg, server_tls);
     auto first = std::make_shared<Endpoint>(io, client_cfg, client_tls);
     auto second = std::make_shared<Endpoint>(io, client_cfg, client_tls);
+    server->check_local_rebind();
     server->start(); first->start(); second->start();
     auto a = first->client(server->local_endpoint());
     auto b = second->client(server->local_endpoint());

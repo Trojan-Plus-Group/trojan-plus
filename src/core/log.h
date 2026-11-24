@@ -183,26 +183,31 @@ extern tp::tj_unique_ptr<char[]> __debug_str_buf;
         }                                                                                                              \
     } while (false)
 
-#define _log_with_date_time(...)                                                                                       \
-    do {                                                                                                               \
-        if (Log::level != Log::OFF) {                                                                                  \
-            Log::log_with_date_time(tp::string("[") + __STRIPPED_FILE__ + ":" + tp::to_string(__LINE__) + "] " + __VA_ARGS__); \
-        }                                                                                                              \
+#define TP_LOG_PREFIX tp::string("[") + __STRIPPED_FILE__ + ":" + tp::to_string(__LINE__) + "] "
+#define TP_LOG_IF_ENABLED(severity, call) \
+    do { \
+        const auto tp_log_severity = (severity); \
+        if (Log::level != Log::OFF && tp_log_severity >= Log::level) { \
+            call; \
+        } \
     } while (false)
 
-#define _log_with_endpoint(endpoint, ...)                                                                              \
-    do {                                                                                                               \
-        if (Log::level != Log::OFF) {                                                                                  \
-            Log::log_with_endpoint(endpoint, tp::string("[") + __STRIPPED_FILE__ + ":" + tp::to_string(__LINE__) + "] " + __VA_ARGS__); \
-        }                                                                                                              \
-    } while (false)
-
-#define _log(...)                                                                                                      \
-    do {                                                                                                               \
-        if (Log::level != Log::OFF) {                                                                                  \
-            Log::log(tp::string("[") + __STRIPPED_FILE__ + ":" + tp::to_string(__LINE__) + "] " + __VA_ARGS__);        \
-        }                                                                                                              \
-    } while (false)
+#define TP_LOG_AT(message, severity) \
+    TP_LOG_IF_ENABLED(severity, Log::log(TP_LOG_PREFIX + (message), tp_log_severity))
+#define TP_LOG_TIME_AT(message, severity) \
+    TP_LOG_IF_ENABLED(severity, Log::log_with_date_time(TP_LOG_PREFIX + (message), tp_log_severity))
+#define TP_LOG_ENDPOINT_AT(endpoint, message, severity) \
+    TP_LOG_IF_ENABLED(severity, Log::log_with_endpoint(endpoint, TP_LOG_PREFIX + (message), tp_log_severity))
+#define TP_LOG_DEFAULT(message) TP_LOG_AT(message, Log::ALL)
+#define TP_LOG_TIME_DEFAULT(message) TP_LOG_TIME_AT(message, Log::ALL)
+#define TP_LOG_ENDPOINT_DEFAULT(endpoint, message) TP_LOG_ENDPOINT_AT(endpoint, message, Log::ALL)
+#define TP_LOG_SELECT(_1, _2, selected, ...) selected
+#define TP_LOG_ENDPOINT_SELECT(_1, _2, _3, selected, ...) selected
+#define _log(...) TP_LOG_SELECT(__VA_ARGS__, TP_LOG_AT, TP_LOG_DEFAULT, unused)(__VA_ARGS__)
+#define _log_with_date_time(...) \
+    TP_LOG_SELECT(__VA_ARGS__, TP_LOG_TIME_AT, TP_LOG_TIME_DEFAULT, unused)(__VA_ARGS__)
+#define _log_with_endpoint(...) \
+    TP_LOG_ENDPOINT_SELECT(__VA_ARGS__, TP_LOG_ENDPOINT_AT, TP_LOG_ENDPOINT_DEFAULT, unused)(__VA_ARGS__)
 
 #define output_debug_info_ec(ec)                                                                                       \
     do {                                                                                                               \
