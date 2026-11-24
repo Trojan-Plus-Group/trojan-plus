@@ -82,6 +82,7 @@ class QuicEndpoint : public std::enable_shared_from_this<QuicEndpoint> {
     const Config& m_config;
     std::shared_ptr<QuicTlsCtx> m_tls_ctx;
     boost::asio::ip::udp::socket m_socket;
+    boost::asio::ip::udp::endpoint m_local_endpoint;
     boost::asio::ip::udp::endpoint m_recv_endpoint;
     tp::vector<uint8_t> m_recv_buf;
     bool m_running;

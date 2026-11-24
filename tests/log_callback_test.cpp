@@ -59,6 +59,21 @@ void throwing(const char*, size_t, int, void*) { throw std::runtime_error("conta
 }
 int main() {
     Log::level = Log::INFO;
+    int evaluations = 0;
+    const auto message = [&] { ++evaluations; return "lazy message"; };
+    const boost::asio::ip::udp::endpoint endpoint;
+    _log_with_date_time(message(), Log::ALL);
+    _log_with_endpoint(endpoint, message(), Log::ALL);
+    _log(message());
+    assert(evaluations == 0);
+    _log_with_date_time(message(), Log::INFO);
+    _log_with_endpoint(endpoint, message(), Log::INFO);
+    _log(message(), Log::INFO);
+    assert(evaluations == 3);
+    Log::level = Log::OFF;
+    _log_with_date_time(message(), Log::OFF);
+    assert(evaluations == 3);
+    Log::level = Log::INFO;
     assert(trojan_set_log_callback(receive, &calls) == 0);
     Log::log(text, Log::ALL);
     assert(calls == 0);

@@ -113,6 +113,9 @@ void QuicEndpoint::open_socket(const boost::asio::ip::udp::endpoint& bind_ep,
         return;
     }
 
+    // Query after bind to retain the actual port for ephemeral binds.
+    m_local_endpoint = m_socket.local_endpoint(ec);
+
     m_udp_gso = m_config.get_quic().udp_gso && quic_udp_gso::platform_supported() &&
                 quic_udp_gso::probe(m_socket.native_handle());
     if (udp_gso_enabled()) {
@@ -291,6 +294,7 @@ void QuicEndpoint::stop() {
         m_socket.cancel(ec);
         m_socket.close(ec);
     }
+    m_local_endpoint = {};
     for (auto& conn : waiters) {
         conn->m_waiting_for_capacity = false;
         if (conn->m_close_waiting) {
@@ -407,6 +411,5 @@ void QuicEndpoint::drain_aggregates() {
 }
 
 boost::asio::ip::udp::endpoint QuicEndpoint::local_endpoint() const {
-    boost::system::error_code ec;
-    return m_socket.local_endpoint(ec);
+    return m_local_endpoint;
 }
