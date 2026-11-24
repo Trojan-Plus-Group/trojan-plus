@@ -103,6 +103,7 @@ struct QuicEndpoint : std::enable_shared_from_this<QuicEndpoint> {
         void cancel(boost::system::error_code&) {}
         void close(boost::system::error_code&) { open = false; }
     } m_socket;
+    int m_local_endpoint{0};
     struct Queue {
         std::vector<int> pending{1};
         bool full() const { return !pending.empty(); }
