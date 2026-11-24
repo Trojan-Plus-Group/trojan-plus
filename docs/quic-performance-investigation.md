@@ -13,6 +13,7 @@ No single congestion-control or encryption explanation survived all experiments.
 - UDP GSO plus loss-timer coalescing helped the tested phone LAN path considerably.
 - ACK thinning, disabled pacing, and relaxed loss detection were unsafe general fixes.
 - Clean VM gains varied sharply between experiments; their cause remains unresolved.
+- Keeping overdue waits cut clean-path timer churn but regressed delayed uploads.
 - The public long-RTT test reduced CPU, but did not improve throughput.
 
 This tree provides `quic.udp_gso` (now defaults to `true`) for server and client endpoints
@@ -385,8 +386,125 @@ not a fully conforming acceptance result.
 **Conclusion:** lower CPU did not guarantee higher throughput; default stayed OFF.
 **Confidence:** strong LAN benefit in these pairs, limited public-path generality.
 
+### 10. Timer re-arm reduction (B)
+
+**Question.** Why does timer re-arm work remain with GSO enabled?
+Temporary counters on `d70b805` sampled one isolated clean transfer per case,
+with GSO on and log level 1. The denominator is decimal payload MB or received
+QUIC packets (ngtcp2), not UDP skbs. Last snapshots can omit the teardown tail.
+
+| Case | Base arms/MB client/server | Candidate arms/MB client/server | Base arms/RX packet client/server | Candidate arms/RX packet client/server |
+|---|---:|---:|---:|---:|
+| tcp_down-socks5 | 161.3/136.5 | 10.5/14.9 | 0.225/0.382 | 0.015/0.041 |
+| tcp_down-tun | 164.6/140.1 | 9.7/14.1 | 0.228/0.390 | 0.014/0.039 |
+| tcp_up-socks5 | 352.2/395.6 | 38.8/25.8 | 0.788/0.443 | 0.087/0.029 |
+| tcp_up-tun | 1576.1/1046.7 | 122.2/98.3 | 2.230/0.721 | 0.174/0.068 |
+
+Earlier requests accounted for 18.2–43.3% of installs, later requests 46.8–50.4%,
+and equal requests 7.0–31.5%. A later request only replaced a wait after its
+installed deadline had passed. The pump and GSO write sites accounted for
+nearly all arms. Most replaced waits were canceled rather than handled.
+Aggregate expiry includes pacing, but these counters cannot isolate which
+source caused each shift. Moving pacing to a different path was not tested.
+
+**Candidate.** Keep an overdue wait instead of canceling and replacing it.
+The pending handler processes current ngtcp2 expiry, clears armed state, and
+pumps to recompute the next expiry. Keep future waits for equal/later requests
+in both modes, with the existing 1 ms earlier tolerance on GSO and zero off.
+Overdue waits add no intentional delay: the handler is already eligible to run.
+Those are policy bounds, not guarantees on event-loop dispatch latency.
+Early fires with no work increased, but later and equal replacements disappeared.
+
+**Release bench.** Base vs candidate, alternating order, log level 1, back leg
+`b0`. Clean: five pairs with GSO on, two off. Impaired: three pairs per profile
+with GSO on. TCP bulk uses Mbit/s; TCP latency uses p95 TTFB and UDP latency uses
+p95 RTT, both in ms. Brackets show range; ratios are candidate/base by round.
+Lower is better only for latency.
+
+**Clean.**
+
+| Front | GSO | Mode | Metric | Base median [range] | Head median [range] | Paired ratios | Median ratio | Base client/server CPU s/GB |
+|---|---|---|---|---|---|---|---|---|
+| f0 | off | socks5 | tcp_down | 286.689 [281.067, 292.310] | 581.152 [519.996, 642.308] | 2.197, 1.850 | 2.024 | 27.875/21.189 |
+| f0 | off | socks5 | tcp_up | 158.878 [156.491, 161.264] | 328.072 [321.346, 334.797] | 1.993, 2.139 | 2.066 | 26.301/50.701 |
+| f0 | off | tun | tcp_down | 230.236 [223.958, 236.513] | 488.455 [472.681, 504.229] | 2.251, 1.999 | 2.125 | 33.339/22.694 |
+| f0 | off | tun | tcp_up | 88.802 [88.419, 89.185] | 154.443 [153.567, 155.319] | 1.722, 1.757 | 1.739 | 75.833/90.094 |
+| f0 | on | socks5 | tcp_down | 538.562 [512.615, 551.933] | 860.003 [807.467, 873.118] | 1.703, 1.607, 1.597, 1.520, 1.538 | 1.597 | 14.836/10.896 |
+| f0 | on | socks5 | tcp_up | 204.305 [196.323, 214.591] | 330.046 [296.843, 343.365] | 1.464, 1.622, 1.643, 1.538, 1.667 | 1.622 | 19.260/39.488 |
+| f0 | on | tun | tcp_down | 396.686 [365.835, 407.476] | 545.870 [500.815, 580.707] | 1.374, 1.492, 1.229, 1.464, 1.395 | 1.395 | 18.877/11.123 |
+| f0 | on | tun | tcp_up | 97.947 [93.135, 101.861] | 159.857 [152.654, 167.992] | 1.688, 1.712, 1.569, 1.633, 1.639 | 1.639 | 69.915/81.636 |
+
+**30 ms RTT.**
+
+| Front | GSO | Mode | Metric | Base median [range] | Head median [range] | Paired ratios | Median ratio | Base client/server CPU s/GB |
+|---|---|---|---|---|---|---|---|---|
+| f30 | on | socks5 | tcp_down | 104.289 [103.926, 123.815] | 110.779 [105.386, 129.011] | 1.042, 1.014, 1.062 | 1.042 | 37.318/14.356 |
+| f30 | on | socks5 | tcp_lat | 35.067 [34.924, 35.197] | 35.534 [34.933, 36.573] | 1.017, 0.992, 1.043 | 1.017 | n/a/n/a |
+| f30 | on | socks5 | tcp_up | 82.988 [81.524, 84.247] | 77.012 [75.309, 78.401] | 0.914, 0.962, 0.907 | 0.914 | 22.815/54.608 |
+| f30 | on | socks5 | udp_lat | 33.976 [33.962, 34.009] | 33.907 [33.829, 33.949] | 0.998, 0.996, 0.998 | 0.998 | n/a/n/a |
+| f30 | on | tun | tcp_down | 117.944 [108.562, 118.597] | 105.837 [101.468, 111.188] | 0.975, 0.938, 0.860 | 0.938 | 40.137/13.596 |
+| f30 | on | tun | tcp_lat | 35.053 [34.893, 35.304] | 34.645 [34.521, 35.334] | 1.001, 0.993, 0.985 | 0.993 | n/a/n/a |
+| f30 | on | tun | tcp_up | 56.709 [56.148, 57.255] | 36.841 [34.572, 54.653] | 0.973, 0.650, 0.604 | 0.650 | 58.398/57.350 |
+| f30 | on | tun | udp_lat | 33.969 [33.953, 34.006] | 33.943 [33.925, 33.958] | 0.998, 1.000, 0.999 | 0.999 | n/a/n/a |
+
+**80 ms RTT with loss.**
+
+| Front | GSO | Mode | Metric | Base median [range] | Head median [range] | Paired ratios | Median ratio | Base client/server CPU s/GB |
+|---|---|---|---|---|---|---|---|---|
+| f80l1 | on | socks5 | tcp_down | 133.207 [126.891, 134.058] | 162.964 [158.360, 163.698] | 1.221, 1.223, 1.248 | 1.223 | 27.388/15.395 |
+| f80l1 | on | socks5 | tcp_lat | 86.744 [86.631, 87.539] | 86.326 [85.943, 86.472] | 0.986, 0.992, 0.997 | 0.992 | n/a/n/a |
+| f80l1 | on | socks5 | tcp_up | 32.713 [32.110, 32.820] | 32.817 [32.399, 34.024] | 1.000, 1.040, 1.009 | 1.009 | 27.788/65.535 |
+| f80l1 | on | socks5 | udp_lat | 128.686 [116.901, 129.758] | 135.778 [115.763, 137.259] | 0.892, 1.174, 1.055 | 1.055 | n/a/n/a |
+| f80l1 | on | tun | tcp_down | 133.122 [132.233, 133.519] | 164.179 [160.682, 165.221] | 1.203, 1.249, 1.233 | 1.233 | 31.879/15.275 |
+| f80l1 | on | tun | tcp_lat | 86.545 [86.212, 87.514] | 86.748 [86.129, 87.095] | 0.999, 0.995, 1.002 | 0.999 | n/a/n/a |
+| f80l1 | on | tun | tcp_up | 25.611 [24.590, 25.786] | 24.825 [24.797, 24.832] | 0.968, 0.963, 1.010 | 0.968 | 84.181/82.210 |
+| f80l1 | on | tun | udp_lat | 107.183 [85.410, 143.003] | 147.337 [135.993, 156.134] | 1.092, 1.592, 1.375 | 1.375 | n/a/n/a |
+
+The 30 ms upload regression appeared in every pair for both modes. TUN UDP
+p95 also rose in every 80 ms/loss pair, despite zero missing echoes. No bench
+cell reported failure, but a passing transfer does not clear these regressions.
+
+**Safety checks.** Candidate container matrix had all 40 suites exit zero;
+recorded PASS/SKIP lists matched the prior matrix. T5 and T22–T25 passed,
+as did the S5 server handshake timeout regression. A production-helper test
+pinned due-wait retention, exact earlier deadlines without GSO, and reset after
+firing; it was part of the rejected candidate, not a product change.
+
+A focused repository netem workload A comparison used two repeats per variant,
+with stats enabled to select BBR and CUBIC. All 16 transfers passed SHA256.
+Ratios below match repeat numbers, not interleaved netem runs. Loss figures are
+last sampled server lost/sent counts, not exact retransmission totals. Netem
+seeds varied; ordered jitter can induce transport loss even without random
+qdisc drops, so these data do not identify a cause for every loss delta.
+
+| Controller | Profile | Base Mbit/s | Candidate Mbit/s | Ratios by repeat | Server lost/sent base vs candidate |
+|---|---|---|---|---|---|
+| bbr | loss1 | 191.804, 281.269 | 388.807, 434.968 | 2.027, 1.546 | 2.57%, 3.46% vs 0.94%, 0.96% |
+| bbr | delay100-jitter-ordered | 6.465, 6.285 | 6.325, 6.286 | 0.978, 1.000 | 8.30%, 5.72% vs 8.11%, 7.57% |
+| cubic | loss1 | 185.995, 164.368 | 358.554, 346.914 | 1.928, 2.111 | 0.97%, 1.05% vs 1.02%, 0.97% |
+| cubic | delay100-jitter-ordered | 6.564, 6.479 | 6.845, 6.382 | 1.043, 0.985 | 0.53%, 1.18% vs 0.51%, 0.19% |
+
+| Profile | Base client/server % | Candidate client/server % |
+|---|---|---|
+| socks5-down | 18.86/20.67 | 0.57/7.40 |
+| socks5-up | 22.17/16.88 | 13.07/1.83 |
+| tun-down | 14.62/20.20 | 0.51/9.58 |
+| tun-up | 24.28/20.15 | 3.17/1.08 |
+
+Matched frame-pointer builds sampled sustained clean transfers. Inclusive
+`timerfd_settime` shares overlap other CPU categories and are percentages of
+samples, not syscall counts. The large clean throughput gain does not follow
+from those shares alone; changes in wake scheduling or packet delivery are
+possible contributors, not established causes.
+
+**Conclusion.** Do not ship overdue-wait retention as tested. It removes
+measured churn and improves clean throughput but fails the impairment gate.
+**Confidence:** strong for the clean improvement and the local 30 ms upload
+regression; cause and generality across paths remain unresolved.
+
 ## What did not work or was dropped
 
+- Overdue-wait retention: clean gains did not offset delayed-upload regressions.
 - ACK thinning: impaired BBR regressions outweighed clean-path wins.
 - Fast clock: much smaller benefit after clock repair; not shipped.
 - Disabled pacing: controller-dependent behavior and more loss; not safe generally.
@@ -425,6 +543,8 @@ not a fully conforming acceptance result.
 ## Open questions
 
 - Why did later clean-path runs fail to reproduce E2's large timer gains?
+- Which expiry sources drive overdue replacements, and can batching avoid
+  those replacements without changing delayed-path send timing?
 - Which hidden phone kernel operations dominate TUN write and per-packet work?
 - How much sender idleness comes from controller decisions versus wake scheduling?
 - Would receiver UDP GRO improve clean paths enough to justify parsing complexity?
