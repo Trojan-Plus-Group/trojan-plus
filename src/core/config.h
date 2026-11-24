@@ -114,7 +114,8 @@ class Config {
         tp::string h1_upstream;               // server: real HTTP/1 backend for non-trojan traffic
         bool       debug_disable_tcp;         // debug: disable tcp, only allow quic
         uint32_t   ping_interval_ms;          // QUIC PING keep-alive interval, 0 = disabled
-        bool       udp_gso;                   // Linux UDP_SEGMENT sends and loss-timer coalescing; default false
+        bool       udp_gso;                   // Linux UDP_SEGMENT sends and loss-timer coalescing; default true
+        bool       udp_gso_explicit;          // Whether quic.udp_gso was specified
         tp::string stateless_reset_secret;
     };
 

@@ -15,7 +15,7 @@ No single congestion-control or encryption explanation survived all experiments.
 - Clean VM gains varied sharply between experiments; their cause remains unresolved.
 - The public long-RTT test reduced CPU, but did not improve throughput.
 
-This tree provides `quic.udp_gso` (default `false`) for server and client endpoints
+This tree provides `quic.udp_gso` (now defaults to `true`) for server and client endpoints
 on Linux and Android with UDP_SEGMENT support, as documented in
 [configuration](config.md). The option enables UDP GSO plus timer coalescing.
 
