@@ -1,8 +1,11 @@
-trigger:
-- master
+# Branch pushes (including master) never trigger a build; master only changes through PRs.
+trigger: none
 
+# Validate every PR that targets master.
 pr:
-- master
+  branches:
+    include:
+      - master
 
 stages:
 
