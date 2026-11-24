@@ -94,7 +94,8 @@ stages:
 
   - job: Windows
     pool:
-      vmImage: windows-latest
+      # windows-latest now ships VS 2026; Boost 1.87 b2 cannot bootstrap with it. Revisit with Boost >= 1.91 before windows-2022 is retired.
+      vmImage: windows-2022
     steps:
     - checkout: self
       submodules: recursive
@@ -207,7 +208,7 @@ stages:
 
   - job: Windows
     pool:
-      vmImage: windows-latest
+      vmImage: windows-2022
     steps:
     - checkout: self
       submodules: recursive
@@ -305,7 +306,7 @@ stages:
 
   - job: Windows
     pool:
-      vmImage: windows-latest
+      vmImage: windows-2022
     steps:
     - download: current
       artifact: WindowsBinary
