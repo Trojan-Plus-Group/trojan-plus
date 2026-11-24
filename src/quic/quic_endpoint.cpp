@@ -117,7 +117,7 @@ void QuicEndpoint::open_socket(const boost::asio::ip::udp::endpoint& bind_ep,
                 quic_udp_gso::probe(m_socket.native_handle());
     if (udp_gso_enabled()) {
         _log_with_date_time("QUIC UDP_SEGMENT enabled for socket", Log::INFO);
-    } else if (m_config.get_quic().udp_gso) {
+    } else if (m_config.get_quic().udp_gso && m_config.get_quic().udp_gso_explicit) {
         _log_with_date_time("QUIC udp_gso unavailable: Linux UDP_SEGMENT support required", Log::WARN);
     }
     // Keep option, query, and non-blocking errors separate so each result remains observable.

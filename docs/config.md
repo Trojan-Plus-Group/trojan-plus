@@ -30,7 +30,7 @@ unrelated protocols. Set the same custom token on both ends when needed.
 
 ## QUIC UDP GSO
 
-`quic.udp_gso` defaults to `false`. This send-only endpoint option works on
+`quic.udp_gso` defaults to `true`. This send-only endpoint option works on
 both clients and servers independently; peers need no matching setting.
 On Linux (including Android), enabling it
 bundles loss-timer coalescing with `UDP_SEGMENT` send batching. An armed,
@@ -65,14 +65,13 @@ the suppressed count and destination address family. Other send errors drop the
 failed aggregate (or only the failed datagram in per-datagram mode) and continue draining
 without stopping the endpoint. Unexpected short sends also drop the item and
 continue. Unsupported platforms or sockets run with the feature off and warn
-when requested.
-This is opt-in, not a change to default packet shaping; GRO and ACK thinning are
-not enabled.
+only when explicitly enabled in the config. Set `"udp_gso": false` to disable
+batching and loss-timer coalescing. GRO and ACK thinning are not enabled.
 
 ```json
 "quic": {
     "enabled": true,
-    "udp_gso": false
+    "udp_gso": true
 }
 ```
 
@@ -107,7 +106,7 @@ Set it explicitly to `0` to disable automatic client reconnection. For example:
 ```json
 "quic": {
     "enabled": true,
-    "udp_gso": false,
+    "udp_gso": true,
     "retry_connect_timeout_ms": 1000
 }
 ```
