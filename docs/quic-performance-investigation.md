@@ -538,6 +538,30 @@ in both upload modes; full acceptance, profile, and matrix retests were not
 run for this rejected follow-up. Which wakeup interactions change upload
 behavior remains open.
 
+#### Round 3: pending ACKs did not explain delayed upload
+
+Three interleaved diagnostic pairs compared base with R1 at 30 ms RTT and
+on clean SOCKS5 download. R1/base throughput ratios were 0.970, 0.914, 0.923
+for delayed SOCKS5 upload; 0.603, 1.099, 0.891 for delayed TUN upload; and
+1.616, 1.565, 1.551 for clean SOCKS5 download.
+
+| Upload sender, 30 ms | Base lost packets by round | R1 lost packets by round | Base timer loss events with queued UDP | R1 timer loss events with queued UDP |
+|---|---|---|---|---|
+| SOCKS5 | 634, 537, 602 | 0, 44, 0 | 3, 0, 1 | 0, 0, 0 |
+| TUN | 19037, 20869, 19422 | 0, 16464, 6492 | 18, 40, 25 | 0, 27, 9 |
+
+No front qdisc drops were recorded. A nonempty socket reports bytes in the
+next datagram, not its contents or total backlog. No ACK of a tracked lost
+packet or spurious-congestion callback was observed. ACKs of other packets
+sometimes followed timer loss within 1 ms; timing alone does not make them
+spurious loss evidence.
+
+**Verdict:** the proposed loss mechanism does not explain the measured
+regression. The slowest TUN pair and two slower SOCKS5 pairs showed zero
+sender loss with R1. This does not rule out unread ACKs affecting other
+wakeup behavior. The counters did not isolate a replacement mechanism, so
+no receive drain or deferral was tried. No new candidate to screen or qualify.
+
 ## What did not work or was dropped
 
 - Overdue-wait retention: clean gains did not offset delayed-upload regressions.
