@@ -502,6 +502,42 @@ measured churn and improves clean throughput but fails the impairment gate.
 **Confidence:** strong for the clean improvement and the local 30 ms upload
 regression; cause and generality across paths remain unresolved.
 
+#### Round 2: overdue-wait retention isolated
+
+Three interleaved clean and impaired rounds separated overdue-wait retention
+(R1) from the future-wait and zero-expiry changes (R2). R1 carried the clean
+win and independently reproduced the SOCKS5 delayed-upload regression.
+Ratios below are candidate/base, in round order; UDP uses p95 RTT.
+
+| Case | R1 | R2 | Combined |
+|---|---|---|---|
+| Clean SOCKS5 download | 1.655, 1.690, 1.551 | 1.033, 1.036, 1.017 | 1.633, 1.687, 1.635 |
+| Clean TUN upload | 1.587, 1.696, 1.709 | 0.979, 1.030, 0.978 | 1.621, 1.672, 1.711 |
+| 30 ms SOCKS5 upload | 0.926, 0.900, 0.944 | 1.020, 0.996, 1.028 | 0.878, 0.873, 0.935 |
+| 30 ms TUN upload | 0.596, 0.864, 1.016 | 0.975, 0.990, 1.019 | 0.987, 0.966, 1.071 |
+| 80 ms/loss TUN UDP | 1.076, 0.929, 1.114 | 1.055, 1.007, 1.180 | 1.068, 0.934, 1.133 |
+
+A build-tree diagnostic hook classified the minimum expiry. On the 30 ms
+TUN upload client, combined versus base pacing arms fell from 86,541 to
+22,994, while pacing fires rose from 635 to 5,494. Mean lateness of due
+pacing fires was 879 versus 785 microseconds (base versus combined).
+Loss/PTO-classified empty fires rose from 863 to 15,352; no packets were
+emitted synchronously in those early loss/PTO callbacks. Median sampled
+cwnd fell from 1,788,590 to 874,840 bytes and flight from 427,500 to 230,000
+bytes. These are timer-arm snapshots from one transfer per variant, not
+proof that loss processing, pacing, or congestion control caused the slowdown.
+
+A follow-up retained overdue waits but re-armed without pumping when no
+expiry was due. It added no intentional expiry delay; existing future-wait
+policy stayed intact. Clean SOCKS5 download ratios were 1.623, 1.628, 1.651,
+but 30 ms upload ratios were 0.845, 0.878, 0.849 (SOCKS5) and 0.173, 0.566,
+0.177 (TUN). Skipping the early pump did not fix delayed upload.
+
+**Decision:** no timer change. The targeted release screen already failed
+in both upload modes; full acceptance, profile, and matrix retests were not
+run for this rejected follow-up. Which wakeup interactions change upload
+behavior remains open.
+
 ## What did not work or was dropped
 
 - Overdue-wait retention: clean gains did not offset delayed-upload regressions.
